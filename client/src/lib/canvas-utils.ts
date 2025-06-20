@@ -1,5 +1,14 @@
 import { StrokeSettings } from "@/components/image-editor";
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 255, g: 255, b: 255 };
+}
+
 export function drawImageWithStroke(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
@@ -7,9 +16,6 @@ export function drawImageWithStroke(
   canvasWidth: number,
   canvasHeight: number
 ) {
-  // Clear canvas
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
   // Calculate scaling to fit image within canvas
   const scale = Math.min(canvasWidth / image.width, canvasHeight / image.height);
   const scaledWidth = image.width * scale;
@@ -19,24 +25,20 @@ export function drawImageWithStroke(
 
   // Draw stroke/outline if enabled
   if (strokeSettings.enabled && strokeSettings.width > 0) {
+    // Calculate stroke width relative to scaling
+    const strokeWidth = strokeSettings.width * scale;
+    
     // Save current composite operation
     const originalCompositeOperation = ctx.globalCompositeOperation;
     
-    // Draw stroke by creating an outline
-    const strokeWidth = strokeSettings.width * scale;
-    
     // Create outline by drawing the image multiple times with slight offsets
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalCompositeOperation = 'destination-over';
     
     // Draw stroke in multiple directions to create outline effect
-    for (let angle = 0; angle < 360; angle += 45) {
+    for (let angle = 0; angle < 360; angle += 30) {
       const radians = (angle * Math.PI) / 180;
       const dx = Math.cos(radians) * strokeWidth;
       const dy = Math.sin(radians) * strokeWidth;
-      
-      // Set stroke color and draw offset image
-      ctx.fillStyle = strokeSettings.color;
-      ctx.globalCompositeOperation = 'destination-over';
       
       // Create a temporary canvas to color the image
       const tempCanvas = document.createElement('canvas');
