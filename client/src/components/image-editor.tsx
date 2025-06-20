@@ -62,7 +62,7 @@ export default function ImageEditor() {
     outputDPI: 300,
   });
   const [shapeSettings, setShapeSettings] = useState<ShapeSettings>({
-    enabled: false,
+    enabled: true,
     type: 'square',
     widthInches: 4.0,
     heightInches: 4.0,

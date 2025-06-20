@@ -99,14 +99,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Calculate image dimensions based on resize settings (not constrained by shape)
-      const imageAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
-      const shapeAspectRatio = shapeSettings.widthInches / shapeSettings.heightInches;
+      // Calculate image dimensions based on resize settings
+      const pixelsPerInch = 300; // Standard DPI
+      const targetImageWidthPx = resizeSettings.widthInches * pixelsPerInch;
+      const targetImageHeightPx = resizeSettings.heightInches * pixelsPerInch;
       
-      // Scale image based on resize settings relative to shape size
-      const scaleToShape = Math.min(shapeWidth, shapeHeight) / 6; // Base scale factor
-      let imageWidth = (resizeSettings.widthInches / shapeSettings.widthInches) * shapeWidth;
-      let imageHeight = (resizeSettings.heightInches / shapeSettings.heightInches) * shapeHeight;
+      // Scale to fit in preview while maintaining actual proportions
+      const previewScale = Math.min(shapeWidth, shapeHeight) / Math.max(targetImageWidthPx, targetImageHeightPx);
+      let imageWidth = targetImageWidthPx * previewScale;
+      let imageHeight = targetImageHeightPx * previewScale;
 
       // Perfect center positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
