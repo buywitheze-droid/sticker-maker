@@ -114,39 +114,36 @@ export default function ImageEditor() {
     });
   }, [imageInfo]);
 
-  const handleStrokeModeChange = useCallback((mode: StrokeMode) => {
-    setStrokeMode(mode);
+  const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
+    const updated = { ...strokeSettings, ...newSettings };
     
-    if (mode === 'contour') {
-      setStrokeSettings(prev => ({ ...prev, enabled: true }));
-      setShapeSettings(prev => ({ ...prev, enabled: false }));
-    } else if (mode === 'shape') {
-      setStrokeSettings(prev => ({ ...prev, enabled: false }));
-      setShapeSettings(prev => ({ ...prev, enabled: true }));
-    } else {
-      setStrokeSettings(prev => ({ ...prev, enabled: false }));
+    // If enabling stroke, disable shape
+    if (newSettings.enabled === true) {
       setShapeSettings(prev => ({ ...prev, enabled: false }));
     }
-  }, []);
+    
+    setStrokeSettings(updated);
+  }, [strokeSettings]);
 
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
-    setShapeSettings(prev => {
-      const updated = { ...prev, ...newSettings };
-      
-      // Auto-adjust height for square shapes
-      if (updated.type === 'square' && newSettings.widthInches !== undefined) {
-        updated.heightInches = newSettings.widthInches;
-      } else if (updated.type === 'square' && newSettings.heightInches !== undefined) {
-        updated.widthInches = newSettings.heightInches;
-      }
-      
-      return updated;
-    });
-  }, []);
+    const updated = { ...shapeSettings, ...newSettings };
+    
+    // Auto-adjust height for square shapes
+    if (updated.type === 'square' && newSettings.widthInches !== undefined) {
+      updated.heightInches = newSettings.widthInches;
+    } else if (updated.type === 'square' && newSettings.heightInches !== undefined) {
+      updated.widthInches = newSettings.heightInches;
+    }
+    
+    // If enabling shape, disable stroke
+    if (newSettings.enabled === true) {
+      setStrokeSettings(prev => ({ ...prev, enabled: false }));
+    }
+    
+    setShapeSettings(updated);
+  }, [shapeSettings]);
 
-  const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
-    setStrokeSettings(prev => ({ ...prev, ...newSettings }));
-  }, []);
+
 
   const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard', format: VectorFormat = 'png') => {
     if (!imageInfo || !canvasRef.current) return;
@@ -219,8 +216,6 @@ export default function ImageEditor() {
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
         shapeSettings={shapeSettings}
-        strokeMode={strokeMode}
-        onStrokeModeChange={handleStrokeModeChange}
         onStrokeChange={handleStrokeChange}
         onResizeChange={handleResizeChange}
         onShapeChange={handleShapeChange}

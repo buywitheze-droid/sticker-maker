@@ -5,14 +5,12 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings, StrokeMode } from "./image-editor";
+import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
-  strokeMode: StrokeMode;
-  onStrokeModeChange: (mode: StrokeMode) => void;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
@@ -25,8 +23,6 @@ export default function ControlsSection({
   strokeSettings,
   resizeSettings,
   shapeSettings,
-  strokeMode,
-  onStrokeModeChange,
   onStrokeChange,
   onResizeChange,
   onShapeChange,
