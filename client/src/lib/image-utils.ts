@@ -60,7 +60,7 @@ export async function downloadCanvas(
   // Draw the image with stroke at high resolution
   if (shapeSettings?.enabled) {
     // Center the image within the shape
-    await drawImageCenteredInShape(ctx, image, strokeSettings, outputWidth, outputHeight);
+    await drawImageCenteredInShape(ctx, image, outputWidth, outputHeight);
   } else {
     await drawHighResImage(ctx, image, strokeSettings, outputWidth, outputHeight);
   }
@@ -118,15 +118,9 @@ function drawShapeBackground(
 async function drawImageCenteredInShape(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
-  strokeSettings: StrokeSettings,
   canvasWidth: number,
   canvasHeight: number
 ) {
-  // Create a temporary canvas for the image with stroke
-  const tempCanvas = document.createElement('canvas');
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return;
-  
   // Calculate image dimensions maintaining aspect ratio
   const imageAspect = image.width / image.height;
   const canvasAspect = canvasWidth / canvasHeight;
@@ -142,39 +136,10 @@ async function drawImageCenteredInShape(
     drawWidth = drawHeight * imageAspect;
   }
   
-  tempCanvas.width = drawWidth;
-  tempCanvas.height = drawHeight;
-  
-  // Draw image with stroke on temp canvas
-  if (strokeSettings.enabled) {
-    const strokeWidth = Math.max(1, strokeSettings.width);
-    const rgb = hexToRgb(strokeSettings.color);
-    
-    // Draw stroke by drawing image multiple times with offset
-    for (let x = -strokeWidth; x <= strokeWidth; x++) {
-      for (let y = -strokeWidth; y <= strokeWidth; y++) {
-        if (x * x + y * y <= strokeWidth * strokeWidth) {
-          tempCtx.drawImage(image, x, y, drawWidth, drawHeight);
-        }
-      }
-    }
-    
-    // Apply stroke color
-    tempCtx.globalCompositeOperation = 'source-in';
-    tempCtx.fillStyle = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
-    tempCtx.fillRect(0, 0, drawWidth, drawHeight);
-    
-    // Draw original image on top
-    tempCtx.globalCompositeOperation = 'source-over';
-    tempCtx.drawImage(image, 0, 0, drawWidth, drawHeight);
-  } else {
-    tempCtx.drawImage(image, 0, 0, drawWidth, drawHeight);
-  }
-  
   // Center the image on the main canvas
   const x = (canvasWidth - drawWidth) / 2;
   const y = (canvasHeight - drawHeight) / 2;
-  ctx.drawImage(tempCanvas, x, y);
+  ctx.drawImage(image, x, y, drawWidth, drawHeight);
 }
 
 async function drawHighResImage(

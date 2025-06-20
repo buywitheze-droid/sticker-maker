@@ -45,7 +45,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (shapeSettings.enabled) {
         drawShapePreview(ctx, canvas.width, canvas.height);
       } else {
-        drawImageWithStroke(ctx, imageInfo.image, strokeSettings, canvas.width, canvas.height);
+        drawImageWithStroke(ctx, imageInfo.image, strokeSettings, undefined, undefined, undefined, undefined, canvas.width, canvas.height);
       }
     }, [imageInfo, strokeSettings, shapeSettings, zoom, backgroundColor]);
 
@@ -96,9 +96,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Draw image centered in shape
-      const availableWidth = shapeWidth * 0.7;
-      const availableHeight = shapeHeight * 0.7;
+      // Draw image perfectly centered in shape (no stroke when shape is enabled)
+      const availableWidth = shapeWidth * 0.8;
+      const availableHeight = shapeHeight * 0.8;
       const imageAspect = imageInfo.originalWidth / imageInfo.originalHeight;
       const availableAspect = availableWidth / availableHeight;
       
@@ -111,11 +111,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         imageWidth = imageHeight * imageAspect;
       }
 
+      // Perfect center positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 
-      // Draw image with stroke using existing utility
-      drawImageWithStroke(ctx, imageInfo.image, strokeSettings, imageX, imageY, imageWidth, imageHeight);
+      // Draw image without stroke (shape background replaces stroke functionality)
+      ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
     };
 
     const handleZoomIn = () => {

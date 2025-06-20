@@ -13,20 +13,36 @@ export function drawImageWithStroke(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
-  canvasWidth: number,
-  canvasHeight: number
+  x?: number,
+  y?: number,
+  width?: number,
+  height?: number,
+  canvasWidth?: number,
+  canvasHeight?: number
 ) {
-  // Calculate scaling to fit image within canvas
-  const scale = Math.min(canvasWidth / image.width, canvasHeight / image.height);
-  const scaledWidth = image.width * scale;
-  const scaledHeight = image.height * scale;
-  const x = (canvasWidth - scaledWidth) / 2;
-  const y = (canvasHeight - scaledHeight) / 2;
+  let drawX: number, drawY: number, drawWidth: number, drawHeight: number;
+  
+  if (x !== undefined && y !== undefined && width !== undefined && height !== undefined) {
+    // Use provided dimensions and position
+    drawX = x;
+    drawY = y;
+    drawWidth = width;
+    drawHeight = height;
+  } else if (canvasWidth !== undefined && canvasHeight !== undefined) {
+    // Calculate scaling to fit image within canvas
+    const scale = Math.min(canvasWidth / image.width, canvasHeight / image.height);
+    drawWidth = image.width * scale;
+    drawHeight = image.height * scale;
+    drawX = (canvasWidth - drawWidth) / 2;
+    drawY = (canvasHeight - drawHeight) / 2;
+  } else {
+    return; // Invalid parameters
+  }
 
   // Draw stroke/outline if enabled
   if (strokeSettings.enabled && strokeSettings.width > 0) {
     // Calculate stroke width relative to scaling
-    const strokeWidth = Math.ceil(strokeSettings.width * scale);
+    const strokeWidth = Math.ceil(strokeSettings.width * (drawWidth / image.width));
     
     // Create temporary canvas for image processing
     const tempCanvas = document.createElement('canvas');
@@ -35,11 +51,11 @@ export function drawImageWithStroke(
     
     // Set size with padding for stroke
     const padding = strokeWidth * 2;
-    tempCanvas.width = scaledWidth + padding;
-    tempCanvas.height = scaledHeight + padding;
+    tempCanvas.width = drawWidth + padding;
+    tempCanvas.height = drawHeight + padding;
     
     // Draw image centered in temp canvas
-    tempCtx.drawImage(image, strokeWidth, strokeWidth, scaledWidth, scaledHeight);
+    tempCtx.drawImage(image, strokeWidth, strokeWidth, drawWidth, drawHeight);
     
     // Get image data for processing
     const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
@@ -100,18 +116,18 @@ export function drawImageWithStroke(
     tempCtx.putImageData(strokeData, 0, 0);
     
     // Draw original image on top
-    tempCtx.drawImage(image, strokeWidth, strokeWidth, scaledWidth, scaledHeight);
+    tempCtx.drawImage(image, strokeWidth, strokeWidth, drawWidth, drawHeight);
     
     // Draw final result to main canvas
-    ctx.drawImage(tempCanvas, x - strokeWidth, y - strokeWidth);
+    ctx.drawImage(tempCanvas, drawX - strokeWidth, drawY - strokeWidth);
   } else {
     // Draw image without stroke
-    ctx.drawImage(image, x, y, scaledWidth, scaledHeight);
+    ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
   }
 
   // Draw the main image on top
   ctx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(image, x, y, scaledWidth, scaledHeight);
+  ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
 }
 
 export function createCheckerboardPattern(ctx: CanvasRenderingContext2D, size: number = 20) {

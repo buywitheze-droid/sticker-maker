@@ -126,8 +126,21 @@ export default function ImageEditor() {
         updated.widthInches = newSettings.heightInches;
       }
       
+      // When shape background is enabled, disable stroke
+      if (newSettings.enabled === true) {
+        setStrokeSettings(prev => ({ ...prev, enabled: false }));
+      }
+      
       return updated;
     });
+  }, []);
+
+  const handleStrokeChangeWithShapeCheck = useCallback((newSettings: Partial<StrokeSettings>) => {
+    // When stroke is enabled, disable shape background
+    if (newSettings.enabled === true) {
+      setShapeSettings(prev => ({ ...prev, enabled: false }));
+    }
+    setStrokeSettings(prev => ({ ...prev, ...newSettings }));
   }, []);
 
   const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard', format: VectorFormat = 'png') => {
@@ -201,7 +214,7 @@ export default function ImageEditor() {
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
         shapeSettings={shapeSettings}
-        onStrokeChange={handleStrokeChange}
+        onStrokeChange={handleStrokeChangeWithShapeCheck}
         onResizeChange={handleResizeChange}
         onShapeChange={handleShapeChange}
         onDownload={handleDownload}
