@@ -41,21 +41,15 @@ export function createTrueContour(
       processedImage = fillTransparentHoles(image, threshold);
     }
     
+    // Always draw the processed image first
+    ctx.drawImage(processedImage, imageX, imageY);
+    
     if (strokeSettings.enabled) {
       // Generate cutting contour paths
       const contourPaths = generateTrueContourPaths(processedImage, threshold, smoothing, includeHoles, holeMargin);
       
-      // First draw white-filled contour as background
-      drawWhiteFilledContour(ctx, contourPaths, imageX, imageY);
-      
-      // Then draw the processed image on top
-      ctx.drawImage(processedImage, imageX, imageY);
-      
-      // Finally draw outline stroke
+      // Draw only the outline stroke (no white fill background)
       drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
-    } else {
-      // No outline - just draw the processed image
-      ctx.drawImage(processedImage, imageX, imageY);
     }
     
     return canvas;
@@ -421,12 +415,26 @@ function applySimpleOffset(
   edgePixels: ContourPoint[],
   offsetDistance: number
 ): ContourPoint[] {
+  if (edgePixels.length === 0) return [];
+  
   const offsetPixels: ContourPoint[] = [];
   
+  // Find the center of the shape
+  const centerX = edgePixels.reduce((sum, p) => sum + p.x, 0) / edgePixels.length;
+  const centerY = edgePixels.reduce((sum, p) => sum + p.y, 0) / edgePixels.length;
+  
   for (const pixel of edgePixels) {
-    // Calculate outward normal (simplified)
-    const offsetX = pixel.x + offsetDistance;
-    const offsetY = pixel.y + offsetDistance;
+    // Calculate outward vector from center
+    const dx = pixel.x - centerX;
+    const dy = pixel.y - centerY;
+    const length = Math.sqrt(dx * dx + dy * dy) || 1;
+    
+    // Normalize and apply offset
+    const normalX = dx / length;
+    const normalY = dy / length;
+    
+    const offsetX = pixel.x + normalX * offsetDistance;
+    const offsetY = pixel.y + normalY * offsetDistance;
     
     offsetPixels.push({
       x: Math.round(offsetX),
@@ -440,17 +448,32 @@ function applySimpleOffset(
 function connectPixelsToContour(pixels: ContourPoint[]): ContourPoint[] {
   if (pixels.length === 0) return [];
   
-  // Simple contour connection - sort by angle from center
+  // Find the center of the shape
   const centerX = pixels.reduce((sum, p) => sum + p.x, 0) / pixels.length;
   const centerY = pixels.reduce((sum, p) => sum + p.y, 0) / pixels.length;
   
+  // Sort pixels by angle from center to create a closed contour
   const sortedPixels = pixels.slice().sort((a, b) => {
     const angleA = Math.atan2(a.y - centerY, a.x - centerX);
     const angleB = Math.atan2(b.y - centerY, b.x - centerX);
     return angleA - angleB;
   });
   
-  return sortedPixels;
+  // Apply simple smoothing
+  const smoothed: ContourPoint[] = [];
+  for (let i = 0; i < sortedPixels.length; i++) {
+    const prev = sortedPixels[(i - 1 + sortedPixels.length) % sortedPixels.length];
+    const curr = sortedPixels[i];
+    const next = sortedPixels[(i + 1) % sortedPixels.length];
+    
+    // Simple averaging for smoothing
+    smoothed.push({
+      x: Math.round((prev.x + curr.x + next.x) / 3),
+      y: Math.round((prev.y + curr.y + next.y) / 3)
+    });
+  }
+  
+  return smoothed;
 }
 
 function createBordifyBinaryMask(
