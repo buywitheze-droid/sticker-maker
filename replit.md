@@ -158,6 +158,9 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Applied dark grey theme to application background per user preference
   - Changed default preview background to dark grey instead of white
   - Maintained dark theme consistency throughout interface
+  - Disabled shape background checkbox - now always enabled by default
+  - Removed output information/resize window section from bottom of controls
+  - Simplified interface to focus on core shape background functionality
 
 ## Changelog
 

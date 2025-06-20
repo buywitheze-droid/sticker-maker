@@ -55,13 +55,10 @@ export default function ControlsSection({
           <CardContent className="space-y-4 pt-6">
             <div className="flex items-center justify-between">
               <Label className="text-base font-medium">Shape Background</Label>
-              <Checkbox
-                checked={shapeSettings.enabled}
-                onCheckedChange={(checked) => onShapeChange({ enabled: !!checked })}
-              />
+              <div className="text-sm text-green-600 font-medium">Always Enabled</div>
             </div>
 
-            {shapeSettings.enabled && (
+            {true && (
               <div className="space-y-4 mt-4">
                 <div>
                   <Label>Shape Type</Label>
@@ -212,77 +209,7 @@ export default function ControlsSection({
           </CardContent>
         </Card>
 
-        {/* Resize Controls */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-base font-medium text-gray-900 mb-4">Resize</h3>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-sm text-gray-700 mb-1 block">Width (inches)</Label>
-                  <Input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    value={resizeSettings.widthInches}
-                    onChange={(e) => onResizeChange({ widthInches: parseFloat(e.target.value) || 0.1 })}
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-700 mb-1 block">Height (inches)</Label>
-                  <Input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    value={resizeSettings.heightInches}
-                    onChange={(e) => onResizeChange({ heightInches: parseFloat(e.target.value) || 0.1 })}
-                  />
-                </div>
-              </div>
 
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="maintainAspectRatio"
-                  checked={resizeSettings.maintainAspectRatio}
-                  onCheckedChange={(checked) => onResizeChange({ maintainAspectRatio: checked as boolean })}
-                />
-                <Label htmlFor="maintainAspectRatio" className="text-sm text-gray-700">
-                  Lock aspect ratio
-                </Label>
-              </div>
-
-              <div>
-                <Label className="text-sm text-gray-700 mb-2 block">Output DPI</Label>
-                <Select
-                  value={resizeSettings.outputDPI.toString()}
-                  onValueChange={(value) => onResizeChange({ outputDPI: parseInt(value) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="72">72 DPI (Screen)</SelectItem>
-                    <SelectItem value="150">150 DPI (Good Quality)</SelectItem>
-                    <SelectItem value="300">300 DPI (Print Quality)</SelectItem>
-                    <SelectItem value="600">600 DPI (High Quality)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
-                <div className="flex justify-between">
-                  <span>Output pixels:</span>
-                  <span>{outputInfo.pixels}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Estimated file size:</span>
-                  <span>{outputInfo.estimatedSize}</span>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
 
 
