@@ -295,57 +295,15 @@ export default function ControlsSection({
             
             <div className="space-y-3">
               <Button 
-                onClick={() => onDownload('standard')}
+                onClick={() => onDownload('highres')}
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-blue-500 hover:bg-blue-600"
               >
-                Download PNG Sticker
+                PNG file with outline
               </Button>
-              
-              <Button 
-                onClick={() => onDownload('highres')}
-                disabled={!imageInfo || isProcessing}
-                className="w-full bg-emerald-500 hover:bg-emerald-600"
-              >
-                Download 300 DPI (Print Quality)
-              </Button>
-
-              <div className="space-y-2">
-                <Button 
-                  onClick={() => onDownload('vector')}
-                  disabled={!imageInfo || isProcessing}
-                  className="w-full bg-purple-500 hover:bg-purple-600"
-                >
-                  Download Vector Quality (PNG)
-                </Button>
-                
-                <div className="grid grid-cols-3 gap-2">
-                  <Button 
-                    onClick={() => onDownload('cutcontour', 'pdf')}
-                    disabled={!imageInfo || isProcessing}
-                    className="bg-red-500 hover:bg-red-600 text-xs"
-                  >
-                    PDF
-                  </Button>
-                  <Button 
-                    onClick={() => onDownload('cutcontour', 'eps')}
-                    disabled={!imageInfo || isProcessing}
-                    className="bg-orange-500 hover:bg-orange-600 text-xs"
-                  >
-                    EPS
-                  </Button>
-                  <Button 
-                    onClick={() => onDownload('cutcontour', 'svg')}
-                    disabled={!imageInfo || isProcessing}
-                    className="bg-green-500 hover:bg-green-600 text-xs"
-                  >
-                    SVG
-                  </Button>
-                </div>
-              </div>
 
               <div className="text-xs text-gray-500 text-center">
-                Auto-cropped with transparent background. PDF/EPS/SVG downloads create true vector outlines with magenta CutContour spot color for cutting machines.
+                Full resolution PNG with transparent background and auto-cropping.
               </div>
             </div>
           </CardContent>

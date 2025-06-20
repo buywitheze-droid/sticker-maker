@@ -114,6 +114,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Renamed "White Outline" to "Contour" for better user clarity
   - Added visual feedback with colored borders when options are enabled
   - Implemented side-by-side layout showing both options with automatic mutual exclusion
+  - Simplified download options to single "PNG file with outline" button for full resolution transparent PNG
+  - Set shape stroke to be disabled by default for cleaner shape backgrounds
 
 ## Changelog
 
