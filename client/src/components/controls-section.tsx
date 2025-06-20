@@ -158,6 +158,47 @@ export default function ControlsSection({
                 )}
 
                 <div>
+                  <Label>Image Size (inches)</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <Label className="text-xs text-gray-500">Width</Label>
+                      <Slider
+                        value={[resizeSettings.widthInches]}
+                        onValueChange={([value]) => onResizeChange({ widthInches: value })}
+                        min={0.5}
+                        max={12}
+                        step={0.1}
+                        className="mt-1"
+                      />
+                      <div className="text-xs text-gray-500">
+                        {resizeSettings.widthInches}"
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Height</Label>
+                      <Slider
+                        value={[resizeSettings.heightInches]}
+                        onValueChange={([value]) => onResizeChange({ heightInches: value })}
+                        min={0.5}
+                        max={12}
+                        step={0.1}
+                        className="mt-1"
+                      />
+                      <div className="text-xs text-gray-500">
+                        {resizeSettings.heightInches}"
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 mt-2">
+                    <Checkbox
+                      checked={resizeSettings.maintainAspectRatio}
+                      onCheckedChange={(checked) => onResizeChange({ maintainAspectRatio: !!checked })}
+                    />
+                    <Label className="text-xs">Lock aspect ratio</Label>
+                  </div>
+                </div>
+
+                <div>
                   <Label>Fill Color</Label>
                   <div className="flex items-center space-x-2 mt-2">
                     <input
