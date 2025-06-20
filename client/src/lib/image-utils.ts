@@ -1,4 +1,4 @@
-import { StrokeSettings } from "@/components/image-editor";
+import { StrokeSettings, ShapeSettings } from "@/components/image-editor";
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -30,22 +30,40 @@ export async function downloadCanvas(
   widthInches: number,
   heightInches: number,
   dpi: number,
-  filename: string
+  filename: string,
+  shapeSettings?: ShapeSettings
 ) {
   // Create a high-resolution canvas for export
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Failed to get canvas context');
 
-  // Calculate output dimensions
-  const outputWidth = inchesToPixels(widthInches, dpi);
-  const outputHeight = inchesToPixels(heightInches, dpi);
+  // Calculate output dimensions based on shape settings
+  let outputWidth, outputHeight;
+  
+  if (shapeSettings?.enabled) {
+    outputWidth = inchesToPixels(shapeSettings.widthInches, dpi);
+    outputHeight = inchesToPixels(shapeSettings.heightInches, dpi);
+  } else {
+    outputWidth = inchesToPixels(widthInches, dpi);
+    outputHeight = inchesToPixels(heightInches, dpi);
+  }
 
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
+  // Draw background shape if enabled
+  if (shapeSettings?.enabled) {
+    drawShapeBackground(ctx, shapeSettings, outputWidth, outputHeight);
+  }
+
   // Draw the image with stroke at high resolution
-  await drawHighResImage(ctx, image, strokeSettings, outputWidth, outputHeight);
+  if (shapeSettings?.enabled) {
+    // Center the image within the shape
+    await drawImageCenteredInShape(ctx, image, strokeSettings, outputWidth, outputHeight);
+  } else {
+    await drawHighResImage(ctx, image, strokeSettings, outputWidth, outputHeight);
+  }
 
   // Download the canvas as PNG
   canvas.toBlob((blob) => {
@@ -60,6 +78,103 @@ export async function downloadCanvas(
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, 'image/png');
+}
+
+function drawShapeBackground(
+  ctx: CanvasRenderingContext2D,
+  shapeSettings: ShapeSettings,
+  width: number,
+  height: number
+) {
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
+  // Fill the shape
+  ctx.fillStyle = shapeSettings.fillColor;
+  ctx.beginPath();
+  
+  if (shapeSettings.type === 'circle') {
+    const radius = Math.min(width, height) / 2;
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(width, height);
+    const startX = centerX - size / 2;
+    const startY = centerY - size / 2;
+    ctx.rect(startX, startY, size, size);
+  } else { // rectangle
+    ctx.rect(0, 0, width, height);
+  }
+  
+  ctx.fill();
+  
+  // Draw stroke if enabled
+  if (shapeSettings.strokeEnabled) {
+    ctx.strokeStyle = shapeSettings.strokeColor;
+    ctx.lineWidth = shapeSettings.strokeWidth;
+    ctx.stroke();
+  }
+}
+
+async function drawImageCenteredInShape(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  strokeSettings: StrokeSettings,
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  // Create a temporary canvas for the image with stroke
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return;
+  
+  // Calculate image dimensions maintaining aspect ratio
+  const imageAspect = image.width / image.height;
+  const canvasAspect = canvasWidth / canvasHeight;
+  
+  let drawWidth, drawHeight;
+  if (imageAspect > canvasAspect) {
+    // Image is wider - fit to width
+    drawWidth = canvasWidth * 0.8; // Leave some margin
+    drawHeight = drawWidth / imageAspect;
+  } else {
+    // Image is taller - fit to height
+    drawHeight = canvasHeight * 0.8; // Leave some margin
+    drawWidth = drawHeight * imageAspect;
+  }
+  
+  tempCanvas.width = drawWidth;
+  tempCanvas.height = drawHeight;
+  
+  // Draw image with stroke on temp canvas
+  if (strokeSettings.enabled) {
+    const strokeWidth = Math.max(1, strokeSettings.width);
+    const rgb = hexToRgb(strokeSettings.color);
+    
+    // Draw stroke by drawing image multiple times with offset
+    for (let x = -strokeWidth; x <= strokeWidth; x++) {
+      for (let y = -strokeWidth; y <= strokeWidth; y++) {
+        if (x * x + y * y <= strokeWidth * strokeWidth) {
+          tempCtx.drawImage(image, x, y, drawWidth, drawHeight);
+        }
+      }
+    }
+    
+    // Apply stroke color
+    tempCtx.globalCompositeOperation = 'source-in';
+    tempCtx.fillStyle = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    tempCtx.fillRect(0, 0, drawWidth, drawHeight);
+    
+    // Draw original image on top
+    tempCtx.globalCompositeOperation = 'source-over';
+    tempCtx.drawImage(image, 0, 0, drawWidth, drawHeight);
+  } else {
+    tempCtx.drawImage(image, 0, 0, drawWidth, drawHeight);
+  }
+  
+  // Center the image on the main canvas
+  const x = (canvasWidth - drawWidth) / 2;
+  const y = (canvasHeight - drawHeight) / 2;
+  ctx.drawImage(tempCanvas, x, y);
 }
 
 async function drawHighResImage(

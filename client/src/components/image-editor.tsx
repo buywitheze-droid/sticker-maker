@@ -27,6 +27,17 @@ export interface ResizeSettings {
   outputDPI: number;
 }
 
+export interface ShapeSettings {
+  enabled: boolean;
+  type: 'square' | 'rectangle' | 'circle';
+  widthInches: number;
+  heightInches: number;
+  fillColor: string;
+  strokeEnabled: boolean;
+  strokeWidth: number;
+  strokeColor: string;
+}
+
 export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
@@ -39,6 +50,16 @@ export default function ImageEditor() {
     heightInches: 3.8,
     maintainAspectRatio: true,
     outputDPI: 300,
+  });
+  const [shapeSettings, setShapeSettings] = useState<ShapeSettings>({
+    enabled: false,
+    type: 'square',
+    widthInches: 4.0,
+    heightInches: 4.0,
+    fillColor: '#ffffff',
+    strokeEnabled: true,
+    strokeWidth: 2,
+    strokeColor: '#000000',
   });
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -94,6 +115,21 @@ export default function ImageEditor() {
     });
   }, [imageInfo]);
 
+  const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
+    setShapeSettings(prev => {
+      const updated = { ...prev, ...newSettings };
+      
+      // Auto-adjust height for square shapes
+      if (updated.type === 'square' && newSettings.widthInches !== undefined) {
+        updated.heightInches = newSettings.widthInches;
+      } else if (updated.type === 'square' && newSettings.heightInches !== undefined) {
+        updated.widthInches = newSettings.heightInches;
+      }
+      
+      return updated;
+    });
+  }, []);
+
   const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard', format: VectorFormat = 'png') => {
     if (!imageInfo || !canvasRef.current) return;
     
@@ -134,7 +170,8 @@ export default function ImageEditor() {
           resizeSettings.widthInches,
           resizeSettings.heightInches,
           dpi,
-          filename
+          filename,
+          shapeSettings
         );
       }
     } catch (error) {
@@ -143,7 +180,7 @@ export default function ImageEditor() {
     } finally {
       setIsProcessing(false);
     }
-  }, [imageInfo, strokeSettings, resizeSettings]);
+  }, [imageInfo, strokeSettings, resizeSettings, shapeSettings]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -157,13 +194,16 @@ export default function ImageEditor() {
         imageInfo={imageInfo}
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
+        shapeSettings={shapeSettings}
       />
       
       <ControlsSection
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
+        shapeSettings={shapeSettings}
         onStrokeChange={handleStrokeChange}
         onResizeChange={handleResizeChange}
+        onShapeChange={handleShapeChange}
         onDownload={handleDownload}
         isProcessing={isProcessing}
         imageInfo={imageInfo}

@@ -3,17 +3,18 @@ import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ImageInfo, StrokeSettings, ResizeSettings } from "./image-editor";
+import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
+  shapeSettings: ShapeSettings;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -41,8 +42,81 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
-      drawImageWithStroke(ctx, imageInfo.image, strokeSettings, canvas.width, canvas.height);
-    }, [imageInfo, strokeSettings, zoom, backgroundColor]);
+      if (shapeSettings.enabled) {
+        drawShapePreview(ctx, canvas.width, canvas.height);
+      } else {
+        drawImageWithStroke(ctx, imageInfo.image, strokeSettings, canvas.width, canvas.height);
+      }
+    }, [imageInfo, strokeSettings, shapeSettings, zoom, backgroundColor]);
+
+    const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
+      if (!imageInfo) return;
+
+      // Calculate shape dimensions for preview
+      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.8;
+      const shapeAspect = shapeSettings.widthInches / shapeSettings.heightInches;
+      
+      let shapeWidth, shapeHeight;
+      if (shapeAspect > 1) {
+        shapeWidth = maxSize;
+        shapeHeight = maxSize / shapeAspect;
+      } else {
+        shapeHeight = maxSize;
+        shapeWidth = maxSize * shapeAspect;
+      }
+
+      // Center the shape
+      const shapeX = (canvasWidth - shapeWidth) / 2;
+      const shapeY = (canvasHeight - shapeHeight) / 2;
+
+      // Draw shape background
+      ctx.fillStyle = shapeSettings.fillColor;
+      ctx.beginPath();
+      
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidth, shapeHeight) / 2;
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(shapeWidth, shapeHeight);
+        const startX = shapeX + (shapeWidth - size) / 2;
+        const startY = shapeY + (shapeHeight - size) / 2;
+        ctx.rect(startX, startY, size, size);
+      } else { // rectangle
+        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+      }
+      
+      ctx.fill();
+      
+      // Draw shape stroke if enabled
+      if (shapeSettings.strokeEnabled) {
+        ctx.strokeStyle = shapeSettings.strokeColor;
+        ctx.lineWidth = shapeSettings.strokeWidth;
+        ctx.stroke();
+      }
+
+      // Draw image centered in shape
+      const availableWidth = shapeWidth * 0.7;
+      const availableHeight = shapeHeight * 0.7;
+      const imageAspect = imageInfo.originalWidth / imageInfo.originalHeight;
+      const availableAspect = availableWidth / availableHeight;
+      
+      let imageWidth, imageHeight;
+      if (imageAspect > availableAspect) {
+        imageWidth = availableWidth;
+        imageHeight = imageWidth / imageAspect;
+      } else {
+        imageHeight = availableHeight;
+        imageWidth = imageHeight * imageAspect;
+      }
+
+      const imageX = shapeX + (shapeWidth - imageWidth) / 2;
+      const imageY = shapeY + (shapeHeight - imageHeight) / 2;
+
+      // Draw image with stroke using existing utility
+      drawImageWithStroke(ctx, imageInfo.image, strokeSettings, imageX, imageY, imageWidth, imageHeight);
+    };
 
     const handleZoomIn = () => {
       setZoom(prev => Math.min(prev + 0.5, 3));

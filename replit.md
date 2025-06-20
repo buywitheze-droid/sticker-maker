@@ -102,6 +102,13 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added true vector export formats: PDF, EPS, and SVG with edge tracing algorithms
   - Created vector path generation from bitmap outlines for cutting machine compatibility
 
+- **June 20, 2025**: Added shape background functionality
+  - Implemented square, rectangle, and circle shape options
+  - Added shape positioning that centers the design within the selected shape
+  - Created configurable shape fill colors and stroke options
+  - Maintained original stroke functionality for the centered image design
+  - Added real-time preview showing image centered within chosen shape background
+
 ## Changelog
 
 ```
