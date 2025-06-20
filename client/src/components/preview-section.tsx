@@ -169,19 +169,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use VinylMaster contour for preview
+      // Use optimized contour for preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
-        // Create VinylMaster contour for preview with optimized settings
-        const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
-          strokeSettings,
-          precision: 1.0, // Faster precision for preview
-          smoothness: 1.2, // Slightly more smoothing for preview
-          cornerRadius: 2, // Standard corner radius
-          autoWeed: false // Skip auto-weed for preview speed
-        });
-        
-        // Draw the VinylMaster contour result scaled to preview size
-        ctx.drawImage(vinylMasterCanvas, previewX, previewY, previewWidth, previewHeight);
+        try {
+          // Create VinylMaster contour for preview with fast settings
+          const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
+            strokeSettings,
+            precision: 3.0, // Much faster precision for preview
+            smoothness: 2.0, // More smoothing for preview speed
+            cornerRadius: 4, // Larger radius for speed
+            autoWeed: false // Skip auto-weed for preview speed
+          });
+          
+          // Draw the VinylMaster contour result scaled to preview size
+          ctx.drawImage(vinylMasterCanvas, previewX, previewY, previewWidth, previewHeight);
+        } catch (error) {
+          console.error('Preview contour error:', error);
+          // Fallback to simple image rendering
+          ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
+        }
       } else {
         // Draw the main image without contour
         ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);

@@ -71,32 +71,69 @@ export default function ImageEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
-    // Automatically crop the image to remove empty space
-    const croppedCanvas = cropImageToContent(image);
-    const croppedImage = new Image();
-    
-    croppedImage.onload = () => {
-      const dpi = 144; // Default assumption
-      const newImageInfo: ImageInfo = {
-        file,
-        image: croppedImage,
-        originalWidth: croppedImage.width,
-        originalHeight: croppedImage.height,
-        dpi,
+    try {
+      // Validate image size to prevent crashes
+      if (image.width * image.height > 8000000) { // 8MP limit
+        alert('Image is too large. Please upload an image smaller than 8 megapixels.');
+        return;
+      }
+      
+      // Automatically crop the image to remove empty space
+      const croppedCanvas = cropImageToContent(image);
+      const croppedImage = new Image();
+      
+      croppedImage.onload = () => {
+        const dpi = 300; // Default DPI for high-quality printing
+        const newImageInfo: ImageInfo = {
+          file,
+          image: croppedImage,
+          originalWidth: croppedImage.width,
+          originalHeight: croppedImage.height,
+          dpi,
+        };
+        
+        setImageInfo(newImageInfo);
+        
+        // Update resize settings based on cropped image
+        const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
+        setResizeSettings(prev => ({
+          ...prev,
+          widthInches,
+          heightInches,
+        }));
       };
       
-      setImageInfo(newImageInfo);
+      croppedImage.onerror = () => {
+        console.error('Error loading cropped image, using original');
+        handleFallbackImage(file, image);
+      };
       
-      // Update resize settings based on cropped image
-      const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches,
-        heightInches,
-      }));
+      croppedImage.src = croppedCanvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Error processing uploaded image:', error);
+      handleFallbackImage(file, image);
+    }
+  }, []);
+
+  const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
+    const dpi = 300;
+    const { widthInches, heightInches } = calculateImageDimensions(image.width, image.height, dpi);
+    
+    const newImageInfo: ImageInfo = {
+      file,
+      image,
+      originalWidth: image.width,
+      originalHeight: image.height,
+      dpi
     };
     
-    croppedImage.src = croppedCanvas.toDataURL();
+    setImageInfo(newImageInfo);
+    
+    setResizeSettings(prev => ({
+      ...prev,
+      widthInches,
+      heightInches
+    }));
   }, []);
 
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {

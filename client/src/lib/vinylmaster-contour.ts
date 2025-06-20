@@ -27,34 +27,82 @@ export function createVinylMasterContour(
   image: HTMLImageElement,
   options: VinylMasterContourOptions
 ): HTMLCanvasElement {
-  const { strokeSettings, precision = 0.5, smoothness = 1.0, cornerRadius = 2, autoWeed = true } = options;
-  
-  // Create working canvas with VinylMaster specifications
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  try {
+    const { strokeSettings, precision = 0.5, smoothness = 1.0, cornerRadius = 2, autoWeed = true } = options;
+    
+    // Validate image dimensions to prevent memory issues
+    if (image.width * image.height > 4000000) { // 4MP limit
+      console.warn('Image too large for VinylMaster processing, using simplified method');
+      return createSimplifiedContour(image, strokeSettings);
+    }
+    
+    const padding = Math.max(strokeSettings.width * 2, 10);
+    canvas.width = image.width + padding * 2;
+    canvas.height = image.height + padding * 2;
+    
+    const imageX = padding;
+    const imageY = padding;
+    
+    if (strokeSettings.enabled) {
+      // Generate VinylMaster V5 contours with error handling
+      const contours = generateVinylMasterContours(image, precision, smoothness, cornerRadius, autoWeed);
+      
+      if (contours.length > 0) {
+        // Draw contours using VinylMaster rendering
+        drawVinylMasterContours(ctx, image, strokeSettings, imageX, imageY, contours);
+      } else {
+        // Fallback to simple stroke if no contours found
+        drawSimpleStroke(ctx, image, strokeSettings, imageX, imageY);
+      }
+      
+      // Draw original image on top
+      ctx.drawImage(image, imageX, imageY);
+    } else {
+      ctx.drawImage(image, imageX, imageY);
+    }
+    
+    return canvas;
+  } catch (error) {
+    console.error('VinylMaster contour error:', error);
+    // Fallback to simple rendering
+    return createSimplifiedContour(image, strokeSettings);
+  }
+}
+
+function createSimplifiedContour(image: HTMLImageElement, strokeSettings: StrokeSettings): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
   
-  const padding = strokeSettings.width * 3; // Extra padding for VinylMaster precision
+  const padding = strokeSettings.width * 2;
   canvas.width = image.width + padding * 2;
   canvas.height = image.height + padding * 2;
   
-  const imageX = padding;
-  const imageY = padding;
-  
   if (strokeSettings.enabled) {
-    // Generate VinylMaster V5 contours
-    const contours = generateVinylMasterContours(image, precision, smoothness, cornerRadius, autoWeed);
-    
-    // Draw contours using VinylMaster rendering
-    drawVinylMasterContours(ctx, image, strokeSettings, imageX, imageY, contours);
-    
-    // Draw original image on top
-    ctx.drawImage(image, imageX, imageY);
-  } else {
-    ctx.drawImage(image, imageX, imageY);
+    drawSimpleStroke(ctx, image, strokeSettings, padding, padding);
   }
   
+  ctx.drawImage(image, padding, padding);
   return canvas;
+}
+
+function drawSimpleStroke(
+  ctx: CanvasRenderingContext2D, 
+  image: HTMLImageElement, 
+  strokeSettings: StrokeSettings, 
+  x: number, 
+  y: number
+): void {
+  ctx.save();
+  ctx.strokeStyle = strokeSettings.color;
+  ctx.lineWidth = strokeSettings.width;
+  ctx.strokeRect(x - strokeSettings.width/2, y - strokeSettings.width/2, 
+                 image.width + strokeSettings.width, image.height + strokeSettings.width);
+  ctx.restore();
 }
 
 function generateVinylMasterContours(
@@ -64,31 +112,43 @@ function generateVinylMasterContours(
   cornerRadius: number,
   autoWeed: boolean
 ): VinylContour[] {
-  // Extract image data using VinylMaster's high-precision method
-  const tempCanvas = document.createElement('canvas');
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return [];
-  
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
-  tempCtx.drawImage(image, 0, 0);
-  
-  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
-  const { data, width, height } = imageData;
-  
-  // Create VinylMaster binary mask with anti-aliasing detection
-  const binaryMask = createVinylMasterMask(data, width, height);
-  
-  // Apply VinylMaster's morphological operations
-  const processedMask = applyMorphologicalOperations(binaryMask, width, height);
-  
-  // Trace contours using VinylMaster's advanced algorithm
-  const contours = traceVinylMasterContours(processedMask, width, height, precision);
-  
-  // Apply VinylMaster's path optimization
-  return contours.map(contour => 
-    optimizeVinylMasterPath(contour, smoothness, cornerRadius, autoWeed)
-  ).filter(contour => contour.area > 25); // VinylMaster minimum area threshold
+  try {
+    // Extract image data using VinylMaster's high-precision method
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return [];
+    
+    tempCanvas.width = image.width;
+    tempCanvas.height = image.height;
+    tempCtx.drawImage(image, 0, 0);
+    
+    const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+    const { data, width, height } = imageData;
+    
+    // Limit processing for large images
+    const maxDimension = Math.max(width, height);
+    if (maxDimension > 1000) {
+      // Use faster processing for large images
+      precision = Math.max(precision * 2, 2.0);
+    }
+    
+    // Create VinylMaster binary mask with anti-aliasing detection
+    const binaryMask = createVinylMasterMask(data, width, height);
+    
+    // Apply VinylMaster's morphological operations (simplified for performance)
+    const processedMask = width * height > 1000000 ? binaryMask : applyMorphologicalOperations(binaryMask, width, height);
+    
+    // Trace contours using VinylMaster's advanced algorithm
+    const contours = traceVinylMasterContours(processedMask, width, height, precision);
+    
+    // Apply VinylMaster's path optimization
+    return contours.map(contour => 
+      optimizeVinylMasterPath(contour, smoothness, cornerRadius, autoWeed)
+    ).filter(contour => contour.area > 25); // VinylMaster minimum area threshold
+  } catch (error) {
+    console.error('Error generating VinylMaster contours:', error);
+    return [];
+  }
 }
 
 function createVinylMasterMask(data: Uint8ClampedArray, width: number, height: number): number[][] {
@@ -179,9 +239,15 @@ function traceVinylMasterContours(
   
   // VinylMaster's contour detection threshold
   const threshold = 128;
+  const maxContours = 50; // Limit number of contours for performance
   
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  // Use larger step size for large images to improve performance
+  const step = width * height > 500000 ? 3 : 1;
+  
+  for (let y = step; y < height - step; y += step) {
+    for (let x = step; x < width - step; x += step) {
+      if (contours.length >= maxContours) break;
+      
       if (mask[y][x] >= threshold && !visited[y][x] && isVinylMasterEdge(mask, x, y, width, height, threshold)) {
         const contour = traceVinylMasterSingleContour(mask, visited, x, y, width, height, threshold, precision);
         if (contour && contour.points.length > 6) {
@@ -189,6 +255,7 @@ function traceVinylMasterContours(
         }
       }
     }
+    if (contours.length >= maxContours) break;
   }
   
   return contours;
@@ -238,36 +305,41 @@ function traceVinylMasterSingleContour(
   precision: number
 ): VinylContour | null {
   const points: VinylPoint[] = [];
+  const maxPoints = Math.min(width * height, 10000); // Limit points to prevent memory issues
   
-  // VinylMaster's 16-directional tracing for sub-pixel precision
+  // Simplified 8-directional tracing for better performance
   const directions = [
-    [1, 0], [1, 0.5], [1, 1], [0.5, 1],
-    [0, 1], [-0.5, 1], [-1, 1], [-1, 0.5],
-    [-1, 0], [-1, -0.5], [-1, -1], [-0.5, -1],
-    [0, -1], [0.5, -1], [1, -1], [1, -0.5]
+    [1, 0], [1, 1], [0, 1], [-1, 1],
+    [-1, 0], [-1, -1], [0, -1], [1, -1]
   ];
   
   let x = startX;
   let y = startY;
   let dir = 0;
   let totalArea = 0;
+  let iterations = 0;
   
   do {
-    visited[Math.floor(y)][Math.floor(x)] = true;
+    const floorY = Math.floor(y);
+    const floorX = Math.floor(x);
     
-    // Determine point type based on VinylMaster's analysis
-    const pointType = determineVinylMasterPointType(mask, x, y, width, height, threshold);
+    if (floorY >= 0 && floorY < height && floorX >= 0 && floorX < width) {
+      visited[floorY][floorX] = true;
+    }
+    
+    // Simplified point type determination for performance
+    const pointType = points.length % 4 === 0 ? 'curve' : 'line';
     
     points.push({
-      x: x,
-      y: y,
+      x: Math.round(x * 10) / 10, // Round to 1 decimal for precision
+      y: Math.round(y * 10) / 10,
       type: pointType,
-      tension: calculateVinylMasterTension(mask, x, y, width, height)
+      tension: 0.5 // Fixed tension for performance
     });
     
-    // Find next point using VinylMaster's directional search
+    // Find next point using simplified directional search
     let found = false;
-    const step = precision;
+    const step = Math.max(precision, 1); // Minimum step of 1 pixel
     
     for (let i = 0; i < directions.length; i++) {
       const checkDir = (dir + i) % directions.length;
@@ -276,10 +348,14 @@ function traceVinylMasterSingleContour(
       const ny = y + dy * step;
       
       if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-        const maskValue = interpolateMaskValue(mask, nx, ny, width, height);
+        const floorNx = Math.floor(nx);
+        const floorNy = Math.floor(ny);
         
-        if (maskValue >= threshold && isVinylMasterEdge(mask, Math.floor(nx), Math.floor(ny), width, height, threshold)) {
-          // Calculate area contribution for VinylMaster
+        if (floorNy < height && floorNx < width && 
+            mask[floorNy][floorNx] >= threshold && 
+            isVinylMasterEdge(mask, floorNx, floorNy, width, height, threshold)) {
+          
+          // Simplified area calculation
           totalArea += (x * ny - nx * y) * 0.5;
           
           x = nx;
@@ -292,11 +368,12 @@ function traceVinylMasterSingleContour(
     }
     
     if (!found) break;
+    iterations++;
     
-  } while (points.length < width * height && 
-           (Math.abs(x - startX) > precision || Math.abs(y - startY) > precision || points.length < 3));
+  } while (points.length < maxPoints && iterations < maxPoints && 
+           (Math.abs(x - startX) > step || Math.abs(y - startY) > step || points.length < 3));
   
-  if (points.length < 6) return null;
+  if (points.length < 4) return null;
   
   // Determine contour direction
   const direction = totalArea > 0 ? 'counterclockwise' : 'clockwise';
