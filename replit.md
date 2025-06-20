@@ -118,6 +118,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Fixed export sizing bug where images exported at wrong dimensions (e.g., 10.6" exporting as 44")
   - Set shape stroke to be disabled by default for cleaner shape backgrounds
   - Cutcontour export now forces magenta (#FF00FF) cutlines and respects resize settings
+  - Added image resize controls directly within Shape Background section with auto-sync
+  - Updated preview to show live changes while adjusting design size in real-time
 
 ## Changelog
 

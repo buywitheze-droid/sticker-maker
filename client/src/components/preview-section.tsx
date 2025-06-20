@@ -45,9 +45,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (shapeSettings.enabled) {
         drawShapePreview(ctx, canvas.width, canvas.height);
       } else {
-        drawImageWithStroke(ctx, imageInfo.image, strokeSettings, undefined, undefined, undefined, undefined, canvas.width, canvas.height);
+        // For contour mode, draw image based on resize settings
+        drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
-    }, [imageInfo, strokeSettings, shapeSettings, zoom, backgroundColor]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, zoom, backgroundColor]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -117,6 +118,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       // Draw image without stroke (shape background replaces stroke functionality)
       ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+    };
+
+    const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
+      if (!imageInfo) return;
+
+      // Calculate preview dimensions based on resize settings
+      const previewAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
+      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.8;
+      
+      let previewWidth, previewHeight;
+      if (previewAspectRatio > 1) {
+        previewWidth = maxSize;
+        previewHeight = maxSize / previewAspectRatio;
+      } else {
+        previewHeight = maxSize;
+        previewWidth = maxSize * previewAspectRatio;
+      }
+      
+      // Center the preview
+      const previewX = (canvasWidth - previewWidth) / 2;
+      const previewY = (canvasHeight - previewHeight) / 2;
+      
+      // Draw with stroke using the canvas utils
+      drawImageWithStroke(
+        ctx, 
+        imageInfo.image, 
+        strokeSettings, 
+        previewX, 
+        previewY, 
+        previewWidth, 
+        previewHeight, 
+        canvasWidth, 
+        canvasHeight
+      );
     };
 
     const handleZoomIn = () => {
