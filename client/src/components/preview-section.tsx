@@ -97,19 +97,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Draw image perfectly centered in shape (no stroke when shape is enabled)
+      // Calculate image dimensions based on resize settings within the shape
+      const imageAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
       const availableWidth = shapeWidth * 0.8;
       const availableHeight = shapeHeight * 0.8;
-      const imageAspect = imageInfo.originalWidth / imageInfo.originalHeight;
       const availableAspect = availableWidth / availableHeight;
       
       let imageWidth, imageHeight;
-      if (imageAspect > availableAspect) {
+      if (imageAspectRatio > availableAspect) {
         imageWidth = availableWidth;
-        imageHeight = imageWidth / imageAspect;
+        imageHeight = imageWidth / imageAspectRatio;
       } else {
         imageHeight = availableHeight;
-        imageWidth = imageHeight * imageAspect;
+        imageWidth = imageHeight * imageAspectRatio;
       }
 
       // Perfect center positioning
@@ -140,18 +140,30 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Draw with stroke using the canvas utils
-      drawImageWithStroke(
-        ctx, 
-        imageInfo.image, 
-        strokeSettings, 
-        previewX, 
-        previewY, 
-        previewWidth, 
-        previewHeight, 
-        canvasWidth, 
-        canvasHeight
-      );
+      // Draw stroke/outline if enabled
+      if (strokeSettings.enabled && strokeSettings.width > 0) {
+        const strokeWidth = strokeSettings.width * 2; // Scale for preview
+        
+        // Draw stroke using shadow technique for better preview
+        ctx.save();
+        ctx.shadowColor = strokeSettings.color;
+        ctx.shadowBlur = 0;
+        
+        // Draw multiple shadows in a circle pattern for solid outline
+        const steps = 8;
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          ctx.shadowOffsetX = Math.cos(angle) * strokeWidth;
+          ctx.shadowOffsetY = Math.sin(angle) * strokeWidth;
+          
+          ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
+        }
+        
+        ctx.restore();
+      }
+      
+      // Draw the main image on top
+      ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
     };
 
     const handleZoomIn = () => {
