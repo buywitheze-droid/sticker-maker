@@ -104,39 +104,44 @@ function fillTransparentHoles(image: HTMLImageElement, threshold: number): HTMLC
   const filledData = new Uint8ClampedArray(data.length);
   filledData.set(data);
   
-  // Fill interior holes with white
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  // Use flood fill algorithm to identify and fill interior gaps
+  const visited = new Uint8Array(width * height);
+  const isInteriorGap = new Uint8Array(width * height);
+  
+  // First pass: identify all transparent regions and classify them
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
+      const pixelIdx = y * width + x;
       const currentAlpha = data[idx + 3];
       
-      if (currentAlpha < threshold) {
-        // Check if this transparent pixel is surrounded by solid content (interior hole)
-        let solidCount = 0;
-        const checkRadius = 3;
-        let totalChecked = 0;
+      if (currentAlpha < threshold && !visited[pixelIdx]) {
+        // Found an unvisited transparent region - flood fill to analyze it
+        const region = floodFillRegion(data, width, height, x, y, threshold, visited);
         
-        for (let dy = -checkRadius; dy <= checkRadius; dy++) {
-          for (let dx = -checkRadius; dx <= checkRadius; dx++) {
-            const checkY = y + dy;
-            const checkX = x + dx;
-            if (checkY >= 0 && checkY < height && checkX >= 0 && checkX < width) {
-              totalChecked++;
-              const checkIdx = (checkY * width + checkX) * 4;
-              if (data[checkIdx + 3] >= threshold) {
-                solidCount++;
-              }
-            }
+        // Check if this region is an interior gap (surrounded by solid content)
+        const isSurrounded = isRegionSurrounded(region, data, width, height, threshold);
+        
+        if (isSurrounded) {
+          // Mark all pixels in this region as interior gaps
+          for (const pixel of region) {
+            isInteriorGap[pixel.y * width + pixel.x] = 1;
           }
         }
-        
-        // If mostly surrounded by solid content, fill with white
-        if (solidCount > totalChecked * 0.5) {
-          filledData[idx] = 255;     // R
-          filledData[idx + 1] = 255; // G
-          filledData[idx + 2] = 255; // B
-          filledData[idx + 3] = 255; // A
-        }
+      }
+    }
+  }
+  
+  // Second pass: fill all identified interior gaps with white
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pixelIdx = y * width + x;
+      if (isInteriorGap[pixelIdx]) {
+        const idx = (y * width + x) * 4;
+        filledData[idx] = 255;     // R
+        filledData[idx + 1] = 255; // G
+        filledData[idx + 2] = 255; // B
+        filledData[idx + 3] = 255; // A
       }
     }
   }
@@ -226,6 +231,94 @@ function addTextBackground(image: HTMLImageElement, threshold: number): HTMLCanv
   ctx.putImageData(newImageData, 0, 0);
   
   return canvas;
+}
+
+function floodFillRegion(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  startX: number,
+  startY: number,
+  threshold: number,
+  visited: Uint8Array
+): Array<{x: number, y: number}> {
+  const region: Array<{x: number, y: number}> = [];
+  const stack: Array<{x: number, y: number}> = [{x: startX, y: startY}];
+  
+  while (stack.length > 0) {
+    const {x, y} = stack.pop()!;
+    const pixelIdx = y * width + x;
+    
+    if (x < 0 || x >= width || y < 0 || y >= height || visited[pixelIdx]) {
+      continue;
+    }
+    
+    const idx = (y * width + x) * 4;
+    const alpha = data[idx + 3];
+    
+    if (alpha >= threshold) {
+      continue; // This is a solid pixel, not part of the transparent region
+    }
+    
+    visited[pixelIdx] = 1;
+    region.push({x, y});
+    
+    // Add neighboring pixels to stack
+    stack.push({x: x + 1, y});
+    stack.push({x: x - 1, y});
+    stack.push({x, y: y + 1});
+    stack.push({x, y: y - 1});
+  }
+  
+  return region;
+}
+
+function isRegionSurrounded(
+  region: Array<{x: number, y: number}>,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  threshold: number
+): boolean {
+  // Check if any pixel in the region touches the image boundary
+  for (const {x, y} of region) {
+    if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+      return false; // Region touches boundary, so it's not an interior gap
+    }
+  }
+  
+  // Check if the region is surrounded by solid content
+  // We'll sample points around the region's perimeter
+  const perimeter = new Set<string>();
+  
+  for (const {x, y} of region) {
+    // Check 8-directional neighbors
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          const nIdx = (ny * width + nx) * 4;
+          const nAlpha = data[nIdx + 3];
+          
+          if (nAlpha >= threshold) {
+            perimeter.add(`${nx},${ny}`);
+          }
+        }
+      }
+    }
+  }
+  
+  // If we found solid pixels around the region and the region doesn't touch boundaries,
+  // and the perimeter has sufficient solid content, consider it surrounded
+  const regionSize = region.length;
+  const perimeterSize = perimeter.size;
+  
+  // Require a minimum ratio of perimeter to region size for robust detection
+  return perimeterSize > 0 && (perimeterSize >= Math.min(regionSize * 0.3, 50));
 }
 
 function generateTrueContourPaths(

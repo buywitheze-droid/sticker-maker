@@ -108,7 +108,7 @@ export default function ControlsSection({
                   />
                 </div>
                 <div className="text-xs text-gray-500">
-                  Automatically fills interior transparent areas with solid white background
+                  Automatically fills gaps inside designs that are surrounded by solid pixels
                 </div>
 
                 <div className="flex items-center justify-between">
