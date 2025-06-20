@@ -322,7 +322,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="lg:col-span-1">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Preview</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">Preview</h2>
         
         <Card>
           <CardContent className="p-6">

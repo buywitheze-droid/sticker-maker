@@ -46,7 +46,7 @@ export default function ControlsSection({
 
   return (
     <div className="lg:col-span-1">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Adjustments</h2>
+      <h2 className="text-lg font-semibold text-white mb-4">Adjustments</h2>
       <div className="space-y-6">
 
 

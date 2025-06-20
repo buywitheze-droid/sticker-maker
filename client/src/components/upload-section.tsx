@@ -46,7 +46,7 @@ export default function UploadSection({ onImageUpload, imageInfo }: UploadSectio
 
   return (
     <div className="lg:col-span-1">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload Image</h2>
+      <h2 className="text-lg font-semibold text-white mb-4">Upload Image</h2>
       
       {/* Drag and Drop Zone */}
       <div 
