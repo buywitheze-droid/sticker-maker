@@ -180,7 +180,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             includeHoles: strokeSettings.includeHoles || false, // Use stroke settings for holes
             holeMargin: 1.5, // Reduced margin for preview performance
             fillHoles: strokeSettings.fillHoles || false, // Use stroke settings for hole filling
-            autoTextBackground: strokeSettings.autoTextBackground || false // Use stroke settings for auto text background
+            autoTextBackground: false // Disabled auto text background
           });
           
           // Draw the True Contour result scaled to preview size

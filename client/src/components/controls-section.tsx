@@ -111,16 +111,7 @@ export default function ControlsSection({
                   Automatically fills gaps inside designs that are surrounded by solid pixels
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Auto Text Background</Label>
-                  <Checkbox
-                    checked={strokeSettings.autoTextBackground}
-                    onCheckedChange={(checked) => onStrokeChange({ autoTextBackground: !!checked })}
-                  />
-                </div>
-                <div className="text-xs text-gray-500">
-                  Adds white background around text to merge all letters into one unified design
-                </div>
+
               </div>
             )}
           </CardContent>

@@ -141,9 +141,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Implemented intelligent hole detection using flood fill algorithm to identify gaps surrounded by solid pixels
   - Enhanced gap detection to distinguish between interior holes and outer transparency areas
   - Added region analysis to ensure only true interior gaps are filled while preserving design boundaries
-  - Added "Auto Text Background" feature to automatically place white background around text images
-  - Implemented bounding box detection to merge all text objects into one unified design with single outer contour
-  - Added smart padding calculation based on image dimensions for optimal text background coverage
+  - Removed auto text background feature to fix white image upload issue
+  - Fixed image processing pipeline to preserve original transparency and content
 
 ## Changelog
 

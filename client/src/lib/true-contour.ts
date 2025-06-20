@@ -36,10 +36,7 @@ export function createTrueContour(
     // Process image based on options
     let processedImage = image;
     
-    if (autoTextBackground) {
-      // Add white background to merge all text objects into one unified design
-      processedImage = addTextBackground(image, threshold);
-    } else if (fillHoles) {
+    if (fillHoles) {
       // Fill holes with white background if requested
       processedImage = fillTransparentHoles(image, threshold);
     }

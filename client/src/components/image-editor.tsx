@@ -53,7 +53,7 @@ export default function ImageEditor() {
     enabled: true,
     includeHoles: false,
     fillHoles: false,
-    autoTextBackground: true,
+    autoTextBackground: false,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -207,7 +207,7 @@ export default function ImageEditor() {
           includeHoles: strokeSettings.includeHoles || false, // Include holes if enabled
           holeMargin: 2.0, // Flexi Auto Contour standard hole margin (2 pixels)
           fillHoles: strokeSettings.fillHoles || false, // Fill holes if enabled
-          autoTextBackground: strokeSettings.autoTextBackground || false // Auto text background if enabled
+          autoTextBackground: false // Disabled auto text background
         });
         
         // Download the True Contour canvas
