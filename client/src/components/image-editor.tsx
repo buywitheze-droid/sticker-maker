@@ -5,7 +5,7 @@ import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
-import { createCadCutContour } from "@/lib/cadcut-contour";
+import { createCadCutContour } from "@/lib/cadcut-contour-clean";
 import { createCTContour } from "@/lib/ctcontour";
 
 export interface ImageInfo {
@@ -154,24 +154,24 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'cutcontour') {
-        // Use CTContour method for professional outline generation
+        // Use CadCut contour method for professional outline generation
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const ctContourCanvas = createCTContour(imageInfo.image, {
+        const cadCutCanvas = createCadCutContour(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
-          precision: 1.0, // High precision for cutting
-          threshold: 200, // Alpha threshold for edge detection
-          simplification: 1.5 // Minimal simplification for accuracy
+          tolerance: 3, // High precision for cutting
+          smoothing: 0.5, // Minimal smoothing for precision
+          cornerDetection: true // Preserve sharp corners
         });
         
-        // Download the CTContour canvas
-        ctContourCanvas.toBlob((blob: Blob | null) => {
+        // Download the CadCut contour canvas
+        cadCutCanvas.toBlob((blob: Blob | null) => {
           if (!blob) return;
           
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'ctcontour_cutlines.png';
+          link.download = 'cadcut_cutlines.png';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
