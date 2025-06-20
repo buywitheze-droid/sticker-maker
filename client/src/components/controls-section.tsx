@@ -12,7 +12,7 @@ interface ControlsSectionProps {
   resizeSettings: ResizeSettings;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
-  onDownload: (highRes?: boolean) => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
 }
@@ -182,7 +182,7 @@ export default function ControlsSection({
             
             <div className="space-y-3">
               <Button 
-                onClick={() => onDownload(false)}
+                onClick={() => onDownload('standard')}
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-blue-500 hover:bg-blue-600"
               >
@@ -190,15 +190,31 @@ export default function ControlsSection({
               </Button>
               
               <Button 
-                onClick={() => onDownload(true)}
+                onClick={() => onDownload('highres')}
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-emerald-500 hover:bg-emerald-600"
               >
                 Download 300 DPI (Print Quality)
               </Button>
 
+              <Button 
+                onClick={() => onDownload('vector')}
+                disabled={!imageInfo || isProcessing}
+                className="w-full bg-purple-500 hover:bg-purple-600"
+              >
+                Download Vector Quality
+              </Button>
+
+              <Button 
+                onClick={() => onDownload('cutcontour')}
+                disabled={!imageInfo || isProcessing}
+                className="w-full bg-pink-500 hover:bg-pink-600"
+              >
+                Download CutContour (Outline Only)
+              </Button>
+
               <div className="text-xs text-gray-500 text-center">
-                Downloads will have transparent background with white outline
+                Auto-cropped with transparent background. CutContour uses magenta spot color for cutting guides.
               </div>
             </div>
           </CardContent>

@@ -92,8 +92,13 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added 8 background color options (transparent, white, black, grays, blue, red, green)
   - Implemented zoom controls (50% to 300% range) with zoom percentage display
   - Added scrollable preview area for zoomed-in inspection
-  - Improved stroke rendering algorithm using Canvas2D shadows for solid, clean outlines
-  - Updated both preview and download functions to use consistent stroke generation
+
+- **June 20, 2025**: Implemented vector-quality stroke processing and automatic image cropping
+  - Added automatic empty space removal using content-aware cropping
+  - Created morphological dilation algorithm for precise, clean outline generation
+  - Implemented vector-quality stroke processing with distance field computation
+  - Added CutContour export feature with magenta spot color for cutting guides
+  - Introduced 4 download modes: Standard, High-res (300 DPI), Vector Quality, and CutContour
 
 ## Changelog
 

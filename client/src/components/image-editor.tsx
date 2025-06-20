@@ -3,6 +3,8 @@ import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
+import { cropImageToContent } from "@/lib/image-crop";
+import { createVectorStroke, downloadVectorStroke } from "@/lib/vector-stroke";
 
 export interface ImageInfo {
   file: File;
@@ -43,24 +45,32 @@ export default function ImageEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
-    const dpi = 144; // Default assumption
-    const newImageInfo: ImageInfo = {
-      file,
-      image,
-      originalWidth: image.width,
-      originalHeight: image.height,
-      dpi,
+    // Automatically crop the image to remove empty space
+    const croppedCanvas = cropImageToContent(image);
+    const croppedImage = new Image();
+    
+    croppedImage.onload = () => {
+      const dpi = 144; // Default assumption
+      const newImageInfo: ImageInfo = {
+        file,
+        image: croppedImage,
+        originalWidth: croppedImage.width,
+        originalHeight: croppedImage.height,
+        dpi,
+      };
+      
+      setImageInfo(newImageInfo);
+      
+      // Update resize settings based on cropped image
+      const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
     };
     
-    setImageInfo(newImageInfo);
-    
-    // Update resize settings based on image
-    const { widthInches, heightInches } = calculateImageDimensions(image.width, image.height, dpi);
-    setResizeSettings(prev => ({
-      ...prev,
-      widthInches,
-      heightInches,
-    }));
+    croppedImage.src = croppedCanvas.toDataURL();
   }, []);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
@@ -84,23 +94,39 @@ export default function ImageEditor() {
     });
   }, [imageInfo]);
 
-  const handleDownload = useCallback(async (highRes: boolean = false) => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard') => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
     
     try {
-      const dpi = highRes ? 300 : resizeSettings.outputDPI;
-      const filename = `sticker${highRes ? '_300dpi' : ''}.png`;
-      
-      await downloadCanvas(
-        imageInfo.image,
-        strokeSettings,
-        resizeSettings.widthInches,
-        resizeSettings.heightInches,
-        dpi,
-        filename
-      );
+      if (downloadType === 'vector' || downloadType === 'cutcontour') {
+        // Use vector stroke processing for highest quality
+        const vectorCanvas = createVectorStroke(imageInfo.image, {
+          strokeSettings,
+          exportCutContour: downloadType === 'cutcontour',
+          vectorQuality: 'high'
+        });
+        
+        const filename = downloadType === 'cutcontour' 
+          ? 'cutcontour_outline.png' 
+          : 'vector_sticker.png';
+          
+        downloadVectorStroke(vectorCanvas, filename);
+      } else {
+        // Standard canvas-based download
+        const dpi = downloadType === 'highres' ? 300 : resizeSettings.outputDPI;
+        const filename = `sticker${downloadType === 'highres' ? '_300dpi' : ''}.png`;
+        
+        await downloadCanvas(
+          imageInfo.image,
+          strokeSettings,
+          resizeSettings.widthInches,
+          resizeSettings.heightInches,
+          dpi,
+          filename
+        );
+      }
     } catch (error) {
       console.error("Download failed:", error);
     } finally {
