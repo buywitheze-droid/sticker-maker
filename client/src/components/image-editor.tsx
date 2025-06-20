@@ -59,7 +59,7 @@ export default function ImageEditor() {
     widthInches: 4.0,
     heightInches: 4.0,
     fillColor: '#ffffff',
-    strokeEnabled: true,
+    strokeEnabled: false,
     strokeWidth: 2,
     strokeColor: '#000000',
   });
