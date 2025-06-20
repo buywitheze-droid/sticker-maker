@@ -332,20 +332,20 @@ function generateTrueContourPaths(
   holeMargin: number
 ): ContourPoint[][] {
   try {
-    // Bordify-style outline generation with morphological operations
-    return generateBordifyOutline(image, threshold, smoothing);
+    // Simple CadCut-style outline generation
+    return generateCadCutOutline(image, threshold, smoothing);
   } catch (error) {
-    console.error('Error generating bordify outline:', error);
+    console.error('Error generating cadcut outline:', error);
     return [];
   }
 }
 
-function generateBordifyOutline(
+function generateCadCutOutline(
   image: HTMLImageElement,
   threshold: number,
   outlineWidth: number
 ): ContourPoint[][] {
-  // Bordify.com method: Advanced morphological operations + distance transform
+  // Simple CadCut-style outline generation
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return [];
@@ -357,23 +357,100 @@ function generateBordifyOutline(
   const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
   const { data, width, height } = imageData;
   
-  // Step 1: Create binary mask from alpha channel
-  const binaryMask = createBordifyBinaryMask(data, width, height, threshold);
+  // Step 1: Create simple binary mask
+  const binaryMask = createSimpleBinaryMask(data, width, height, threshold);
   
-  // Step 2: Apply morphological closing to fill small gaps
-  const closedMask = morphologicalClosing(binaryMask, width, height, 3);
+  // Step 2: Find edge pixels
+  const edgePixels = findEdgePixels(binaryMask, width, height);
   
-  // Step 3: Create distance transform for precise offsetting
-  const distanceField = calculateDistanceTransform(closedMask, width, height);
+  // Step 3: Apply simple offset
+  const offsetPixels = applySimpleOffset(edgePixels, outlineWidth / 20);
   
-  // Step 4: Generate outline at specific distance using level set
-  const outlineMask = extractLevelSet(distanceField, width, height, outlineWidth / 100);
+  // Step 4: Connect pixels into contour
+  const contour = connectPixelsToContour(offsetPixels);
   
-  // Step 5: Trace contours using Bordify's chain code algorithm
-  const contours = traceBordifyContours(outlineMask, width, height);
+  return contour.length > 0 ? [contour] : [];
+}
+
+function createSimpleBinaryMask(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  threshold: number
+): boolean[][] {
+  const mask: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
   
-  // Step 6: Apply Bordify's smoothing algorithm
-  return contours.map(contour => applyBordifySmoothing(contour));
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+      mask[y][x] = alpha >= threshold;
+    }
+  }
+  
+  return mask;
+}
+
+function findEdgePixels(
+  mask: boolean[][],
+  width: number,
+  height: number
+): ContourPoint[] {
+  const edgePixels: ContourPoint[] = [];
+  
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      if (mask[y][x]) {
+        // Check if this pixel is on the edge
+        const neighbors = [
+          mask[y-1][x], mask[y+1][x], // top, bottom
+          mask[y][x-1], mask[y][x+1], // left, right
+        ];
+        
+        if (neighbors.some(n => !n)) {
+          edgePixels.push({ x, y });
+        }
+      }
+    }
+  }
+  
+  return edgePixels;
+}
+
+function applySimpleOffset(
+  edgePixels: ContourPoint[],
+  offsetDistance: number
+): ContourPoint[] {
+  const offsetPixels: ContourPoint[] = [];
+  
+  for (const pixel of edgePixels) {
+    // Calculate outward normal (simplified)
+    const offsetX = pixel.x + offsetDistance;
+    const offsetY = pixel.y + offsetDistance;
+    
+    offsetPixels.push({
+      x: Math.round(offsetX),
+      y: Math.round(offsetY)
+    });
+  }
+  
+  return offsetPixels;
+}
+
+function connectPixelsToContour(pixels: ContourPoint[]): ContourPoint[] {
+  if (pixels.length === 0) return [];
+  
+  // Simple contour connection - sort by angle from center
+  const centerX = pixels.reduce((sum, p) => sum + p.x, 0) / pixels.length;
+  const centerY = pixels.reduce((sum, p) => sum + p.y, 0) / pixels.length;
+  
+  const sortedPixels = pixels.slice().sort((a, b) => {
+    const angleA = Math.atan2(a.y - centerY, a.x - centerX);
+    const angleB = Math.atan2(b.y - centerY, b.x - centerX);
+    return angleA - angleB;
+  });
+  
+  return sortedPixels;
 }
 
 function createBordifyBinaryMask(

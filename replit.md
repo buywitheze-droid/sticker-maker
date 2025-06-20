@@ -120,11 +120,11 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Cutcontour export now forces magenta (#FF00FF) cutlines and respects resize settings
   - Added image resize controls directly within Shape Background section with auto-sync
   - Updated preview to show live changes while adjusting design size in real-time
-  - Implemented Bordify.com-style outline generation with advanced morphological operations
-  - Added adaptive thresholding with local statistics for precise edge detection
-  - Integrated Euclidean distance transform for accurate outline offsetting
-  - Applied morphological closing (dilation + erosion) to fill gaps like Bordify
-  - Added chain code contour tracing with B-spline smoothing for professional results
+  - Reverted to simple CadCut-style outline generation for better compatibility
+  - Added basic binary mask creation from alpha channel for clean edge detection
+  - Implemented simple edge pixel detection with 4-directional neighbor checking
+  - Applied straightforward offset calculation for outline generation
+  - Added basic pixel-to-contour connection using angular sorting from center point
   - Added shape overlap detection with red warning outline when image extends beyond shape bounds
   - Added "Fit to View" zoom control to instantly show full design centered in preview window
   - Implemented True Contour system with precise edge detection following actual image content
