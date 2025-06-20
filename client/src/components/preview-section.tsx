@@ -183,7 +183,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             autoTextBackground: false // Disabled auto text background
           });
           
-          // Draw the True Contour result scaled to preview size
+          // Draw the image with contour result scaled to preview size
           ctx.drawImage(trueContourCanvas, previewX, previewY, previewWidth, previewHeight);
         } catch (error) {
           console.error('Preview contour error:', error);

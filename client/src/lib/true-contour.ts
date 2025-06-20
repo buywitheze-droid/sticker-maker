@@ -24,40 +24,104 @@ export function createTrueContour(
   if (!ctx) return canvas;
 
   try {
-    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5, fillHoles = false, autoTextBackground = false } = options;
+    const { strokeSettings } = options;
     
-    const padding = (strokeSettings.width / 100) * 2; // Convert back from 100x scale
-    canvas.width = image.width + padding * 2;
-    canvas.height = image.height + padding * 2;
+    // Set canvas size to match image exactly
+    canvas.width = image.width;
+    canvas.height = image.height;
     
-    const imageX = padding;
-    const imageY = padding;
+    // Clear canvas with transparent background
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Process image based on options
-    let processedImage = image;
+    // Always draw the original image first
+    ctx.drawImage(image, 0, 0);
     
-    if (fillHoles) {
-      // Fill holes with white background if requested
-      processedImage = fillTransparentHoles(image, threshold);
-    }
-    
-    // Always draw the processed image first
-    ctx.drawImage(processedImage, imageX, imageY);
-    
-    if (strokeSettings.enabled) {
-      // Generate cutting contour paths
-      const contourPaths = generateTrueContourPaths(processedImage, threshold, smoothing, includeHoles, holeMargin);
-      
-      // Draw only the outline stroke (no white fill background)
-      drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
+    // Add outline if enabled
+    if (strokeSettings.enabled && strokeSettings.width > 0) {
+      try {
+        // Simple outline generation
+        const outline = generateSimpleOutline(image, strokeSettings);
+        if (outline.length > 0) {
+          drawSimpleOutline(ctx, outline, strokeSettings);
+        }
+      } catch (outlineError) {
+        console.error('Outline generation error:', outlineError);
+      }
     }
     
     return canvas;
   } catch (error) {
     console.error('True contour error:', error);
-    // Fallback to simple rendering
-    return createSimpleContour(image, strokeSettings);
+    // Return canvas with just the original image
+    canvas.width = image.width;
+    canvas.height = image.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0);
+    return canvas;
   }
+}
+
+function generateSimpleOutline(image: HTMLImageElement, strokeSettings: StrokeSettings): ContourPoint[] {
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return [];
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  const { data, width, height } = imageData;
+  
+  // Find bounding box of visible content
+  let minX = width, maxX = 0, minY = height, maxY = 0;
+  let hasContent = false;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+      
+      if (alpha > 50) { // Visible pixel
+        hasContent = true;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  
+  if (!hasContent) return [];
+  
+  // Create simple rectangular outline with offset
+  const offset = strokeSettings.width / 100 * 5; // Convert from 100x scale
+  
+  return [
+    { x: minX - offset, y: minY - offset },
+    { x: maxX + offset, y: minY - offset },
+    { x: maxX + offset, y: maxY + offset },
+    { x: minX - offset, y: maxY + offset },
+    { x: minX - offset, y: minY - offset } // Close the path
+  ];
+}
+
+function drawSimpleOutline(ctx: CanvasRenderingContext2D, outline: ContourPoint[], strokeSettings: StrokeSettings): void {
+  if (outline.length < 3) return;
+  
+  ctx.strokeStyle = strokeSettings.color;
+  ctx.lineWidth = Math.max(1, strokeSettings.width / 100);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  ctx.beginPath();
+  ctx.moveTo(outline[0].x, outline[0].y);
+  
+  for (let i = 1; i < outline.length; i++) {
+    ctx.lineTo(outline[i].x, outline[i].y);
+  }
+  
+  ctx.stroke();
 }
 
 function createSimpleContour(image: HTMLImageElement, strokeSettings: StrokeSettings): HTMLCanvasElement {
@@ -346,6 +410,7 @@ function generateCadCutOutline(
   
   tempCanvas.width = image.width;
   tempCanvas.height = image.height;
+  tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
   tempCtx.drawImage(image, 0, 0);
   
   const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
@@ -357,13 +422,15 @@ function generateCadCutOutline(
   // Step 2: Find edge pixels
   const edgePixels = findEdgePixels(binaryMask, width, height);
   
+  if (edgePixels.length === 0) return [];
+  
   // Step 3: Apply simple offset
-  const offsetPixels = applySimpleOffset(edgePixels, outlineWidth / 20);
+  const offsetPixels = applySimpleOffset(edgePixels, Math.max(1, outlineWidth / 20));
   
   // Step 4: Connect pixels into contour
   const contour = connectPixelsToContour(offsetPixels);
   
-  return contour.length > 0 ? [contour] : [];
+  return contour.length > 3 ? [contour] : [];
 }
 
 function createSimpleBinaryMask(
@@ -1431,30 +1498,7 @@ function optimizeVectorPath(path: ContourPoint[]): ContourPoint[] {
   return simplified;
 }
 
-function drawWhiteFilledContour(
-  ctx: CanvasRenderingContext2D,
-  contourPaths: ContourPoint[][],
-  offsetX: number,
-  offsetY: number
-): void {
-  if (!contourPaths || contourPaths.length === 0) return;
-  
-  ctx.fillStyle = '#FFFFFF';
-  
-  for (const path of contourPaths) {
-    if (!path || path.length < 3) continue;
-    
-    ctx.beginPath();
-    ctx.moveTo(path[0].x + offsetX, path[0].y + offsetY);
-    
-    for (let i = 1; i < path.length; i++) {
-      ctx.lineTo(path[i].x + offsetX, path[i].y + offsetY);
-    }
-    
-    ctx.closePath();
-    ctx.fill();
-  }
-}
+
 
 function createOuterEdgeMask(
   data: Uint8ClampedArray, 
