@@ -122,6 +122,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Updated preview to show live changes while adjusting design size in real-time
   - Implemented CadCut-style contour system with Sobel edge detection and Douglas-Peucker path simplification
   - Added shape overlap detection with red warning outline when image extends beyond shape bounds
+  - Added "Fit to View" zoom control to instantly show full design centered in preview window
 
 ## Changelog
 

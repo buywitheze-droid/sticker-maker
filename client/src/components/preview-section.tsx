@@ -273,6 +273,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     };
 
+    const handleFitToView = () => {
+      setZoom(1);
+      if (containerRef.current) {
+        // Reset zoom and center the full design in view
+        requestAnimationFrame(() => {
+          const container = containerRef.current!;
+          const scrollWidth = container.scrollWidth;
+          const scrollHeight = container.scrollHeight;
+          const clientWidth = container.clientWidth;
+          const clientHeight = container.clientHeight;
+          
+          // Center the design to show the full preview
+          container.scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
+          container.scrollTop = Math.max(0, (scrollHeight - clientHeight) / 2);
+        });
+      }
+    };
+
     const getBackgroundStyle = () => {
       if (backgroundColor === "transparent") {
         return "checkerboard";
@@ -366,6 +384,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 <Button variant="ghost" size="sm" onClick={handleResetZoom}>
                   <RotateCcw className="w-4 h-4 mr-1" />
                   Reset
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleFitToView} disabled={!imageInfo}>
+                  <ImageIcon className="w-4 h-4 mr-1" />
+                  Fit to View
                 </Button>
                 <Button variant="ghost" size="sm" onClick={handleZoomIn} disabled={zoom >= 3}>
                   <ZoomIn className="w-4 h-4" />
