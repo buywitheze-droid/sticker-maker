@@ -85,21 +85,22 @@ function generateTrueContourPaths(
     const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
     const { data, width, height } = imageData;
     
-    // Create edge masks for both outer edges and holes
-    const { outerEdges, holeEdges } = createEdgeMasks(data, width, height, threshold, includeHoles, holeMargin);
+    // Create edge mask for outer boundaries only
+    const outerEdges = createOuterEdgeMask(data, width, height, threshold);
     
-    // Trace outer contours
-    const outerContours = traceImageContours(outerEdges, width, height);
+    // Trace only the main outer contour
+    const outerContours = traceMainContour(outerEdges, width, height);
     
-    // Trace hole contours if requested with Flexi Auto Contour margins
-    const holeContours = includeHoles ? traceImageContours(holeEdges, width, height) : [];
+    // Only add hole contours if specifically requested
+    let holeContours: ContourPoint[][] = [];
+    if (includeHoles) {
+      const holeEdges = createHoleEdgeMask(data, width, height, threshold, holeMargin);
+      const rawHoleContours = traceImageContours(holeEdges, width, height);
+      holeContours = applyFlexiHoleMargins(rawHoleContours, holeMargin);
+    }
     
-    // Apply Flexi Auto Contour style margins to holes
-    const adjustedHoleContours = includeHoles ? 
-      applyFlexiHoleMargins(holeContours, holeMargin) : [];
-    
-    // Combine outer and hole contours
-    const contours = [...outerContours, ...adjustedHoleContours];
+    // Combine contours - outer boundary plus optional holes
+    const contours = [...outerContours, ...holeContours];
     
     // Smooth the paths if requested
     return contours.map(contour => 
@@ -111,99 +112,154 @@ function generateTrueContourPaths(
   }
 }
 
-function createEdgeMasks(
+function createOuterEdgeMask(
   data: Uint8ClampedArray, 
   width: number, 
   height: number, 
-  threshold: number, 
-  includeHoles: boolean,
-  holeMargin: number
-): { outerEdges: boolean[][], holeEdges: boolean[][] } {
-  const outerEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
-  const holeEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
+  threshold: number
+): boolean[][] {
+  const edgeMask: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
   
-  // Create alpha mask first
+  // Create alpha mask
   const alphaMask: number[][] = Array(height).fill(null).map(() => Array(width).fill(0));
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
-      alphaMask[y][x] = data[idx + 3]; // Alpha channel
+      alphaMask[y][x] = data[idx + 3];
     }
   }
   
-  // Find outer edges and holes
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  // Find only the outermost edges - pixels that are solid and border transparency or image boundary
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
       const currentAlpha = alphaMask[y][x];
       
-      // For outer edges: solid pixels adjacent to transparent pixels
       if (currentAlpha >= threshold) {
-        let hasTransparentNeighbor = false;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const neighborAlpha = alphaMask[y + dy][x + dx];
-            if (neighborAlpha < threshold) {
-              hasTransparentNeighbor = true;
-              break;
-            }
-          }
-          if (hasTransparentNeighbor) break;
-        }
-        outerEdges[y][x] = hasTransparentNeighbor;
-      }
-      
-      // For hole edges: transparent pixels adjacent to solid pixels (interior holes)
-      if (includeHoles && currentAlpha < threshold) {
-        let hasSolidNeighbor = false;
-        let isInteriorHole = true;
+        let isOuterEdge = false;
         
-        // Check if this transparent pixel is surrounded by solid content (interior hole)
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const neighborAlpha = alphaMask[y + dy][x + dx];
-            if (neighborAlpha >= threshold) {
-              hasSolidNeighbor = true;
-            }
-          }
-        }
-        
-        // Check if this is truly an interior hole by ensuring it's not on the edge
-        if (hasSolidNeighbor) {
-          // Flexi Auto Contour style hole detection with margin consideration
-          let solidCount = 0;
-          const checkRadius = Math.max(3, Math.floor(holeMargin * 3)); // Scale radius based on margin
-          for (let dy = -checkRadius; dy <= checkRadius; dy++) {
-            for (let dx = -checkRadius; dx <= checkRadius; dx++) {
-              const checkY = y + dy;
-              const checkX = x + dx;
-              if (checkY >= 0 && checkY < height && checkX >= 0 && checkX < width) {
-                if (alphaMask[checkY][checkX] >= threshold) {
-                  solidCount++;
-                }
+        // Check if this pixel is on the image boundary
+        if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+          isOuterEdge = true;
+        } else {
+          // Check 8-directional neighbors for transparency
+          for (let dy = -1; dy <= 1 && !isOuterEdge; dy++) {
+            for (let dx = -1; dx <= 1 && !isOuterEdge; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const neighborAlpha = alphaMask[y + dy][x + dx];
+              if (neighborAlpha < threshold) {
+                isOuterEdge = true;
               }
             }
           }
-          
-          // Flexi Auto Contour uses stricter criteria for hole detection
-          const totalChecked = (checkRadius * 2 + 1) * (checkRadius * 2 + 1);
-          if (solidCount > totalChecked * 0.4) { // Higher threshold for Flexi compatibility
-            holeEdges[y][x] = true;
+        }
+        
+        edgeMask[y][x] = isOuterEdge;
+      }
+    }
+  }
+  
+  return edgeMask;
+}
+
+function createHoleEdgeMask(
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number, 
+  threshold: number,
+  holeMargin: number
+): boolean[][] {
+  const holeEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
+  
+  // Create alpha mask
+  const alphaMask: number[][] = Array(height).fill(null).map(() => Array(width).fill(0));
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      alphaMask[y][x] = data[idx + 3];
+    }
+  }
+  
+  // Find interior holes only - transparent pixels completely surrounded by solid content
+  for (let y = 2; y < height - 2; y++) {
+    for (let x = 2; x < width - 2; x++) {
+      const currentAlpha = alphaMask[y][x];
+      
+      if (currentAlpha < threshold) {
+        // Check if this transparent pixel is truly inside the design (surrounded by solid content)
+        let solidCount = 0;
+        const checkRadius = Math.max(3, Math.floor(holeMargin * 3));
+        let totalChecked = 0;
+        
+        for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+          for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+            const checkY = y + dy;
+            const checkX = x + dx;
+            if (checkY >= 0 && checkY < height && checkX >= 0 && checkX < width) {
+              totalChecked++;
+              if (alphaMask[checkY][checkX] >= threshold) {
+                solidCount++;
+              }
+            }
           }
+        }
+        
+        // Only mark as hole edge if mostly surrounded by solid content
+        if (solidCount > totalChecked * 0.6) {
+          // Check immediate neighbors to confirm this is an edge of the hole
+          let hasSolidNeighbor = false;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              if (alphaMask[y + dy][x + dx] >= threshold) {
+                hasSolidNeighbor = true;
+                break;
+              }
+            }
+            if (hasSolidNeighbor) break;
+          }
+          
+          holeEdges[y][x] = hasSolidNeighbor;
         }
       }
     }
   }
   
-  return { outerEdges, holeEdges };
+  return holeEdges;
+}
+
+function traceMainContour(edgeMask: boolean[][], width: number, height: number): ContourPoint[][] {
+  const contours: ContourPoint[][] = [];
+  const visited: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
+  
+  // Find the largest/main contour (outermost boundary)
+  let largestContour: ContourPoint[] = [];
+  let largestSize = 0;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (edgeMask[y][x] && !visited[y][x]) {
+        const contour = traceContourFromPoint(edgeMask, visited, x, y, width, height);
+        if (contour.length > largestSize) {
+          largestSize = contour.length;
+          largestContour = contour;
+        }
+      }
+    }
+  }
+  
+  // Only return the main outer contour
+  if (largestContour.length > 20) {
+    contours.push(largestContour);
+  }
+  
+  return contours;
 }
 
 function traceImageContours(edgeMask: boolean[][], width: number, height: number): ContourPoint[][] {
   const contours: ContourPoint[][] = [];
   const visited: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
   
-  // Find all contour starting points
+  // Find all contour starting points (used for holes)
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       if (edgeMask[y][x] && !visited[y][x]) {
@@ -235,52 +291,58 @@ function traceContourFromPoint(
   let x = startX;
   let y = startY;
   let dirIndex = 0;
-  const maxPoints = Math.min(width * height, 5000);
+  const maxPoints = Math.min(width * height, 2000); // Reduced for performance
   
-  do {
-    visited[y][x] = true;
-    contour.push({ x, y });
-    
-    // Find next edge point
-    let found = false;
-    for (let i = 0; i < 8; i++) {
-      const checkDir = (dirIndex + i) % 8;
-      const [dx, dy] = directions[checkDir];
-      const nx = x + dx;
-      const ny = y + dy;
-      
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
-          edgeMask[ny][nx] && !visited[ny][nx]) {
-        x = nx;
-        y = ny;
-        dirIndex = checkDir;
-        found = true;
-        break;
+  try {
+    do {
+      if (y >= 0 && y < height && x >= 0 && x < width) {
+        visited[y][x] = true;
+        contour.push({ x, y });
       }
-    }
-    
-    if (!found) {
-      // Try to find any nearby unvisited edge point
-      for (let radius = 1; radius <= 3 && !found; radius++) {
-        for (let dy = -radius; dy <= radius && !found; dy++) {
-          for (let dx = -radius; dx <= radius && !found; dx++) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
-                edgeMask[ny][nx] && !visited[ny][nx]) {
-              x = nx;
-              y = ny;
-              found = true;
+      
+      // Find next edge point
+      let found = false;
+      for (let i = 0; i < 8; i++) {
+        const checkDir = (dirIndex + i) % 8;
+        const [dx, dy] = directions[checkDir];
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
+            edgeMask[ny][nx] && !visited[ny][nx]) {
+          x = nx;
+          y = ny;
+          dirIndex = checkDir;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        // Try to find any nearby unvisited edge point
+        for (let radius = 1; radius <= 2 && !found; radius++) {
+          for (let dy = -radius; dy <= radius && !found; dy++) {
+            for (let dx = -radius; dx <= radius && !found; dx++) {
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
+                  edgeMask[ny][nx] && !visited[ny][nx]) {
+                x = nx;
+                y = ny;
+                found = true;
+              }
             }
           }
         }
       }
-    }
-    
-    if (!found) break;
-    
-  } while (contour.length < maxPoints && 
-           (Math.abs(x - startX) > 1 || Math.abs(y - startY) > 1 || contour.length < 3));
+      
+      if (!found) break;
+      
+    } while (contour.length < maxPoints && 
+             (Math.abs(x - startX) > 1 || Math.abs(y - startY) > 1 || contour.length < 3));
+  } catch (error) {
+    console.error('Error tracing contour:', error);
+  }
   
   return contour;
 }
