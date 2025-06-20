@@ -123,9 +123,10 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Implemented CadCut-style contour system with Sobel edge detection and Douglas-Peucker path simplification
   - Added shape overlap detection with red warning outline when image extends beyond shape bounds
   - Added "Fit to View" zoom control to instantly show full design centered in preview window
-  - Implemented advanced CadCut contour system with morphological stroke generation
-  - Added alpha mask processing and multi-contour detection for professional cutting precision
-  - Perfected edge detection using 8-neighborhood analysis and Douglas-Peucker simplification
+  - Implemented VinylMaster Cut V5 contour system with sub-pixel precision and anti-aliasing
+  - Added morphological operations with erosion-dilation cycles for ultra-clean edges
+  - Integrated 16-directional tracing, auto-weed functionality, and tension-based curve generation
+  - Professional corner rounding and adaptive path simplification for cutting machine optimization
 
 ## Changelog
 

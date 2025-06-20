@@ -5,7 +5,7 @@ import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
-import { createCadCutContour } from "@/lib/cadcut-contour-clean";
+import { createVinylMasterContour } from "@/lib/vinylmaster-contour";
 import { createCTContour } from "@/lib/ctcontour";
 
 export interface ImageInfo {
@@ -154,24 +154,25 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'cutcontour') {
-        // Use CadCut contour method for professional outline generation
+        // Use VinylMaster Cut V5 contour system for professional cutting
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+        const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
-          tolerance: 3, // High precision for cutting
-          smoothing: 0.5, // Minimal smoothing for precision
-          cornerDetection: true // Preserve sharp corners
+          precision: 0.3, // VinylMaster's sub-pixel precision
+          smoothness: 0.8, // Professional smoothing
+          cornerRadius: 1.5, // Optimal for cutting machines
+          autoWeed: true // Remove small features automatically
         });
         
-        // Download the CadCut contour canvas
-        cadCutCanvas.toBlob((blob: Blob | null) => {
+        // Download the VinylMaster contour canvas
+        vinylMasterCanvas.toBlob((blob: Blob | null) => {
           if (!blob) return;
           
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'cadcut_cutlines.png';
+          link.download = 'vinylmaster_cutlines.png';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);

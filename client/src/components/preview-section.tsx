@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
-import { createCadCutContour } from "@/lib/cadcut-contour-clean";
+import { createVinylMasterContour } from "@/lib/vinylmaster-contour";
 import { createCTContour } from "@/lib/ctcontour";
 
 interface PreviewSectionProps {
@@ -169,18 +169,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use CadCut contour for preview
+      // Use VinylMaster contour for preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
-        // Create CadCut contour for preview with optimized settings
-        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+        // Create VinylMaster contour for preview with optimized settings
+        const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
           strokeSettings,
-          tolerance: 6, // Slightly less precision for faster preview
-          smoothing: 1, // Minimal smoothing
-          cornerDetection: true
+          precision: 1.0, // Faster precision for preview
+          smoothness: 1.2, // Slightly more smoothing for preview
+          cornerRadius: 2, // Standard corner radius
+          autoWeed: false // Skip auto-weed for preview speed
         });
         
-        // Draw the CadCut contour result scaled to preview size
-        ctx.drawImage(cadCutCanvas, previewX, previewY, previewWidth, previewHeight);
+        // Draw the VinylMaster contour result scaled to preview size
+        ctx.drawImage(vinylMasterCanvas, previewX, previewY, previewWidth, previewHeight);
       } else {
         // Draw the main image without contour
         ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
