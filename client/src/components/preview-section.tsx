@@ -108,42 +108,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 
-      // Check for overlap based on shape type
+      // Overlap detection disabled for now to prevent false positives
       let imageExtendsBeyondShape = false;
-      
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2;
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        
-        // Check if any corner of the image extends beyond the circle
-        const corners = [
-          { x: imageX, y: imageY },
-          { x: imageX + imageWidth, y: imageY },
-          { x: imageX + imageWidth, y: imageY + imageHeight },
-          { x: imageX, y: imageY + imageHeight }
-        ];
-        
-        for (const corner of corners) {
-          const dx = corner.x - centerX;
-          const dy = corner.y - centerY;
-          const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
-          
-          // Add a larger tolerance (15 pixels) to avoid false positives
-          if (distanceFromCenter > radius + 15) {
-            imageExtendsBeyondShape = true;
-            break;
-          }
-        }
-      } else {
-        // Rectangle or square - add tolerance here too
-        const tolerance = 15;
-        imageExtendsBeyondShape = 
-          imageX < shapeX - tolerance || 
-          imageY < shapeY - tolerance || 
-          imageX + imageWidth > shapeX + shapeWidth + tolerance || 
-          imageY + imageHeight > shapeY + shapeHeight + tolerance;
-      }
 
       // Draw image without clipping to show full size
       ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
