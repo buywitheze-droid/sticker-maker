@@ -120,7 +120,10 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Cutcontour export now forces magenta (#FF00FF) cutlines and respects resize settings
   - Added image resize controls directly within Shape Background section with auto-sync
   - Updated preview to show live changes while adjusting design size in real-time
-  - Implemented CadCut-style contour system with Sobel edge detection and Douglas-Peucker path simplification
+  - Implemented Flexi Auto Contour system with professional-grade edge detection and morphological operations
+  - Added adaptive thresholding and anti-aliasing support for clean edge detection
+  - Integrated Moore neighborhood tracing algorithm for precise contour following
+  - Applied morphological dilation and erosion operations for edge cleanup
   - Added shape overlap detection with red warning outline when image extends beyond shape bounds
   - Added "Fit to View" zoom control to instantly show full design centered in preview window
   - Implemented True Contour system with precise edge detection following actual image content
