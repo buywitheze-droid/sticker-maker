@@ -5,12 +5,14 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
+import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings, StrokeMode } from "./image-editor";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
+  strokeMode: StrokeMode;
+  onStrokeModeChange: (mode: StrokeMode) => void;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
@@ -23,6 +25,8 @@ export default function ControlsSection({
   strokeSettings,
   resizeSettings,
   shapeSettings,
+  strokeMode,
+  onStrokeModeChange,
   onStrokeChange,
   onResizeChange,
   onShapeChange,
@@ -179,126 +183,7 @@ export default function ControlsSection({
           </CardContent>
         </Card>
 
-        {/* Shape Settings */}
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <div className="flex items-center justify-between">
-              <Label className="text-base font-medium">Shape Background</Label>
-              <Checkbox
-                checked={shapeSettings.enabled}
-                onCheckedChange={(checked) => onShapeChange({ enabled: !!checked })}
-              />
-            </div>
 
-            {shapeSettings.enabled && (
-              <div className="space-y-4">
-                <div>
-                  <Label>Shape Type</Label>
-                  <Select
-                    value={shapeSettings.type}
-                    onValueChange={(value: 'square' | 'rectangle' | 'circle') => 
-                      onShapeChange({ type: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="square">Square</SelectItem>
-                      <SelectItem value="rectangle">Rectangle</SelectItem>
-                      <SelectItem value="circle">Circle</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label>Width (inches)</Label>
-                  <Slider
-                    value={[shapeSettings.widthInches]}
-                    onValueChange={([value]) => onShapeChange({ widthInches: value })}
-                    min={1}
-                    max={12}
-                    step={0.1}
-                    className="mt-2"
-                  />
-                  <div className="text-sm text-gray-500 mt-1">
-                    {shapeSettings.widthInches}"
-                  </div>
-                </div>
-
-                {shapeSettings.type !== 'square' && (
-                  <div>
-                    <Label>Height (inches)</Label>
-                    <Slider
-                      value={[shapeSettings.heightInches]}
-                      onValueChange={([value]) => onShapeChange({ heightInches: value })}
-                      min={1}
-                      max={12}
-                      step={0.1}
-                      className="mt-2"
-                    />
-                    <div className="text-sm text-gray-500 mt-1">
-                      {shapeSettings.heightInches}"
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <Label>Fill Color</Label>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <input
-                      type="color"
-                      value={shapeSettings.fillColor}
-                      onChange={(e) => onShapeChange({ fillColor: e.target.value })}
-                      className="w-8 h-8 rounded border"
-                    />
-                    <span className="text-sm text-gray-600">{shapeSettings.fillColor}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <Label>Shape Stroke</Label>
-                  <Checkbox
-                    checked={shapeSettings.strokeEnabled}
-                    onCheckedChange={(checked) => onShapeChange({ strokeEnabled: !!checked })}
-                  />
-                </div>
-
-                {shapeSettings.strokeEnabled && (
-                  <>
-                    <div>
-                      <Label>Stroke Width</Label>
-                      <Slider
-                        value={[shapeSettings.strokeWidth]}
-                        onValueChange={([value]) => onShapeChange({ strokeWidth: value })}
-                        min={1}
-                        max={10}
-                        step={1}
-                        className="mt-2"
-                      />
-                      <div className="text-sm text-gray-500 mt-1">
-                        {shapeSettings.strokeWidth}px
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label>Stroke Color</Label>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <input
-                          type="color"
-                          value={shapeSettings.strokeColor}
-                          onChange={(e) => onShapeChange({ strokeColor: e.target.value })}
-                          className="w-8 h-8 rounded border"
-                        />
-                        <span className="text-sm text-gray-600">{shapeSettings.strokeColor}</span>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
         {/* Download Section */}
         <Card>

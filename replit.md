@@ -110,6 +110,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added real-time preview showing image centered within chosen shape background
   - Implemented mutual exclusion between shape background and white outline modes
   - Enhanced zoom controls to maintain image centering during zoom operations
+  - Redesigned UI with dropdown selection for "Contour" and "Shape Background" modes
+  - Renamed "White Outline" to "Contour" for better user clarity
 
 ## Changelog
 

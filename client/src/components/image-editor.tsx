@@ -20,6 +20,8 @@ export interface StrokeSettings {
   enabled: boolean;
 }
 
+export type StrokeMode = 'none' | 'contour' | 'shape';
+
 export interface ResizeSettings {
   widthInches: number;
   heightInches: number;
@@ -61,6 +63,7 @@ export default function ImageEditor() {
     strokeWidth: 2,
     strokeColor: '#000000',
   });
+  const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [isProcessing, setIsProcessing] = useState(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -94,10 +97,6 @@ export default function ImageEditor() {
     croppedImage.src = croppedCanvas.toDataURL();
   }, []);
 
-  const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
-    setStrokeSettings(prev => ({ ...prev, ...newSettings }));
-  }, []);
-
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {
       const updated = { ...prev, ...newSettings };
@@ -115,6 +114,21 @@ export default function ImageEditor() {
     });
   }, [imageInfo]);
 
+  const handleStrokeModeChange = useCallback((mode: StrokeMode) => {
+    setStrokeMode(mode);
+    
+    if (mode === 'contour') {
+      setStrokeSettings(prev => ({ ...prev, enabled: true }));
+      setShapeSettings(prev => ({ ...prev, enabled: false }));
+    } else if (mode === 'shape') {
+      setStrokeSettings(prev => ({ ...prev, enabled: false }));
+      setShapeSettings(prev => ({ ...prev, enabled: true }));
+    } else {
+      setStrokeSettings(prev => ({ ...prev, enabled: false }));
+      setShapeSettings(prev => ({ ...prev, enabled: false }));
+    }
+  }, []);
+
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
     setShapeSettings(prev => {
       const updated = { ...prev, ...newSettings };
@@ -126,20 +140,11 @@ export default function ImageEditor() {
         updated.widthInches = newSettings.heightInches;
       }
       
-      // When shape background is enabled, disable stroke
-      if (newSettings.enabled === true) {
-        setStrokeSettings(prev => ({ ...prev, enabled: false }));
-      }
-      
       return updated;
     });
   }, []);
 
-  const handleStrokeChangeWithShapeCheck = useCallback((newSettings: Partial<StrokeSettings>) => {
-    // When stroke is enabled, disable shape background
-    if (newSettings.enabled === true) {
-      setShapeSettings(prev => ({ ...prev, enabled: false }));
-    }
+  const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     setStrokeSettings(prev => ({ ...prev, ...newSettings }));
   }, []);
 
@@ -214,7 +219,9 @@ export default function ImageEditor() {
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
         shapeSettings={shapeSettings}
-        onStrokeChange={handleStrokeChangeWithShapeCheck}
+        strokeMode={strokeMode}
+        onStrokeModeChange={handleStrokeModeChange}
+        onStrokeChange={handleStrokeChange}
         onResizeChange={handleResizeChange}
         onShapeChange={handleShapeChange}
         onDownload={handleDownload}
