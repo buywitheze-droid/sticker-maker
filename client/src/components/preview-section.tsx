@@ -120,15 +120,90 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     const handleZoomIn = () => {
-      setZoom(prev => Math.min(prev + 0.5, 3));
+      if (containerRef.current && imageInfo) {
+        const container = containerRef.current;
+        const oldScrollLeft = container.scrollLeft;
+        const oldScrollTop = container.scrollTop;
+        const oldZoom = zoom;
+        
+        const newZoom = Math.min(oldZoom + 0.5, 3);
+        setZoom(newZoom);
+        
+        // Calculate new scroll position to keep center point consistent
+        requestAnimationFrame(() => {
+          const zoomRatio = newZoom / oldZoom;
+          const containerWidth = container.clientWidth;
+          const containerHeight = container.clientHeight;
+          
+          // Calculate the center point in the old coordinate system
+          const centerX = oldScrollLeft + containerWidth / 2;
+          const centerY = oldScrollTop + containerHeight / 2;
+          
+          // Scale the center point and recalculate scroll position
+          const newCenterX = centerX * zoomRatio;
+          const newCenterY = centerY * zoomRatio;
+          
+          const newScrollLeft = newCenterX - containerWidth / 2;
+          const newScrollTop = newCenterY - containerHeight / 2;
+          
+          container.scrollLeft = Math.max(0, newScrollLeft);
+          container.scrollTop = Math.max(0, newScrollTop);
+        });
+      } else {
+        setZoom(prev => Math.min(prev + 0.5, 3));
+      }
     };
 
     const handleZoomOut = () => {
-      setZoom(prev => Math.max(prev - 0.5, 0.5));
+      if (containerRef.current && imageInfo) {
+        const container = containerRef.current;
+        const oldScrollLeft = container.scrollLeft;
+        const oldScrollTop = container.scrollTop;
+        const oldZoom = zoom;
+        
+        const newZoom = Math.max(oldZoom - 0.5, 0.5);
+        setZoom(newZoom);
+        
+        // Calculate new scroll position to keep center point consistent
+        requestAnimationFrame(() => {
+          const zoomRatio = newZoom / oldZoom;
+          const containerWidth = container.clientWidth;
+          const containerHeight = container.clientHeight;
+          
+          // Calculate the center point in the old coordinate system
+          const centerX = oldScrollLeft + containerWidth / 2;
+          const centerY = oldScrollTop + containerHeight / 2;
+          
+          // Scale the center point and recalculate scroll position
+          const newCenterX = centerX * zoomRatio;
+          const newCenterY = centerY * zoomRatio;
+          
+          const newScrollLeft = newCenterX - containerWidth / 2;
+          const newScrollTop = newCenterY - containerHeight / 2;
+          
+          container.scrollLeft = Math.max(0, newScrollLeft);
+          container.scrollTop = Math.max(0, newScrollTop);
+        });
+      } else {
+        setZoom(prev => Math.max(prev - 0.5, 0.5));
+      }
     };
 
     const handleResetZoom = () => {
       setZoom(1);
+      if (containerRef.current) {
+        // Center the container when resetting zoom
+        requestAnimationFrame(() => {
+          const container = containerRef.current!;
+          const scrollWidth = container.scrollWidth;
+          const scrollHeight = container.scrollHeight;
+          const clientWidth = container.clientWidth;
+          const clientHeight = container.clientHeight;
+          
+          container.scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
+          container.scrollTop = Math.max(0, (scrollHeight - clientHeight) / 2);
+        });
+      }
     };
 
     const getBackgroundStyle = () => {
@@ -178,18 +253,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               style={{ 
                 minHeight: '400px',
                 maxHeight: '500px',
-                backgroundColor: getBackgroundColor()
+                backgroundColor: getBackgroundColor(),
+                scrollBehavior: 'smooth'
               }}
             >
-              <canvas 
-                ref={canvasRef}
-                className="relative z-10 mx-auto block"
-                style={{ 
-                  maxWidth: `${400 * zoom}px`,
-                  maxHeight: `${400 * zoom}px`,
-                  imageRendering: zoom > 1 ? 'pixelated' : 'auto'
+              <div 
+                className="flex items-center justify-center"
+                style={{
+                  minWidth: imageInfo ? `${400 * zoom}px` : '100%',
+                  minHeight: imageInfo ? `${400 * zoom}px` : '100%',
+                  width: imageInfo ? `${400 * zoom}px` : '100%',
+                  height: imageInfo ? `${400 * zoom}px` : '100%'
                 }}
-              />
+              >
+                <canvas 
+                  ref={canvasRef}
+                  className="relative z-10 block"
+                  style={{ 
+                    width: '400px',
+                    height: '400px',
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center',
+                    imageRendering: zoom > 1 ? 'pixelated' : 'auto'
+                  }}
+                />
+              </div>
               
               {/* Placeholder when no image */}
               {!imageInfo && (

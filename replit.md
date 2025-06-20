@@ -108,6 +108,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Created configurable shape fill colors and stroke options
   - Maintained original stroke functionality for the centered image design
   - Added real-time preview showing image centered within chosen shape background
+  - Implemented mutual exclusion between shape background and white outline modes
+  - Enhanced zoom controls to maintain image centering during zoom operations
 
 ## Changelog
 
