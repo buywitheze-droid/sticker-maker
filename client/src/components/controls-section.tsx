@@ -51,12 +51,11 @@ export default function ControlsSection({
   return (
     <div className="lg:col-span-1">
       <h2 className="text-lg font-semibold text-gray-900 mb-4">Adjustments</h2>
-      
       <div className="space-y-6">
         {/* Stroke Controls */}
         <Card>
           <CardContent className="p-6">
-            <h3 className="text-base font-medium text-gray-900 mb-4">White Outline</h3>
+            <h3 className="text-base font-medium text-gray-900 mb-4">Contour/outline</h3>
             
             <div className="space-y-4">
               <div>
