@@ -85,35 +85,23 @@ async function drawHighResImage(
 
   // Draw stroke/outline if enabled
   if (strokeSettings.enabled && strokeSettings.width > 0) {
-    // Create a temporary canvas to generate the outline
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) {
-      tempCanvas.width = drawWidth + strokeSettings.width * 2;
-      tempCanvas.height = drawHeight + strokeSettings.width * 2;
-      
-      // Draw the image on temp canvas
-      tempCtx.drawImage(image, strokeSettings.width, strokeSettings.width, drawWidth, drawHeight);
-      
-      // Create outline by drawing the image multiple times with slight offsets
-      ctx.globalCompositeOperation = 'source-over';
-      const strokeOffset = strokeSettings.width;
-      
-      // Draw stroke by creating multiple copies with offsets
-      for (let angle = 0; angle < 360; angle += 45) {
-        const radians = (angle * Math.PI) / 180;
-        const dx = Math.cos(radians) * strokeOffset;
-        const dy = Math.sin(radians) * strokeOffset;
-        
-        ctx.fillStyle = strokeSettings.color;
-        ctx.globalCompositeOperation = 'destination-over';
-        ctx.drawImage(
-          tempCanvas,
-          offsetX - strokeOffset + dx,
-          offsetY - strokeOffset + dy
-        );
-      }
+    // Use Canvas2D shadow to create outline effect
+    ctx.save();
+    
+    // Set up shadow properties for outline
+    ctx.shadowColor = strokeSettings.color;
+    ctx.shadowBlur = 0;
+    
+    // Draw multiple shadows in a circle pattern for solid outline
+    const steps = Math.max(12, Math.ceil(strokeSettings.width * 2));
+    for (let i = 0; i < steps; i++) {
+      const angle = (i / steps) * Math.PI * 2;
+      ctx.shadowOffsetX = Math.cos(angle) * strokeSettings.width;
+      ctx.shadowOffsetY = Math.sin(angle) * strokeSettings.width;
+      ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
     }
+    
+    ctx.restore();
   }
 
   // Draw the main image

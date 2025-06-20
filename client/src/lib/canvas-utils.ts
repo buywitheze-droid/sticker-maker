@@ -28,40 +28,23 @@ export function drawImageWithStroke(
     // Calculate stroke width relative to scaling
     const strokeWidth = strokeSettings.width * scale;
     
-    // Save current composite operation
-    const originalCompositeOperation = ctx.globalCompositeOperation;
+    // Use Canvas2D shadow to create outline effect
+    ctx.save();
     
-    // Create outline by drawing the image multiple times with slight offsets
-    ctx.globalCompositeOperation = 'destination-over';
+    // Set up shadow properties for outline
+    ctx.shadowColor = strokeSettings.color;
+    ctx.shadowBlur = 0;
     
-    // Draw stroke in multiple directions to create outline effect
-    for (let angle = 0; angle < 360; angle += 30) {
-      const radians = (angle * Math.PI) / 180;
-      const dx = Math.cos(radians) * strokeWidth;
-      const dy = Math.sin(radians) * strokeWidth;
-      
-      // Create a temporary canvas to color the image
-      const tempCanvas = document.createElement('canvas');
-      const tempCtx = tempCanvas.getContext('2d');
-      if (tempCtx) {
-        tempCanvas.width = scaledWidth;
-        tempCanvas.height = scaledHeight;
-        
-        // Draw image on temp canvas
-        tempCtx.drawImage(image, 0, 0, scaledWidth, scaledHeight);
-        
-        // Apply stroke color by using composite operations
-        tempCtx.globalCompositeOperation = 'source-in';
-        tempCtx.fillStyle = strokeSettings.color;
-        tempCtx.fillRect(0, 0, scaledWidth, scaledHeight);
-        
-        // Draw the colored outline
-        ctx.drawImage(tempCanvas, x + dx, y + dy);
-      }
+    // Draw multiple shadows in a circle pattern for solid outline
+    const steps = Math.max(8, Math.ceil(strokeWidth));
+    for (let i = 0; i < steps; i++) {
+      const angle = (i / steps) * Math.PI * 2;
+      ctx.shadowOffsetX = Math.cos(angle) * strokeWidth;
+      ctx.shadowOffsetY = Math.sin(angle) * strokeWidth;
+      ctx.drawImage(image, x, y, scaledWidth, scaledHeight);
     }
     
-    // Restore composite operation
-    ctx.globalCompositeOperation = originalCompositeOperation;
+    ctx.restore();
   }
 
   // Draw the main image on top

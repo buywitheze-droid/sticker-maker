@@ -86,11 +86,21 @@ This is a full-stack web application for creating stickers by adding customizabl
 - Port 5000 for local development, port 80 for external access
 - Environment variables for database connection
 
+## Recent Changes
+
+- **June 20, 2025**: Enhanced preview section with background color options and zoom functionality
+  - Added 8 background color options (transparent, white, black, grays, blue, red, green)
+  - Implemented zoom controls (50% to 300% range) with zoom percentage display
+  - Added scrollable preview area for zoomed-in inspection
+  - Improved stroke rendering algorithm using Canvas2D shadows for solid, clean outlines
+  - Updated both preview and download functions to use consistent stroke generation
+
 ## Changelog
 
 ```
 Changelog:
-- June 20, 2025. Initial setup
+- June 20, 2025. Initial setup with full sticker maker functionality
+- June 20, 2025. Added preview enhancements: background colors and zoom controls
 ```
 
 ## User Preferences
