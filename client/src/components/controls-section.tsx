@@ -302,8 +302,36 @@ export default function ControlsSection({
                 PNG file with outline
               </Button>
 
+              <div className="mt-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Vector Outline for Illustrator</h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button 
+                    onClick={() => onDownload('vector', 'pdf')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-red-500 hover:bg-red-600 text-xs"
+                  >
+                    PDF
+                  </Button>
+                  <Button 
+                    onClick={() => onDownload('vector', 'eps')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-orange-500 hover:bg-orange-600 text-xs"
+                  >
+                    EPS
+                  </Button>
+                  <Button 
+                    onClick={() => onDownload('vector', 'svg')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-green-500 hover:bg-green-600 text-xs"
+                  >
+                    SVG
+                  </Button>
+                </div>
+              </div>
+
               <div className="text-xs text-gray-500 text-center">
-                Full resolution PNG with transparent background and auto-cropping.
+                PNG: Full resolution with transparent background.<br/>
+                Vector formats: Raster image with true editable vector outline paths for Illustrator.
               </div>
             </div>
           </CardContent>
