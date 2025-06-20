@@ -5,7 +5,7 @@ import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
-import { createVinylMasterContour } from "@/lib/vinylmaster-contour";
+import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 
 export interface ImageInfo {
@@ -191,25 +191,23 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'cutcontour') {
-        // Use VinylMaster Cut V5 contour system for professional cutting
+        // Use True Contour system for precise edge following
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
+        const trueContourCanvas = createTrueContour(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
-          precision: 0.3, // VinylMaster's sub-pixel precision
-          smoothness: 0.8, // Professional smoothing
-          cornerRadius: 1.5, // Optimal for cutting machines
-          autoWeed: true // Remove small features automatically
+          threshold: 128, // Alpha threshold for edge detection
+          smoothing: 1 // Minimal smoothing for precision
         });
         
-        // Download the VinylMaster contour canvas
-        vinylMasterCanvas.toBlob((blob: Blob | null) => {
+        // Download the True Contour canvas
+        trueContourCanvas.toBlob((blob: Blob | null) => {
           if (!blob) return;
           
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'vinylmaster_cutlines.png';
+          link.download = 'true_contour_cutlines.png';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);

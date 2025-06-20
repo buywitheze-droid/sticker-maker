@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
-import { createVinylMasterContour } from "@/lib/vinylmaster-contour";
+import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 
 interface PreviewSectionProps {
@@ -169,20 +169,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use optimized contour for preview
+      // Use true contour for preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
         try {
-          // Create VinylMaster contour for preview with fast settings
-          const vinylMasterCanvas = createVinylMasterContour(imageInfo.image, {
+          // Create True Contour for preview with fast settings
+          const trueContourCanvas = createTrueContour(imageInfo.image, {
             strokeSettings,
-            precision: 3.0, // Much faster precision for preview
-            smoothness: 2.0, // More smoothing for preview speed
-            cornerRadius: 4, // Larger radius for speed
-            autoWeed: false // Skip auto-weed for preview speed
+            threshold: 100, // Lower threshold for faster preview
+            smoothing: 2 // More smoothing for preview speed
           });
           
-          // Draw the VinylMaster contour result scaled to preview size
-          ctx.drawImage(vinylMasterCanvas, previewX, previewY, previewWidth, previewHeight);
+          // Draw the True Contour result scaled to preview size
+          ctx.drawImage(trueContourCanvas, previewX, previewY, previewWidth, previewHeight);
         } catch (error) {
           console.error('Preview contour error:', error);
           // Fallback to simple image rendering
