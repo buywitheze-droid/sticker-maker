@@ -73,19 +73,230 @@ function generateSimpleOutline(image: HTMLImageElement, strokeSettings: StrokeSe
   const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
   const { data, width, height } = imageData;
   
-  // Find all separate visible regions
-  const regions = findSeparateRegions(data, width, height);
+  // Create actual contour following the image shape
+  return generateActualContour(data, width, height, strokeSettings);
+}
+
+function generateActualContour(
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number, 
+  strokeSettings: StrokeSettings
+): ContourPoint[] {
+  // Step 1: Find edge pixels using alpha channel
+  const edgePixels = findImageEdgePixels(data, width, height);
   
-  if (regions.length === 0) return [];
+  if (edgePixels.length === 0) return [];
   
-  // If multiple regions, merge them with intelligent outline growth
-  if (regions.length > 1) {
-    return mergeRegionsWithIntelligentOutlines(regions, strokeSettings, data, width, height);
+  // Step 2: Create ordered contour from edge pixels
+  const orderedContour = createOrderedContour(edgePixels);
+  
+  // Step 3: Apply offset for stroke width with intelligent growth
+  const offset = strokeSettings.width / 100 * 5;
+  return applyIntelligentOffset(orderedContour, offset, data, width, height);
+}
+
+function findImageEdgePixels(data: Uint8ClampedArray, width: number, height: number): ContourPoint[] {
+  const edgePixels: ContourPoint[] = [];
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+      
+      // If this pixel is visible
+      if (alpha > 50) {
+        // Check if it's an edge pixel (has transparent neighbor)
+        let isEdge = false;
+        
+        // Check 8-directional neighbors
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+              isEdge = true; // Edge of image
+              break;
+            }
+            
+            const nIdx = (ny * width + nx) * 4;
+            const nAlpha = data[nIdx + 3];
+            
+            if (nAlpha <= 50) {
+              isEdge = true; // Has transparent neighbor
+              break;
+            }
+          }
+          if (isEdge) break;
+        }
+        
+        if (isEdge) {
+          edgePixels.push({ x, y });
+        }
+      }
+    }
   }
   
-  // Single region - create outline with intelligent growth
-  const region = regions[0];
-  return createIntelligentOutline(region, strokeSettings, data, width, height);
+  return edgePixels;
+}
+
+function createOrderedContour(edgePixels: ContourPoint[]): ContourPoint[] {
+  if (edgePixels.length === 0) return [];
+  
+  // Find starting point (leftmost, then topmost)
+  let startPoint = edgePixels[0];
+  for (const pixel of edgePixels) {
+    if (pixel.x < startPoint.x || (pixel.x === startPoint.x && pixel.y < startPoint.y)) {
+      startPoint = pixel;
+    }
+  }
+  
+  const orderedContour: ContourPoint[] = [startPoint];
+  const used = new Set<string>();
+  used.add(`${startPoint.x},${startPoint.y}`);
+  
+  let currentPoint = startPoint;
+  
+  // Follow the contour by finding the nearest unused edge pixel
+  while (orderedContour.length < edgePixels.length) {
+    let nearestPixel: ContourPoint | null = null;
+    let minDistance = Infinity;
+    
+    for (const pixel of edgePixels) {
+      const key = `${pixel.x},${pixel.y}`;
+      if (used.has(key)) continue;
+      
+      const dx = pixel.x - currentPoint.x;
+      const dy = pixel.y - currentPoint.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Prefer nearby pixels (within 2 pixel distance)
+      if (distance <= 2 && distance < minDistance) {
+        minDistance = distance;
+        nearestPixel = pixel;
+      }
+    }
+    
+    // If no nearby pixel found, find closest overall
+    if (!nearestPixel) {
+      for (const pixel of edgePixels) {
+        const key = `${pixel.x},${pixel.y}`;
+        if (used.has(key)) continue;
+        
+        const dx = pixel.x - currentPoint.x;
+        const dy = pixel.y - currentPoint.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestPixel = pixel;
+        }
+      }
+    }
+    
+    if (!nearestPixel) break;
+    
+    orderedContour.push(nearestPixel);
+    used.add(`${nearestPixel.x},${nearestPixel.y}`);
+    currentPoint = nearestPixel;
+  }
+  
+  // Smooth the contour
+  return smoothContour(orderedContour);
+}
+
+function smoothContour(contour: ContourPoint[]): ContourPoint[] {
+  if (contour.length < 3) return contour;
+  
+  const smoothed: ContourPoint[] = [];
+  
+  for (let i = 0; i < contour.length; i++) {
+    const prev = contour[(i - 1 + contour.length) % contour.length];
+    const curr = contour[i];
+    const next = contour[(i + 1) % contour.length];
+    
+    // Simple smoothing - average with neighbors
+    const smoothX = (prev.x + curr.x * 2 + next.x) / 4;
+    const smoothY = (prev.y + curr.y * 2 + next.y) / 4;
+    
+    smoothed.push({ x: Math.round(smoothX), y: Math.round(smoothY) });
+  }
+  
+  return smoothed;
+}
+
+function applyIntelligentOffset(
+  contour: ContourPoint[], 
+  offset: number, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): ContourPoint[] {
+  if (contour.length === 0) return [];
+  
+  const offsetContour: ContourPoint[] = [];
+  
+  for (let i = 0; i < contour.length; i++) {
+    const point = contour[i];
+    const prev = contour[(i - 1 + contour.length) % contour.length];
+    const next = contour[(i + 1) % contour.length];
+    
+    // Calculate outward normal vector
+    const dx1 = point.x - prev.x;
+    const dy1 = point.y - prev.y;
+    const dx2 = next.x - point.x;
+    const dy2 = next.y - point.y;
+    
+    // Average direction
+    const avgDx = (dx1 + dx2) / 2;
+    const avgDy = (dy1 + dy2) / 2;
+    
+    // Perpendicular vector (outward normal)
+    const normalX = -avgDy;
+    const normalY = avgDx;
+    
+    // Normalize
+    const length = Math.sqrt(normalX * normalX + normalY * normalY) || 1;
+    const unitNormalX = normalX / length;
+    const unitNormalY = normalY / length;
+    
+    // Apply offset with boundary checking
+    let actualOffset = offset;
+    
+    // Check for collision with other solid content
+    for (let testOffset = 1; testOffset <= offset; testOffset++) {
+      const testX = Math.round(point.x + unitNormalX * testOffset);
+      const testY = Math.round(point.y + unitNormalY * testOffset);
+      
+      // Check bounds
+      if (testX < 0 || testX >= width || testY < 0 || testY >= height) {
+        actualOffset = testOffset - 1;
+        break;
+      }
+      
+      // Check for collision with solid content
+      const testIdx = (testY * width + testX) * 4;
+      const testAlpha = data[testIdx + 3];
+      
+      if (testAlpha > 50) {
+        actualOffset = Math.max(1, testOffset - 2);
+        break;
+      }
+    }
+    
+    const offsetX = Math.round(point.x + unitNormalX * actualOffset);
+    const offsetY = Math.round(point.y + unitNormalY * actualOffset);
+    
+    offsetContour.push({ 
+      x: Math.max(0, Math.min(width - 1, offsetX)), 
+      y: Math.max(0, Math.min(height - 1, offsetY)) 
+    });
+  }
+  
+  return offsetContour;
 }
 
 interface ImageRegion {
