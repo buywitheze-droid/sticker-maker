@@ -111,6 +111,13 @@ export default function ControlsSection({
                   Automatically fills gaps inside designs that are surrounded by solid pixels
                 </div>
 
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <h4 className="text-sm font-medium text-blue-800 mb-2">Contour Merging</h4>
+                  <div className="text-xs text-blue-600">
+                    Multiple separate elements in your design will be automatically merged into one unified contour for easier cutting.
+                  </div>
+                </div>
+
 
               </div>
             )}

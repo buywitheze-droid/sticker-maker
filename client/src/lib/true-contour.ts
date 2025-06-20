@@ -73,37 +73,241 @@ function generateSimpleOutline(image: HTMLImageElement, strokeSettings: StrokeSe
   const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
   const { data, width, height } = imageData;
   
-  // Find bounding box of visible content
-  let minX = width, maxX = 0, minY = height, maxY = 0;
-  let hasContent = false;
+  // Find all separate visible regions
+  const regions = findSeparateRegions(data, width, height);
+  
+  if (regions.length === 0) return [];
+  
+  // If multiple regions, merge them into one larger contour
+  if (regions.length > 1) {
+    return mergeRegionsIntoUnifiedContour(regions, strokeSettings);
+  }
+  
+  // Single region - create outline around it
+  const region = regions[0];
+  const offset = strokeSettings.width / 100 * 5;
+  
+  return [
+    { x: region.minX - offset, y: region.minY - offset },
+    { x: region.maxX + offset, y: region.minY - offset },
+    { x: region.maxX + offset, y: region.maxY + offset },
+    { x: region.minX - offset, y: region.maxY + offset },
+    { x: region.minX - offset, y: region.minY - offset }
+  ];
+}
+
+interface ImageRegion {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  pixels: ContourPoint[];
+}
+
+function findSeparateRegions(data: Uint8ClampedArray, width: number, height: number): ImageRegion[] {
+  const visited = new Set<string>();
+  const regions: ImageRegion[] = [];
   
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
       const alpha = data[idx + 3];
+      const key = `${x},${y}`;
       
-      if (alpha > 50) { // Visible pixel
-        hasContent = true;
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
+      if (alpha > 50 && !visited.has(key)) {
+        // Found a new region - flood fill to find all connected pixels
+        const region = floodFillRegion(data, width, height, x, y, visited);
+        if (region.pixels.length > 10) { // Minimum region size
+          regions.push(region);
+        }
       }
     }
   }
   
-  if (!hasContent) return [];
+  return regions;
+}
+
+function floodFillRegion(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  startX: number,
+  startY: number,
+  visited: Set<string>
+): ImageRegion {
+  const stack: ContourPoint[] = [{ x: startX, y: startY }];
+  const pixels: ContourPoint[] = [];
+  let minX = startX, maxX = startX, minY = startY, maxY = startY;
   
-  // Create simple rectangular outline with offset
-  const offset = strokeSettings.width / 100 * 5; // Convert from 100x scale
+  while (stack.length > 0) {
+    const { x, y } = stack.pop()!;
+    const key = `${x},${y}`;
+    
+    if (x < 0 || x >= width || y < 0 || y >= height || visited.has(key)) {
+      continue;
+    }
+    
+    const idx = (y * width + x) * 4;
+    const alpha = data[idx + 3];
+    
+    if (alpha <= 50) continue; // Not visible
+    
+    visited.add(key);
+    pixels.push({ x, y });
+    
+    // Update bounding box
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+    
+    // Add 4-connected neighbors
+    stack.push({ x: x + 1, y });
+    stack.push({ x: x - 1, y });
+    stack.push({ x, y: y + 1 });
+    stack.push({ x, y: y - 1 });
+  }
   
-  return [
-    { x: minX - offset, y: minY - offset },
-    { x: maxX + offset, y: minY - offset },
-    { x: maxX + offset, y: maxY + offset },
-    { x: minX - offset, y: maxY + offset },
-    { x: minX - offset, y: minY - offset } // Close the path
-  ];
+  return { minX, maxX, minY, maxY, pixels };
+}
+
+function mergeRegionsIntoUnifiedContour(regions: ImageRegion[], strokeSettings: StrokeSettings): ContourPoint[] {
+  if (regions.length === 0) return [];
+  
+  // Calculate merge distance based on stroke width
+  const mergeDistance = strokeSettings.width / 100 * 8; // Larger merge distance
+  
+  // Find overall bounding box of all regions
+  let globalMinX = regions[0].minX;
+  let globalMaxX = regions[0].maxX;
+  let globalMinY = regions[0].minY;
+  let globalMaxY = regions[0].maxY;
+  
+  for (const region of regions) {
+    globalMinX = Math.min(globalMinX, region.minX);
+    globalMaxX = Math.max(globalMaxX, region.maxX);
+    globalMinY = Math.min(globalMinY, region.minY);
+    globalMaxY = Math.max(globalMaxY, region.maxY);
+  }
+  
+  // Create unified contour that encompasses all regions
+  const offset = strokeSettings.width / 100 * 5;
+  
+  // Strategy 1: Simple encompassing rectangle
+  if (shouldUseSimpleRectangle(regions, mergeDistance)) {
+    return [
+      { x: globalMinX - offset, y: globalMinY - offset },
+      { x: globalMaxX + offset, y: globalMinY - offset },
+      { x: globalMaxX + offset, y: globalMaxY + offset },
+      { x: globalMinX - offset, y: globalMaxY + offset },
+      { x: globalMinX - offset, y: globalMinY - offset }
+    ];
+  }
+  
+  // Strategy 2: Convex hull for more complex shapes
+  return createConvexHullContour(regions, offset);
+}
+
+function shouldUseSimpleRectangle(regions: ImageRegion[], mergeDistance: number): boolean {
+  // Use simple rectangle if regions are relatively close or aligned
+  for (let i = 0; i < regions.length; i++) {
+    for (let j = i + 1; j < regions.length; j++) {
+      const r1 = regions[i];
+      const r2 = regions[j];
+      
+      // Check horizontal or vertical alignment
+      const horizontalOverlap = Math.min(r1.maxY, r2.maxY) - Math.max(r1.minY, r2.minY);
+      const verticalOverlap = Math.min(r1.maxX, r2.maxX) - Math.max(r1.minX, r2.minX);
+      
+      if (horizontalOverlap > 10 || verticalOverlap > 10) {
+        return true; // Regions are aligned, use simple rectangle
+      }
+    }
+  }
+  
+  return regions.length <= 2; // For 2 or fewer regions, use simple rectangle
+}
+
+function createConvexHullContour(regions: ImageRegion[], offset: number): ContourPoint[] {
+  // Collect all corner points from all regions
+  const allPoints: ContourPoint[] = [];
+  
+  for (const region of regions) {
+    allPoints.push(
+      { x: region.minX, y: region.minY },
+      { x: region.maxX, y: region.minY },
+      { x: region.maxX, y: region.maxY },
+      { x: region.minX, y: region.maxY }
+    );
+  }
+  
+  // Calculate convex hull
+  const hull = calculateConvexHull(allPoints);
+  
+  // Apply offset to hull points
+  const center = calculateCentroid(hull);
+  return hull.map(point => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const length = Math.sqrt(dx * dx + dy * dy) || 1;
+    const normalX = dx / length;
+    const normalY = dy / length;
+    
+    return {
+      x: Math.round(point.x + normalX * offset),
+      y: Math.round(point.y + normalY * offset)
+    };
+  });
+}
+
+function calculateConvexHull(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 3) return points;
+  
+  // Simple gift wrapping algorithm for convex hull
+  const hull: ContourPoint[] = [];
+  
+  // Find leftmost point
+  let leftmost = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].x < points[leftmost].x || 
+        (points[i].x === points[leftmost].x && points[i].y < points[leftmost].y)) {
+      leftmost = i;
+    }
+  }
+  
+  let current = leftmost;
+  do {
+    hull.push(points[current]);
+    let next = (current + 1) % points.length;
+    
+    for (let i = 0; i < points.length; i++) {
+      const orientation = calculateOrientation(points[current], points[i], points[next]);
+      if (orientation === 2) { // Counterclockwise
+        next = i;
+      }
+    }
+    
+    current = next;
+  } while (current !== leftmost);
+  
+  return hull;
+}
+
+function calculateOrientation(p: ContourPoint, q: ContourPoint, r: ContourPoint): number {
+  const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+  if (val === 0) return 0; // Collinear
+  return val > 0 ? 1 : 2; // Clockwise or Counterclockwise
+}
+
+function calculateCentroid(points: ContourPoint[]): ContourPoint {
+  const sum = points.reduce(
+    (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
+    { x: 0, y: 0 }
+  );
+  return {
+    x: sum.x / points.length,
+    y: sum.y / points.length
+  };
 }
 
 function drawSimpleOutline(ctx: CanvasRenderingContext2D, outline: ContourPoint[], strokeSettings: StrokeSettings): void {
@@ -294,45 +498,7 @@ function addTextBackground(image: HTMLImageElement, threshold: number): HTMLCanv
   return canvas;
 }
 
-function floodFillRegion(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number,
-  startX: number,
-  startY: number,
-  threshold: number,
-  visited: Uint8Array
-): Array<{x: number, y: number}> {
-  const region: Array<{x: number, y: number}> = [];
-  const stack: Array<{x: number, y: number}> = [{x: startX, y: startY}];
-  
-  while (stack.length > 0) {
-    const {x, y} = stack.pop()!;
-    const pixelIdx = y * width + x;
-    
-    if (x < 0 || x >= width || y < 0 || y >= height || visited[pixelIdx]) {
-      continue;
-    }
-    
-    const idx = (y * width + x) * 4;
-    const alpha = data[idx + 3];
-    
-    if (alpha >= threshold) {
-      continue; // This is a solid pixel, not part of the transparent region
-    }
-    
-    visited[pixelIdx] = 1;
-    region.push({x, y});
-    
-    // Add neighboring pixels to stack
-    stack.push({x: x + 1, y});
-    stack.push({x: x - 1, y});
-    stack.push({x, y: y + 1});
-    stack.push({x, y: y - 1});
-  }
-  
-  return region;
-}
+
 
 function isRegionSurrounded(
   region: Array<{x: number, y: number}>,
