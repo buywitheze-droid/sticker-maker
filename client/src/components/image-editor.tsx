@@ -101,17 +101,21 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'vector' || downloadType === 'cutcontour') {
-        // Use vector stroke processing for highest quality
+        // Use optimized vector processing to prevent crashes
+        await new Promise(resolve => setTimeout(resolve, 100)); // Small delay for UI feedback
+        
         const vectorCanvas = createVectorStroke(imageInfo.image, {
           strokeSettings,
           exportCutContour: downloadType === 'cutcontour',
-          vectorQuality: 'high'
+          vectorQuality: 'medium' // Use medium quality to prevent crashes
         });
         
         const filename = downloadType === 'cutcontour' 
           ? 'cutcontour_outline.png' 
           : 'vector_sticker.png';
-          
+        
+        // Add another small delay before download
+        await new Promise(resolve => setTimeout(resolve, 100));
         downloadVectorStroke(vectorCanvas, filename);
       } else {
         // Standard canvas-based download
@@ -129,6 +133,7 @@ export default function ImageEditor() {
       }
     } catch (error) {
       console.error("Download failed:", error);
+      alert("Download failed. Please try a different quality setting or reduce the image size.");
     } finally {
       setIsProcessing(false);
     }
@@ -164,7 +169,12 @@ export default function ImageEditor() {
           <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-              <span className="text-gray-700">Processing image...</span>
+              <div className="text-gray-700">
+                <div className="font-medium">Processing image...</div>
+                <div className="text-sm text-gray-500 mt-1">
+                  Creating high-quality stroke and preparing download
+                </div>
+              </div>
             </div>
           </div>
         </div>

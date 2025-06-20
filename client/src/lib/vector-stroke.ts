@@ -19,72 +19,57 @@ export function createVectorStroke(
   image: HTMLImageElement,
   options: VectorStrokeOptions
 ): HTMLCanvasElement {
-  const { strokeSettings, exportCutContour = false, vectorQuality = 'high' } = options;
+  const { strokeSettings, exportCutContour = false, vectorQuality = 'medium' } = options;
   
   // Create canvas for vector-quality processing
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
   
-  // Set high resolution for vector quality
-  const scaleFactor = vectorQuality === 'high' ? 4 : vectorQuality === 'medium' ? 2 : 1;
-  const strokeWidth = strokeSettings.width * scaleFactor;
+  // Use more reasonable scaling to prevent crashes
+  const scaleFactor = vectorQuality === 'high' ? 2 : vectorQuality === 'medium' ? 1.5 : 1;
+  const strokeWidth = Math.ceil(strokeSettings.width * scaleFactor);
   
-  canvas.width = (image.width + strokeWidth * 2) * scaleFactor;
-  canvas.height = (image.height + strokeWidth * 2) * scaleFactor;
+  canvas.width = Math.ceil((image.width + strokeWidth * 2) * scaleFactor);
+  canvas.height = Math.ceil((image.height + strokeWidth * 2) * scaleFactor);
+  
+  // Limit canvas size to prevent crashes
+  const maxSize = 4096;
+  if (canvas.width > maxSize || canvas.height > maxSize) {
+    const scale = Math.min(maxSize / canvas.width, maxSize / canvas.height);
+    canvas.width = Math.ceil(canvas.width * scale);
+    canvas.height = Math.ceil(canvas.height * scale);
+  }
   
   // Enable high-quality rendering
-  ctx.imageSmoothingEnabled = false;
+  ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   
-  // Draw scaled image
-  ctx.drawImage(
-    image,
-    strokeWidth,
-    strokeWidth,
-    image.width * scaleFactor,
-    image.height * scaleFactor
-  );
-  
   if (strokeSettings.enabled && strokeWidth > 0) {
-    // Get image data for precise vector processing
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
+    // Use optimized shadow-based approach for better performance
+    ctx.save();
     
-    // Create high-precision stroke mask
-    const strokeMask = new Uint8ClampedArray(data.length);
+    // Set up shadow properties for clean outline
+    ctx.shadowColor = exportCutContour ? '#FF00FF' : strokeSettings.color; // Magenta for CutContour
+    ctx.shadowBlur = 0;
     
-    // Use distance field approach for vector-quality stroke
-    const distanceField = createDistanceField(data, canvas.width, canvas.height, strokeWidth);
-    
-    // Apply stroke based on distance field
-    const strokeColor = hexToRgb(strokeSettings.color);
-    const strokeData = ctx.createImageData(canvas.width, canvas.height);
-    
-    for (let i = 0; i < distanceField.length; i++) {
-      const pixelIndex = i * 4;
-      const distance = distanceField[i];
-      const originalAlpha = data[pixelIndex + 3];
+    // Draw multiple shadows in a circle pattern for solid outline
+    const steps = Math.min(16, Math.max(8, strokeWidth));
+    for (let i = 0; i < steps; i++) {
+      const angle = (i / steps) * Math.PI * 2;
+      ctx.shadowOffsetX = Math.cos(angle) * strokeWidth;
+      ctx.shadowOffsetY = Math.sin(angle) * strokeWidth;
       
-      // Create stroke where distance is within stroke width and original is transparent
-      if (distance <= strokeWidth && distance > 0 && originalAlpha < 128) {
-        // For CutContour, use spot color (usually magenta)
-        if (exportCutContour) {
-          strokeData.data[pixelIndex] = 255;     // Red
-          strokeData.data[pixelIndex + 1] = 0;   // Green
-          strokeData.data[pixelIndex + 2] = 255; // Blue (Magenta)
-        } else {
-          strokeData.data[pixelIndex] = strokeColor.r;
-          strokeData.data[pixelIndex + 1] = strokeColor.g;
-          strokeData.data[pixelIndex + 2] = strokeColor.b;
-        }
-        strokeData.data[pixelIndex + 3] = 255;
-      }
+      ctx.drawImage(
+        image,
+        strokeWidth,
+        strokeWidth,
+        canvas.width - strokeWidth * 2,
+        canvas.height - strokeWidth * 2
+      );
     }
     
-    // Clear canvas and apply stroke
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.putImageData(strokeData, 0, 0);
+    ctx.restore();
     
     // If not CutContour, draw original image on top
     if (!exportCutContour) {
@@ -92,10 +77,13 @@ export function createVectorStroke(
         image,
         strokeWidth,
         strokeWidth,
-        image.width * scaleFactor,
-        image.height * scaleFactor
+        canvas.width - strokeWidth * 2,
+        canvas.height - strokeWidth * 2
       );
     }
+  } else {
+    // Just draw the image if no stroke
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   }
   
   return canvas;
