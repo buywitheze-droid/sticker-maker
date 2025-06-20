@@ -5,6 +5,7 @@ import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
+import { createCadCutContour } from "@/lib/cadcut-contour";
 
 export interface ImageInfo {
   file: File;
@@ -151,24 +152,45 @@ export default function ImageEditor() {
     setIsProcessing(true);
     
     try {
-      // Use standard canvas-based download with 300 DPI for cutcontour
-      const dpi = 300;
-      const filename = downloadType === 'cutcontour' ? 'cutcontour_sticker.png' : 'sticker_300dpi.png';
-      
-      // Create cutcontour-specific stroke settings with magenta color
-      const cutcontourStrokeSettings = downloadType === 'cutcontour' 
-        ? { ...strokeSettings, color: '#FF00FF', enabled: true } // Force magenta cutlines
-        : strokeSettings;
-      
-      await downloadCanvas(
-        imageInfo.image,
-        cutcontourStrokeSettings,
-        resizeSettings.widthInches,
-        resizeSettings.heightInches,
-        dpi,
-        filename,
-        shapeSettings
-      );
+      if (downloadType === 'cutcontour') {
+        // Use CadCut-style contour processing
+        await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
+        
+        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+          strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
+          tolerance: 5, // High precision like CadCut
+          smoothing: 1, // Minimal smoothing for precision
+          cornerDetection: true // Preserve sharp corners
+        });
+        
+        // Download the CadCut contour canvas
+        cadCutCanvas.toBlob((blob: Blob | null) => {
+          if (!blob) return;
+          
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = 'cadcut_contour.png';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      } else {
+        // Standard download using existing system
+        const dpi = 300;
+        const filename = 'sticker_300dpi.png';
+        
+        await downloadCanvas(
+          imageInfo.image,
+          strokeSettings,
+          resizeSettings.widthInches,
+          resizeSettings.heightInches,
+          dpi,
+          filename,
+          shapeSettings
+        );
+      }
     } catch (error) {
       console.error("Download failed:", error);
       alert("Download failed. Please try again.");

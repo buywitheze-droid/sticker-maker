@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
+import { createCadCutContour } from "@/lib/cadcut-contour";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -167,30 +168,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Draw stroke/outline if enabled
+      // Use CadCut-style contour system for preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
-        const strokeWidth = strokeSettings.width * 2; // Scale for preview
+        // Create CadCut contour for preview
+        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+          strokeSettings,
+          tolerance: 8, // Slightly less precision for faster preview
+          smoothing: 1,
+          cornerDetection: true
+        });
         
-        // Draw stroke using shadow technique for better preview
-        ctx.save();
-        ctx.shadowColor = strokeSettings.color;
-        ctx.shadowBlur = 0;
-        
-        // Draw multiple shadows in a circle pattern for solid outline
-        const steps = 8;
-        for (let i = 0; i < steps; i++) {
-          const angle = (i / steps) * Math.PI * 2;
-          ctx.shadowOffsetX = Math.cos(angle) * strokeWidth;
-          ctx.shadowOffsetY = Math.sin(angle) * strokeWidth;
-          
-          ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
-        }
-        
-        ctx.restore();
+        // Draw the CadCut contour result scaled to preview size
+        ctx.drawImage(cadCutCanvas, previewX, previewY, previewWidth, previewHeight);
+      } else {
+        // Draw the main image without contour
+        ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
       }
-      
-      // Draw the main image on top
-      ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
     };
 
     const handleZoomIn = () => {
