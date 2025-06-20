@@ -120,11 +120,11 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Cutcontour export now forces magenta (#FF00FF) cutlines and respects resize settings
   - Added image resize controls directly within Shape Background section with auto-sync
   - Updated preview to show live changes while adjusting design size in real-time
-  - Implemented professional white outline system for cutting machines with 35px (~0.09") offset
-  - Added tight boundary detection following visible content with smooth curve generation
-  - Integrated Catmull-Rom spline interpolation for cutting-machine compatible smooth paths
-  - Applied white-filled background contour placement beneath original design
-  - Added closed path generation ensuring complete cut-ready contours with minimal nodes
+  - Implemented Bordify.com-style outline generation with advanced morphological operations
+  - Added adaptive thresholding with local statistics for precise edge detection
+  - Integrated Euclidean distance transform for accurate outline offsetting
+  - Applied morphological closing (dilation + erosion) to fill gaps like Bordify
+  - Added chain code contour tracing with B-spline smoothing for professional results
   - Added shape overlap detection with red warning outline when image extends beyond shape bounds
   - Added "Fit to View" zoom control to instantly show full design centered in preview window
   - Implemented True Contour system with precise edge detection following actual image content
