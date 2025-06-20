@@ -77,8 +77,9 @@ function generateCTContours(
   
   // Filter out small contours and return largest ones
   return simplifiedContours
-    .filter(contour => contour.area > 100) // Minimum area threshold
-    .sort((a, b) => b.area - a.area); // Sort by area, largest first
+    .filter(contour => contour.area > 50) // Reduced threshold for better performance
+    .sort((a, b) => b.area - a.area) // Sort by area, largest first
+    .slice(0, 5); // Limit to 5 largest contours for performance
 }
 
 function createBinaryMask(
@@ -107,9 +108,10 @@ function traceCTContours(
   const contours: CTContour[] = [];
   const visited = new Uint8Array(width * height);
   
-  // Scan for contour starting points
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  // Scan for contour starting points with step optimization
+  const step = Math.max(1, Math.floor(precision));
+  for (let y = step; y < height - step; y += step) {
+    for (let x = step; x < width - step; x += step) {
       const index = y * width + x;
       
       if (mask[index] === 1 && visited[index] === 0) {

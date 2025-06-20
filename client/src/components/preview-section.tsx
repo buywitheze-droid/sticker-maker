@@ -169,22 +169,30 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use CTContour method for preview
+      // Use simplified stroke for fast preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
-        // Create CTContour for preview
-        const ctContourCanvas = createCTContour(imageInfo.image, {
-          strokeSettings,
-          precision: 0.8, // Slightly reduced precision for faster preview
-          threshold: 180, // Alpha threshold
-          simplification: 2.0 // More simplification for preview performance
-        });
+        const strokeWidth = strokeSettings.width * 2; // Scale for preview
         
-        // Draw the CTContour result scaled to preview size
-        ctx.drawImage(ctContourCanvas, previewX, previewY, previewWidth, previewHeight);
-      } else {
-        // Draw the main image without contour
-        ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
+        // Use fast shadow-based stroke for preview performance
+        ctx.save();
+        ctx.shadowColor = strokeSettings.color;
+        ctx.shadowBlur = 0;
+        
+        // Draw simple outline for fast preview
+        const steps = 4; // Reduced steps for speed
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          ctx.shadowOffsetX = Math.cos(angle) * strokeWidth;
+          ctx.shadowOffsetY = Math.sin(angle) * strokeWidth;
+          
+          ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
+        }
+        
+        ctx.restore();
       }
+      
+      // Draw the main image on top
+      ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
     };
 
     const handleZoomIn = () => {
