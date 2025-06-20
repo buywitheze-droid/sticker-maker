@@ -6,6 +6,7 @@ export interface TrueContourOptions {
   smoothing: number;
   includeHoles: boolean;
   holeMargin: number;
+  fillHoles: boolean;
 }
 
 interface ContourPoint {
@@ -22,7 +23,7 @@ export function createTrueContour(
   if (!ctx) return canvas;
 
   try {
-    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5 } = options;
+    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5, fillHoles = false } = options;
     
     const padding = strokeSettings.width * 2;
     canvas.width = image.width + padding * 2;
@@ -31,17 +32,21 @@ export function createTrueContour(
     const imageX = padding;
     const imageY = padding;
     
+    // Fill holes with white background if requested
+    if (fillHoles) {
+      const processedImage = fillTransparentHoles(image, threshold);
+      ctx.drawImage(processedImage, imageX, imageY);
+    } else {
+      ctx.drawImage(image, imageX, imageY);
+    }
+    
     if (strokeSettings.enabled) {
       // Generate true contour paths following the actual image edges
-      const contourPaths = generateTrueContourPaths(image, threshold, smoothing, includeHoles, holeMargin);
+      const sourceImage = fillHoles ? fillTransparentHoles(image, threshold) : image;
+      const contourPaths = generateTrueContourPaths(sourceImage, threshold, smoothing, includeHoles, holeMargin);
       
       // Draw the contour stroke
       drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
-      
-      // Draw original image on top
-      ctx.drawImage(image, imageX, imageY);
-    } else {
-      ctx.drawImage(image, imageX, imageY);
     }
     
     return canvas;
@@ -62,6 +67,78 @@ function createSimpleContour(image: HTMLImageElement, strokeSettings: StrokeSett
   canvas.height = image.height + padding * 2;
   
   ctx.drawImage(image, padding, padding);
+  return canvas;
+}
+
+function fillTransparentHoles(image: HTMLImageElement, threshold: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+  
+  canvas.width = image.width;
+  canvas.height = image.height;
+  
+  // Draw white background first
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Extract image data to identify holes
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return canvas;
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  const { data, width, height } = imageData;
+  
+  // Create filled image data
+  const filledData = new Uint8ClampedArray(data.length);
+  filledData.set(data);
+  
+  // Fill interior holes with white
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = (y * width + x) * 4;
+      const currentAlpha = data[idx + 3];
+      
+      if (currentAlpha < threshold) {
+        // Check if this transparent pixel is surrounded by solid content (interior hole)
+        let solidCount = 0;
+        const checkRadius = 3;
+        let totalChecked = 0;
+        
+        for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+          for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+            const checkY = y + dy;
+            const checkX = x + dx;
+            if (checkY >= 0 && checkY < height && checkX >= 0 && checkX < width) {
+              totalChecked++;
+              const checkIdx = (checkY * width + checkX) * 4;
+              if (data[checkIdx + 3] >= threshold) {
+                solidCount++;
+              }
+            }
+          }
+        }
+        
+        // If mostly surrounded by solid content, fill with white
+        if (solidCount > totalChecked * 0.5) {
+          filledData[idx] = 255;     // R
+          filledData[idx + 1] = 255; // G
+          filledData[idx + 2] = 255; // B
+          filledData[idx + 3] = 255; // A
+        }
+      }
+    }
+  }
+  
+  // Create new image data and draw it
+  const filledImageData = new ImageData(filledData, width, height);
+  ctx.putImageData(filledImageData, 0, 0);
+  
   return canvas;
 }
 

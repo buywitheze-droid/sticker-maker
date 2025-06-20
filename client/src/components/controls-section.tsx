@@ -99,6 +99,17 @@ export default function ControlsSection({
                 <div className="text-xs text-gray-500">
                   Traces transparent areas inside the design for complex cutting paths
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Fill Transparent Holes</Label>
+                  <Checkbox
+                    checked={strokeSettings.fillHoles}
+                    onCheckedChange={(checked) => onStrokeChange({ fillHoles: !!checked })}
+                  />
+                </div>
+                <div className="text-xs text-gray-500">
+                  Automatically fills interior transparent areas with solid white background
+                </div>
               </div>
             )}
           </CardContent>
