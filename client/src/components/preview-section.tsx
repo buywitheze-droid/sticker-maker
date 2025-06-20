@@ -169,31 +169,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use true contour for preview
-      if (strokeSettings.enabled && strokeSettings.width > 0) {
-        try {
-          // Create True Contour for preview with fast settings
-          const trueContourCanvas = createTrueContour(imageInfo.image, {
-            strokeSettings,
-            threshold: 100, // Lower threshold for faster preview
-            smoothing: 2, // More smoothing for preview speed
-            includeHoles: strokeSettings.includeHoles || false, // Use stroke settings for holes
-            holeMargin: 1.5, // Reduced margin for preview performance
-            fillHoles: strokeSettings.fillHoles || false, // Use stroke settings for hole filling
-            autoTextBackground: false // Disabled auto text background
-          });
-          
-          // Draw the image with contour result scaled to preview size
-          ctx.drawImage(trueContourCanvas, previewX, previewY, previewWidth, previewHeight);
-        } catch (error) {
-          console.error('Preview contour error:', error);
-          // Fallback to simple image rendering
-          ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
-        }
-      } else {
-        // Draw the main image without contour
-        ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
-      }
+      // Draw the main image
+      ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
     };
 
     const handleZoomIn = () => {
