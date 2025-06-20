@@ -135,6 +135,9 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Implemented largest contour detection to ensure only the primary design outline is traced unless holes are specifically enabled
   - Added "Fill Transparent Holes" option to automatically cover interior transparent areas with solid white background
   - Implemented intelligent hole detection to identify and fill only true interior holes while preserving outer transparency
+  - Added "Auto Text Background" feature to automatically place white background around text images
+  - Implemented bounding box detection to merge all text objects into one unified design with single outer contour
+  - Added smart padding calculation based on image dimensions for optimal text background coverage
 
 ## Changelog
 

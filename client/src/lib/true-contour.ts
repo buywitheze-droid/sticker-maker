@@ -7,6 +7,7 @@ export interface TrueContourOptions {
   includeHoles: boolean;
   holeMargin: number;
   fillHoles: boolean;
+  autoTextBackground: boolean;
 }
 
 interface ContourPoint {
@@ -23,7 +24,7 @@ export function createTrueContour(
   if (!ctx) return canvas;
 
   try {
-    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5, fillHoles = false } = options;
+    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5, fillHoles = false, autoTextBackground = false } = options;
     
     const padding = strokeSettings.width * 2;
     canvas.width = image.width + padding * 2;
@@ -32,18 +33,23 @@ export function createTrueContour(
     const imageX = padding;
     const imageY = padding;
     
-    // Fill holes with white background if requested
-    if (fillHoles) {
-      const processedImage = fillTransparentHoles(image, threshold);
-      ctx.drawImage(processedImage, imageX, imageY);
-    } else {
-      ctx.drawImage(image, imageX, imageY);
+    // Process image based on options
+    let processedImage = image;
+    
+    if (autoTextBackground) {
+      // Add white background to merge all text objects into one unified design
+      processedImage = addTextBackground(image, threshold);
+    } else if (fillHoles) {
+      // Fill holes with white background if requested
+      processedImage = fillTransparentHoles(image, threshold);
     }
     
+    // Draw the processed image
+    ctx.drawImage(processedImage, imageX, imageY);
+    
     if (strokeSettings.enabled) {
-      // Generate true contour paths following the actual image edges
-      const sourceImage = fillHoles ? fillTransparentHoles(image, threshold) : image;
-      const contourPaths = generateTrueContourPaths(sourceImage, threshold, smoothing, includeHoles, holeMargin);
+      // Generate true contour paths following the processed image edges
+      const contourPaths = generateTrueContourPaths(processedImage, threshold, smoothing, includeHoles, holeMargin);
       
       // Draw the contour stroke
       drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
@@ -138,6 +144,86 @@ function fillTransparentHoles(image: HTMLImageElement, threshold: number): HTMLC
   // Create new image data and draw it
   const filledImageData = new ImageData(filledData, width, height);
   ctx.putImageData(filledImageData, 0, 0);
+  
+  return canvas;
+}
+
+function addTextBackground(image: HTMLImageElement, threshold: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+  
+  canvas.width = image.width;
+  canvas.height = image.height;
+  
+  // Extract image data to analyze text structure
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return canvas;
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  const { data, width, height } = imageData;
+  
+  // Find the bounding box of all visible content
+  let minX = width, maxX = 0, minY = height, maxY = 0;
+  let hasContent = false;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+      
+      if (alpha >= threshold) {
+        hasContent = true;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  
+  if (!hasContent) {
+    // If no content, return original image
+    ctx.drawImage(image, 0, 0);
+    return canvas;
+  }
+  
+  // Add padding around the content bounding box
+  const padding = Math.max(8, Math.min(width, height) * 0.02); // 2% of smallest dimension, minimum 8px
+  const bgMinX = Math.max(0, minX - padding);
+  const bgMaxX = Math.min(width - 1, maxX + padding);
+  const bgMinY = Math.max(0, minY - padding);
+  const bgMaxY = Math.min(height - 1, maxY + padding);
+  
+  // Create new image data with white background
+  const newData = new Uint8ClampedArray(data.length);
+  
+  // Copy original data
+  newData.set(data);
+  
+  // Add white background in the bounding box area
+  for (let y = bgMinY; y <= bgMaxY; y++) {
+    for (let x = bgMinX; x <= bgMaxX; x++) {
+      const idx = (y * width + x) * 4;
+      
+      // If pixel is transparent, make it white
+      if (data[idx + 3] < threshold) {
+        newData[idx] = 255;     // R
+        newData[idx + 1] = 255; // G
+        newData[idx + 2] = 255; // B
+        newData[idx + 3] = 255; // A
+      }
+    }
+  }
+  
+  // Create new image data and draw it
+  const newImageData = new ImageData(newData, width, height);
+  ctx.putImageData(newImageData, 0, 0);
   
   return canvas;
 }

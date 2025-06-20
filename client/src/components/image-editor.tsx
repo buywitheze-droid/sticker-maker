@@ -22,6 +22,7 @@ export interface StrokeSettings {
   enabled: boolean;
   includeHoles: boolean;
   fillHoles: boolean;
+  autoTextBackground: boolean;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
@@ -52,6 +53,7 @@ export default function ImageEditor() {
     enabled: true,
     includeHoles: false,
     fillHoles: false,
+    autoTextBackground: true,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -204,7 +206,8 @@ export default function ImageEditor() {
           smoothing: 1, // Minimal smoothing for precision
           includeHoles: strokeSettings.includeHoles || false, // Include holes if enabled
           holeMargin: 2.0, // Flexi Auto Contour standard hole margin (2 pixels)
-          fillHoles: strokeSettings.fillHoles || false // Fill holes if enabled
+          fillHoles: strokeSettings.fillHoles || false, // Fill holes if enabled
+          autoTextBackground: strokeSettings.autoTextBackground || false // Auto text background if enabled
         });
         
         // Download the True Contour canvas
