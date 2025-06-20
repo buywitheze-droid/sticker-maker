@@ -129,18 +129,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const dy = corner.y - centerY;
           const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
           
-          if (distanceFromCenter > radius) {
+          // Add a small tolerance (5 pixels) to avoid false positives
+          if (distanceFromCenter > radius + 5) {
             imageExtendsBeyondShape = true;
             break;
           }
         }
       } else {
-        // Rectangle or square
+        // Rectangle or square - add tolerance here too
+        const tolerance = 5;
         imageExtendsBeyondShape = 
-          imageX < shapeX || 
-          imageY < shapeY || 
-          imageX + imageWidth > shapeX + shapeWidth || 
-          imageY + imageHeight > shapeY + shapeHeight;
+          imageX < shapeX - tolerance || 
+          imageY < shapeY - tolerance || 
+          imageX + imageWidth > shapeX + shapeWidth + tolerance || 
+          imageY + imageHeight > shapeY + shapeHeight + tolerance;
       }
 
       // Draw image without clipping to show full size
