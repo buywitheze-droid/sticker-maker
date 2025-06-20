@@ -78,22 +78,14 @@ function generateSimpleOutline(image: HTMLImageElement, strokeSettings: StrokeSe
   
   if (regions.length === 0) return [];
   
-  // If multiple regions, merge them into one larger contour
+  // If multiple regions, merge them with intelligent outline growth
   if (regions.length > 1) {
-    return mergeRegionsIntoUnifiedContour(regions, strokeSettings);
+    return mergeRegionsWithIntelligentOutlines(regions, strokeSettings, data, width, height);
   }
   
-  // Single region - create outline around it
+  // Single region - create outline with intelligent growth
   const region = regions[0];
-  const offset = strokeSettings.width / 100 * 5;
-  
-  return [
-    { x: region.minX - offset, y: region.minY - offset },
-    { x: region.maxX + offset, y: region.minY - offset },
-    { x: region.maxX + offset, y: region.maxY + offset },
-    { x: region.minX - offset, y: region.maxY + offset },
-    { x: region.minX - offset, y: region.minY - offset }
-  ];
+  return createIntelligentOutline(region, strokeSettings, data, width, height);
 }
 
 interface ImageRegion {
@@ -171,11 +163,18 @@ function floodFillRegion(
   return { minX, maxX, minY, maxY, pixels };
 }
 
-function mergeRegionsIntoUnifiedContour(regions: ImageRegion[], strokeSettings: StrokeSettings): ContourPoint[] {
+function mergeRegionsWithIntelligentOutlines(
+  regions: ImageRegion[], 
+  strokeSettings: StrokeSettings, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): ContourPoint[] {
   if (regions.length === 0) return [];
   
-  // Calculate merge distance based on stroke width
-  const mergeDistance = strokeSettings.width / 100 * 8; // Larger merge distance
+  // For merged regions, we want to create a single encompassing outline
+  // that can grow outward freely since it's the exterior boundary
+  const offset = strokeSettings.width / 100 * 5;
   
   // Find overall bounding box of all regions
   let globalMinX = regions[0].minX;
@@ -190,22 +189,192 @@ function mergeRegionsIntoUnifiedContour(regions: ImageRegion[], strokeSettings: 
     globalMaxY = Math.max(globalMaxY, region.maxY);
   }
   
-  // Create unified contour that encompasses all regions
-  const offset = strokeSettings.width / 100 * 5;
+  // Create exterior outline that can grow freely
+  return [
+    { x: Math.max(0, globalMinX - offset), y: Math.max(0, globalMinY - offset) },
+    { x: Math.min(width - 1, globalMaxX + offset), y: Math.max(0, globalMinY - offset) },
+    { x: Math.min(width - 1, globalMaxX + offset), y: Math.min(height - 1, globalMaxY + offset) },
+    { x: Math.max(0, globalMinX - offset), y: Math.min(height - 1, globalMaxY + offset) },
+    { x: Math.max(0, globalMinX - offset), y: Math.max(0, globalMinY - offset) }
+  ];
+}
+
+function createIntelligentOutline(
+  region: ImageRegion, 
+  strokeSettings: StrokeSettings, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): ContourPoint[] {
+  const baseOffset = strokeSettings.width / 100 * 5;
   
-  // Strategy 1: Simple encompassing rectangle
-  if (shouldUseSimpleRectangle(regions, mergeDistance)) {
-    return [
-      { x: globalMinX - offset, y: globalMinY - offset },
-      { x: globalMaxX + offset, y: globalMinY - offset },
-      { x: globalMaxX + offset, y: globalMaxY + offset },
-      { x: globalMinX - offset, y: globalMaxY + offset },
-      { x: globalMinX - offset, y: globalMinY - offset }
-    ];
+  // Check if this region is surrounded by other content (interior) or touches edges (exterior)
+  const isInteriorRegion = checkIfInteriorRegion(region, data, width, height);
+  
+  if (isInteriorRegion) {
+    // For interior regions, calculate constrained outline that stops when it hits other content
+    return createConstrainedOutline(region, baseOffset, data, width, height);
+  } else {
+    // For exterior regions, allow free growth
+    return createFreeGrowthOutline(region, baseOffset, width, height);
+  }
+}
+
+function checkIfInteriorRegion(
+  region: ImageRegion, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): boolean {
+  // Check if region touches image boundaries - if so, it's exterior
+  if (region.minX <= 5 || region.maxX >= width - 5 || 
+      region.minY <= 5 || region.maxY >= height - 5) {
+    return false; // Touches edges, so it's exterior
   }
   
-  // Strategy 2: Convex hull for more complex shapes
-  return createConvexHullContour(regions, offset);
+  // Check if region is surrounded by other solid content
+  const checkRadius = 20; // Look around the region
+  let surroundingPixels = 0;
+  let solidPixels = 0;
+  
+  for (let y = Math.max(0, region.minY - checkRadius); 
+       y <= Math.min(height - 1, region.maxY + checkRadius); y++) {
+    for (let x = Math.max(0, region.minX - checkRadius); 
+         x <= Math.min(width - 1, region.maxX + checkRadius); x++) {
+      
+      // Skip if inside the region itself
+      if (x >= region.minX && x <= region.maxX && y >= region.minY && y <= region.maxY) {
+        continue;
+      }
+      
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+      
+      surroundingPixels++;
+      if (alpha > 50) {
+        solidPixels++;
+      }
+    }
+  }
+  
+  // If more than 30% of surrounding area is solid, consider it interior
+  return surroundingPixels > 0 && (solidPixels / surroundingPixels) > 0.3;
+}
+
+function createConstrainedOutline(
+  region: ImageRegion, 
+  baseOffset: number, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): ContourPoint[] {
+  // For interior regions, calculate how much we can grow in each direction
+  // before hitting other solid content
+  
+  const maxGrowthLeft = calculateMaxGrowth(region, 'left', baseOffset, data, width, height);
+  const maxGrowthRight = calculateMaxGrowth(region, 'right', baseOffset, data, width, height);
+  const maxGrowthTop = calculateMaxGrowth(region, 'top', baseOffset, data, width, height);
+  const maxGrowthBottom = calculateMaxGrowth(region, 'bottom', baseOffset, data, width, height);
+  
+  return [
+    { x: region.minX - maxGrowthLeft, y: region.minY - maxGrowthTop },
+    { x: region.maxX + maxGrowthRight, y: region.minY - maxGrowthTop },
+    { x: region.maxX + maxGrowthRight, y: region.maxY + maxGrowthBottom },
+    { x: region.minX - maxGrowthLeft, y: region.maxY + maxGrowthBottom },
+    { x: region.minX - maxGrowthLeft, y: region.minY - maxGrowthTop }
+  ];
+}
+
+function calculateMaxGrowth(
+  region: ImageRegion, 
+  direction: 'left' | 'right' | 'top' | 'bottom', 
+  requestedOffset: number, 
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number
+): number {
+  let maxGrowth = requestedOffset;
+  
+  for (let distance = 1; distance <= requestedOffset; distance++) {
+    let hitsSolid = false;
+    
+    if (direction === 'left') {
+      const checkX = region.minX - distance;
+      if (checkX < 0) {
+        maxGrowth = distance - 1;
+        break;
+      }
+      for (let y = region.minY; y <= region.maxY; y++) {
+        const idx = (y * width + checkX) * 4;
+        if (data[idx + 3] > 50) {
+          hitsSolid = true;
+          break;
+        }
+      }
+    } else if (direction === 'right') {
+      const checkX = region.maxX + distance;
+      if (checkX >= width) {
+        maxGrowth = distance - 1;
+        break;
+      }
+      for (let y = region.minY; y <= region.maxY; y++) {
+        const idx = (y * width + checkX) * 4;
+        if (data[idx + 3] > 50) {
+          hitsSolid = true;
+          break;
+        }
+      }
+    } else if (direction === 'top') {
+      const checkY = region.minY - distance;
+      if (checkY < 0) {
+        maxGrowth = distance - 1;
+        break;
+      }
+      for (let x = region.minX; x <= region.maxX; x++) {
+        const idx = (checkY * width + x) * 4;
+        if (data[idx + 3] > 50) {
+          hitsSolid = true;
+          break;
+        }
+      }
+    } else if (direction === 'bottom') {
+      const checkY = region.maxY + distance;
+      if (checkY >= height) {
+        maxGrowth = distance - 1;
+        break;
+      }
+      for (let x = region.minX; x <= region.maxX; x++) {
+        const idx = (checkY * width + x) * 4;
+        if (data[idx + 3] > 50) {
+          hitsSolid = true;
+          break;
+        }
+      }
+    }
+    
+    if (hitsSolid) {
+      maxGrowth = Math.max(1, distance - 2); // Stop a bit before hitting solid content
+      break;
+    }
+  }
+  
+  return maxGrowth;
+}
+
+function createFreeGrowthOutline(
+  region: ImageRegion, 
+  offset: number, 
+  width: number, 
+  height: number
+): ContourPoint[] {
+  // For exterior regions, allow full growth but respect image boundaries
+  return [
+    { x: Math.max(0, region.minX - offset), y: Math.max(0, region.minY - offset) },
+    { x: Math.min(width - 1, region.maxX + offset), y: Math.max(0, region.minY - offset) },
+    { x: Math.min(width - 1, region.maxX + offset), y: Math.min(height - 1, region.maxY + offset) },
+    { x: Math.max(0, region.minX - offset), y: Math.min(height - 1, region.maxY + offset) },
+    { x: Math.max(0, region.minX - offset), y: Math.max(0, region.minY - offset) }
+  ];
 }
 
 function shouldUseSimpleRectangle(regions: ImageRegion[], mergeDistance: number): boolean {
