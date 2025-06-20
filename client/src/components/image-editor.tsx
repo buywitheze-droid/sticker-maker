@@ -151,47 +151,27 @@ export default function ImageEditor() {
     setIsProcessing(true);
     
     try {
-      if (downloadType === 'vector' || downloadType === 'cutcontour') {
-        // Use optimized vector processing to prevent crashes
-        await new Promise(resolve => setTimeout(resolve, 100)); // Small delay for UI feedback
-        
-        const vectorCanvas = createVectorStroke(imageInfo.image, {
-          strokeSettings,
-          exportCutContour: downloadType === 'cutcontour',
-          vectorQuality: 'medium' // Use medium quality to prevent crashes
-        });
-        
-        let filename = downloadType === 'cutcontour' 
-          ? 'cutcontour_outline' 
-          : 'vector_sticker';
-        
-        // For true vector formats, create vector paths
-        let vectorPaths;
-        if (format === 'pdf' || format === 'eps' || format === 'svg') {
-          vectorPaths = createVectorPaths(imageInfo.image, strokeSettings, downloadType === 'cutcontour');
-        }
-        
-        // Add another small delay before download
-        await new Promise(resolve => setTimeout(resolve, 100));
-        downloadVectorStroke(vectorCanvas, filename, format, vectorPaths);
-      } else {
-        // Standard canvas-based download
-        const dpi = downloadType === 'highres' ? 300 : resizeSettings.outputDPI;
-        const filename = `sticker${downloadType === 'highres' ? '_300dpi' : ''}.png`;
-        
-        await downloadCanvas(
-          imageInfo.image,
-          strokeSettings,
-          resizeSettings.widthInches,
-          resizeSettings.heightInches,
-          dpi,
-          filename,
-          shapeSettings
-        );
-      }
+      // Use standard canvas-based download with 300 DPI for cutcontour
+      const dpi = 300;
+      const filename = downloadType === 'cutcontour' ? 'cutcontour_sticker.png' : 'sticker_300dpi.png';
+      
+      // Create cutcontour-specific stroke settings with magenta color
+      const cutcontourStrokeSettings = downloadType === 'cutcontour' 
+        ? { ...strokeSettings, color: '#FF00FF', enabled: true } // Force magenta cutlines
+        : strokeSettings;
+      
+      await downloadCanvas(
+        imageInfo.image,
+        cutcontourStrokeSettings,
+        resizeSettings.widthInches,
+        resizeSettings.heightInches,
+        dpi,
+        filename,
+        shapeSettings
+      );
     } catch (error) {
       console.error("Download failed:", error);
-      alert("Download failed. Please try a different quality setting or reduce the image size.");
+      alert("Download failed. Please try again.");
     } finally {
       setIsProcessing(false);
     }

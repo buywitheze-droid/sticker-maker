@@ -114,8 +114,10 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Renamed "White Outline" to "Contour" for better user clarity
   - Added visual feedback with colored borders when options are enabled
   - Implemented side-by-side layout showing both options with automatic mutual exclusion
-  - Simplified download options to single "PNG file with outline" button for full resolution transparent PNG
+  - Simplified download options to single "PNG file with cutlines" button for cutting machines
+  - Fixed export sizing bug where images exported at wrong dimensions (e.g., 10.6" exporting as 44")
   - Set shape stroke to be disabled by default for cleaner shape backgrounds
+  - Cutcontour export now forces magenta (#FF00FF) cutlines and respects resize settings
 
 ## Changelog
 
