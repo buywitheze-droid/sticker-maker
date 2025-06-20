@@ -66,13 +66,13 @@ export default function ControlsSection({
                   <Slider
                     value={[strokeSettings.width]}
                     onValueChange={([value]) => onStrokeChange({ width: value })}
-                    min={1}
-                    max={20}
-                    step={1}
+                    min={100}
+                    max={5000}
+                    step={100}
                     className="mt-2"
                   />
                   <div className="text-sm text-gray-500 mt-1">
-                    {strokeSettings.width}px
+                    {strokeSettings.width/100}px (~{(strokeSettings.width/100/300*25.4).toFixed(1)}mm offset)
                   </div>
                 </div>
 

@@ -48,7 +48,7 @@ export interface ShapeSettings {
 export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 5,
+    width: 500, // Increased by 100x (5 * 100)
     color: "#ffffff",
     enabled: true,
     includeHoles: false,
