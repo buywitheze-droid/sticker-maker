@@ -155,6 +155,9 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Simplified UI to focus on shape background as the primary design option
   - Streamlined preview and image processing to eliminate complex contour generation
   - Maintained shape background functionality for centered design layouts
+  - Applied dark grey theme to application background per user preference
+  - Changed default preview background to dark grey instead of white
+  - Maintained dark theme consistency throughout interface
 
 ## Changelog
 
