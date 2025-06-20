@@ -129,15 +129,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const dy = corner.y - centerY;
           const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
           
-          // Add a small tolerance (5 pixels) to avoid false positives
-          if (distanceFromCenter > radius + 5) {
+          // Add a larger tolerance (15 pixels) to avoid false positives
+          if (distanceFromCenter > radius + 15) {
             imageExtendsBeyondShape = true;
             break;
           }
         }
       } else {
         // Rectangle or square - add tolerance here too
-        const tolerance = 5;
+        const tolerance = 15;
         imageExtendsBeyondShape = 
           imageX < shapeX - tolerance || 
           imageY < shapeY - tolerance || 
