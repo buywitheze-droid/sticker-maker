@@ -12,7 +12,7 @@ interface ControlsSectionProps {
   resizeSettings: ResizeSettings;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour') => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
 }
@@ -197,24 +197,42 @@ export default function ControlsSection({
                 Download 300 DPI (Print Quality)
               </Button>
 
-              <Button 
-                onClick={() => onDownload('vector')}
-                disabled={!imageInfo || isProcessing}
-                className="w-full bg-purple-500 hover:bg-purple-600"
-              >
-                Download Vector Quality
-              </Button>
-
-              <Button 
-                onClick={() => onDownload('cutcontour')}
-                disabled={!imageInfo || isProcessing}
-                className="w-full bg-pink-500 hover:bg-pink-600"
-              >
-                Download CutContour (Outline Only)
-              </Button>
+              <div className="space-y-2">
+                <Button 
+                  onClick={() => onDownload('vector')}
+                  disabled={!imageInfo || isProcessing}
+                  className="w-full bg-purple-500 hover:bg-purple-600"
+                >
+                  Download Vector Quality (PNG)
+                </Button>
+                
+                <div className="grid grid-cols-3 gap-2">
+                  <Button 
+                    onClick={() => onDownload('cutcontour', 'pdf')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-red-500 hover:bg-red-600 text-xs"
+                  >
+                    PDF
+                  </Button>
+                  <Button 
+                    onClick={() => onDownload('cutcontour', 'eps')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-orange-500 hover:bg-orange-600 text-xs"
+                  >
+                    EPS
+                  </Button>
+                  <Button 
+                    onClick={() => onDownload('cutcontour', 'svg')}
+                    disabled={!imageInfo || isProcessing}
+                    className="bg-green-500 hover:bg-green-600 text-xs"
+                  >
+                    SVG
+                  </Button>
+                </div>
+              </div>
 
               <div className="text-xs text-gray-500 text-center">
-                Auto-cropped with transparent background. CutContour uses magenta spot color for cutting guides.
+                Auto-cropped with transparent background. PDF/EPS/SVG downloads create true vector outlines with magenta CutContour spot color for cutting machines.
               </div>
             </div>
           </CardContent>

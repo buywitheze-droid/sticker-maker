@@ -4,7 +4,7 @@ import PreviewSection from "./preview-section";
 import ControlsSection from "./controls-section";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
-import { createVectorStroke, downloadVectorStroke } from "@/lib/vector-stroke";
+import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
 
 export interface ImageInfo {
   file: File;
@@ -94,7 +94,7 @@ export default function ImageEditor() {
     });
   }, [imageInfo]);
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard') => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard', format: VectorFormat = 'png') => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
@@ -110,13 +110,19 @@ export default function ImageEditor() {
           vectorQuality: 'medium' // Use medium quality to prevent crashes
         });
         
-        const filename = downloadType === 'cutcontour' 
-          ? 'cutcontour_outline.png' 
-          : 'vector_sticker.png';
+        let filename = downloadType === 'cutcontour' 
+          ? 'cutcontour_outline' 
+          : 'vector_sticker';
+        
+        // For true vector formats, create vector paths
+        let vectorPaths;
+        if (format === 'pdf' || format === 'eps' || format === 'svg') {
+          vectorPaths = createVectorPaths(imageInfo.image, strokeSettings, downloadType === 'cutcontour');
+        }
         
         // Add another small delay before download
         await new Promise(resolve => setTimeout(resolve, 100));
-        downloadVectorStroke(vectorCanvas, filename);
+        downloadVectorStroke(vectorCanvas, filename, format, vectorPaths);
       } else {
         // Standard canvas-based download
         const dpi = downloadType === 'highres' ? 300 : resizeSettings.outputDPI;

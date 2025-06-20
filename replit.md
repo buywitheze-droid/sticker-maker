@@ -99,6 +99,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Implemented vector-quality stroke processing with distance field computation
   - Added CutContour export feature with magenta spot color for cutting guides
   - Introduced 4 download modes: Standard, High-res (300 DPI), Vector Quality, and CutContour
+  - Added true vector export formats: PDF, EPS, and SVG with edge tracing algorithms
+  - Created vector path generation from bitmap outlines for cutting machine compatibility
 
 ## Changelog
 
