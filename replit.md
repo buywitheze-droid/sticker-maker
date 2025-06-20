@@ -127,6 +127,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added alpha channel edge detection to trace visible content boundaries instead of rectangular outlines
   - Created contour tracing that follows the actual shape edges for authentic design outlining
   - Fixed contour generation to produce proper image content outlines rather than boundary boxes
+  - Added "Include Interior Holes" option to trace transparent areas inside designs for complex cutting paths
+  - Implemented dual edge detection for both outer boundaries and interior holes with intelligent hole detection
 
 ## Changelog
 

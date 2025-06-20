@@ -20,6 +20,7 @@ export interface StrokeSettings {
   width: number;
   color: string;
   enabled: boolean;
+  includeHoles: boolean;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
@@ -48,6 +49,7 @@ export default function ImageEditor() {
     width: 5,
     color: "#ffffff",
     enabled: true,
+    includeHoles: false,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -197,7 +199,8 @@ export default function ImageEditor() {
         const trueContourCanvas = createTrueContour(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
           threshold: 128, // Alpha threshold for edge detection
-          smoothing: 1 // Minimal smoothing for precision
+          smoothing: 1, // Minimal smoothing for precision
+          includeHoles: strokeSettings.includeHoles || false // Include holes if enabled
         });
         
         // Download the True Contour canvas

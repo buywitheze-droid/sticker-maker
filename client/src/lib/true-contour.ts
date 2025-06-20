@@ -4,6 +4,7 @@ export interface TrueContourOptions {
   strokeSettings: StrokeSettings;
   threshold: number;
   smoothing: number;
+  includeHoles: boolean;
 }
 
 interface ContourPoint {
@@ -20,7 +21,7 @@ export function createTrueContour(
   if (!ctx) return canvas;
 
   try {
-    const { strokeSettings, threshold = 128, smoothing = 1 } = options;
+    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false } = options;
     
     const padding = strokeSettings.width * 2;
     canvas.width = image.width + padding * 2;
@@ -31,7 +32,7 @@ export function createTrueContour(
     
     if (strokeSettings.enabled) {
       // Generate true contour paths following the actual image edges
-      const contourPaths = generateTrueContourPaths(image, threshold, smoothing);
+      const contourPaths = generateTrueContourPaths(image, threshold, smoothing, includeHoles);
       
       // Draw the contour stroke
       drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
@@ -66,7 +67,8 @@ function createSimpleContour(image: HTMLImageElement, strokeSettings: StrokeSett
 function generateTrueContourPaths(
   image: HTMLImageElement,
   threshold: number,
-  smoothing: number
+  smoothing: number,
+  includeHoles: boolean
 ): ContourPoint[][] {
   try {
     // Extract image data
@@ -81,11 +83,17 @@ function generateTrueContourPaths(
     const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
     const { data, width, height } = imageData;
     
-    // Create edge mask using proper edge detection
-    const edgeMask = createEdgeMask(data, width, height, threshold);
+    // Create edge masks for both outer edges and holes
+    const { outerEdges, holeEdges } = createEdgeMasks(data, width, height, threshold, includeHoles);
     
-    // Trace contours following the actual edges
-    const contours = traceImageContours(edgeMask, width, height);
+    // Trace outer contours
+    const outerContours = traceImageContours(outerEdges, width, height);
+    
+    // Trace hole contours if requested
+    const holeContours = includeHoles ? traceImageContours(holeEdges, width, height) : [];
+    
+    // Combine outer and hole contours
+    const contours = [...outerContours, ...holeContours];
     
     // Smooth the paths if requested
     return contours.map(contour => 
@@ -97,8 +105,15 @@ function generateTrueContourPaths(
   }
 }
 
-function createEdgeMask(data: Uint8ClampedArray, width: number, height: number, threshold: number): boolean[][] {
-  const mask: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
+function createEdgeMasks(
+  data: Uint8ClampedArray, 
+  width: number, 
+  height: number, 
+  threshold: number, 
+  includeHoles: boolean
+): { outerEdges: boolean[][], holeEdges: boolean[][] } {
+  const outerEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
+  const holeEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
   
   // Create alpha mask first
   const alphaMask: number[][] = Array(height).fill(null).map(() => Array(width).fill(0));
@@ -109,32 +124,72 @@ function createEdgeMask(data: Uint8ClampedArray, width: number, height: number, 
     }
   }
   
-  // Find edges where alpha transitions from transparent to opaque
+  // Find outer edges and holes
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const currentAlpha = alphaMask[y][x];
       
-      // Check if this pixel is part of the visible content
+      // For outer edges: solid pixels adjacent to transparent pixels
       if (currentAlpha >= threshold) {
-        // Check if any neighbor is transparent (edge detection)
-        let isEdge = false;
+        let hasTransparentNeighbor = false;
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
             if (dx === 0 && dy === 0) continue;
             const neighborAlpha = alphaMask[y + dy][x + dx];
             if (neighborAlpha < threshold) {
-              isEdge = true;
+              hasTransparentNeighbor = true;
               break;
             }
           }
-          if (isEdge) break;
+          if (hasTransparentNeighbor) break;
         }
-        mask[y][x] = isEdge;
+        outerEdges[y][x] = hasTransparentNeighbor;
+      }
+      
+      // For hole edges: transparent pixels adjacent to solid pixels (interior holes)
+      if (includeHoles && currentAlpha < threshold) {
+        let hasSolidNeighbor = false;
+        let isInteriorHole = true;
+        
+        // Check if this transparent pixel is surrounded by solid content (interior hole)
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const neighborAlpha = alphaMask[y + dy][x + dx];
+            if (neighborAlpha >= threshold) {
+              hasSolidNeighbor = true;
+            }
+          }
+        }
+        
+        // Check if this is truly an interior hole by ensuring it's not on the edge
+        if (hasSolidNeighbor) {
+          // Additional check: make sure it's not just an edge by checking a larger radius
+          let solidCount = 0;
+          const checkRadius = 3;
+          for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+            for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+              const checkY = y + dy;
+              const checkX = x + dx;
+              if (checkY >= 0 && checkY < height && checkX >= 0 && checkX < width) {
+                if (alphaMask[checkY][checkX] >= threshold) {
+                  solidCount++;
+                }
+              }
+            }
+          }
+          
+          // If there's significant solid content around this transparent pixel, it's likely a hole
+          const totalChecked = (checkRadius * 2 + 1) * (checkRadius * 2 + 1);
+          if (solidCount > totalChecked * 0.3) { // At least 30% solid content around it
+            holeEdges[y][x] = true;
+          }
+        }
       }
     }
   }
   
-  return mask;
+  return { outerEdges, holeEdges };
 }
 
 function traceImageContours(edgeMask: boolean[][], width: number, height: number): ContourPoint[][] {

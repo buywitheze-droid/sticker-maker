@@ -88,6 +88,17 @@ export default function ControlsSection({
                     <span className="text-sm text-gray-600">{strokeSettings.color}</span>
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Include Interior Holes</Label>
+                  <Checkbox
+                    checked={strokeSettings.includeHoles}
+                    onCheckedChange={(checked) => onStrokeChange({ includeHoles: !!checked })}
+                  />
+                </div>
+                <div className="text-xs text-gray-500">
+                  Traces transparent areas inside the design for complex cutting paths
+                </div>
               </div>
             )}
           </CardContent>

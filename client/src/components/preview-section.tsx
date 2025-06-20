@@ -176,7 +176,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const trueContourCanvas = createTrueContour(imageInfo.image, {
             strokeSettings,
             threshold: 100, // Lower threshold for faster preview
-            smoothing: 2 // More smoothing for preview speed
+            smoothing: 2, // More smoothing for preview speed
+            includeHoles: strokeSettings.includeHoles || false // Use stroke settings for holes
           });
           
           // Draw the True Contour result scaled to preview size
