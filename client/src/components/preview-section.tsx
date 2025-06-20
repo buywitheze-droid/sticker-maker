@@ -99,15 +99,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Calculate image dimensions based on resize settings
-      const pixelsPerInch = 300; // Standard DPI
-      const targetImageWidthPx = resizeSettings.widthInches * pixelsPerInch;
-      const targetImageHeightPx = resizeSettings.heightInches * pixelsPerInch;
-      
-      // Scale to fit in preview while maintaining actual proportions
-      const previewScale = Math.min(shapeWidth, shapeHeight) / Math.max(targetImageWidthPx, targetImageHeightPx);
-      let imageWidth = targetImageWidthPx * previewScale;
-      let imageHeight = targetImageHeightPx * previewScale;
+      // Calculate image dimensions in preview based on resize settings
+      const shapePixelsPerInch = Math.min(shapeWidth / shapeSettings.widthInches, shapeHeight / shapeSettings.heightInches);
+      let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
+      let imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
 
       // Perfect center positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
