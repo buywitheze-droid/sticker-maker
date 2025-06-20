@@ -177,7 +177,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             strokeSettings,
             threshold: 100, // Lower threshold for faster preview
             smoothing: 2, // More smoothing for preview speed
-            includeHoles: strokeSettings.includeHoles || false // Use stroke settings for holes
+            includeHoles: strokeSettings.includeHoles || false, // Use stroke settings for holes
+            holeMargin: 1.5 // Reduced margin for preview performance
           });
           
           // Draw the True Contour result scaled to preview size

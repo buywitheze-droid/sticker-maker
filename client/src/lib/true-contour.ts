@@ -5,6 +5,7 @@ export interface TrueContourOptions {
   threshold: number;
   smoothing: number;
   includeHoles: boolean;
+  holeMargin: number;
 }
 
 interface ContourPoint {
@@ -21,7 +22,7 @@ export function createTrueContour(
   if (!ctx) return canvas;
 
   try {
-    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false } = options;
+    const { strokeSettings, threshold = 128, smoothing = 1, includeHoles = false, holeMargin = 0.5 } = options;
     
     const padding = strokeSettings.width * 2;
     canvas.width = image.width + padding * 2;
@@ -32,7 +33,7 @@ export function createTrueContour(
     
     if (strokeSettings.enabled) {
       // Generate true contour paths following the actual image edges
-      const contourPaths = generateTrueContourPaths(image, threshold, smoothing, includeHoles);
+      const contourPaths = generateTrueContourPaths(image, threshold, smoothing, includeHoles, holeMargin);
       
       // Draw the contour stroke
       drawTrueContourStroke(ctx, contourPaths, strokeSettings, imageX, imageY);
@@ -68,7 +69,8 @@ function generateTrueContourPaths(
   image: HTMLImageElement,
   threshold: number,
   smoothing: number,
-  includeHoles: boolean
+  includeHoles: boolean,
+  holeMargin: number
 ): ContourPoint[][] {
   try {
     // Extract image data
@@ -84,16 +86,20 @@ function generateTrueContourPaths(
     const { data, width, height } = imageData;
     
     // Create edge masks for both outer edges and holes
-    const { outerEdges, holeEdges } = createEdgeMasks(data, width, height, threshold, includeHoles);
+    const { outerEdges, holeEdges } = createEdgeMasks(data, width, height, threshold, includeHoles, holeMargin);
     
     // Trace outer contours
     const outerContours = traceImageContours(outerEdges, width, height);
     
-    // Trace hole contours if requested
+    // Trace hole contours if requested with Flexi Auto Contour margins
     const holeContours = includeHoles ? traceImageContours(holeEdges, width, height) : [];
     
+    // Apply Flexi Auto Contour style margins to holes
+    const adjustedHoleContours = includeHoles ? 
+      applyFlexiHoleMargins(holeContours, holeMargin) : [];
+    
     // Combine outer and hole contours
-    const contours = [...outerContours, ...holeContours];
+    const contours = [...outerContours, ...adjustedHoleContours];
     
     // Smooth the paths if requested
     return contours.map(contour => 
@@ -110,7 +116,8 @@ function createEdgeMasks(
   width: number, 
   height: number, 
   threshold: number, 
-  includeHoles: boolean
+  includeHoles: boolean,
+  holeMargin: number
 ): { outerEdges: boolean[][], holeEdges: boolean[][] } {
   const outerEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
   const holeEdges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
@@ -164,9 +171,9 @@ function createEdgeMasks(
         
         // Check if this is truly an interior hole by ensuring it's not on the edge
         if (hasSolidNeighbor) {
-          // Additional check: make sure it's not just an edge by checking a larger radius
+          // Flexi Auto Contour style hole detection with margin consideration
           let solidCount = 0;
-          const checkRadius = 3;
+          const checkRadius = Math.max(3, Math.floor(holeMargin * 3)); // Scale radius based on margin
           for (let dy = -checkRadius; dy <= checkRadius; dy++) {
             for (let dx = -checkRadius; dx <= checkRadius; dx++) {
               const checkY = y + dy;
@@ -179,9 +186,9 @@ function createEdgeMasks(
             }
           }
           
-          // If there's significant solid content around this transparent pixel, it's likely a hole
+          // Flexi Auto Contour uses stricter criteria for hole detection
           const totalChecked = (checkRadius * 2 + 1) * (checkRadius * 2 + 1);
-          if (solidCount > totalChecked * 0.3) { // At least 30% solid content around it
+          if (solidCount > totalChecked * 0.4) { // Higher threshold for Flexi compatibility
             holeEdges[y][x] = true;
           }
         }
@@ -303,6 +310,62 @@ function smoothContourPath(path: ContourPoint[], smoothing: number): ContourPoin
   }
   
   return smoothed;
+}
+
+function applyFlexiHoleMargins(holeContours: ContourPoint[][], margin: number): ContourPoint[][] {
+  // Flexi Auto Contour applies inward offset to holes for proper cutting clearance
+  return holeContours.map(contour => {
+    if (contour.length < 3) return contour;
+    
+    const adjustedContour: ContourPoint[] = [];
+    const marginPixels = Math.max(1, Math.floor(margin));
+    
+    for (let i = 0; i < contour.length; i++) {
+      const prev = contour[(i - 1 + contour.length) % contour.length];
+      const curr = contour[i];
+      const next = contour[(i + 1) % contour.length];
+      
+      // Calculate inward normal vector for hole contour
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+      
+      if (len1 > 0 && len2 > 0) {
+        // Normalize and average the edge vectors
+        const nx1 = -dy1 / len1; // Perpendicular (inward for holes)
+        const ny1 = dx1 / len1;
+        
+        const nx2 = -dy2 / len2;
+        const ny2 = dx2 / len2;
+        
+        // Average normal direction
+        let avgNx = (nx1 + nx2) / 2;
+        let avgNy = (ny1 + ny2) / 2;
+        const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy);
+        
+        if (avgLen > 0) {
+          avgNx /= avgLen;
+          avgNy /= avgLen;
+          
+          // Apply Flexi Auto Contour style inward margin
+          adjustedContour.push({
+            x: Math.round(curr.x + avgNx * marginPixels),
+            y: Math.round(curr.y + avgNy * marginPixels)
+          });
+        } else {
+          adjustedContour.push(curr);
+        }
+      } else {
+        adjustedContour.push(curr);
+      }
+    }
+    
+    return adjustedContour.length > 2 ? adjustedContour : contour;
+  }).filter(contour => contour.length > 2);
 }
 
 function drawTrueContourStroke(

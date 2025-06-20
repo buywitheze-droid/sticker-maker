@@ -129,6 +129,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Fixed contour generation to produce proper image content outlines rather than boundary boxes
   - Added "Include Interior Holes" option to trace transparent areas inside designs for complex cutting paths
   - Implemented dual edge detection for both outer boundaries and interior holes with intelligent hole detection
+  - Applied Flexi Auto Contour standard margins for holes with inward offset for proper cutting machine clearance
+  - Added 2-pixel inward margin for holes to match professional vinyl cutting software standards
 
 ## Changelog
 

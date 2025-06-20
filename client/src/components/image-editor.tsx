@@ -200,7 +200,8 @@ export default function ImageEditor() {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
           threshold: 128, // Alpha threshold for edge detection
           smoothing: 1, // Minimal smoothing for precision
-          includeHoles: strokeSettings.includeHoles || false // Include holes if enabled
+          includeHoles: strokeSettings.includeHoles || false, // Include holes if enabled
+          holeMargin: 2.0 // Flexi Auto Contour standard hole margin (2 pixels)
         });
         
         // Download the True Contour canvas
