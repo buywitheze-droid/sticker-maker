@@ -6,6 +6,7 @@ import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
 import { createCadCutContour } from "@/lib/cadcut-contour";
+import { createCTContour } from "@/lib/ctcontour";
 
 export interface ImageInfo {
   file: File;
@@ -153,24 +154,24 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'cutcontour') {
-        // Use CadCut-style contour processing
+        // Use CTContour method for professional outline generation
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+        const ctContourCanvas = createCTContour(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
-          tolerance: 5, // High precision like CadCut
-          smoothing: 1, // Minimal smoothing for precision
-          cornerDetection: true // Preserve sharp corners
+          precision: 1.0, // High precision for cutting
+          threshold: 200, // Alpha threshold for edge detection
+          simplification: 1.5 // Minimal simplification for accuracy
         });
         
-        // Download the CadCut contour canvas
-        cadCutCanvas.toBlob((blob: Blob | null) => {
+        // Download the CTContour canvas
+        ctContourCanvas.toBlob((blob: Blob | null) => {
           if (!blob) return;
           
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'cadcut_contour.png';
+          link.download = 'ctcontour_cutlines.png';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);

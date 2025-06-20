@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
 import { createCadCutContour } from "@/lib/cadcut-contour";
+import { createCTContour } from "@/lib/ctcontour";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -168,18 +169,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
-      // Use CadCut-style contour system for preview
+      // Use CTContour method for preview
       if (strokeSettings.enabled && strokeSettings.width > 0) {
-        // Create CadCut contour for preview
-        const cadCutCanvas = createCadCutContour(imageInfo.image, {
+        // Create CTContour for preview
+        const ctContourCanvas = createCTContour(imageInfo.image, {
           strokeSettings,
-          tolerance: 8, // Slightly less precision for faster preview
-          smoothing: 1,
-          cornerDetection: true
+          precision: 0.8, // Slightly reduced precision for faster preview
+          threshold: 180, // Alpha threshold
+          simplification: 2.0 // More simplification for preview performance
         });
         
-        // Draw the CadCut contour result scaled to preview size
-        ctx.drawImage(cadCutCanvas, previewX, previewY, previewWidth, previewHeight);
+        // Draw the CTContour result scaled to preview size
+        ctx.drawImage(ctContourCanvas, previewX, previewY, previewWidth, previewHeight);
       } else {
         // Draw the main image without contour
         ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
