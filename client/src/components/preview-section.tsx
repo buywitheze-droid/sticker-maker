@@ -97,27 +97,54 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Calculate image dimensions based on resize settings within the shape
+      // Calculate image dimensions based on resize settings (not constrained by shape)
       const imageAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
-      const availableWidth = shapeWidth * 0.8;
-      const availableHeight = shapeHeight * 0.8;
-      const availableAspect = availableWidth / availableHeight;
+      const shapeAspectRatio = shapeSettings.widthInches / shapeSettings.heightInches;
       
-      let imageWidth, imageHeight;
-      if (imageAspectRatio > availableAspect) {
-        imageWidth = availableWidth;
-        imageHeight = imageWidth / imageAspectRatio;
-      } else {
-        imageHeight = availableHeight;
-        imageWidth = imageHeight * imageAspectRatio;
-      }
+      // Scale image based on resize settings relative to shape size
+      const scaleToShape = Math.min(shapeWidth, shapeHeight) / 6; // Base scale factor
+      let imageWidth = (resizeSettings.widthInches / shapeSettings.widthInches) * shapeWidth;
+      let imageHeight = (resizeSettings.heightInches / shapeSettings.heightInches) * shapeHeight;
 
       // Perfect center positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 
-      // Draw image without stroke (shape background replaces stroke functionality)
+      // Check for overlap - if image extends beyond shape bounds
+      const imageExtendsBeyondShape = 
+        imageX < shapeX || 
+        imageY < shapeY || 
+        imageX + imageWidth > shapeX + shapeWidth || 
+        imageY + imageHeight > shapeY + shapeHeight;
+
+      // Draw image without clipping to show full size
       ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+
+      // Draw red warning outline if image overlaps shape bounds
+      if (imageExtendsBeyondShape) {
+        ctx.save();
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]);
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2;
+          const centerX = shapeX + shapeWidth / 2;
+          const centerY = shapeY + shapeHeight / 2;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+          ctx.stroke();
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          const startX = shapeX + (shapeWidth - size) / 2;
+          const startY = shapeY + (shapeHeight - size) / 2;
+          ctx.strokeRect(startX, startY, size, size);
+        } else { // rectangle
+          ctx.strokeRect(shapeX, shapeY, shapeWidth, shapeHeight);
+        }
+        
+        ctx.restore();
+      }
     };
 
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
