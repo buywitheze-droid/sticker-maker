@@ -61,11 +61,44 @@ export async function downloadCanvas(
 
   // Draw the image with stroke at high resolution
   if (shapeSettings?.enabled) {
+    // Crop image to remove empty space before processing
+    const croppedCanvas = cropImageToContent(image);
+    const sourceImage = croppedCanvas ? (() => {
+      const img = new Image();
+      img.src = croppedCanvas.toDataURL();
+      return img;
+    })() : image;
+
+    // Wait for cropped image to load if created
+    if (croppedCanvas) {
+      await new Promise((resolve) => {
+        sourceImage.onload = resolve;
+      });
+    }
+
+    // Calculate image placement with manual offset
+    const imageAspect = sourceImage.width / sourceImage.height;
+    const shapeAspect = outputWidth / outputHeight;
+    
+    let drawWidth, drawHeight;
+    if (imageAspect > shapeAspect) {
+      drawWidth = outputWidth * 0.8;
+      drawHeight = drawWidth / imageAspect;
+    } else {
+      drawHeight = outputHeight * 0.8;
+      drawWidth = drawHeight * imageAspect;
+    }
+    
+    // Apply manual position offset
+    const baseX = (outputWidth - drawWidth) / 2;
+    const baseY = (outputHeight - drawHeight) / 2;
+    const finalX = baseX + (shapeSettings.offsetX || 0);
+    const finalY = baseY + (shapeSettings.offsetY || 0);
+    
     // Apply clipping to prevent image from extending beyond shape bounds
     applyCadCutClipping(ctx, shapeSettings, outputWidth, outputHeight);
     
-    // Center the image within the shape
-    await drawImageCenteredInShape(ctx, image, outputWidth, outputHeight);
+    ctx.drawImage(sourceImage, finalX, finalY, drawWidth, drawHeight);
     
     // Restore context after clipping
     ctx.restore();

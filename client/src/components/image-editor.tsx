@@ -418,7 +418,24 @@ export default function ImageEditor() {
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
 
         // Download zip package with cropped original
-        await downloadZipPackage(finalImage, canvas, imageInfo.file.name);
+        try {
+          await downloadZipPackage(finalImage, canvas, imageInfo.file.name);
+        } catch (error) {
+          console.error('Zip download failed:', error);
+          // Fallback to single file download
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `${imageInfo.file.name.replace(/\.[^/.]+$/, '')}-cutlines.png`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+            }
+          }, 'image/png');
+        }
         
       } else if (downloadType === 'cutcontour') {
         // Generate magenta vector path along transparent pixel boundaries
