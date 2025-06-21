@@ -4,10 +4,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
-import type { CadCutBounds } from "@/lib/cadcut-bounds";
+import { CadCutBounds, checkCadCutBounds } from "@/lib/cadcut-bounds";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
+import { cropImageToContent } from "@/lib/image-crop";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -124,7 +125,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       // Create cropped version for accurate centering (after empty space removal)
       const croppedCanvas = cropImageToContent(imageInfo.image);
-      const sourceImage = croppedCanvas || imageInfo.image;
+      const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
       
       // Center the cropped image within the shape for more accurate positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
