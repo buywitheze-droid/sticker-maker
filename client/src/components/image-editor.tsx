@@ -66,7 +66,7 @@ export default function ImageEditor() {
     type: 'square',
     widthInches: 4.0,
     heightInches: 4.0,
-    fillColor: '#ffffff',
+    fillColor: '#FF00FF',
     strokeEnabled: false,
     strokeWidth: 2,
     strokeColor: '#000000',
