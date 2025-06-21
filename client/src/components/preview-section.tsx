@@ -107,8 +107,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
       }
 
-      // Add visual feedback for bounds violations
-      if (cadCutBounds && !cadCutBounds.isWithinBounds) {
+      // Add visual feedback for bounds violations (only for rectangle and square)
+      if (cadCutBounds && !cadCutBounds.isWithinBounds && 
+          shapeSettings.type !== 'circle' && shapeSettings.type !== 'oval') {
         ctx.strokeStyle = '#ef4444'; // Red warning color
         ctx.lineWidth = 3;
         ctx.setLineDash([5, 5]); // Dashed line
@@ -193,41 +194,23 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.restore();
       
-      // Draw red outline if image extends beyond shape
-      if (imageExtendsBeyondShape) {
+      // Draw red outline if image extends beyond shape (only for rectangle and square)
+      if (imageExtendsBeyondShape && shapeSettings.type !== 'circle' && shapeSettings.type !== 'oval') {
         ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 3;
         ctx.setLineDash([5, 5]);
-        
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2;
-          const centerX = shapeX + shapeWidth / 2;
-          const centerY = shapeY + shapeHeight / 2;
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-          ctx.stroke();
-        } else {
-          ctx.strokeRect(shapeX, shapeY, shapeWidth, shapeHeight);
-        }
-        
+        ctx.strokeRect(shapeX, shapeY, shapeWidth, shapeHeight);
         ctx.setLineDash([]);
       }
 
-      // Draw red warning outline if image overlaps shape bounds
-      if (imageExtendsBeyondShape) {
+      // Draw red warning outline if image overlaps shape bounds (only for rectangle and square)
+      if (imageExtendsBeyondShape && shapeSettings.type !== 'circle' && shapeSettings.type !== 'oval') {
         ctx.save();
         ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 3;
         ctx.setLineDash([5, 5]);
         
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2;
-          const centerX = shapeX + shapeWidth / 2;
-          const centerY = shapeY + shapeHeight / 2;
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-          ctx.stroke();
-        } else if (shapeSettings.type === 'square') {
+        if (shapeSettings.type === 'square') {
           const size = Math.min(shapeWidth, shapeHeight);
           const startX = shapeX + (shapeWidth - size) / 2;
           const startY = shapeY + (shapeHeight - size) / 2;
