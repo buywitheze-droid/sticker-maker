@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection from "./controls-section";
@@ -80,6 +80,9 @@ export default function ImageEditor() {
   });
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ x: 16, y: 16 }); // Initial position: top-right
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -254,6 +257,56 @@ export default function ImageEditor() {
       offsetY: prev.offsetY + deltaY,
     }));
   }, []);
+
+  const handleMenuMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget || (e.target as HTMLElement).closest('.menu-header')) {
+      setIsDragging(true);
+      const rect = e.currentTarget.getBoundingClientRect();
+      setDragOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleMenuMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    
+    const previewContainer = document.querySelector('.preview-container');
+    if (!previewContainer) return;
+    
+    const containerRect = previewContainer.getBoundingClientRect();
+    const newX = e.clientX - containerRect.left - dragOffset.x;
+    const newY = e.clientY - containerRect.top - dragOffset.y;
+    
+    // Keep menu within bounds
+    const menuWidth = 96; // w-24 = 96px
+    const menuHeight = 120; // Approximate height
+    const maxX = containerRect.width - menuWidth;
+    const maxY = containerRect.height - menuHeight;
+    
+    setMenuPosition({
+      x: Math.max(0, Math.min(newX, maxX)),
+      y: Math.max(0, Math.min(newY, maxY)),
+    });
+  }, [isDragging, dragOffset]);
+
+  const handleMenuMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Add global event listeners for dragging
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMenuMouseMove);
+      document.addEventListener('mouseup', handleMenuMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMenuMouseMove);
+        document.removeEventListener('mouseup', handleMenuMouseUp);
+      };
+    }
+  }, [isDragging, handleMenuMouseMove, handleMenuMouseUp]);
 
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
     const updated = { ...shapeSettings, ...newSettings };
@@ -434,7 +487,7 @@ export default function ImageEditor() {
         imageInfo={imageInfo}
       />
       
-      <div className="relative">
+      <div className="relative preview-container">
         <PreviewSection
           ref={canvasRef}
           imageInfo={imageInfo}
@@ -444,15 +497,27 @@ export default function ImageEditor() {
           cadCutBounds={cadCutBounds}
         />
         
-        {/* Position Control Menu */}
+        {/* Draggable Position Control Menu */}
         {imageInfo && shapeSettings.enabled && (
-          <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700">
-            <div className="text-xs text-gray-600 dark:text-gray-400 text-center mb-2 font-medium">Position</div>
+          <div 
+            className="absolute bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700 cursor-move select-none"
+            style={{ 
+              left: `${menuPosition.x}px`, 
+              top: `${menuPosition.y}px`,
+              right: 'auto',
+              zIndex: 10
+            }}
+            onMouseDown={handleMenuMouseDown}
+          >
+            <div className="text-xs text-gray-600 dark:text-gray-400 text-center mb-2 font-medium menu-header">
+              Position
+            </div>
             <div className="grid grid-cols-3 gap-1 w-24 h-24">
               {/* Top arrow */}
               <div></div>
               <button
                 onClick={() => handlePositionChange(0, -10)}
+                onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Up"
               >
@@ -465,6 +530,7 @@ export default function ImageEditor() {
               {/* Left and Right arrows */}
               <button
                 onClick={() => handlePositionChange(-10, 0)}
+                onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Left"
               >
@@ -475,6 +541,7 @@ export default function ImageEditor() {
               
               <button
                 onClick={() => setShapeSettings(prev => ({ ...prev, offsetX: 0, offsetY: 0 }))}
+                onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 rounded transition-colors"
                 title="Reset Position"
               >
@@ -485,6 +552,7 @@ export default function ImageEditor() {
               
               <button
                 onClick={() => handlePositionChange(10, 0)}
+                onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Right"
               >
@@ -497,6 +565,7 @@ export default function ImageEditor() {
               <div></div>
               <button
                 onClick={() => handlePositionChange(0, 10)}
+                onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Down"
               >

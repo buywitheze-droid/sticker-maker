@@ -190,6 +190,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Enhanced shape background centering to always appear in center of preview window regardless of zoom level
   - Fixed position control menu functionality with proper handlePositionChange function and offset handling
   - Enhanced preview centering to always fit shapes properly in view with consistent padding and optimal sizing
+  - Made position control menu draggable with mouse for flexible placement anywhere on preview area
 
 ## Changelog
 
