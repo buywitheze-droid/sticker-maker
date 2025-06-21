@@ -104,7 +104,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
       let imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
 
-      // Perfect center positioning
+      // Center the image within the shape
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 

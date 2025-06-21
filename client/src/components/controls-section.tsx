@@ -226,9 +226,18 @@ export default function ControlsSection({
               >
                 PNG file with cutlines
               </Button>
+              
+              <Button 
+                onClick={() => onDownload('design-only')}
+                disabled={!imageInfo || isProcessing}
+                className="w-full"
+                variant="outline"
+              >
+                Design without outlines
+              </Button>
 
               <div className="text-xs text-gray-500 text-center">
-                Full resolution PNG with transparent background and cutlines for cutting machines.
+                Full resolution PNG with transparent background.
               </div>
             </div>
           </CardContent>

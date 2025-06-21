@@ -190,7 +190,7 @@ export default function ImageEditor() {
 
 
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' = 'standard', format: VectorFormat = 'png') => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' = 'standard', format: VectorFormat = 'png') => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
