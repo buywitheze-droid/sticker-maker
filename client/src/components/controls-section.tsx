@@ -80,36 +80,53 @@ export default function ControlsSection({
                   </Select>
                 </div>
 
-                <div>
-                  <Label>Width (inches)</Label>
-                  <Slider
-                    value={[shapeSettings.widthInches]}
-                    onValueChange={([value]) => onShapeChange({ widthInches: value })}
-                    min={1}
-                    max={12}
-                    step={0.1}
-                    className="mt-2"
-                  />
-                  <div className="text-sm text-gray-500 mt-1">
-                    {shapeSettings.widthInches}"
-                  </div>
-                </div>
-
-                {shapeSettings.type !== 'square' && (
+                {(shapeSettings.type === 'circle' || shapeSettings.type === 'square') ? (
                   <div>
-                    <Label>Height (inches)</Label>
+                    <Label>Size (inches)</Label>
                     <Slider
-                      value={[shapeSettings.heightInches]}
-                      onValueChange={([value]) => onShapeChange({ heightInches: value })}
+                      value={[shapeSettings.widthInches]}
+                      onValueChange={([value]) => onShapeChange({ widthInches: value, heightInches: value })}
                       min={1}
                       max={12}
                       step={0.1}
                       className="mt-2"
                     />
                     <div className="text-sm text-gray-500 mt-1">
-                      {shapeSettings.heightInches}"
+                      {shapeSettings.widthInches}"
                     </div>
                   </div>
+                ) : (
+                  <>
+                    <div>
+                      <Label>Width (inches)</Label>
+                      <Slider
+                        value={[shapeSettings.widthInches]}
+                        onValueChange={([value]) => onShapeChange({ widthInches: value })}
+                        min={1}
+                        max={12}
+                        step={0.1}
+                        className="mt-2"
+                      />
+                      <div className="text-sm text-gray-500 mt-1">
+                        {shapeSettings.widthInches}"
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label>Height (inches)</Label>
+                      <Slider
+                        value={[shapeSettings.heightInches]}
+                        onValueChange={([value]) => onShapeChange({ heightInches: value })}
+                        min={1}
+                        max={12}
+                        step={0.1}
+                        className="mt-2"
+                      />
+                      <div className="text-sm text-gray-500 mt-1">
+                        {shapeSettings.heightInches}"
+                      </div>
+                    </div>
+                  </>
                 )}
 
                 <div>
