@@ -147,10 +147,10 @@ function checkBoundsContainment(
   shapeSettings: ShapeSettings
 ): boolean {
   if (shapeSettings.type === 'circle') {
-    // Check if all corners of design rectangle are within circle
+    // Check if all corners of design rectangle are within circle with 20% tighter tolerance
     const centerX = shapeBounds.x + shapeBounds.width / 2;
     const centerY = shapeBounds.y + shapeBounds.height / 2;
-    const radius = shapeBounds.width / 2;
+    const radius = (shapeBounds.width / 2) * 0.8; // 20% closer to image
     
     const corners = [
       { x: designBounds.x, y: designBounds.y },
@@ -165,11 +165,11 @@ function checkBoundsContainment(
       return (dx * dx + dy * dy) <= (radius * radius);
     });
   } else if (shapeSettings.type === 'oval') {
-    // Check if all corners are within ellipse
+    // Check if all corners are within ellipse with 20% tighter tolerance
     const centerX = shapeBounds.x + shapeBounds.width / 2;
     const centerY = shapeBounds.y + shapeBounds.height / 2;
-    const radiusX = shapeBounds.width / 2;
-    const radiusY = shapeBounds.height / 2;
+    const radiusX = (shapeBounds.width / 2) * 0.8; // 20% closer to image
+    const radiusY = (shapeBounds.height / 2) * 0.8; // 20% closer to image
     
     const corners = [
       { x: designBounds.x, y: designBounds.y },
@@ -184,7 +184,7 @@ function checkBoundsContainment(
       return (dx * dx + dy * dy) <= 1;
     });
   } else {
-    // Rectangle or square - simple bounds check
+    // Rectangle or square - simple bounds check (no tolerance change)
     return (
       designBounds.x >= shapeBounds.x &&
       designBounds.y >= shapeBounds.y &&
@@ -222,10 +222,12 @@ export function applyCadCutClipping(
   ctx.beginPath();
   
   if (shapeSettings.type === 'circle') {
-    const radius = Math.min(shapeWidth, shapeHeight) / 2;
+    const radius = (Math.min(shapeWidth, shapeHeight) / 2) * 0.8; // 20% closer clipping
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
   } else if (shapeSettings.type === 'oval') {
-    ctx.ellipse(centerX, centerY, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
+    const radiusX = (shapeWidth / 2) * 0.8; // 20% closer clipping
+    const radiusY = (shapeHeight / 2) * 0.8; // 20% closer clipping
+    ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(shapeWidth, shapeHeight);
     const startX = centerX - size / 2;

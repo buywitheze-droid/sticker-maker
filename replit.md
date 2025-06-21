@@ -183,6 +183,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Enhanced cropping algorithm to detect and remove ALL background padding automatically
   - Updated preview to show images with zero empty space around actual content
   - Improved content detection with anti-aliasing support for precise boundary detection
+  - Enhanced oval and circle boundary tolerance to be 20% closer to image content for tighter fitting
 
 ## Changelog
 
