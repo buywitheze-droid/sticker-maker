@@ -114,7 +114,7 @@ export default function ImageEditor() {
         return;
       }
       
-      // Automatically crop the image to remove empty space
+      // Automatically crop the image to remove ALL empty space
       const croppedCanvas = cropImageToContent(image);
       if (!croppedCanvas) {
         console.error('Failed to crop image, using original');
@@ -126,6 +126,8 @@ export default function ImageEditor() {
       
       croppedImage.onload = () => {
         const dpi = 300; // Default DPI for high-quality printing
+        
+        // Create final cropped image info with zero padding
         const newImageInfo: ImageInfo = {
           file,
           image: croppedImage,
@@ -169,24 +171,49 @@ export default function ImageEditor() {
 
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
-    const { widthInches, heightInches } = calculateImageDimensions(image.width, image.height, dpi);
     
-    const newImageInfo: ImageInfo = {
-      file,
-      image,
-      originalWidth: image.width,
-      originalHeight: image.height,
-      dpi
+    // Always try to crop even fallback images to remove empty space
+    const croppedCanvas = cropImageToContent(image);
+    const finalImage = croppedCanvas ? (() => {
+      const img = new Image();
+      img.src = croppedCanvas.toDataURL();
+      return img;
+    })() : image;
+
+    const processImage = () => {
+      const { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
+
+      const newImageInfo: ImageInfo = {
+        file,
+        image: finalImage,
+        originalWidth: finalImage.width,
+        originalHeight: finalImage.height,
+        dpi,
+      };
+
+      setImageInfo(newImageInfo);
+
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
+      
+      setShapeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
+
+      updateCadCutBounds(widthInches, heightInches);
     };
-    
-    setImageInfo(newImageInfo);
-    
-    setResizeSettings(prev => ({
-      ...prev,
-      widthInches,
-      heightInches
-    }));
-  }, []);
+
+    if (croppedCanvas) {
+      finalImage.onload = processImage;
+    } else {
+      processImage();
+    }
+  }, [updateCadCutBounds]);
 
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {

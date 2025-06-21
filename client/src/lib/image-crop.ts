@@ -19,12 +19,12 @@ export function getImageBounds(image: HTMLImageElement): { x: number; y: number;
   let maxX = 0;
   let maxY = 0;
   
-  // Find the bounding box of non-transparent pixels
+  // Find the exact bounding box of visible content (alpha > 10 to handle anti-aliasing)
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
       const alpha = data[(y * canvas.width + x) * 4 + 3];
       
-      if (alpha > 0) { // Non-transparent pixel found
+      if (alpha > 10) { // Visible pixel found (includes anti-aliased edges)
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
@@ -56,6 +56,7 @@ export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement |
       return null;
     }
     
+    // Always create a cropped canvas to ensure zero empty space
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -63,10 +64,11 @@ export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement |
       return null;
     }
     
+    // Set canvas to exact content dimensions with no padding
     canvas.width = bounds.width;
     canvas.height = bounds.height;
     
-    // Draw only the content area
+    // Draw only the content area with pixel-perfect cropping
     ctx.drawImage(
       image,
       bounds.x, bounds.y, bounds.width, bounds.height,
