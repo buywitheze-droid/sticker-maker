@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
+import type { TracedDesign } from "@/lib/design-tracer";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
@@ -13,14 +14,15 @@ interface PreviewSectionProps {
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
+  tracedDesign?: TracedDesign | null;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, tracedDesign }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
-    const [backgroundColor, setBackgroundColor] = useState("transparent");
+    const [backgroundColor, setBackgroundColor] = useState("#374151");
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
@@ -50,7 +52,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // For contour mode, draw image based on resize settings
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, zoom, backgroundColor]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, tracedDesign, zoom, backgroundColor]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -103,6 +105,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.strokeStyle = shapeSettings.strokeColor;
         ctx.lineWidth = shapeSettings.strokeWidth;
         ctx.stroke();
+      }
+
+      // Add visual feedback for bounds violations
+      if (tracedDesign && !tracedDesign.isWithinBounds) {
+        ctx.strokeStyle = '#ef4444'; // Red warning color
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]); // Dashed line
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset line dash
       }
 
       // Calculate image dimensions in preview based on resize settings

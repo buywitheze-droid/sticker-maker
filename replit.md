@@ -169,6 +169,16 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added oval shape support to image-utils drawShapeBackground function for proper export functionality
   - Enhanced preview section to render oval shapes with correct aspect ratio and centering
 
+- **June 21, 2025**: Implemented design tracing and bounds detection system
+  - Created design-tracer.ts library for converting uploaded images to vector paths
+  - Added automatic edge detection using alpha channel analysis for precise design boundary tracing
+  - Implemented bounds checking to detect when designs extend beyond shape boundaries
+  - Created vector path simplification using Douglas-Peucker algorithm for clean contours
+  - Added shape-specific collision detection for circle, oval, square, and rectangle shapes
+  - Integrated real-time bounds checking that updates when shape settings change
+  - Set up foundation for automatic design clipping to prevent out-of-bounds rendering
+  - Changed default preview background to dark grey (#374151) for better design visibility
+
 ## Changelog
 
 ```
