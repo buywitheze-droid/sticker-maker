@@ -1,5 +1,6 @@
 import { StrokeSettings, ShapeSettings } from "@/components/image-editor";
 import { applyCadCutClipping } from "@/lib/cadcut-bounds";
+import { cropImageToContent } from "@/lib/image-crop";
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -132,8 +133,12 @@ async function drawImageCenteredInShape(
   canvasWidth: number,
   canvasHeight: number
 ) {
+  // First, crop the image to remove empty space for accurate centering
+  const croppedCanvas = cropImageToContent(image);
+  const sourceImage = croppedCanvas || image;
+  
   // Calculate image dimensions maintaining aspect ratio
-  const imageAspect = image.width / image.height;
+  const imageAspect = sourceImage.width / sourceImage.height;
   const canvasAspect = canvasWidth / canvasHeight;
   
   let drawWidth, drawHeight;
@@ -147,10 +152,10 @@ async function drawImageCenteredInShape(
     drawWidth = drawHeight * imageAspect;
   }
   
-  // Center the image on the main canvas
+  // Center the cropped image perfectly within the shape
   const x = (canvasWidth - drawWidth) / 2;
   const y = (canvasHeight - drawHeight) / 2;
-  ctx.drawImage(image, x, y, drawWidth, drawHeight);
+  ctx.drawImage(sourceImage, x, y, drawWidth, drawHeight);
 }
 
 async function drawHighResImage(

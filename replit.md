@@ -185,6 +185,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Improved content detection with anti-aliasing support for precise boundary detection
   - Disabled red warning outlines for circle and oval shapes to provide cleaner preview experience
   - Reverted circle and oval boundary tolerance back to original values for standard fitting
+  - Enhanced image centering to use cropped content for more accurate positioning within shapes after empty space removal
 
 ## Changelog
 

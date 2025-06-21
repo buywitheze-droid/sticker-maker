@@ -122,7 +122,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
       let imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
 
-      // Center the image within the shape
+      // Create cropped version for accurate centering (after empty space removal)
+      const croppedCanvas = cropImageToContent(imageInfo.image);
+      const sourceImage = croppedCanvas || imageInfo.image;
+      
+      // Center the cropped image within the shape for more accurate positioning
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 
@@ -189,8 +193,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.clip();
       
-      // Draw image clipped to shape
-      ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+      // Draw cropped image clipped to shape for accurate centering
+      ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
       
       ctx.restore();
       
