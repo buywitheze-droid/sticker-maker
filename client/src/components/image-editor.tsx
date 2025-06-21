@@ -446,7 +446,7 @@ export default function ImageEditor() {
         
         {/* Position Control Menu */}
         {imageInfo && shapeSettings.enabled && (
-          <div className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700">
+          <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700">
             <div className="text-xs text-gray-600 dark:text-gray-400 text-center mb-2 font-medium">Position</div>
             <div className="grid grid-cols-3 gap-1 w-24 h-24">
               {/* Top arrow */}
