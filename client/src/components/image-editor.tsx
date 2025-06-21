@@ -75,6 +75,8 @@ export default function ImageEditor() {
     strokeEnabled: false,
     strokeWidth: 2,
     strokeColor: '#000000',
+    offsetX: 0,
+    offsetY: 0,
   });
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -245,6 +247,14 @@ export default function ImageEditor() {
     setStrokeSettings(updated);
   }, [strokeSettings]);
 
+  const handlePositionChange = useCallback((deltaX: number, deltaY: number) => {
+    setShapeSettings(prev => ({
+      ...prev,
+      offsetX: prev.offsetX + deltaX,
+      offsetY: prev.offsetY + deltaY,
+    }));
+  }, []);
+
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
     const updated = { ...shapeSettings, ...newSettings };
     
@@ -333,7 +343,7 @@ export default function ImageEditor() {
           });
         }
 
-        // Center and draw the cropped image
+        // Center and draw the cropped image with manual positioning
         const imageAspect = finalImage.width / finalImage.height;
         const shapeAspect = outputWidth / outputHeight;
         
@@ -346,8 +356,11 @@ export default function ImageEditor() {
           imageWidth = imageHeight * imageAspect;
         }
         
-        const imageX = (outputWidth - imageWidth) / 2;
-        const imageY = (outputHeight - imageHeight) / 2;
+        // Apply manual position offset
+        const baseImageX = (outputWidth - imageWidth) / 2;
+        const baseImageY = (outputHeight - imageHeight) / 2;
+        const imageX = baseImageX + (shapeSettings.offsetX || 0);
+        const imageY = baseImageY + (shapeSettings.offsetY || 0);
         
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
 

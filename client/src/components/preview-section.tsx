@@ -133,8 +133,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       // Apply manual position offset (scale offset to preview)
       const offsetScale = shapePixelsPerInch / 300; // Scale offset from 300 DPI to preview scale
-      const imageX = baseImageX + (shapeSettings.offsetX * offsetScale);
-      const imageY = baseImageY + (shapeSettings.offsetY * offsetScale);
+      const imageX = baseImageX + ((shapeSettings.offsetX || 0) * offsetScale);
+      const imageY = baseImageY + ((shapeSettings.offsetY || 0) * offsetScale);
 
       // Check for overlap with different tolerances based on shape type
       let imageExtendsBeyondShape = false;
