@@ -9,16 +9,8 @@ export async function downloadZipPackage(
   try {
     const zip = new JSZip();
     
-    // Crop original image to remove empty space
-    const croppedCanvas = cropImageToContent(originalImage);
-    const imageToSave = croppedCanvas || originalImage;
-    
-    // Get cropped original image as blob
-    const originalBlob = croppedCanvas ? 
-      await new Promise<Blob | null>((resolve) => {
-        croppedCanvas.toBlob(resolve, 'image/png', 1.0);
-      }) : 
-      await imageToBlob(originalImage);
+    // Create original image blob directly
+    const originalBlob = await imageToBlob(originalImage);
       
     if (originalBlob) {
       // Extract original filename without extension and add proper extension

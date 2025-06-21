@@ -477,7 +477,8 @@ export default function ImageEditor() {
       } else {
         // Standard download using existing system
         const dpi = 300;
-        const filename = 'sticker_300dpi.png';
+        const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
+        const filename = `${nameWithoutExt}_sticker_300dpi.png`;
         
         await downloadCanvas(
           imageInfo.image,
@@ -491,7 +492,14 @@ export default function ImageEditor() {
       }
     } catch (error) {
       console.error("Download failed:", error);
-      alert("Download failed. Please try again.");
+      console.error("Error details:", {
+        hasImage: !!imageInfo,
+        hasCanvas: !!canvasRef.current,
+        shapeSettings,
+        resizeSettings,
+        strokeSettings
+      });
+      alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
     } finally {
       setIsProcessing(false);
     }

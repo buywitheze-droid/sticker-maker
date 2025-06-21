@@ -107,18 +107,33 @@ export async function downloadCanvas(
   }
 
   // Download the canvas as PNG
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, 'image/png');
+  return new Promise<void>((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Failed to create blob from canvas'));
+          return;
+        }
+        
+        try {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      }, 'image/png');
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 function drawShapeBackground(
@@ -166,29 +181,35 @@ async function drawImageCenteredInShape(
   canvasWidth: number,
   canvasHeight: number
 ) {
-  // First, crop the image to remove empty space for accurate centering
-  const croppedCanvas = cropImageToContent(image);
-  const sourceImage = croppedCanvas || image;
-  
-  // Calculate image dimensions maintaining aspect ratio
-  const imageAspect = sourceImage.width / sourceImage.height;
-  const canvasAspect = canvasWidth / canvasHeight;
-  
-  let drawWidth, drawHeight;
-  if (imageAspect > canvasAspect) {
-    // Image is wider - fit to width
-    drawWidth = canvasWidth * 0.8; // Leave some margin
-    drawHeight = drawWidth / imageAspect;
-  } else {
-    // Image is taller - fit to height
-    drawHeight = canvasHeight * 0.8; // Leave some margin
-    drawWidth = drawHeight * imageAspect;
+  try {
+    // First, crop the image to remove empty space for accurate centering
+    const croppedCanvas = cropImageToContent(image);
+    const sourceImage = croppedCanvas || image;
+    
+    // Calculate image dimensions maintaining aspect ratio
+    const imageAspect = sourceImage.width / sourceImage.height;
+    const canvasAspect = canvasWidth / canvasHeight;
+    
+    let drawWidth, drawHeight;
+    if (imageAspect > canvasAspect) {
+      // Image is wider - fit to width
+      drawWidth = canvasWidth * 0.8; // Leave some margin
+      drawHeight = drawWidth / imageAspect;
+    } else {
+      // Image is taller - fit to height
+      drawHeight = canvasHeight * 0.8; // Leave some margin
+      drawWidth = drawHeight * imageAspect;
+    }
+    
+    // Center the cropped image perfectly within the shape
+    const x = (canvasWidth - drawWidth) / 2;
+    const y = (canvasHeight - drawHeight) / 2;
+    ctx.drawImage(sourceImage, x, y, drawWidth, drawHeight);
+  } catch (error) {
+    console.error('Error in drawImageCenteredInShape:', error);
+    // Fallback to drawing original image
+    ctx.drawImage(image, 0, 0, canvasWidth, canvasHeight);
   }
-  
-  // Center the cropped image perfectly within the shape
-  const x = (canvasWidth - drawWidth) / 2;
-  const y = (canvasHeight - drawHeight) / 2;
-  ctx.drawImage(sourceImage, x, y, drawWidth, drawHeight);
 }
 
 async function drawHighResImage(
