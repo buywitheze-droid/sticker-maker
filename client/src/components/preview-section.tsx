@@ -163,20 +163,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           imageY + imageHeight > shapeY + shapeHeight + tolerance;
       }
 
-      // Apply clipping for shape bounds with 20% tighter tolerance for circles/ovals
+      // Apply clipping for shape bounds
       ctx.save();
       ctx.beginPath();
       
       if (shapeSettings.type === 'circle') {
-        const radius = (Math.min(shapeWidth, shapeHeight) / 2) * 0.8; // 20% closer to image
+        const radius = Math.min(shapeWidth, shapeHeight) / 2;
         const centerX = shapeX + shapeWidth / 2;
         const centerY = shapeY + shapeHeight / 2;
         ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       } else if (shapeSettings.type === 'oval') {
         const centerX = shapeX + shapeWidth / 2;
         const centerY = shapeY + shapeHeight / 2;
-        const radiusX = (shapeWidth / 2) * 0.8; // 20% closer to image
-        const radiusY = (shapeHeight / 2) * 0.8; // 20% closer to image
+        const radiusX = shapeWidth / 2;
+        const radiusY = shapeHeight / 2;
         ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
       } else if (shapeSettings.type === 'square') {
         const size = Math.min(shapeWidth, shapeHeight);
