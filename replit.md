@@ -187,6 +187,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Reverted circle and oval boundary tolerance back to original values for standard fitting
   - Enhanced image centering to use cropped content for more accurate positioning within shapes after empty space removal
   - Added manual position control menu with 4 directional arrows in bottom-left corner for precise design placement
+  - Enhanced shape background centering to always appear in center of preview window regardless of zoom level
 
 ## Changelog
 

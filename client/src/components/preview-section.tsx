@@ -58,8 +58,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      // Calculate shape dimensions for preview
-      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.8;
+      // Calculate shape dimensions for preview - always center the shape in the preview window
+      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.7; // Slightly smaller for better visibility
       const shapeAspect = shapeSettings.widthInches / shapeSettings.heightInches;
       
       let shapeWidth, shapeHeight;
@@ -71,7 +71,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         shapeWidth = maxSize * shapeAspect;
       }
 
-      // Center the shape
+      // Always center the shape in the preview window regardless of zoom
       const shapeX = (canvasWidth - shapeWidth) / 2;
       const shapeY = (canvasHeight - shapeHeight) / 2;
 
@@ -236,9 +236,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      // Calculate preview dimensions based on resize settings
+      // Calculate preview dimensions based on resize settings - always center in window
       const previewAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
-      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.8;
+      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.7; // Consistent with shape preview
       
       let previewWidth, previewHeight;
       if (previewAspectRatio > 1) {
@@ -249,7 +249,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         previewWidth = maxSize * previewAspectRatio;
       }
       
-      // Center the preview
+      // Always center the preview in the window
       const previewX = (canvasWidth - previewWidth) / 2;
       const previewY = (canvasHeight - previewHeight) / 2;
       
