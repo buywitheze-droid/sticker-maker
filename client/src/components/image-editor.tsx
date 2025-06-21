@@ -8,6 +8,7 @@ import { createVectorStroke, downloadVectorStroke, createVectorPaths, type Vecto
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
+import { downloadZipPackage } from "@/lib/zip-download";
 
 export interface ImageInfo {
   file: File;
@@ -240,13 +241,76 @@ export default function ImageEditor() {
 
 
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' = 'standard', format: VectorFormat = 'png') => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png') => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
     
     try {
-      if (downloadType === 'cutcontour') {
+      if (downloadType === 'download-package') {
+        // Create zip package with original and cutlines
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Calculate output dimensions
+        const outputWidth = inchesToPixels(shapeSettings.widthInches, 300);
+        const outputHeight = inchesToPixels(shapeSettings.heightInches, 300);
+        
+        canvas.width = outputWidth;
+        canvas.height = outputHeight;
+
+        // Draw shape background
+        ctx.fillStyle = shapeSettings.fillColor;
+        ctx.beginPath();
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(outputWidth, outputHeight) / 2;
+          const centerX = outputWidth / 2;
+          const centerY = outputHeight / 2;
+          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          const centerX = outputWidth / 2;
+          const centerY = outputHeight / 2;
+          ctx.ellipse(centerX, centerY, outputWidth / 2, outputHeight / 2, 0, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(outputWidth, outputHeight);
+          const startX = (outputWidth - size) / 2;
+          const startY = (outputHeight - size) / 2;
+          ctx.rect(startX, startY, size, size);
+        } else {
+          ctx.rect(0, 0, outputWidth, outputHeight);
+        }
+        
+        ctx.fill();
+
+        // Draw cutlines in magenta
+        ctx.strokeStyle = '#FF00FF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Center and draw the image
+        const imageAspect = imageInfo.image.width / imageInfo.image.height;
+        const shapeAspect = outputWidth / outputHeight;
+        
+        let imageWidth, imageHeight;
+        if (imageAspect > shapeAspect) {
+          imageWidth = outputWidth * 0.8;
+          imageHeight = imageWidth / imageAspect;
+        } else {
+          imageHeight = outputHeight * 0.8;
+          imageWidth = imageHeight * imageAspect;
+        }
+        
+        const imageX = (outputWidth - imageWidth) / 2;
+        const imageY = (outputHeight - imageHeight) / 2;
+        
+        ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+
+        // Download zip package
+        await downloadZipPackage(imageInfo.image, canvas, imageInfo.file.name);
+        
+      } else if (downloadType === 'cutcontour') {
         // Generate magenta vector path along transparent pixel boundaries
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         

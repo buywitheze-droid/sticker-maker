@@ -14,7 +14,7 @@ interface ControlsSectionProps {
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
 }
@@ -238,44 +238,15 @@ export default function ControlsSection({
             
             <div className="space-y-3">
               <Button 
-                onClick={() => onDownload('cutcontour')}
+                onClick={() => onDownload('download-package')}
                 disabled={!imageInfo || isProcessing}
-                className="w-full bg-magenta-500 hover:bg-magenta-600 text-white"
-                style={{ backgroundColor: '#FF00FF', borderColor: '#FF00FF' }}
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
               >
-                🎯 Magenta Cut Contour
+                Download Package (.zip)
               </Button>
               
-              <div className="grid grid-cols-2 gap-2">
-                <Button 
-                  onClick={() => onDownload('cutcontour', 'svg')}
-                  disabled={!imageInfo || isProcessing}
-                  className="text-xs"
-                  variant="outline"
-                >
-                  SVG Vector
-                </Button>
-                <Button 
-                  onClick={() => onDownload('cutcontour', 'eps')}
-                  disabled={!imageInfo || isProcessing}
-                  className="text-xs"
-                  variant="outline"
-                >
-                  EPS Vector
-                </Button>
-              </div>
-              
-              <Button 
-                onClick={() => onDownload('design-only')}
-                disabled={!imageInfo || isProcessing}
-                className="w-full"
-                variant="outline"
-              >
-                Design without outlines
-              </Button>
-
-              <div className="text-xs text-gray-500 text-center">
-                Magenta paths trace transparent pixel boundaries for precise cutting machine operation.
+              <div className="text-xs text-gray-500 text-center mt-2">
+                Includes original upload + design with cutlines
               </div>
             </div>
           </CardContent>
