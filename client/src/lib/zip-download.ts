@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { cropImageToContent } from './image-crop';
 
 export async function downloadZipPackage(
   originalImage: HTMLImageElement,
@@ -8,8 +9,17 @@ export async function downloadZipPackage(
   try {
     const zip = new JSZip();
     
-    // Get original image as blob
-    const originalBlob = await imageToBlob(originalImage);
+    // Crop original image to remove empty space
+    const croppedCanvas = cropImageToContent(originalImage);
+    const imageToSave = croppedCanvas || originalImage;
+    
+    // Get cropped original image as blob
+    const originalBlob = croppedCanvas ? 
+      await new Promise<Blob | null>((resolve) => {
+        croppedCanvas.toBlob(resolve, 'image/png', 1.0);
+      }) : 
+      await imageToBlob(originalImage);
+      
     if (originalBlob) {
       // Extract original filename without extension and add proper extension
       const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, "");

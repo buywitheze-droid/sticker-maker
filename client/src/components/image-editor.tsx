@@ -289,8 +289,23 @@ export default function ImageEditor() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Center and draw the image
-        const imageAspect = imageInfo.image.width / imageInfo.image.height;
+        // Crop image to remove empty space before processing
+        const croppedCanvas = cropImageToContent(imageInfo.image);
+        const finalImage = croppedCanvas ? (() => {
+          const img = new Image();
+          img.src = croppedCanvas.toDataURL();
+          return img;
+        })() : imageInfo.image;
+
+        // Wait for cropped image to load if created
+        if (croppedCanvas) {
+          await new Promise((resolve) => {
+            finalImage.onload = resolve;
+          });
+        }
+
+        // Center and draw the cropped image
+        const imageAspect = finalImage.width / finalImage.height;
         const shapeAspect = outputWidth / outputHeight;
         
         let imageWidth, imageHeight;
@@ -305,10 +320,10 @@ export default function ImageEditor() {
         const imageX = (outputWidth - imageWidth) / 2;
         const imageY = (outputHeight - imageHeight) / 2;
         
-        ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+        ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
 
-        // Download zip package
-        await downloadZipPackage(imageInfo.image, canvas, imageInfo.file.name);
+        // Download zip package with cropped original
+        await downloadZipPackage(finalImage, canvas, imageInfo.file.name);
         
       } else if (downloadType === 'cutcontour') {
         // Generate magenta vector path along transparent pixel boundaries

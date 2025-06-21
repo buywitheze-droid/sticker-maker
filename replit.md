@@ -179,6 +179,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Changed default preview background to dark grey (#374151) for better design visibility
   - Improved UI controls: single "Size" slider for circle/square, separate width/height for oval/rectangle
   - Changed default shape fill color from magenta to white for cleaner appearance
+  - Implemented automatic empty space removal in vector conversion for cleaner exports
+  - Enhanced zip download to include cropped originals without unnecessary padding
 
 ## Changelog
 
