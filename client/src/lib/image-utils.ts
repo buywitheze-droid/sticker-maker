@@ -1,5 +1,5 @@
 import { StrokeSettings, ShapeSettings } from "@/components/image-editor";
-import { clipDesignToShape } from "@/lib/design-tracer";
+import { applyCadCutClipping } from "@/lib/cadcut-bounds";
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -60,8 +60,14 @@ export async function downloadCanvas(
 
   // Draw the image with stroke at high resolution
   if (shapeSettings?.enabled) {
+    // Apply clipping to prevent image from extending beyond shape bounds
+    applyCadCutClipping(ctx, shapeSettings, outputWidth, outputHeight);
+    
     // Center the image within the shape
     await drawImageCenteredInShape(ctx, image, outputWidth, outputHeight);
+    
+    // Restore context after clipping
+    ctx.restore();
   } else {
     await drawHighResImage(ctx, image, strokeSettings, outputWidth, outputHeight);
   }

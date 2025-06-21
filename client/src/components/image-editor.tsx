@@ -7,7 +7,7 @@ import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
-import { traceDesignToVector, checkDesignBounds, type TracedDesign } from "@/lib/design-tracer";
+import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 
 export interface ImageInfo {
   file: File;
@@ -48,7 +48,7 @@ export interface ShapeSettings {
 
 export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
-  const [tracedDesign, setTracedDesign] = useState<TracedDesign | null>(null);
+  const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
     width: 500, // Increased by 100x (5 * 100)
     color: "#ffffff",
@@ -78,10 +78,10 @@ export default function ImageEditor() {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Function to update traced design bounds
-  const updateTracedDesign = useCallback((vectorPaths: any[], shapeWidthInches: number, shapeHeightInches: number) => {
-    if (!imageInfo || !vectorPaths.length) {
-      setTracedDesign(null);
+  // Function to update CadCut bounds checking
+  const updateCadCutBounds = useCallback((shapeWidthInches: number, shapeHeightInches: number) => {
+    if (!imageInfo) {
+      setCadCutBounds(null);
       return;
     }
 
@@ -89,16 +89,14 @@ export default function ImageEditor() {
     const shapeWidthPixels = shapeWidthInches * imageInfo.dpi;
     const shapeHeightPixels = shapeHeightInches * imageInfo.dpi;
 
-    const traced = checkDesignBounds(
-      vectorPaths,
-      imageInfo.image.width,
-      imageInfo.image.height,
+    const bounds = checkCadCutBounds(
+      imageInfo.image,
       shapeSettings,
       shapeWidthPixels,
       shapeHeightPixels
     );
 
-    setTracedDesign(traced);
+    setCadCutBounds(bounds);
   }, [imageInfo, shapeSettings]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
@@ -137,9 +135,6 @@ export default function ImageEditor() {
         
         setImageInfo(newImageInfo);
         
-        // Trace design to vector paths for bounds detection
-        const vectorPaths = traceDesignToVector(croppedImage);
-        
         // Update resize settings based on cropped image
         const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
         setResizeSettings(prev => ({
@@ -156,7 +151,7 @@ export default function ImageEditor() {
         }));
         
         // Initial bounds check
-        updateTracedDesign(vectorPaths, widthInches, heightInches);
+        updateCadCutBounds(widthInches, heightInches);
       };
       
       croppedImage.onerror = () => {
@@ -237,12 +232,11 @@ export default function ImageEditor() {
     
     setShapeSettings(updated);
     
-    // Update traced design bounds when shape settings change
+    // Update CadCut bounds when shape settings change
     if (imageInfo && (newSettings.widthInches || newSettings.heightInches || newSettings.type)) {
-      const vectorPaths = traceDesignToVector(imageInfo.image);
-      updateTracedDesign(vectorPaths, updated.widthInches, updated.heightInches);
+      updateCadCutBounds(updated.widthInches, updated.heightInches);
     }
-  }, [shapeSettings, imageInfo, updateTracedDesign]);
+  }, [shapeSettings, imageInfo, updateCadCutBounds]);
 
 
 
@@ -325,7 +319,7 @@ export default function ImageEditor() {
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
         shapeSettings={shapeSettings}
-        tracedDesign={tracedDesign}
+        cadCutBounds={cadCutBounds}
       />
       
       <ControlsSection

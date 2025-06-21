@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
-import type { TracedDesign } from "@/lib/design-tracer";
+import type { CadCutBounds } from "@/lib/cadcut-bounds";
 import { drawImageWithStroke } from "@/lib/canvas-utils";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
@@ -14,11 +14,11 @@ interface PreviewSectionProps {
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
-  tracedDesign?: TracedDesign | null;
+  cadCutBounds?: CadCutBounds | null;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, tracedDesign }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -52,7 +52,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // For contour mode, draw image based on resize settings
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, tracedDesign, zoom, backgroundColor]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -108,7 +108,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       // Add visual feedback for bounds violations
-      if (tracedDesign && !tracedDesign.isWithinBounds) {
+      if (cadCutBounds && !cadCutBounds.isWithinBounds) {
         ctx.strokeStyle = '#ef4444'; // Red warning color
         ctx.lineWidth = 3;
         ctx.setLineDash([5, 5]); // Dashed line
@@ -162,8 +162,36 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           imageY + imageHeight > shapeY + shapeHeight + tolerance;
       }
 
-      // Draw image without clipping to show full size
+      // Apply clipping for shape bounds
+      ctx.save();
+      ctx.beginPath();
+      
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidth, shapeHeight) / 2;
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'oval') {
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        const radiusX = shapeWidth / 2;
+        const radiusY = shapeHeight / 2;
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(shapeWidth, shapeHeight);
+        const startX = shapeX + (shapeWidth - size) / 2;
+        const startY = shapeY + (shapeHeight - size) / 2;
+        ctx.rect(startX, startY, size, size);
+      } else { // rectangle
+        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+      }
+      
+      ctx.clip();
+      
+      // Draw image clipped to shape
       ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+      
+      ctx.restore();
       
       // Draw red outline if image extends beyond shape
       if (imageExtendsBeyondShape) {
