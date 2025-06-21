@@ -129,8 +129,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const dy = corner.y - centerY;
           const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
           
-          // Large tolerance for circles (30 pixels) to avoid false positives
-          if (distanceFromCenter > radius + 30) {
+          // Very large tolerance for circles (50 pixels) to avoid false positives
+          if (distanceFromCenter > radius + 50) {
             imageExtendsBeyondShape = true;
             break;
           }
