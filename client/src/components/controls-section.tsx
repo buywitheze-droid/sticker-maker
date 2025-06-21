@@ -64,7 +64,7 @@ export default function ControlsSection({
                   <Label>Shape Type</Label>
                   <Select
                     value={shapeSettings.type}
-                    onValueChange={(value: 'square' | 'rectangle' | 'circle') => 
+                    onValueChange={(value: 'square' | 'rectangle' | 'circle' | 'oval') => 
                       onShapeChange({ type: value })
                     }
                   >
@@ -75,6 +75,7 @@ export default function ControlsSection({
                       <SelectItem value="square">Square</SelectItem>
                       <SelectItem value="rectangle">Rectangle</SelectItem>
                       <SelectItem value="circle">Circle</SelectItem>
+                      <SelectItem value="oval">Oval</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

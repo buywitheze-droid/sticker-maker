@@ -96,6 +96,10 @@ function drawShapeBackground(
   if (shapeSettings.type === 'circle') {
     const radius = Math.min(width, height) / 2;
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  } else if (shapeSettings.type === 'oval') {
+    const radiusX = width / 2;
+    const radiusY = height / 2;
+    ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(width, height);
     const startX = centerX - size / 2;

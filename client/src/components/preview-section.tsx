@@ -81,6 +81,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const centerX = shapeX + shapeWidth / 2;
         const centerY = shapeY + shapeHeight / 2;
         ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'oval') {
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        const radiusX = shapeWidth / 2;
+        const radiusY = shapeHeight / 2;
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
       } else if (shapeSettings.type === 'square') {
         const size = Math.min(shapeWidth, shapeHeight);
         const startX = shapeX + (shapeWidth - size) / 2;

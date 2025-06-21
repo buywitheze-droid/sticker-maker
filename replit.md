@@ -162,6 +162,13 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Removed output information/resize window section from bottom of controls
   - Simplified interface to focus on core shape background functionality
 
+- **June 21, 2025**: Added oval shape option to shape background functionality
+  - Extended shape type options to include oval alongside existing square, rectangle, and circle options
+  - Updated UI dropdown to include oval selection in controls section
+  - Implemented oval rendering using HTML5 Canvas ellipse method in both preview and export functions
+  - Added oval shape support to image-utils drawShapeBackground function for proper export functionality
+  - Enhanced preview section to render oval shapes with correct aspect ratio and centering
+
 ## Changelog
 
 ```

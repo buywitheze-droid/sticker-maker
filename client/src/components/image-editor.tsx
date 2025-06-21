@@ -36,7 +36,7 @@ export interface ResizeSettings {
 
 export interface ShapeSettings {
   enabled: boolean;
-  type: 'square' | 'rectangle' | 'circle';
+  type: 'square' | 'rectangle' | 'circle' | 'oval';
   widthInches: number;
   heightInches: number;
   fillColor: string;
