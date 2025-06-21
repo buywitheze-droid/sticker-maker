@@ -108,11 +108,65 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
 
-      // Overlap detection disabled for now to prevent false positives
+      // Check for overlap with different tolerances based on shape type
       let imageExtendsBeyondShape = false;
+      
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidth, shapeHeight) / 2;
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        
+        // Check if any corner of the image extends beyond the circle
+        const corners = [
+          { x: imageX, y: imageY },
+          { x: imageX + imageWidth, y: imageY },
+          { x: imageX + imageWidth, y: imageY + imageHeight },
+          { x: imageX, y: imageY + imageHeight }
+        ];
+        
+        for (const corner of corners) {
+          const dx = corner.x - centerX;
+          const dy = corner.y - centerY;
+          const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
+          
+          // Large tolerance for circles (30 pixels) to avoid false positives
+          if (distanceFromCenter > radius + 30) {
+            imageExtendsBeyondShape = true;
+            break;
+          }
+        }
+      } else {
+        // Smaller tolerance for rectangles/squares (5 pixels) since they're more precise
+        const tolerance = 5;
+        imageExtendsBeyondShape = 
+          imageX < shapeX - tolerance || 
+          imageY < shapeY - tolerance || 
+          imageX + imageWidth > shapeX + shapeWidth + tolerance || 
+          imageY + imageHeight > shapeY + shapeHeight + tolerance;
+      }
 
       // Draw image without clipping to show full size
       ctx.drawImage(imageInfo.image, imageX, imageY, imageWidth, imageHeight);
+      
+      // Draw red outline if image extends beyond shape
+      if (imageExtendsBeyondShape) {
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]);
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2;
+          const centerX = shapeX + shapeWidth / 2;
+          const centerY = shapeY + shapeHeight / 2;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+          ctx.stroke();
+        } else {
+          ctx.strokeRect(shapeX, shapeY, shapeWidth, shapeHeight);
+        }
+        
+        ctx.setLineDash([]);
+      }
 
       // Draw red warning outline if image overlaps shape bounds
       if (imageExtendsBeyondShape) {
