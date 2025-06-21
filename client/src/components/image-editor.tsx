@@ -417,18 +417,20 @@ export default function ImageEditor() {
         
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
 
-        // Download zip package with cropped original
+        // Download package (individual files instead of archive)
         try {
           await downloadZipPackage(finalImage, canvas, imageInfo.file.name);
         } catch (error) {
-          console.error('Zip download failed:', error);
-          // Fallback to single file download
+          console.error('Package download failed:', error);
+          // Direct fallback to cutlines file only
+          const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
           canvas.toBlob((blob) => {
             if (blob) {
               const url = URL.createObjectURL(blob);
               const link = document.createElement('a');
               link.href = url;
-              link.download = `${imageInfo.file.name.replace(/\.[^/.]+$/, '')}-cutlines.png`;
+              link.download = `${nameWithoutExt}_with_cutlines.png`;
+              link.style.display = 'none';
               document.body.appendChild(link);
               link.click();
               document.body.removeChild(link);

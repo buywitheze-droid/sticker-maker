@@ -1,50 +1,46 @@
-import JSZip from 'jszip';
-import { cropImageToContent } from './image-crop';
-
 export async function downloadZipPackage(
   originalImage: HTMLImageElement,
   designCanvas: HTMLCanvasElement,
   originalFilename: string
 ): Promise<void> {
   try {
-    const zip = new JSZip();
+    // Simplified approach: download files individually since zip creation is failing
+    const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, "");
     
-    // Create original image blob directly
+    // Download original image
     const originalBlob = await imageToBlob(originalImage);
-      
     if (originalBlob) {
-      // Extract original filename without extension and add proper extension
-      const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, "");
-      zip.file(`${nameWithoutExt}_original.png`, originalBlob);
+      downloadBlob(originalBlob, `${nameWithoutExt}_original.png`);
     }
     
-    // Get design with cutlines as blob
+    // Small delay between downloads
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Download design with cutlines
     const designBlob = await new Promise<Blob | null>((resolve) => {
       designCanvas.toBlob(resolve, 'image/png', 1.0);
     });
     
     if (designBlob) {
-      const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, "");
-      zip.file(`${nameWithoutExt}_with_cutlines.png`, designBlob);
+      downloadBlob(designBlob, `${nameWithoutExt}_with_cutlines.png`);
     }
     
-    // Generate zip file
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    
-    // Download the zip file
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${originalFilename.replace(/\.[^/.]+$/, "")}_package.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    
   } catch (error) {
-    console.error('Error creating zip package:', error);
+    console.error('Error creating download package:', error);
     throw new Error('Failed to create download package');
   }
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function imageToBlob(image: HTMLImageElement): Promise<Blob | null> {
