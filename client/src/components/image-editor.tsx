@@ -421,14 +421,81 @@ export default function ImageEditor() {
         imageInfo={imageInfo}
       />
       
-      <PreviewSection
-        ref={canvasRef}
-        imageInfo={imageInfo}
-        strokeSettings={strokeSettings}
-        resizeSettings={resizeSettings}
-        shapeSettings={shapeSettings}
-        cadCutBounds={cadCutBounds}
-      />
+      <div className="relative">
+        <PreviewSection
+          ref={canvasRef}
+          imageInfo={imageInfo}
+          strokeSettings={strokeSettings}
+          resizeSettings={resizeSettings}
+          shapeSettings={shapeSettings}
+          cadCutBounds={cadCutBounds}
+        />
+        
+        {/* Position Control Menu */}
+        {imageInfo && shapeSettings.enabled && (
+          <div className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700">
+            <div className="text-xs text-gray-600 dark:text-gray-400 text-center mb-2 font-medium">Position</div>
+            <div className="grid grid-cols-3 gap-1 w-24 h-24">
+              {/* Top arrow */}
+              <div></div>
+              <button
+                onClick={() => handlePositionChange(0, -10)}
+                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                title="Move Up"
+              >
+                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+              <div></div>
+              
+              {/* Left and Right arrows */}
+              <button
+                onClick={() => handlePositionChange(-10, 0)}
+                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                title="Move Left"
+              >
+                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              </button>
+              
+              <button
+                onClick={() => setShapeSettings(prev => ({ ...prev, offsetX: 0, offsetY: 0 }))}
+                className="flex items-center justify-center w-6 h-6 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 rounded transition-colors"
+                title="Reset Position"
+              >
+                <svg className="w-3 h-3 text-blue-600 dark:text-blue-300" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v3.586l1.707-1.707a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8 10.586V7z" clipRule="evenodd" />
+                </svg>
+              </button>
+              
+              <button
+                onClick={() => handlePositionChange(10, 0)}
+                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                title="Move Right"
+              >
+                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                </svg>
+              </button>
+              
+              {/* Bottom arrow */}
+              <div></div>
+              <button
+                onClick={() => handlePositionChange(0, 10)}
+                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                title="Move Down"
+              >
+                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+              <div></div>
+            </div>
+          </div>
+        )}
+      </div>
       
       <ControlsSection
         strokeSettings={strokeSettings}
