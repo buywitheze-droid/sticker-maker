@@ -58,20 +58,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      // Calculate shape dimensions for preview - always center the shape in the preview window
-      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.7; // Slightly smaller for better visibility
+      // Calculate shape dimensions to fit the view properly - always fill most of the preview space
+      const padding = 40; // Leave some padding around the shape
+      const availableWidth = canvasWidth - (padding * 2);
+      const availableHeight = canvasHeight - (padding * 2);
       const shapeAspect = shapeSettings.widthInches / shapeSettings.heightInches;
       
       let shapeWidth, shapeHeight;
-      if (shapeAspect > 1) {
-        shapeWidth = maxSize;
-        shapeHeight = maxSize / shapeAspect;
+      if (shapeAspect > (availableWidth / availableHeight)) {
+        // Shape is wider relative to available space - fit to width
+        shapeWidth = availableWidth;
+        shapeHeight = availableWidth / shapeAspect;
       } else {
-        shapeHeight = maxSize;
-        shapeWidth = maxSize * shapeAspect;
+        // Shape is taller relative to available space - fit to height  
+        shapeHeight = availableHeight;
+        shapeWidth = availableHeight * shapeAspect;
       }
 
-      // Always center the shape in the preview window regardless of zoom
+      // Always center the shape perfectly in the preview window
       const shapeX = (canvasWidth - shapeWidth) / 2;
       const shapeY = (canvasHeight - shapeHeight) / 2;
 
@@ -236,9 +240,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      // Calculate preview dimensions based on resize settings - always center in window
+      // Calculate preview dimensions based on resize settings - fit to view properly
       const previewAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
-      const maxSize = Math.min(canvasWidth, canvasHeight) * 0.7; // Consistent with shape preview
+      const padding = 40;
+      const availableWidth = canvasWidth - (padding * 2);
+      const availableHeight = canvasHeight - (padding * 2);
+      
+      let maxSize;
+      if (previewAspectRatio > (availableWidth / availableHeight)) {
+        maxSize = availableWidth;
+      } else {
+        maxSize = availableHeight;
+      }
       
       let previewWidth, previewHeight;
       if (previewAspectRatio > 1) {
