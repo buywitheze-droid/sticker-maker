@@ -46,22 +46,36 @@ export function getImageBounds(image: HTMLImageElement): { x: number; y: number;
   };
 }
 
-export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement {
-  const bounds = getImageBounds(image);
-  
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
-  
-  canvas.width = bounds.width;
-  canvas.height = bounds.height;
-  
-  // Draw only the content area
-  ctx.drawImage(
-    image,
-    bounds.x, bounds.y, bounds.width, bounds.height,
-    0, 0, bounds.width, bounds.height
-  );
-  
-  return canvas;
+export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement | null {
+  try {
+    const bounds = getImageBounds(image);
+    
+    // Validate bounds
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      console.warn('Invalid crop bounds, returning null');
+      return null;
+    }
+    
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      console.error('Failed to get canvas context');
+      return null;
+    }
+    
+    canvas.width = bounds.width;
+    canvas.height = bounds.height;
+    
+    // Draw only the content area
+    ctx.drawImage(
+      image,
+      bounds.x, bounds.y, bounds.width, bounds.height,
+      0, 0, bounds.width, bounds.height
+    );
+    
+    return canvas;
+  } catch (error) {
+    console.error('Error cropping image:', error);
+    return null;
+  }
 }

@@ -84,8 +84,20 @@ export default function ImageEditor() {
         return;
       }
       
+      // Validate image dimensions
+      if (image.width <= 0 || image.height <= 0) {
+        alert('Invalid image dimensions.');
+        return;
+      }
+      
       // Automatically crop the image to remove empty space
       const croppedCanvas = cropImageToContent(image);
+      if (!croppedCanvas) {
+        console.error('Failed to crop image, using original');
+        handleFallbackImage(file, image);
+        return;
+      }
+      
       const croppedImage = new Image();
       
       croppedImage.onload = () => {

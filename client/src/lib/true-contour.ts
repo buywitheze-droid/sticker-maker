@@ -62,19 +62,33 @@ export function createTrueContour(
 }
 
 function generateSimpleOutline(image: HTMLImageElement, strokeSettings: StrokeSettings): ContourPoint[] {
-  const tempCanvas = document.createElement('canvas');
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return [];
-  
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
-  tempCtx.drawImage(image, 0, 0);
-  
-  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
-  const { data, width, height } = imageData;
-  
-  // Create actual contour following the image shape
-  return generateActualContour(data, width, height, strokeSettings);
+  try {
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) {
+      console.error('Failed to get canvas context for outline generation');
+      return [];
+    }
+    
+    // Validate image dimensions
+    if (image.width <= 0 || image.height <= 0) {
+      console.warn('Invalid image dimensions for outline generation');
+      return [];
+    }
+    
+    tempCanvas.width = image.width;
+    tempCanvas.height = image.height;
+    tempCtx.drawImage(image, 0, 0);
+    
+    const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+    const { data, width, height } = imageData;
+    
+    // Create actual contour following the image shape
+    return generateActualContour(data, width, height, strokeSettings);
+  } catch (error) {
+    console.error('Error generating simple outline:', error);
+    return [];
+  }
 }
 
 function generateActualContour(
