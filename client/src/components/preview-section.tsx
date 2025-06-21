@@ -127,9 +127,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const croppedCanvas = cropImageToContent(imageInfo.image);
       const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
       
-      // Center the cropped image within the shape for more accurate positioning
-      const imageX = shapeX + (shapeWidth - imageWidth) / 2;
-      const imageY = shapeY + (shapeHeight - imageHeight) / 2;
+      // Center the cropped image within the shape and apply manual offset
+      const baseImageX = shapeX + (shapeWidth - imageWidth) / 2;
+      const baseImageY = shapeY + (shapeHeight - imageHeight) / 2;
+      
+      // Apply manual position offset (scale offset to preview)
+      const offsetScale = shapePixelsPerInch / 300; // Scale offset from 300 DPI to preview scale
+      const imageX = baseImageX + (shapeSettings.offsetX * offsetScale);
+      const imageY = baseImageY + (shapeSettings.offsetY * offsetScale);
 
       // Check for overlap with different tolerances based on shape type
       let imageExtendsBeyondShape = false;

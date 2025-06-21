@@ -45,6 +45,8 @@ export interface ShapeSettings {
   strokeEnabled: boolean;
   strokeWidth: number;
   strokeColor: string;
+  offsetX: number;
+  offsetY: number;
 }
 
 export default function ImageEditor() {
