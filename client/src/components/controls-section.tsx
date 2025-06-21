@@ -14,7 +14,7 @@ interface ControlsSectionProps {
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
 }
@@ -222,10 +222,30 @@ export default function ControlsSection({
               <Button 
                 onClick={() => onDownload('cutcontour')}
                 disabled={!imageInfo || isProcessing}
-                className="w-full bg-blue-500 hover:bg-blue-600"
+                className="w-full bg-magenta-500 hover:bg-magenta-600 text-white"
+                style={{ backgroundColor: '#FF00FF', borderColor: '#FF00FF' }}
               >
-                PNG file with cutlines
+                🎯 Magenta Cut Contour
               </Button>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <Button 
+                  onClick={() => onDownload('cutcontour', 'svg')}
+                  disabled={!imageInfo || isProcessing}
+                  className="text-xs"
+                  variant="outline"
+                >
+                  SVG Vector
+                </Button>
+                <Button 
+                  onClick={() => onDownload('cutcontour', 'eps')}
+                  disabled={!imageInfo || isProcessing}
+                  className="text-xs"
+                  variant="outline"
+                >
+                  EPS Vector
+                </Button>
+              </div>
               
               <Button 
                 onClick={() => onDownload('design-only')}
@@ -237,7 +257,7 @@ export default function ControlsSection({
               </Button>
 
               <div className="text-xs text-gray-500 text-center">
-                Full resolution PNG with transparent background.
+                Magenta paths trace transparent pixel boundaries for precise cutting machine operation.
               </div>
             </div>
           </CardContent>

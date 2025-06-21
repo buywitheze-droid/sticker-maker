@@ -48,6 +48,11 @@ export function createVectorStroke(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   
+  // If creating cut contour, generate magenta boundary path
+  if (exportCutContour) {
+    return createMagentaCutContour(image, ctx, canvas, scaleFactor);
+  }
+  
   if (strokeSettings.enabled && strokeWidth > 0) {
     // Use optimized shadow-based approach for better performance
     ctx.save();
@@ -484,4 +489,205 @@ function downloadAsSVG(
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+function createMagentaCutContour(
+  image: HTMLImageElement,
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  scaleFactor: number
+): HTMLCanvasElement {
+  // Clear canvas with transparent background
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Create a temporary canvas to analyze the image
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return canvas;
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  // Get image data to analyze transparency
+  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  const data = imageData.data;
+  
+  // Find transparent boundary pixels
+  const boundaryPixels = findTransparentBoundary(data, image.width, image.height);
+  
+  if (boundaryPixels.length === 0) {
+    return canvas;
+  }
+  
+  // Convert boundary pixels to smooth vector path
+  const vectorPath = pixelsToVectorPath(boundaryPixels, scaleFactor);
+  
+  // Draw magenta cut contour
+  drawMagentaCutPath(ctx, vectorPath, scaleFactor);
+  
+  return canvas;
+}
+
+function findTransparentBoundary(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): Array<{ x: number; y: number }> {
+  const boundaryPixels: Array<{ x: number; y: number }> = [];
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4;
+      const alpha = data[index + 3];
+      
+      // Check if this pixel is opaque
+      if (alpha > 128) {
+        // Check surrounding pixels for transparency
+        let isBoundary = false;
+        
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+              const neighborIndex = (ny * width + nx) * 4;
+              const neighborAlpha = data[neighborIndex + 3];
+              
+              // If any neighbor is transparent, this is a boundary pixel
+              if (neighborAlpha <= 128) {
+                isBoundary = true;
+                break;
+              }
+            } else {
+              // Edge of image counts as transparent
+              isBoundary = true;
+              break;
+            }
+          }
+          if (isBoundary) break;
+        }
+        
+        if (isBoundary) {
+          boundaryPixels.push({ x, y });
+        }
+      }
+    }
+  }
+  
+  return boundaryPixels;
+}
+
+function pixelsToVectorPath(
+  pixels: Array<{ x: number; y: number }>,
+  scaleFactor: number
+): Array<{ x: number; y: number }> {
+  if (pixels.length === 0) return [];
+  
+  // Sort pixels to create a connected path
+  const sortedPixels = [...pixels].sort((a, b) => {
+    if (a.y === b.y) return a.x - b.x;
+    return a.y - b.y;
+  });
+  
+  // Create smooth vector path by connecting nearby pixels
+  const vectorPath: Array<{ x: number; y: number }> = [];
+  let currentPixel = sortedPixels[0];
+  const visited = new Set<string>();
+  
+  vectorPath.push({
+    x: currentPixel.x * scaleFactor,
+    y: currentPixel.y * scaleFactor
+  });
+  visited.add(`${currentPixel.x},${currentPixel.y}`);
+  
+  // Connect pixels by finding nearest unvisited neighbors
+  while (vectorPath.length < sortedPixels.length) {
+    let nearestPixel = null;
+    let nearestDistance = Infinity;
+    
+    for (const pixel of sortedPixels) {
+      const key = `${pixel.x},${pixel.y}`;
+      if (visited.has(key)) continue;
+      
+      const distance = Math.sqrt(
+        Math.pow(pixel.x - currentPixel.x, 2) + 
+        Math.pow(pixel.y - currentPixel.y, 2)
+      );
+      
+      if (distance < nearestDistance && distance <= 3) { // Max distance threshold
+        nearestDistance = distance;
+        nearestPixel = pixel;
+      }
+    }
+    
+    if (nearestPixel) {
+      vectorPath.push({
+        x: nearestPixel.x * scaleFactor,
+        y: nearestPixel.y * scaleFactor
+      });
+      visited.add(`${nearestPixel.x},${nearestPixel.y}`);
+      currentPixel = nearestPixel;
+    } else {
+      // Find any unvisited pixel to continue
+      const unvisited = sortedPixels.find(p => !visited.has(`${p.x},${p.y}`));
+      if (unvisited) {
+        vectorPath.push({
+          x: unvisited.x * scaleFactor,
+          y: unvisited.y * scaleFactor
+        });
+        visited.add(`${unvisited.x},${unvisited.y}`);
+        currentPixel = unvisited;
+      } else {
+        break;
+      }
+    }
+  }
+  
+  return vectorPath;
+}
+
+function drawMagentaCutPath(
+  ctx: CanvasRenderingContext2D,
+  vectorPath: Array<{ x: number; y: number }>,
+  scaleFactor: number
+): void {
+  if (vectorPath.length < 2) return;
+  
+  // Set magenta stroke properties for cut contour
+  ctx.strokeStyle = '#FF00FF'; // Magenta color for cut paths
+  ctx.lineWidth = 2 * scaleFactor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  // Begin path
+  ctx.beginPath();
+  ctx.moveTo(vectorPath[0].x, vectorPath[0].y);
+  
+  // Create smooth curves using quadratic bezier curves
+  for (let i = 1; i < vectorPath.length - 1; i++) {
+    const current = vectorPath[i];
+    const next = vectorPath[i + 1];
+    
+    // Calculate control point for smooth curve
+    const controlX = (current.x + next.x) / 2;
+    const controlY = (current.y + next.y) / 2;
+    
+    ctx.quadraticCurveTo(current.x, current.y, controlX, controlY);
+  }
+  
+  // Connect to last point
+  if (vectorPath.length > 1) {
+    const lastPoint = vectorPath[vectorPath.length - 1];
+    ctx.lineTo(lastPoint.x, lastPoint.y);
+    
+    // Close the path to create a complete contour
+    ctx.closePath();
+  }
+  
+  // Stroke the magenta cut contour
+  ctx.stroke();
 }

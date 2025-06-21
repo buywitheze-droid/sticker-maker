@@ -209,32 +209,42 @@ export default function ImageEditor() {
     
     try {
       if (downloadType === 'cutcontour') {
-        // Use True Contour system for precise edge following
+        // Generate magenta vector path along transparent pixel boundaries
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const trueContourCanvas = createTrueContour(imageInfo.image, {
+        const magentaCutCanvas = createVectorStroke(imageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
-          threshold: 128, // Alpha threshold for edge detection
-          smoothing: 1, // Minimal smoothing for precision
-          includeHoles: strokeSettings.includeHoles || false, // Include holes if enabled
-          holeMargin: 2.0, // Flexi Auto Contour standard hole margin (2 pixels)
-          fillHoles: strokeSettings.fillHoles || false, // Fill holes if enabled
-          autoTextBackground: false // Disabled auto text background
+          exportCutContour: true, // Enable cut contour mode
+          vectorQuality: 'high' // High quality for precise cutting paths
         });
         
-        // Download the True Contour canvas
-        trueContourCanvas.toBlob((blob: Blob | null) => {
+        // Download the magenta cut contour
+        magentaCutCanvas.toBlob((blob: Blob | null) => {
           if (!blob) return;
           
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'true_contour_cutlines.png';
+          link.download = 'magenta_cut_contour.png';
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
         }, 'image/png');
+        
+        // Also generate vector formats for cutting machines
+        const vectorPaths = createVectorPaths(imageInfo.image, {
+          ...strokeSettings, 
+          color: '#FF00FF', 
+          enabled: true
+        });
+        
+        // Download additional vector formats based on requested format
+        if (format === 'svg') {
+          downloadVectorStroke(magentaCutCanvas, 'cut_contour.svg', 'svg', vectorPaths);
+        } else if (format === 'eps') {
+          downloadVectorStroke(magentaCutCanvas, 'cut_contour.eps', 'eps', vectorPaths);
+        }
       } else {
         // Standard download using existing system
         const dpi = 300;
