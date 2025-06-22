@@ -206,11 +206,11 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Uses 8-connected neighbor analysis for precise edge pixel identification
   - Creates clean rectangular contours with consistent offset matching CadCut behavior
   - Simplified, reliable contour generation optimized for cutting machine compatibility
-  - Binary mask creation from alpha channel for precise pixel classification
-  - Edge pixel detection using 8-neighbor analysis for accurate boundary identification
-  - Perimeter tracing algorithm following outermost edge pixels around shape boundaries
-  - Outward normal calculation with proper vector averaging for smooth offset application
-  - Professional contour offset system with reliable white outline rendering
+  - Simple alpha channel detection system for reliable non-transparent pixel identification
+  - Content bounds detection using alpha threshold analysis (similar to borderize.com)
+  - Direct rectangular outline generation around actual image content
+  - Clean white outline rendering with proper offset calculation
+  - CadCut-style rectangular contours with consistent offset matching professional software
 
 ## Changelog
 
