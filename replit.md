@@ -206,6 +206,12 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Uses 8-connected neighbor analysis for precise edge pixel identification
   - Creates clean rectangular contours with consistent offset matching CadCut behavior
   - Simplified, reliable contour generation optimized for cutting machine compatibility
+  - Advanced vectorization system with morphological operations for clean edge detection
+  - Marching squares algorithm for precise contour tracing following actual design boundaries
+  - Douglas-Peucker simplification for smooth vector curves
+  - Bézier curve fitting for professional vector-quality results
+  - Professional offset calculation with averaged normals for smooth cutting paths
+  - Optimized contour generation removing redundant points for efficient cutting
 
 ## Changelog
 
