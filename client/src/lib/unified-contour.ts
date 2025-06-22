@@ -5,6 +5,15 @@ interface ContourPoint {
   y: number;
 }
 
+interface DetectedObject {
+  id: number;
+  pixels: ContourPoint[];
+  bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  area: number;
+  aspectRatio: number;
+  isText: boolean;
+}
+
 export function createUnifiedContour(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings
@@ -69,23 +78,25 @@ function createSingleContour(
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
   strokeSettings: StrokeSettings
 ): ContourPoint[] {
-  // Strategy 1: For simple shapes, use convex hull
-  const edgePoints = findAllEdgePoints(data, width, height, strokeSettings.alphaThreshold);
+  // Step 1: Automatically detect separate objects and text
+  const separateObjects = detectSeparateObjects(data, width, height, strokeSettings.alphaThreshold);
   
-  if (edgePoints.length < 50) {
-    // Simple shape - use convex hull for clean outline
-    return calculateConvexHull(edgePoints);
+  if (separateObjects.length === 0) {
+    return [];
   }
-
-  // Strategy 2: For complex shapes, use alpha shape or concave hull
-  const alphaShape = createAlphaShape(edgePoints, strokeSettings.width * 10);
   
-  if (alphaShape.length > 0) {
-    return alphaShape;
+  if (separateObjects.length === 1) {
+    // Single object - create precise contour
+    return createObjectContour(separateObjects[0], data, width, height, strokeSettings);
   }
-
-  // Strategy 3: Fallback to morphological closing + boundary tracing
-  return createMorphologicalContour(data, width, height, bounds, strokeSettings);
+  
+  // Step 2: Create individual contours for each object
+  const individualContours = separateObjects.map(obj => 
+    createObjectContour(obj, data, width, height, strokeSettings)
+  );
+  
+  // Step 3: Intelligently merge contours based on proximity
+  return mergeNearbyContours(individualContours, strokeSettings.width * 2);
 }
 
 function findAllEdgePoints(
@@ -424,6 +435,276 @@ function calculateOrientation(p: ContourPoint, q: ContourPoint, r: ContourPoint)
   const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
   if (val === 0) return 0; // collinear
   return val > 0 ? 1 : 2; // clockwise or counterclockwise
+}
+
+function detectSeparateObjects(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  alphaThreshold: number
+): DetectedObject[] {
+  const visited = new Uint8Array(width * height);
+  const objects: DetectedObject[] = [];
+  let objectId = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const alpha = data[index * 4 + 3];
+      
+      if (alpha >= alphaThreshold && !visited[index]) {
+        // Found unvisited solid pixel - start flood fill
+        const objectPixels = floodFillObject(data, visited, x, y, width, height, alphaThreshold);
+        
+        if (objectPixels.length > 10) { // Minimum size threshold
+          const bounds = calculateObjectBounds(objectPixels);
+          const area = objectPixels.length;
+          const aspectRatio = (bounds.maxX - bounds.minX) / (bounds.maxY - bounds.minY);
+          const isText = detectIfText(objectPixels, bounds, aspectRatio);
+          
+          objects.push({
+            id: objectId++,
+            pixels: objectPixels,
+            bounds,
+            area,
+            aspectRatio,
+            isText
+          });
+        }
+      }
+    }
+  }
+
+  return objects;
+}
+
+function floodFillObject(
+  data: Uint8ClampedArray,
+  visited: Uint8Array,
+  startX: number,
+  startY: number,
+  width: number,
+  height: number,
+  alphaThreshold: number
+): ContourPoint[] {
+  const pixels: ContourPoint[] = [];
+  const stack: ContourPoint[] = [{ x: startX, y: startY }];
+  
+  while (stack.length > 0) {
+    const { x, y } = stack.pop()!;
+    const index = y * width + x;
+    
+    if (x < 0 || x >= width || y < 0 || y >= height || visited[index]) {
+      continue;
+    }
+    
+    const alpha = data[index * 4 + 3];
+    if (alpha < alphaThreshold) {
+      continue;
+    }
+    
+    visited[index] = 1;
+    pixels.push({ x, y });
+    
+    // Add 4-connected neighbors
+    stack.push({ x: x + 1, y });
+    stack.push({ x: x - 1, y });
+    stack.push({ x, y: y + 1 });
+    stack.push({ x, y: y - 1 });
+  }
+  
+  return pixels;
+}
+
+function calculateObjectBounds(pixels: ContourPoint[]): { minX: number; maxX: number; minY: number; maxY: number } {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  
+  for (const pixel of pixels) {
+    minX = Math.min(minX, pixel.x);
+    maxX = Math.max(maxX, pixel.x);
+    minY = Math.min(minY, pixel.y);
+    maxY = Math.max(maxY, pixel.y);
+  }
+  
+  return { minX, maxX, minY, maxY };
+}
+
+function detectIfText(pixels: ContourPoint[], bounds: { minX: number; maxX: number; minY: number; maxY: number }, aspectRatio: number): boolean {
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const area = pixels.length;
+  const boundingArea = width * height;
+  const density = area / boundingArea;
+  
+  // Text characteristics:
+  // - Moderate aspect ratio (not too wide or tall)
+  // - Medium density (has internal spaces)
+  // - Reasonable size
+  const isTextLikeAspectRatio = aspectRatio > 0.2 && aspectRatio < 8;
+  const isTextLikeDensity = density > 0.3 && density < 0.9;
+  const isReasonableSize = width > 5 && height > 5 && width < 500 && height < 100;
+  
+  return isTextLikeAspectRatio && isTextLikeDensity && isReasonableSize;
+}
+
+function createObjectContour(
+  object: DetectedObject,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  strokeSettings: StrokeSettings
+): ContourPoint[] {
+  // Create a localized edge detection for this object
+  const edgePoints: ContourPoint[] = [];
+  
+  for (const pixel of object.pixels) {
+    const { x, y } = pixel;
+    
+    // Check if this pixel is on the edge (has transparent neighbor)
+    const neighbors = [
+      { x: x - 1, y },
+      { x: x + 1, y },
+      { x, y: y - 1 },
+      { x, y: y + 1 }
+    ];
+    
+    const hasTransparentNeighbor = neighbors.some(neighbor => {
+      if (neighbor.x < 0 || neighbor.x >= width || neighbor.y < 0 || neighbor.y >= height) {
+        return true; // Out of bounds = transparent
+      }
+      const neighborAlpha = data[(neighbor.y * width + neighbor.x) * 4 + 3];
+      return neighborAlpha < strokeSettings.alphaThreshold;
+    });
+    
+    if (hasTransparentNeighbor) {
+      edgePoints.push(pixel);
+    }
+  }
+  
+  if (edgePoints.length < 3) {
+    return calculateConvexHull(object.pixels);
+  }
+  
+  // For text objects, use tighter contours
+  if (object.isText) {
+    return createTextContour(edgePoints, strokeSettings.width * 0.5);
+  }
+  
+  // For regular objects, use standard contour
+  return createShapeContour(edgePoints, strokeSettings.width);
+}
+
+function createTextContour(edgePoints: ContourPoint[], margin: number): ContourPoint[] {
+  // For text, create a tight but smooth contour
+  const bounds = calculateObjectBounds(edgePoints);
+  const padding = Math.max(1, margin);
+  
+  return [
+    { x: bounds.minX - padding, y: bounds.minY - padding },
+    { x: bounds.maxX + padding, y: bounds.minY - padding },
+    { x: bounds.maxX + padding, y: bounds.maxY + padding },
+    { x: bounds.minX - padding, y: bounds.maxY + padding }
+  ];
+}
+
+function createShapeContour(edgePoints: ContourPoint[], margin: number): ContourPoint[] {
+  // For shapes, create a more organic contour following the actual edges
+  if (edgePoints.length < 10) {
+    return calculateConvexHull(edgePoints);
+  }
+  
+  // Use alpha shape for complex objects
+  return createAlphaShape(edgePoints, margin * 5);
+}
+
+function mergeNearbyContours(contours: ContourPoint[][], mergeDistance: number): ContourPoint[] {
+  if (contours.length === 0) return [];
+  if (contours.length === 1) return contours[0];
+  
+  // Find all contours that are within merge distance
+  const contourGroups: ContourPoint[][][] = [];
+  const processed = new Set<number>();
+  
+  for (let i = 0; i < contours.length; i++) {
+    if (processed.has(i)) continue;
+    
+    const group: ContourPoint[][] = [contours[i]];
+    processed.add(i);
+    
+    // Find all contours close to this one
+    for (let j = i + 1; j < contours.length; j++) {
+      if (processed.has(j)) continue;
+      
+      const distance = calculateMinimumContourDistance(contours[i], contours[j]);
+      if (distance <= mergeDistance) {
+        group.push(contours[j]);
+        processed.add(j);
+      }
+    }
+    
+    contourGroups.push(group);
+  }
+  
+  // Merge each group into a single contour
+  const mergedContours = contourGroups.map(group => mergeContourGroup(group));
+  
+  // If we still have multiple groups, create a unified hull around all
+  if (mergedContours.length > 1) {
+    const allPoints = mergedContours.flat();
+    return calculateConvexHull(allPoints);
+  }
+  
+  return mergedContours[0];
+}
+
+function calculateMinimumContourDistance(contour1: ContourPoint[], contour2: ContourPoint[]): number {
+  let minDistance = Infinity;
+  
+  for (const p1 of contour1) {
+    for (const p2 of contour2) {
+      const distance = Math.sqrt(
+        Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2)
+      );
+      minDistance = Math.min(minDistance, distance);
+    }
+  }
+  
+  return minDistance;
+}
+
+function mergeContourGroup(contours: ContourPoint[][]): ContourPoint[] {
+  if (contours.length === 1) return contours[0];
+  
+  // Create a unified hull around all contours in the group
+  const allPoints = contours.flat();
+  
+  // Use morphological closing approach for better merging
+  const bounds = calculateObjectBounds(allPoints);
+  const width = bounds.maxX - bounds.minX + 1;
+  const height = bounds.maxY - bounds.minY + 1;
+  
+  // Create a binary mask for all points
+  const mask = new Uint8Array(width * height);
+  
+  for (const point of allPoints) {
+    const x = point.x - bounds.minX;
+    const y = point.y - bounds.minY;
+    if (x >= 0 && x < width && y >= 0 && y < height) {
+      mask[y * width + x] = 1;
+    }
+  }
+  
+  // Apply morphological closing to connect nearby objects
+  const closedMask = morphologicalClosing(mask, width, height, 3);
+  
+  // Trace the boundary of the closed shape
+  const boundary = traceBoundary(closedMask, width, height);
+  
+  // Convert back to global coordinates
+  return boundary.map(point => ({
+    x: point.x + bounds.minX,
+    y: point.y + bounds.minY
+  }));
 }
 
 function drawUnifiedContour(
