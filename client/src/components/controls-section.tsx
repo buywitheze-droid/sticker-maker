@@ -50,15 +50,86 @@ export default function ControlsSection({
       <div className="space-y-6">
 
 
+        {/* Contour Outline Card */}
+        <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+          <CardContent className="space-y-4 pt-6">
+            <div className="flex items-center space-x-3">
+              <Checkbox 
+                id="stroke-enabled"
+                checked={strokeSettings.enabled}
+                onCheckedChange={(checked) => onStrokeChange({ enabled: checked as boolean })}
+              />
+              <Label htmlFor="stroke-enabled" className="text-base font-medium">
+                Contour Outline
+              </Label>
+            </div>
+            
+            {strokeSettings.enabled && (
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label className="text-sm">Stroke Width: {strokeSettings.width}px</Label>
+                  <Slider
+                    value={[strokeSettings.width]}
+                    onValueChange={(value) => onStrokeChange({ width: value[0] })}
+                    max={50}
+                    min={1}
+                    step={1}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm">Stroke Color</Label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="color"
+                      value={strokeSettings.color}
+                      onChange={(e) => onStrokeChange({ color: e.target.value })}
+                      className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
+                    />
+                    <span className="text-sm font-mono">{strokeSettings.color}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="include-holes"
+                      checked={strokeSettings.includeHoles}
+                      onCheckedChange={(checked) => onStrokeChange({ includeHoles: checked as boolean })}
+                    />
+                    <Label htmlFor="include-holes" className="text-sm">Include Interior Holes</Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="fill-holes"
+                      checked={strokeSettings.fillHoles}
+                      onCheckedChange={(checked) => onStrokeChange({ fillHoles: checked as boolean })}
+                    />
+                    <Label htmlFor="fill-holes" className="text-sm">Fill Transparent Holes</Label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Shape Background Card */}
         <Card className={`border-2 transition-colors ${shapeSettings.enabled ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
           <CardContent className="space-y-4 pt-6">
-            <div className="flex items-center justify-between">
-              <Label className="text-base font-medium">Shape Background</Label>
-              <div className="text-sm text-green-600 font-medium">Always Enabled</div>
+            <div className="flex items-center space-x-3">
+              <Checkbox 
+                id="shape-enabled"
+                checked={shapeSettings.enabled}
+                onCheckedChange={(checked) => onShapeChange({ enabled: checked as boolean })}
+              />
+              <Label htmlFor="shape-enabled" className="text-base font-medium">
+                Shape Background
+              </Label>
             </div>
 
-            {true && (
+            {shapeSettings.enabled && (
               <div className="space-y-4 mt-4">
                 <div>
                   <Label>Shape Type</Label>
