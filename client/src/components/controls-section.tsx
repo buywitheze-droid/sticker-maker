@@ -66,48 +66,20 @@ export default function ControlsSection({
             
             {strokeSettings.enabled && (
               <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label className="text-sm">Contour Offset: {strokeSettings.width.toFixed(2)}"</Label>
+                <div>
+                  <Label>Contour Width</Label>
                   <Slider
                     value={[strokeSettings.width]}
-                    onValueChange={(value) => onStrokeChange({ width: value[0] })}
-                    max={1.0}
-                    min={0.0}
-                    step={0.01}
-                    className="w-full"
-                  />
-                  <div className="text-xs text-gray-500">Distance from design edge in inches | 0" to 1" range</div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm">Stroke Color</Label>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="color"
-                      value={strokeSettings.color}
-                      onChange={(e) => onStrokeChange({ color: e.target.value })}
-                      className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
-                    />
-                    <span className="text-sm font-mono">{strokeSettings.color}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm">Alpha Threshold: {Math.round((strokeSettings.alphaThreshold / 255) * 100)}%</Label>
-                  <Slider
-                    value={[strokeSettings.alphaThreshold]}
-                    onValueChange={(value) => onStrokeChange({ alphaThreshold: value[0] })}
-                    max={255}
+                    onValueChange={([value]) => onStrokeChange({ width: value })}
                     min={1}
+                    max={10}
                     step={1}
-                    className="w-full"
+                    className="mt-2"
                   />
-                  <div className="text-xs text-gray-500">
-                    Lower values = detect more transparent areas | Higher values = only solid areas
+                  <div className="text-sm text-gray-500 mt-1">
+                    {strokeSettings.width}px
                   </div>
                 </div>
-
-
               </div>
             )}
           </CardContent>
