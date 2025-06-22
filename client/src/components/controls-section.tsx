@@ -241,9 +241,7 @@ export default function ControlsSection({
                 onClick={() => onDownload('download-package')}
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-              >
-                Download Package (.zip)
-              </Button>
+              >Download both png and cutline file</Button>
               
               <div className="text-xs text-gray-500 text-center mt-2">
                 Includes original upload + design with cutlines
