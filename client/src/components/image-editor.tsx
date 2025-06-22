@@ -51,10 +51,10 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 0.05, // 0.05 inches default offset
+    width: 2, // 2px default width like yesterday at 11am
     color: "#ffffff",
     enabled: false,
-    alphaThreshold: 128, // 0-255 range, 128 = 50% transparency threshold
+    alphaThreshold: 128, // Keep internal but don't show control
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
