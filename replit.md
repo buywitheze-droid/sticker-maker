@@ -194,7 +194,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Re-enabled contour outline option alongside shape background with mutual exclusion
   - Users can now choose between contour outline mode or shape background mode
   - Added full contour controls: stroke width, color, include holes, fill holes options
-  - Maintained mutual exclusion between contour and shape modes for clean interface
+  - Implemented full mutual exclusion: checking contour disables shape background and vice versa
+  - Set both options disabled by default, allowing users to choose their preferred mode
 
 ## Changelog
 

@@ -242,7 +242,7 @@ export default function ImageEditor() {
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     const updated = { ...strokeSettings, ...newSettings };
     
-    // If enabling stroke, disable shape
+    // If enabling stroke, disable shape for mutual exclusion
     if (newSettings.enabled === true) {
       setShapeSettings(prev => ({ ...prev, enabled: false }));
     }
