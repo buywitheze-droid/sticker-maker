@@ -67,16 +67,16 @@ export default function ControlsSection({
             {strokeSettings.enabled && (
               <div className="space-y-4 mt-4">
                 <div className="space-y-2">
-                  <Label className="text-sm">Contour Offset: {strokeSettings.width}px</Label>
+                  <Label className="text-sm">Contour Offset: {strokeSettings.width.toFixed(2)}"</Label>
                   <Slider
                     value={[strokeSettings.width]}
                     onValueChange={(value) => onStrokeChange({ width: value[0] })}
-                    max={20}
-                    min={1}
-                    step={1}
+                    max={1.0}
+                    min={0.0}
+                    step={0.01}
                     className="w-full"
                   />
-                  <div className="text-xs text-gray-500">Distance from design edge | Higher = larger safety margin</div>
+                  <div className="text-xs text-gray-500">Distance from design edge in inches | 0" to 1" range</div>
                 </div>
 
                 <div className="space-y-2">

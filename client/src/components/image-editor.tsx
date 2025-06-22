@@ -19,7 +19,7 @@ export interface ImageInfo {
 }
 
 export interface StrokeSettings {
-  width: number;
+  width: number; // Now in inches
   color: string;
   enabled: boolean;
   alphaThreshold: number;
@@ -51,7 +51,7 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 2, // CadCut/Flexi standard auto contour width
+    width: 0.05, // 0.05 inches default offset
     color: "#ffffff",
     enabled: false,
     alphaThreshold: 128, // 0-255 range, 128 = 50% transparency threshold

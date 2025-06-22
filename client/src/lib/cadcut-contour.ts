@@ -98,15 +98,18 @@ function detectEdgePixels(
   return edgePixels;
 }
 
-function createCadCutPath(edgePixels: ContourPoint[], strokeWidth: number): ContourPoint[] {
+function createCadCutPath(edgePixels: ContourPoint[], strokeWidthInches: number): ContourPoint[] {
   if (edgePixels.length === 0) return [];
   
   // CadCut approach: Create a simplified outline with consistent offset
   const bounds = calculateBounds(edgePixels);
-  const offset = Math.max(5, strokeWidth * 5); // Increase offset for more visible changes
+  
+  // Convert inches to pixels at 300 DPI (standard for cutting)
+  const dpi = 300;
+  const offsetPixels = strokeWidthInches * dpi;
   
   // Create simplified rectangular contour (CadCut style)
-  const padding = offset;
+  const padding = Math.max(0, offsetPixels);
   const contour: ContourPoint[] = [
     { x: bounds.minX - padding, y: bounds.minY - padding }, // top-left
     { x: bounds.maxX + padding, y: bounds.minY - padding }, // top-right
@@ -139,7 +142,11 @@ function drawCadCutContour(
 
   // Force solid white color
   ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = Math.max(4, strokeSettings.width * 2); // Make stroke much more visible
+  
+  // Convert line width from inches to pixels for visibility (always show at least 2px)
+  const lineWidthPixels = Math.max(2, strokeSettings.width * 300 * 0.02); // Scale for visibility
+  ctx.lineWidth = lineWidthPixels;
+  
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
