@@ -200,6 +200,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Created unified contour system that generates single perfect outline for multi-object images
   - Implemented advanced algorithms: convex hull, alpha shapes, morphological operations, and boundary tracing
   - Optimized for individual sticker cutting with single continuous outline regardless of image complexity
+  - Added advanced alpha threshold slider (0-100%) for precise transparency detection control
+  - Users can fine-tune contour sensitivity: lower values detect more transparent areas, higher values only solid content
 
 ## Changelog
 

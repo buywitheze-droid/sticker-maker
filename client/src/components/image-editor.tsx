@@ -25,6 +25,7 @@ export interface StrokeSettings {
   includeHoles: boolean;
   fillHoles: boolean;
   autoTextBackground: boolean;
+  alphaThreshold: number;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
@@ -59,6 +60,7 @@ export default function ImageEditor() {
     includeHoles: false,
     fillHoles: false,
     autoTextBackground: false,
+    alphaThreshold: 128, // 0-255 range, 128 = 50% transparency threshold
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

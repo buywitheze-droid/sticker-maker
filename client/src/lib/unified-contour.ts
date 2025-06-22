@@ -22,7 +22,7 @@ export function createUnifiedContour(
   const data = imageData.data;
 
   // Step 2: Create unified bounding shape that encompasses all objects
-  const bounds = findContentBounds(data, canvas.width, canvas.height);
+  const bounds = findContentBounds(data, canvas.width, canvas.height, strokeSettings.alphaThreshold);
   if (!bounds) {
     return canvas;
   }
@@ -39,7 +39,8 @@ export function createUnifiedContour(
 function findContentBounds(
   data: Uint8ClampedArray,
   width: number,
-  height: number
+  height: number,
+  alphaThreshold: number
 ): { minX: number; maxX: number; minY: number; maxY: number } | null {
   let minX = width, maxX = 0, minY = height, maxY = 0;
   let hasContent = false;
@@ -47,7 +48,7 @@ function findContentBounds(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const alpha = data[(y * width + x) * 4 + 3];
-      if (alpha > 10) { // Consider semi-transparent pixels
+      if (alpha >= alphaThreshold) { // Use configurable alpha threshold
         hasContent = true;
         minX = Math.min(minX, x);
         maxX = Math.max(maxX, x);
@@ -68,7 +69,7 @@ function createSingleContour(
   strokeSettings: StrokeSettings
 ): ContourPoint[] {
   // Strategy 1: For simple shapes, use convex hull
-  const edgePoints = findAllEdgePoints(data, width, height);
+  const edgePoints = findAllEdgePoints(data, width, height, strokeSettings.alphaThreshold);
   
   if (edgePoints.length < 50) {
     // Simple shape - use convex hull for clean outline
@@ -89,7 +90,8 @@ function createSingleContour(
 function findAllEdgePoints(
   data: Uint8ClampedArray,
   width: number,
-  height: number
+  height: number,
+  alphaThreshold: number
 ): ContourPoint[] {
   const edgePoints: ContourPoint[] = [];
   
@@ -97,7 +99,7 @@ function findAllEdgePoints(
     for (let x = 1; x < width - 1; x++) {
       const currentAlpha = data[(y * width + x) * 4 + 3];
       
-      if (currentAlpha > 10) {
+      if (currentAlpha >= alphaThreshold) {
         // Check if this is an edge pixel (has transparent neighbor)
         const neighbors = [
           data[((y-1) * width + x) * 4 + 3], // top
@@ -106,7 +108,7 @@ function findAllEdgePoints(
           data[(y * width + (x+1)) * 4 + 3], // right
         ];
         
-        const hasTransparentNeighbor = neighbors.some(alpha => alpha <= 10);
+        const hasTransparentNeighbor = neighbors.some(alpha => alpha < alphaThreshold);
         
         if (hasTransparentNeighbor) {
           edgePoints.push({ x, y });
@@ -215,10 +217,10 @@ function createMorphologicalContour(
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
   strokeSettings: StrokeSettings
 ): ContourPoint[] {
-  // Create binary mask
+  // Create binary mask using alpha threshold
   const mask = new Uint8Array(width * height);
   for (let i = 0; i < data.length; i += 4) {
-    mask[i / 4] = data[i + 3] > 10 ? 1 : 0;
+    mask[i / 4] = data[i + 3] >= strokeSettings.alphaThreshold ? 1 : 0;
   }
 
   // Apply morphological closing to connect nearby objects
