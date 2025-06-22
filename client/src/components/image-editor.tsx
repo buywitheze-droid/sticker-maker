@@ -19,7 +19,7 @@ export interface ImageInfo {
 }
 
 export interface StrokeSettings {
-  width: number; // Back to pixels like yesterday at 11am
+  width: number; // Offset in inches (0-1 range)
   color: string;
   enabled: boolean;
   alphaThreshold: number;
@@ -51,10 +51,10 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 2, // Simple default
+    width: 0.05, // Default 0.05 inches offset
     color: "#ffffff",
     enabled: false,
-    alphaThreshold: 128,
+    alphaThreshold: 128, // Auto-detected from alpha channel
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

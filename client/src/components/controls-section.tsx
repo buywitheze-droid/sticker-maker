@@ -51,7 +51,7 @@ export default function ControlsSection({
 
 
         {/* Contour Outline Card */}
-        <Card className="border-2 border-gray-200">
+        <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
           <CardContent className="space-y-4 pt-6">
             <div className="flex items-center space-x-3">
               <Checkbox 
@@ -63,6 +63,25 @@ export default function ControlsSection({
                 Contour Outline
               </Label>
             </div>
+            
+            {strokeSettings.enabled && (
+              <div className="space-y-4 mt-4">
+                <div>
+                  <Label>Contour Offset</Label>
+                  <Slider
+                    value={[strokeSettings.width]}
+                    onValueChange={([value]) => onStrokeChange({ width: value })}
+                    min={0.00}
+                    max={1.00}
+                    step={0.01}
+                    className="mt-2"
+                  />
+                  <div className="text-sm text-gray-500 mt-1">
+                    {strokeSettings.width.toFixed(2)}" offset
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
