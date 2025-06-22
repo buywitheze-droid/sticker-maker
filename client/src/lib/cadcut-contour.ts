@@ -19,27 +19,90 @@ export function createCadCutContour(
   // Clear canvas to transparent
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Step 1: Vectorize the image to get precise contour
-  const vectorContour = vectorizeImage(image, strokeSettings);
-
-  // Step 2: Apply professional offset
-  const offsetContour = applyProfessionalOffset(vectorContour, strokeSettings.width);
-
-  // Step 3: Optimize contour for cutting
-  const optimizedContour = optimizeForCutting(offsetContour);
-
-  // Step 4: Draw the final contour
-  if (optimizedContour.length > 0) {
-    drawVectorContour(ctx, optimizedContour, strokeSettings);
-  }
+  // Get image bounds by analyzing actual content
+  const bounds = getImageContentBounds(image, strokeSettings.alphaThreshold);
   
-  console.log('Vector contour created:', {
-    canvasSize: `${canvas.width}x${canvas.height}`,
-    offsetInches: strokeSettings.width,
-    contourPoints: optimizedContour.length
-  });
+  if (!bounds) {
+    // Fallback: draw around entire image
+    drawSimpleContour(ctx, canvas.width, canvas.height, strokeSettings);
+    return canvas;
+  }
 
+  // Apply offset in pixels (300 DPI conversion)
+  const offsetPixels = strokeSettings.width * 300;
+  
+  // Create expanded rectangle with offset
+  const contourRect = {
+    x: Math.max(0, bounds.x - offsetPixels),
+    y: Math.max(0, bounds.y - offsetPixels),
+    width: Math.min(canvas.width - Math.max(0, bounds.x - offsetPixels), bounds.width + (offsetPixels * 2)),
+    height: Math.min(canvas.height - Math.max(0, bounds.y - offsetPixels), bounds.height + (offsetPixels * 2))
+  };
+
+  // Draw the contour as a thick white stroke
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(4, strokeSettings.width * 100); // Very visible
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  // Draw rectangle outline
+  ctx.strokeRect(contourRect.x, contourRect.y, contourRect.width, contourRect.height);
+  
   return canvas;
+}
+
+function getImageContentBounds(image: HTMLImageElement, alphaThreshold: number): { x: number; y: number; width: number; height: number } | null {
+  // Create temporary canvas to analyze image
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return null;
+
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  
+  tempCtx.drawImage(image, 0, 0);
+  const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  const data = imageData.data;
+
+  let minX = tempCanvas.width, maxX = 0, minY = tempCanvas.height, maxY = 0;
+  let hasContent = false;
+
+  // Find actual content bounds
+  for (let y = 0; y < tempCanvas.height; y++) {
+    for (let x = 0; x < tempCanvas.width; x++) {
+      const index = (y * tempCanvas.width + x) * 4;
+      const alpha = data[index + 3];
+      
+      if (alpha >= alphaThreshold) {
+        hasContent = true;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+
+  if (!hasContent) return null;
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1
+  };
+}
+
+function drawSimpleContour(ctx: CanvasRenderingContext2D, width: number, height: number, strokeSettings: StrokeSettings): void {
+  const offsetPixels = strokeSettings.width * 300;
+  const padding = Math.max(10, offsetPixels);
+  
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(4, strokeSettings.width * 100);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  ctx.strokeRect(padding, padding, width - (padding * 2), height - (padding * 2));
 }
 
 function createBinaryMask(
