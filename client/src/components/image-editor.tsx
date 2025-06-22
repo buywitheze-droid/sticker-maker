@@ -19,7 +19,7 @@ export interface ImageInfo {
 }
 
 export interface StrokeSettings {
-  width: number; // Now in inches
+  width: number; // Back to pixels like yesterday at 11am
   color: string;
   enabled: boolean;
   alphaThreshold: number;
