@@ -169,12 +169,12 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added oval shape support to image-utils drawShapeBackground function for proper export functionality
   - Enhanced preview section to render oval shapes with correct aspect ratio and centering
 
-- **June 22, 2025**: Implemented automatic alpha channel detection with vector outline and CadCut method
-  - Created automatic alpha channel threshold detection using histogram analysis
-  - Implemented vector outline generation from alpha channel edge detection
-  - Applied CadCut methodology with outward normal calculation for precise contour offset
-  - Added 0-1 inch offset range with 0.01 inch precision increments
-  - Enhanced contour system with professional cutting machine compatibility
+- **June 22, 2025**: Implemented true alpha channel edge detection with vector contour following actual design shape
+  - Created proper edge pixel detection that identifies transparent/solid boundaries in alpha channel
+  - Implemented contour path tracing that follows actual design edges instead of rectangular bounds
+  - Applied CadCut methodology with outward normal calculation for precise offset along design edges
+  - Added proper vector path generation from edge pixels sorted by angle from center
+  - Enhanced contour system to trace actual design shape with professional cutting machine compatibility
 
 - **June 21, 2025**: Implemented design tracing and bounds detection system
   - Created CadCut-style bounds detection system for reliable boundary checking

@@ -61,36 +61,67 @@ function createVectorOutlineFromAlpha(image: HTMLImageElement, padding: number =
   const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
   const data = imageData.data;
 
-  // Find content bounds first
-  let minX = image.width, maxX = 0, minY = image.height, maxY = 0;
-  let hasContent = false;
-
-  for (let y = 0; y < image.height; y++) {
-    for (let x = 0; x < image.width; x++) {
+  // Find edge pixels based on alpha channel
+  const edgePixels: VectorPoint[] = [];
+  
+  for (let y = 1; y < image.height - 1; y++) {
+    for (let x = 1; x < image.width - 1; x++) {
       const index = (y * image.width + x) * 4;
       const alpha = data[index + 3];
       
-      if (alpha >= 128) { // Use fixed threshold for simplicity
-        hasContent = true;
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
+      if (alpha >= 128) {
+        // Check if this solid pixel has any transparent neighbors
+        const neighbors = [
+          data[((y-1) * image.width + x) * 4 + 3],     // top
+          data[(y * image.width + (x+1)) * 4 + 3],     // right
+          data[((y+1) * image.width + x) * 4 + 3],     // bottom
+          data[(y * image.width + (x-1)) * 4 + 3]      // left
+        ];
+        
+        // If any neighbor is transparent, this is an edge pixel
+        if (neighbors.some(neighbor => neighbor < 128)) {
+          edgePixels.push({ x: x + padding, y: y + padding });
+        }
       }
     }
   }
 
-  if (!hasContent) return [];
+  if (edgePixels.length === 0) return [];
 
-  // Create simple rectangular outline around content bounds (offset by padding)
-  const outline: VectorPoint[] = [
-    { x: minX + padding, y: minY + padding },     // top-left
-    { x: maxX + padding, y: minY + padding },     // top-right
-    { x: maxX + padding, y: maxY + padding },     // bottom-right
-    { x: minX + padding, y: maxY + padding }      // bottom-left
-  ];
+  // Create actual contour path following the edges
+  return traceContourPath(edgePixels);
+}
 
-  return outline;
+function traceContourPath(edgePixels: VectorPoint[]): VectorPoint[] {
+  if (edgePixels.length === 0) return [];
+  
+  // Sort edge pixels by angle from center to create a proper outline
+  const bounds = {
+    minX: Math.min(...edgePixels.map(p => p.x)),
+    maxX: Math.max(...edgePixels.map(p => p.x)),
+    minY: Math.min(...edgePixels.map(p => p.y)),
+    maxY: Math.max(...edgePixels.map(p => p.y))
+  };
+  
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  
+  // Sort edge pixels by angle from center to create clockwise path
+  const sortedPixels = edgePixels.sort((a, b) => {
+    const angleA = Math.atan2(a.y - centerY, a.x - centerX);
+    const angleB = Math.atan2(b.y - centerY, b.x - centerX);
+    return angleA - angleB;
+  });
+  
+  // Simplify the path by taking every nth pixel to reduce complexity
+  const simplifiedPath: VectorPoint[] = [];
+  const step = Math.max(1, Math.floor(sortedPixels.length / 100)); // Limit to ~100 points
+  
+  for (let i = 0; i < sortedPixels.length; i += step) {
+    simplifiedPath.push(sortedPixels[i]);
+  }
+  
+  return simplifiedPath;
 }
 
 
@@ -98,18 +129,60 @@ function createVectorOutlineFromAlpha(image: HTMLImageElement, padding: number =
 
 
 function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): VectorPoint[] {
-  if (vectorPath.length !== 4) return vectorPath; // Expect rectangular path
+  if (vectorPath.length < 3) return vectorPath;
   
-  // Apply outward offset to rectangle but keep within canvas bounds
-  const [topLeft, topRight, bottomRight, bottomLeft] = vectorPath;
+  const offsetContour: VectorPoint[] = [];
   
-  // Calculate offset but ensure it stays within visible area
-  const offsetContour: VectorPoint[] = [
-    { x: Math.max(0, topLeft.x - offsetPixels), y: Math.max(0, topLeft.y - offsetPixels) },         
-    { x: topRight.x + offsetPixels, y: Math.max(0, topRight.y - offsetPixels) },       
-    { x: bottomRight.x + offsetPixels, y: bottomRight.y + offsetPixels }, 
-    { x: Math.max(0, bottomLeft.x - offsetPixels), y: bottomLeft.y + offsetPixels }    
-  ];
+  for (let i = 0; i < vectorPath.length; i++) {
+    const current = vectorPath[i];
+    const prev = vectorPath[(i - 1 + vectorPath.length) % vectorPath.length];
+    const next = vectorPath[(i + 1) % vectorPath.length];
+    
+    // Calculate outward normal vector
+    const v1x = current.x - prev.x;
+    const v1y = current.y - prev.y;
+    const v2x = next.x - current.x;
+    const v2y = next.y - current.y;
+    
+    // Calculate perpendicular vectors (normals)
+    const n1x = -v1y;
+    const n1y = v1x;
+    const n2x = -v2y;
+    const n2y = v2x;
+    
+    // Normalize normals
+    const len1 = Math.sqrt(n1x * n1x + n1y * n1y);
+    const len2 = Math.sqrt(n2x * n2x + n2y * n2y);
+    
+    let avgNormalX = 0;
+    let avgNormalY = 0;
+    
+    if (len1 > 0 && len2 > 0) {
+      avgNormalX = (n1x / len1 + n2x / len2) / 2;
+      avgNormalY = (n1y / len1 + n2y / len2) / 2;
+    } else if (len1 > 0) {
+      avgNormalX = n1x / len1;
+      avgNormalY = n1y / len1;
+    } else if (len2 > 0) {
+      avgNormalX = n2x / len2;
+      avgNormalY = n2y / len2;
+    }
+    
+    // Normalize average normal
+    const avgLen = Math.sqrt(avgNormalX * avgNormalX + avgNormalY * avgNormalY);
+    if (avgLen > 0) {
+      avgNormalX /= avgLen;
+      avgNormalY /= avgLen;
+      
+      // Apply offset in outward direction
+      offsetContour.push({
+        x: current.x + avgNormalX * offsetPixels,
+        y: current.y + avgNormalY * offsetPixels
+      });
+    } else {
+      offsetContour.push(current);
+    }
+  }
   
   return offsetContour;
 }
@@ -117,15 +190,21 @@ function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): Vec
 function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]): void {
   if (contour.length < 2) return;
 
-  // Force maximum visibility
-  ctx.strokeStyle = '#FF0000'; // Use red for debugging visibility
-  ctx.lineWidth = 5; // Thick line for visibility
+  // Use white outline for final contour
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1.0;
+  
+  // Add subtle shadow for visibility
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+  ctx.shadowBlur = 3;
+  ctx.shadowOffsetX = 1;
+  ctx.shadowOffsetY = 1;
 
-  console.log('Drawing contour at coordinates:', contour);
+  console.log('Drawing contour with', contour.length, 'points');
   
   ctx.beginPath();
   ctx.moveTo(contour[0].x, contour[0].y);
@@ -137,12 +216,10 @@ function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]
   ctx.closePath();
   ctx.stroke();
   
-  // Also draw corner points for debugging
-  ctx.fillStyle = '#00FF00';
-  for (const point of contour) {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
-    ctx.fill();
-  }
+  // Reset shadow
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
 }
 
