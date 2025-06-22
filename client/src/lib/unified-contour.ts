@@ -30,7 +30,8 @@ export function createUnifiedContour(
   // Step 3: Create a unified contour using convex hull or alpha shape
   const unifiedContour = createSingleContour(data, canvas.width, canvas.height, bounds, strokeSettings);
 
-  // Step 4: Draw the final unified contour
+  // Step 4: Clear canvas and draw the final unified contour only
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawUnifiedContour(ctx, unifiedContour, strokeSettings);
 
   return canvas;

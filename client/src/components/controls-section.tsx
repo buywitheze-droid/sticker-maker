@@ -92,6 +92,21 @@ export default function ControlsSection({
                   </div>
                 </div>
 
+                <div className="space-y-2">
+                  <Label className="text-sm">Alpha Threshold: {Math.round((strokeSettings.alphaThreshold / 255) * 100)}%</Label>
+                  <Slider
+                    value={[strokeSettings.alphaThreshold]}
+                    onValueChange={(value) => onStrokeChange({ alphaThreshold: value[0] })}
+                    max={255}
+                    min={1}
+                    step={1}
+                    className="w-full"
+                  />
+                  <div className="text-xs text-gray-500">
+                    Lower values = detect more transparent areas | Higher values = only solid areas
+                  </div>
+                </div>
+
                 <div className="space-y-3">
                   <div className="flex items-center space-x-2">
                     <Checkbox
