@@ -196,6 +196,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added full contour controls: stroke width, color, include holes, fill holes options
   - Implemented full mutual exclusion: checking contour disables shape background and vice versa
   - Set both options disabled by default, allowing users to choose their preferred mode
+  - Adjusted contour stroke width to professional cutting software standards (1-10px range, default 2px)
 
 ## Changelog
 

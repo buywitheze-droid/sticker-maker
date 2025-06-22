@@ -53,9 +53,9 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 500, // Increased by 100x (5 * 100)
+    width: 2, // CadCut/Flexi standard auto contour width
     color: "#ffffff",
-    enabled: true,
+    enabled: false,
     includeHoles: false,
     fillHoles: false,
     autoTextBackground: false,
@@ -67,7 +67,7 @@ export default function ImageEditor() {
     outputDPI: 300,
   });
   const [shapeSettings, setShapeSettings] = useState<ShapeSettings>({
-    enabled: true,
+    enabled: false,
     type: 'square',
     widthInches: 4.0,
     heightInches: 4.0,
