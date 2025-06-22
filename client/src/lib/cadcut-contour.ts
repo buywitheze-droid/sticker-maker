@@ -15,33 +15,35 @@ export function createCadCutContour(
 
   canvas.width = image.width;
   canvas.height = image.height;
-
-  // Step 1: Draw image and get pixel data
-  ctx.drawImage(image, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
-
-  // Step 2: Create binary mask based on alpha threshold
-  const binaryMask = createBinaryMask(data, canvas.width, canvas.height, strokeSettings.alphaThreshold);
-
-  // Step 3: Apply CadCut-style edge detection
-  const edgePixels = detectEdgePixels(binaryMask, canvas.width, canvas.height);
-
-  // Step 4: Create contour path using CadCut method
-  const contourPath = createCadCutPath(edgePixels, strokeSettings.width);
-
-  // Step 5: Clear canvas completely and draw ONLY the contour
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-  // Draw a test rectangle to ensure the canvas is working
-  if (contourPath.length === 0) {
-    // Fallback: draw a simple white rectangle around the entire image
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
-  } else {
-    drawCadCutContour(ctx, contourPath, strokeSettings);
-  }
+  // Clear canvas to transparent
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Convert inches to pixels (300 DPI)
+  const offsetPixels = strokeSettings.width * 300;
+  
+  // ALWAYS draw a visible white rectangle outline for testing
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(6, offsetPixels * 0.1); // Ensure visibility
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  // Draw rectangle with offset from edges
+  const padding = Math.max(10, offsetPixels);
+  ctx.strokeRect(
+    padding, 
+    padding, 
+    canvas.width - (padding * 2), 
+    canvas.height - (padding * 2)
+  );
+  
+  console.log('CadCut contour created:', {
+    canvasSize: `${canvas.width}x${canvas.height}`,
+    offsetInches: strokeSettings.width,
+    offsetPixels,
+    padding,
+    lineWidth: ctx.lineWidth
+  });
 
   return canvas;
 }

@@ -271,8 +271,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       // Draw CadCut contour if stroke is enabled
       if (strokeSettings.enabled) {
+        console.log('Drawing contour in preview, stroke enabled:', strokeSettings);
         const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
+        console.log('Contour canvas created:', contourCanvas.width, 'x', contourCanvas.height);
+        
+        // Save context state
+        ctx.save();
+        
+        // Set blend mode to ensure white shows on dark background
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
+        
+        // Draw the contour canvas
         ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
+        
+        // Restore context
+        ctx.restore();
+        
+        console.log('Contour drawn at:', previewX, previewY, previewWidth, previewHeight);
       }
     };
 
