@@ -346,8 +346,8 @@ export default function ImageEditor() {
         if (!ctx) return;
 
         // Calculate output dimensions
-        const outputWidth = inchesToPixels(shapeSettings.widthInches, 300);
-        const outputHeight = inchesToPixels(shapeSettings.heightInches, 300);
+        const outputWidth = shapeSettings.widthInches * 300;
+        const outputHeight = shapeSettings.heightInches * 300;
         
         canvas.width = outputWidth;
         canvas.height = outputHeight;

@@ -44,11 +44,11 @@ export async function downloadCanvas(
   let outputWidth, outputHeight;
   
   if (shapeSettings?.enabled) {
-    outputWidth = inchesToPixels(shapeSettings.widthInches, dpi);
-    outputHeight = inchesToPixels(shapeSettings.heightInches, dpi);
+    outputWidth = shapeSettings.widthInches * dpi;
+    outputHeight = shapeSettings.heightInches * dpi;
   } else {
-    outputWidth = inchesToPixels(widthInches, dpi);
-    outputHeight = inchesToPixels(heightInches, dpi);
+    outputWidth = widthInches * dpi;
+    outputHeight = heightInches * dpi;
   }
 
   canvas.width = outputWidth;
