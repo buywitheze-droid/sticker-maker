@@ -8,24 +8,27 @@ export function createCadCutContour(
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  canvas.width = image.width;
-  canvas.height = image.height;
+  // Make canvas larger to accommodate offset
+  const padding = strokeSettings.width * 300 + 50; // Extra padding
+  canvas.width = image.width + (padding * 2);
+  canvas.height = image.height + (padding * 2);
   
   // Clear canvas to transparent
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   try {
-    // Auto-detect alpha channel and create vector outline
-    const vectorOutline = createVectorOutlineFromAlpha(image);
+    // Auto-detect alpha channel and create vector outline (offset for padding)
+    const vectorOutline = createVectorOutlineFromAlpha(image, padding);
     
     if (vectorOutline.length === 0) {
       console.log('No vector outline found');
       return canvas;
     }
 
-    // FIXED: Apply CadCut method with inch-based offset
-    const offsetPixels = strokeSettings.width * 300; // Convert inches to pixels at 300 DPI
+    // Apply CadCut method with inch-based offset
+    const offsetPixels = strokeSettings.width * 300;
     console.log('Offset pixels:', offsetPixels, 'from width:', strokeSettings.width);
+    console.log('Canvas size:', canvas.width, 'x', canvas.height);
     
     const cadcutContour = applyCadCutMethod(vectorOutline, offsetPixels);
     console.log('Vector outline:', vectorOutline);
@@ -46,7 +49,7 @@ interface VectorPoint {
   y: number;
 }
 
-function createVectorOutlineFromAlpha(image: HTMLImageElement): VectorPoint[] {
+function createVectorOutlineFromAlpha(image: HTMLImageElement, padding: number = 0): VectorPoint[] {
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return [];
@@ -79,12 +82,12 @@ function createVectorOutlineFromAlpha(image: HTMLImageElement): VectorPoint[] {
 
   if (!hasContent) return [];
 
-  // Create simple rectangular outline around content bounds
+  // Create simple rectangular outline around content bounds (offset by padding)
   const outline: VectorPoint[] = [
-    { x: minX, y: minY },     // top-left
-    { x: maxX, y: minY },     // top-right
-    { x: maxX, y: maxY },     // bottom-right
-    { x: minX, y: maxY }      // bottom-left
+    { x: minX + padding, y: minY + padding },     // top-left
+    { x: maxX + padding, y: minY + padding },     // top-right
+    { x: maxX + padding, y: maxY + padding },     // bottom-right
+    { x: minX + padding, y: maxY + padding }      // bottom-left
   ];
 
   return outline;
@@ -97,14 +100,15 @@ function createVectorOutlineFromAlpha(image: HTMLImageElement): VectorPoint[] {
 function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): VectorPoint[] {
   if (vectorPath.length !== 4) return vectorPath; // Expect rectangular path
   
-  // Apply outward offset to rectangle - FIXED: make sure it expands outward
+  // Apply outward offset to rectangle but keep within canvas bounds
   const [topLeft, topRight, bottomRight, bottomLeft] = vectorPath;
   
+  // Calculate offset but ensure it stays within visible area
   const offsetContour: VectorPoint[] = [
-    { x: topLeft.x - offsetPixels, y: topLeft.y - offsetPixels },         // expand top-left outward
-    { x: topRight.x + offsetPixels, y: topRight.y - offsetPixels },       // expand top-right outward  
-    { x: bottomRight.x + offsetPixels, y: bottomRight.y + offsetPixels }, // expand bottom-right outward
-    { x: bottomLeft.x - offsetPixels, y: bottomLeft.y + offsetPixels }    // expand bottom-left outward
+    { x: Math.max(0, topLeft.x - offsetPixels), y: Math.max(0, topLeft.y - offsetPixels) },         
+    { x: topRight.x + offsetPixels, y: Math.max(0, topRight.y - offsetPixels) },       
+    { x: bottomRight.x + offsetPixels, y: bottomRight.y + offsetPixels }, 
+    { x: Math.max(0, bottomLeft.x - offsetPixels), y: bottomLeft.y + offsetPixels }    
   ];
   
   return offsetContour;
@@ -113,19 +117,16 @@ function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): Vec
 function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]): void {
   if (contour.length < 2) return;
 
-  // FIXED: Make contour more visible and ensure proper rendering
-  ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = Math.max(3, 2); // Minimum 3px line width for visibility
+  // Force maximum visibility
+  ctx.strokeStyle = '#FF0000'; // Use red for debugging visibility
+  ctx.lineWidth = 5; // Thick line for visibility
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
-  
-  // Add shadow for better visibility
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 2;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 1;
+  ctx.globalAlpha = 1.0;
 
+  console.log('Drawing contour at coordinates:', contour);
+  
   ctx.beginPath();
   ctx.moveTo(contour[0].x, contour[0].y);
   
@@ -136,10 +137,12 @@ function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]
   ctx.closePath();
   ctx.stroke();
   
-  // Reset shadow
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
+  // Also draw corner points for debugging
+  ctx.fillStyle = '#00FF00';
+  for (const point of contour) {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
 }
 
