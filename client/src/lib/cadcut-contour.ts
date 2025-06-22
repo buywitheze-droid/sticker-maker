@@ -200,62 +200,69 @@ function morphologicalErosion(mask: Uint8Array, width: number, height: number, r
 }
 
 function marchingSquares(mask: Uint8Array, width: number, height: number): ContourPoint[] {
-  const contour: ContourPoint[] = [];
+  // Find all edge pixels first
+  const edgePixels: ContourPoint[] = [];
   
-  // Find starting point (first edge pixel)
-  let startX = -1, startY = -1;
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const index = y * width + x;
       if (mask[index] === 1) {
-        // Check if it's an edge pixel
+        // Check if it's an edge pixel (has at least one transparent neighbor)
         if (mask[index - 1] === 0 || mask[index + 1] === 0 || 
-            mask[index - width] === 0 || mask[index + width] === 0) {
-          startX = x;
-          startY = y;
-          break;
+            mask[index - width] === 0 || mask[index + width] === 0 ||
+            mask[index - width - 1] === 0 || mask[index - width + 1] === 0 ||
+            mask[index + width - 1] === 0 || mask[index + width + 1] === 0) {
+          edgePixels.push({ x, y });
         }
       }
     }
-    if (startX !== -1) break;
   }
   
-  if (startX === -1) return [];
+  if (edgePixels.length === 0) return [];
   
-  // Trace contour using Moore neighborhood
-  let currentX = startX;
-  let currentY = startY;
-  let direction = 0; // 0=right, 1=down, 2=left, 3=up
-  const directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+  // Create a convex hull from edge pixels for reliable contour
+  return createConvexHull(edgePixels);
+}
+
+function createConvexHull(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 3) return points;
   
-  do {
-    contour.push({ x: currentX, y: currentY });
-    
-    // Find next edge pixel
-    let found = false;
-    for (let i = 0; i < 8; i++) {
-      const checkDir = (direction + i) % 4;
-      const [dx, dy] = directions[checkDir];
-      const nextX = currentX + dx;
-      const nextY = currentY + dy;
-      
-      if (nextX >= 0 && nextX < width && nextY >= 0 && nextY < height) {
-        const nextIndex = nextY * width + nextX;
-        if (mask[nextIndex] === 1) {
-          currentX = nextX;
-          currentY = nextY;
-          direction = (checkDir + 3) % 4; // Turn left
-          found = true;
-          break;
-        }
-      }
+  // Find the bottommost point (and leftmost if tied)
+  let bottom = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].y > points[bottom].y || 
+        (points[i].y === points[bottom].y && points[i].x < points[bottom].x)) {
+      bottom = i;
     }
-    
-    if (!found) break;
-    
-  } while (currentX !== startX || currentY !== startY || contour.length < 4);
+  }
   
-  return contour;
+  // Swap bottom point to first position
+  [points[0], points[bottom]] = [points[bottom], points[0]];
+  
+  // Sort points by polar angle with respect to bottom point
+  const bottomPoint = points[0];
+  points.slice(1).sort((a, b) => {
+    const angleA = Math.atan2(a.y - bottomPoint.y, a.x - bottomPoint.x);
+    const angleB = Math.atan2(b.y - bottomPoint.y, b.x - bottomPoint.x);
+    return angleA - angleB;
+  });
+  
+  // Graham scan
+  const hull: ContourPoint[] = [points[0], points[1]];
+  
+  for (let i = 2; i < points.length; i++) {
+    while (hull.length > 1 && 
+           crossProduct(hull[hull.length - 2], hull[hull.length - 1], points[i]) <= 0) {
+      hull.pop();
+    }
+    hull.push(points[i]);
+  }
+  
+  return hull;
+}
+
+function crossProduct(a: ContourPoint, b: ContourPoint, c: ContourPoint): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
 function douglasPeuckerSimplify(points: ContourPoint[], tolerance: number): ContourPoint[] {
@@ -419,43 +426,26 @@ function drawVectorContour(
 ): void {
   if (contour.length < 2) return;
 
-  // Professional white cutting line
+  // Force bright white color that will be visible
   ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = Math.max(2, strokeSettings.width * 50); // Visible but precise
+  ctx.lineWidth = Math.max(3, strokeSettings.width * 80); // Make very visible
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
 
-  // Draw smooth vector path
+  // Simple but reliable path drawing
   ctx.beginPath();
+  ctx.moveTo(contour[0].x, contour[0].y);
   
-  if (contour.length > 2) {
-    // Use quadratic curves for smoother lines
-    ctx.moveTo(contour[0].x, contour[0].y);
-    
-    for (let i = 1; i < contour.length - 1; i++) {
-      const current = contour[i];
-      const next = contour[i + 1];
-      const controlX = current.x;
-      const controlY = current.y;
-      const endX = (current.x + next.x) / 2;
-      const endY = (current.y + next.y) / 2;
-      
-      ctx.quadraticCurveTo(controlX, controlY, endX, endY);
-    }
-    
-    // Close the path smoothly
-    const last = contour[contour.length - 1];
-    const first = contour[0];
-    ctx.quadraticCurveTo(last.x, last.y, first.x, first.y);
-  } else {
-    // Fallback for simple paths
-    ctx.moveTo(contour[0].x, contour[0].y);
-    for (let i = 1; i < contour.length; i++) {
-      ctx.lineTo(contour[i].x, contour[i].y);
-    }
-    ctx.closePath();
+  for (let i = 1; i < contour.length; i++) {
+    ctx.lineTo(contour[i].x, contour[i].y);
   }
   
+  ctx.closePath();
+  ctx.stroke();
+  
+  // Add extra visibility with a second stroke
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = Math.max(1, strokeSettings.width * 40);
   ctx.stroke();
 }
