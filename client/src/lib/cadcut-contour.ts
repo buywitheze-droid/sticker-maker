@@ -30,9 +30,18 @@ export function createCadCutContour(
   // Step 4: Create contour path using CadCut method
   const contourPath = createCadCutPath(edgePixels, strokeSettings.width);
 
-  // Step 5: Clear canvas and draw the contour
+  // Step 5: Clear canvas completely and draw ONLY the contour
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawCadCutContour(ctx, contourPath, strokeSettings);
+  
+  // Draw a test rectangle to ensure the canvas is working
+  if (contourPath.length === 0) {
+    // Fallback: draw a simple white rectangle around the entire image
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+  } else {
+    drawCadCutContour(ctx, contourPath, strokeSettings);
+  }
 
   return canvas;
 }
@@ -128,10 +137,12 @@ function drawCadCutContour(
 ): void {
   if (contour.length < 2) return;
 
-  ctx.strokeStyle = strokeSettings.color;
-  ctx.lineWidth = Math.max(2, strokeSettings.width * 3); // Make stroke more visible
+  // Force solid white color
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(4, strokeSettings.width * 2); // Make stroke much more visible
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = 'source-over';
 
   ctx.beginPath();
   ctx.moveTo(contour[0].x, contour[0].y);
