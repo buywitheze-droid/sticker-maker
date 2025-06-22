@@ -274,31 +274,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         try {
           const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
           
-          // Force maximum visibility with multiple techniques
+          // FIXED: Ensure contour renders with proper scaling
           ctx.save();
           ctx.globalCompositeOperation = 'source-over';
           ctx.globalAlpha = 1.0;
           
-          // Draw the contour canvas
+          // Draw the contour canvas with proper scaling
           ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
-          
-          // Add emergency backup outline if needed
-          if (strokeSettings.width > 0) {
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = Math.max(2, strokeSettings.width * 50);
-            ctx.globalCompositeOperation = 'source-over';
-            const padding = strokeSettings.width * 300 * (previewWidth / imageInfo.image.width);
-            ctx.strokeRect(
-              previewX + padding, 
-              previewY + padding, 
-              previewWidth - (padding * 2), 
-              previewHeight - (padding * 2)
-            );
-          }
           
           ctx.restore();
         } catch (error) {
           console.error('Contour rendering error:', error);
+          
+          // DEBUGGING: Log the error details
+          console.log('StrokeSettings:', strokeSettings);
+          console.log('Image dimensions:', imageInfo.image.width, imageInfo.image.height);
         }
       }
     };

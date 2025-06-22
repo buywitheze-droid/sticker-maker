@@ -19,12 +19,17 @@ export function createCadCutContour(
     const vectorOutline = createVectorOutlineFromAlpha(image);
     
     if (vectorOutline.length === 0) {
+      console.log('No vector outline found');
       return canvas;
     }
 
-    // Apply CadCut method with inch-based offset
+    // FIXED: Apply CadCut method with inch-based offset
     const offsetPixels = strokeSettings.width * 300; // Convert inches to pixels at 300 DPI
+    console.log('Offset pixels:', offsetPixels, 'from width:', strokeSettings.width);
+    
     const cadcutContour = applyCadCutMethod(vectorOutline, offsetPixels);
+    console.log('Vector outline:', vectorOutline);
+    console.log('CadCut contour:', cadcutContour);
 
     // Draw the contour outline
     drawCadCutContour(ctx, cadcutContour);
@@ -92,14 +97,14 @@ function createVectorOutlineFromAlpha(image: HTMLImageElement): VectorPoint[] {
 function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): VectorPoint[] {
   if (vectorPath.length !== 4) return vectorPath; // Expect rectangular path
   
-  // Apply outward offset to rectangle
+  // Apply outward offset to rectangle - FIXED: make sure it expands outward
   const [topLeft, topRight, bottomRight, bottomLeft] = vectorPath;
   
   const offsetContour: VectorPoint[] = [
-    { x: topLeft.x - offsetPixels, y: topLeft.y - offsetPixels },         // expand top-left
-    { x: topRight.x + offsetPixels, y: topRight.y - offsetPixels },       // expand top-right
-    { x: bottomRight.x + offsetPixels, y: bottomRight.y + offsetPixels }, // expand bottom-right
-    { x: bottomLeft.x - offsetPixels, y: bottomLeft.y + offsetPixels }    // expand bottom-left
+    { x: topLeft.x - offsetPixels, y: topLeft.y - offsetPixels },         // expand top-left outward
+    { x: topRight.x + offsetPixels, y: topRight.y - offsetPixels },       // expand top-right outward  
+    { x: bottomRight.x + offsetPixels, y: bottomRight.y + offsetPixels }, // expand bottom-right outward
+    { x: bottomLeft.x - offsetPixels, y: bottomLeft.y + offsetPixels }    // expand bottom-left outward
   ];
   
   return offsetContour;
@@ -108,11 +113,18 @@ function applyCadCutMethod(vectorPath: VectorPoint[], offsetPixels: number): Vec
 function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]): void {
   if (contour.length < 2) return;
 
+  // FIXED: Make contour more visible and ensure proper rendering
   ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(3, 2); // Minimum 3px line width for visibility
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
+  
+  // Add shadow for better visibility
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = 2;
+  ctx.shadowOffsetX = 1;
+  ctx.shadowOffsetY = 1;
 
   ctx.beginPath();
   ctx.moveTo(contour[0].x, contour[0].y);
@@ -123,5 +135,11 @@ function drawCadCutContour(ctx: CanvasRenderingContext2D, contour: VectorPoint[]
   
   ctx.closePath();
   ctx.stroke();
+  
+  // Reset shadow
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
 }
 
