@@ -67,15 +67,16 @@ export default function ControlsSection({
             {strokeSettings.enabled && (
               <div className="space-y-4 mt-4">
                 <div className="space-y-2">
-                  <Label className="text-sm">Stroke Width: {strokeSettings.width}px</Label>
+                  <Label className="text-sm">Contour Width: {strokeSettings.width}px</Label>
                   <Slider
                     value={[strokeSettings.width]}
                     onValueChange={(value) => onStrokeChange({ width: value[0] })}
-                    max={50}
+                    max={10}
                     min={1}
                     step={1}
                     className="w-full"
                   />
+                  <div className="text-xs text-gray-500">Professional cutting software standard: 1-3px</div>
                 </div>
 
                 <div className="space-y-2">
