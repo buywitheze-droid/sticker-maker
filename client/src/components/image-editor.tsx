@@ -318,7 +318,7 @@ export default function ImageEditor() {
       updated.widthInches = newSettings.heightInches;
     }
     
-    // If enabling shape, disable stroke
+    // If enabling shape, disable stroke for mutual exclusion
     if (newSettings.enabled === true) {
       setStrokeSettings(prev => ({ ...prev, enabled: false }));
     }
@@ -471,10 +471,12 @@ export default function ImageEditor() {
           downloadVectorStroke(magentaCutCanvas, 'cut_contour.eps', 'eps', vectorPaths);
         }
       } else {
-        // Standard download using existing system
+        // Standard download - shape background or contour outline
         const dpi = 300;
         const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
-        const filename = `${nameWithoutExt}_sticker_300dpi.png`;
+        const filename = shapeSettings.enabled ? 
+          `${nameWithoutExt}_with_shape.png` : 
+          `${nameWithoutExt}_with_contour.png`;
         
         await downloadCanvas(
           imageInfo.image,
@@ -483,7 +485,7 @@ export default function ImageEditor() {
           resizeSettings.heightInches,
           dpi,
           filename,
-          shapeSettings
+          shapeSettings.enabled ? shapeSettings : undefined
         );
       }
     } catch (error) {

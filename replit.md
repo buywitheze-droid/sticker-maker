@@ -191,7 +191,10 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Fixed position control menu functionality with proper handlePositionChange function and offset handling
   - Enhanced preview centering to always fit shapes properly in view with consistent padding and optimal sizing
   - Made position control menu draggable with mouse for flexible placement anywhere on preview area
-  - Simplified download to only export the final design (image centered in shape background with cutlines) as a single PNG file
+  - Re-enabled contour outline option alongside shape background with mutual exclusion
+  - Users can now choose between contour outline mode or shape background mode
+  - Added full contour controls: stroke width, color, include holes, fill holes options
+  - Maintained mutual exclusion between contour and shape modes for clean interface
 
 ## Changelog
 
