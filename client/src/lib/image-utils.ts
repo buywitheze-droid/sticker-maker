@@ -1,6 +1,7 @@
 import { StrokeSettings, ShapeSettings } from "@/components/image-editor";
 import { applyCadCutClipping } from "@/lib/cadcut-bounds";
 import { cropImageToContent } from "@/lib/image-crop";
+import { createUnifiedContour } from "@/lib/unified-contour";
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
