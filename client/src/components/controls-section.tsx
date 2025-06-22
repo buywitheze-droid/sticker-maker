@@ -107,25 +107,7 @@ export default function ControlsSection({
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="include-holes"
-                      checked={strokeSettings.includeHoles}
-                      onCheckedChange={(checked) => onStrokeChange({ includeHoles: checked as boolean })}
-                    />
-                    <Label htmlFor="include-holes" className="text-sm">Include Interior Holes</Label>
-                  </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="fill-holes"
-                      checked={strokeSettings.fillHoles}
-                      onCheckedChange={(checked) => onStrokeChange({ fillHoles: checked as boolean })}
-                    />
-                    <Label htmlFor="fill-holes" className="text-sm">Fill Transparent Holes</Label>
-                  </div>
-                </div>
               </div>
             )}
           </CardContent>

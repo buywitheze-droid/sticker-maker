@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds, checkCadCutBounds } from "@/lib/cadcut-bounds";
-import { drawImageWithStroke } from "@/lib/canvas-utils";
+import { createCadCutContour } from "@/lib/cadcut-contour";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { cropImageToContent } from "@/lib/image-crop";
@@ -268,6 +268,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       // Draw the main image
       ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
+      
+      // Draw CadCut contour if stroke is enabled
+      if (strokeSettings.enabled) {
+        const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
+        ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
+      }
     };
 
     const handleZoomIn = () => {

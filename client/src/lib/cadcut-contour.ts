@@ -94,31 +94,16 @@ function createCadCutPath(edgePixels: ContourPoint[], strokeWidth: number): Cont
   
   // CadCut approach: Create a simplified outline with consistent offset
   const bounds = calculateBounds(edgePixels);
-  const offset = Math.max(1, strokeWidth);
+  const offset = Math.max(2, strokeWidth * 2); // Make stroke width more visible
   
-  // Create simplified rectangular contour with rounded corners (CadCut style)
+  // Create simplified rectangular contour (CadCut style)
   const padding = offset;
-  const contour: ContourPoint[] = [];
-  
-  // Top edge
-  for (let x = bounds.minX - padding; x <= bounds.maxX + padding; x += 2) {
-    contour.push({ x, y: bounds.minY - padding });
-  }
-  
-  // Right edge
-  for (let y = bounds.minY - padding; y <= bounds.maxY + padding; y += 2) {
-    contour.push({ x: bounds.maxX + padding, y });
-  }
-  
-  // Bottom edge (reverse)
-  for (let x = bounds.maxX + padding; x >= bounds.minX - padding; x -= 2) {
-    contour.push({ x, y: bounds.maxY + padding });
-  }
-  
-  // Left edge (reverse)
-  for (let y = bounds.maxY + padding; y >= bounds.minY - padding; y -= 2) {
-    contour.push({ x: bounds.minX - padding, y });
-  }
+  const contour: ContourPoint[] = [
+    { x: bounds.minX - padding, y: bounds.minY - padding }, // top-left
+    { x: bounds.maxX + padding, y: bounds.minY - padding }, // top-right
+    { x: bounds.maxX + padding, y: bounds.maxY + padding }, // bottom-right
+    { x: bounds.minX - padding, y: bounds.maxY + padding }  // bottom-left
+  ];
   
   return contour;
 }

@@ -22,9 +22,6 @@ export interface StrokeSettings {
   width: number;
   color: string;
   enabled: boolean;
-  includeHoles: boolean;
-  fillHoles: boolean;
-  autoTextBackground: boolean;
   alphaThreshold: number;
 }
 
@@ -57,9 +54,6 @@ export default function ImageEditor() {
     width: 2, // CadCut/Flexi standard auto contour width
     color: "#ffffff",
     enabled: false,
-    includeHoles: false,
-    fillHoles: false,
-    autoTextBackground: false,
     alphaThreshold: 128, // 0-255 range, 128 = 50% transparency threshold
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
