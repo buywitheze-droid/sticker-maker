@@ -19,35 +19,49 @@ export function createCadCutContour(
   // Clear canvas to transparent
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Step 1: Extract edge pixels from non-transparent areas
-  const edgePixels = extractEdgePixels(image, strokeSettings.alphaThreshold);
+  // Get precise image bounds
+  const bounds = getImageBounds(image, strokeSettings.alphaThreshold);
   
-  if (edgePixels.length === 0) {
+  if (!bounds) {
     // Fallback: draw around entire image
     drawSimpleContour(ctx, canvas.width, canvas.height, strokeSettings);
     return canvas;
   }
 
-  // Step 2: Create ordered contour path using convex hull
-  const contourPath = computeConvexHull(edgePixels);
+  // Apply offset in pixels (300 DPI conversion)
+  const offsetPixels = strokeSettings.width * 300;
   
-  // Step 3: Apply Ramer-Douglas-Peucker smoothing
-  const smoothedPath = douglasPeuckerSmooth(contourPath, 2.0);
+  // Create contour rectangle with offset
+  const contourRect = {
+    x: Math.max(0, bounds.x - offsetPixels),
+    y: Math.max(0, bounds.y - offsetPixels),
+    width: Math.min(canvas.width, bounds.width + (offsetPixels * 2)),
+    height: Math.min(canvas.height, bounds.height + (offsetPixels * 2))
+  };
+
+  // Force visible white stroke
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(6, offsetPixels * 0.02); // Always visible
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = 'source-over';
   
-  // Step 4: Apply offset for cutting margin
-  const offsetPath = applyOffsetToPath(smoothedPath, strokeSettings.width * 300);
+  // Draw the contour rectangle
+  ctx.strokeRect(contourRect.x, contourRect.y, contourRect.width, contourRect.height);
   
-  // Step 5: Draw the smooth contour line
-  drawSmoothContour(ctx, offsetPath, strokeSettings);
+  // Add extra visibility with inner stroke
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = Math.max(2, offsetPixels * 0.01);
+  ctx.strokeRect(contourRect.x + 1, contourRect.y + 1, contourRect.width - 2, contourRect.height - 2);
   
   return canvas;
 }
 
-function extractEdgePixels(image: HTMLImageElement, alphaThreshold: number): ContourPoint[] {
+function getImageBounds(image: HTMLImageElement, alphaThreshold: number): { x: number; y: number; width: number; height: number } | null {
   // Create temporary canvas to analyze image
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return [];
+  if (!tempCtx) return null;
 
   tempCanvas.width = image.width;
   tempCanvas.height = image.height;
@@ -56,36 +70,33 @@ function extractEdgePixels(image: HTMLImageElement, alphaThreshold: number): Con
   const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
   const data = imageData.data;
 
-  const edgePixels: ContourPoint[] = [];
+  let minX = tempCanvas.width, maxX = 0, minY = tempCanvas.height, maxY = 0;
+  let hasContent = false;
 
-  // Find edge pixels using 8-connected neighbor analysis
-  for (let y = 1; y < tempCanvas.height - 1; y++) {
-    for (let x = 1; x < tempCanvas.width - 1; x++) {
+  // Find actual content bounds
+  for (let y = 0; y < tempCanvas.height; y++) {
+    for (let x = 0; x < tempCanvas.width; x++) {
       const index = (y * tempCanvas.width + x) * 4;
       const alpha = data[index + 3];
       
       if (alpha >= alphaThreshold) {
-        // Check if this solid pixel has any transparent neighbors
-        const neighbors = [
-          data[((y-1) * tempCanvas.width + (x-1)) * 4 + 3], // top-left
-          data[((y-1) * tempCanvas.width + x) * 4 + 3],     // top
-          data[((y-1) * tempCanvas.width + (x+1)) * 4 + 3], // top-right
-          data[(y * tempCanvas.width + (x-1)) * 4 + 3],     // left
-          data[(y * tempCanvas.width + (x+1)) * 4 + 3],     // right
-          data[((y+1) * tempCanvas.width + (x-1)) * 4 + 3], // bottom-left
-          data[((y+1) * tempCanvas.width + x) * 4 + 3],     // bottom
-          data[((y+1) * tempCanvas.width + (x+1)) * 4 + 3]  // bottom-right
-        ];
-        
-        // If any neighbor is transparent, this is an edge pixel
-        if (neighbors.some(neighbor => neighbor < alphaThreshold)) {
-          edgePixels.push({ x, y });
-        }
+        hasContent = true;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
       }
     }
   }
 
-  return edgePixels;
+  if (!hasContent) return null;
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1
+  };
 }
 
 function computeConvexHull(points: ContourPoint[]): ContourPoint[] {
@@ -265,9 +276,16 @@ function drawSimpleContour(ctx: CanvasRenderingContext2D, width: number, height:
   const padding = Math.max(10, offsetPixels);
   
   ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = Math.max(4, strokeSettings.width * 100);
+  ctx.lineWidth = Math.max(6, offsetPixels * 0.02);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = 'source-over';
   
+  // Main outline
   ctx.strokeRect(padding, padding, width - (padding * 2), height - (padding * 2));
+  
+  // Additional visibility stroke
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = Math.max(3, offsetPixels * 0.01);
+  ctx.strokeRect(padding + 1, padding + 1, width - (padding * 2) - 2, height - (padding * 2) - 2);
 }

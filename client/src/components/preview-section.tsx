@@ -271,20 +271,35 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       // Draw CadCut contour if stroke is enabled
       if (strokeSettings.enabled) {
-        const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
-        
-        // Save context state
-        ctx.save();
-        
-        // Ensure maximum visibility
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1.0;
-        
-        // Draw the contour canvas
-        ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
-        
-        // Restore context
-        ctx.restore();
+        try {
+          const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
+          
+          // Force maximum visibility with multiple techniques
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 1.0;
+          
+          // Draw the contour canvas
+          ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
+          
+          // Add emergency backup outline if needed
+          if (strokeSettings.width > 0) {
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = Math.max(2, strokeSettings.width * 50);
+            ctx.globalCompositeOperation = 'source-over';
+            const padding = strokeSettings.width * 300 * (previewWidth / imageInfo.image.width);
+            ctx.strokeRect(
+              previewX + padding, 
+              previewY + padding, 
+              previewWidth - (padding * 2), 
+              previewHeight - (padding * 2)
+            );
+          }
+          
+          ctx.restore();
+        } catch (error) {
+          console.error('Contour rendering error:', error);
+        }
       }
     };
 
