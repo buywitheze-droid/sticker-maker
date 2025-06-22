@@ -169,6 +169,8 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Added oval shape support to image-utils drawShapeBackground function for proper export functionality
   - Enhanced preview section to render oval shapes with correct aspect ratio and centering
 
+- **June 22, 2025**: Simplified contour outline to checkbox-only interface with no settings controls
+
 - **June 21, 2025**: Implemented design tracing and bounds detection system
   - Created CadCut-style bounds detection system for reliable boundary checking
   - Added automatic edge detection using alpha channel analysis for precise design boundary tracing

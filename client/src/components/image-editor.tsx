@@ -51,10 +51,10 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 2, // 2px default width like yesterday at 11am
+    width: 2, // Simple default
     color: "#ffffff",
     enabled: false,
-    alphaThreshold: 128, // Keep internal but don't show control
+    alphaThreshold: 128,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
