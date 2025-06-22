@@ -94,7 +94,7 @@ function createCadCutPath(edgePixels: ContourPoint[], strokeWidth: number): Cont
   
   // CadCut approach: Create a simplified outline with consistent offset
   const bounds = calculateBounds(edgePixels);
-  const offset = Math.max(2, strokeWidth * 2); // Make stroke width more visible
+  const offset = Math.max(5, strokeWidth * 5); // Increase offset for more visible changes
   
   // Create simplified rectangular contour (CadCut style)
   const padding = offset;
@@ -129,7 +129,7 @@ function drawCadCutContour(
   if (contour.length < 2) return;
 
   ctx.strokeStyle = strokeSettings.color;
-  ctx.lineWidth = Math.max(1, strokeSettings.width);
+  ctx.lineWidth = Math.max(2, strokeSettings.width * 3); // Make stroke more visible
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
