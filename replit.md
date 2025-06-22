@@ -191,7 +191,7 @@ This is a full-stack web application for creating stickers by adding customizabl
   - Fixed position control menu functionality with proper handlePositionChange function and offset handling
   - Enhanced preview centering to always fit shapes properly in view with consistent padding and optimal sizing
   - Made position control menu draggable with mouse for flexible placement anywhere on preview area
-  - Fixed download functionality by switching from ZIP archives to individual file downloads for better reliability
+  - Simplified download to only export the final design (image centered in shape background with cutlines) as a single PNG file
 
 ## Changelog
 
