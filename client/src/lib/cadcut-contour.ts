@@ -21,8 +21,8 @@ export function createCadCutContour(
     return canvas;
   }
 
-  // Apply offset in pixels (convert inches to pixels at 300 DPI)
-  const offsetPixels = strokeSettings.width * 300;
+  // Apply offset in pixels (use direct pixel value like yesterday at 11am)
+  const offsetPixels = strokeSettings.width;
   
   // Create rectangular contour around content with offset
   const contourRect = {
@@ -34,7 +34,7 @@ export function createCadCutContour(
 
   // Draw clean white rectangular outline
   ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = Math.max(3, offsetPixels * 0.02);
+  ctx.lineWidth = 2; // Fixed 2px line width like yesterday at 11am
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
