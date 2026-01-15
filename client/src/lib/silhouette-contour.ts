@@ -1084,39 +1084,47 @@ export async function downloadShapePDF(
   const separationRef = context.register(separationColorSpace);
   
   // Add color space to page resources
-  let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-  if (!colorSpaceDict) {
-    colorSpaceDict = context.obj({});
-    resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+  if (resources) {
+    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+    if (!colorSpaceDict) {
+      colorSpaceDict = context.obj({});
+      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+    }
+    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
   }
-  (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
   
   // Build shape outline path with CutContour spot color
   let pathOps = 'q\n'; // Save graphics state
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n'; // Line width
   
-  // Use exact same coordinates as shape fill
+  // Calculate outline center - align with where pdf-lib draws the shape
+  // Apply Y offset to move outline up (PDF Y increases upward)
+  // The offset accounts for coordinate system differences between pdf-lib and raw operators
+  const yOffset = imageHeight * 0.1; // Adjust outline position to align with image
+  const outlineCx = cx;
+  const outlineCy = cy + yOffset;
+  
   if (shapeSettings.type === 'circle') {
     const r = Math.min(widthPts, heightPts) / 2;
     const k = 0.5522847498;
     const rk = r * k;
-    pathOps += `${cx + r} ${cy} m\n`;
-    pathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-    pathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-    pathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-    pathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
+    pathOps += `${outlineCx + r} ${outlineCy} m\n`;
+    pathOps += `${outlineCx + r} ${outlineCy + rk} ${outlineCx + rk} ${outlineCy + r} ${outlineCx} ${outlineCy + r} c\n`;
+    pathOps += `${outlineCx - rk} ${outlineCy + r} ${outlineCx - r} ${outlineCy + rk} ${outlineCx - r} ${outlineCy} c\n`;
+    pathOps += `${outlineCx - r} ${outlineCy - rk} ${outlineCx - rk} ${outlineCy - r} ${outlineCx} ${outlineCy - r} c\n`;
+    pathOps += `${outlineCx + rk} ${outlineCy - r} ${outlineCx + r} ${outlineCy - rk} ${outlineCx + r} ${outlineCy} c\n`;
   } else if (shapeSettings.type === 'oval') {
     const rx = widthPts / 2;
     const ry = heightPts / 2;
     const k = 0.5522847498;
     const rxk = rx * k;
     const ryk = ry * k;
-    pathOps += `${cx + rx} ${cy} m\n`;
-    pathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-    pathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-    pathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-    pathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
+    pathOps += `${outlineCx + rx} ${outlineCy} m\n`;
+    pathOps += `${outlineCx + rx} ${outlineCy + ryk} ${outlineCx + rxk} ${outlineCy + ry} ${outlineCx} ${outlineCy + ry} c\n`;
+    pathOps += `${outlineCx - rxk} ${outlineCy + ry} ${outlineCx - rx} ${outlineCy + ryk} ${outlineCx - rx} ${outlineCy} c\n`;
+    pathOps += `${outlineCx - rx} ${outlineCy - ryk} ${outlineCx - rxk} ${outlineCy - ry} ${outlineCx} ${outlineCy - ry} c\n`;
+    pathOps += `${outlineCx + rxk} ${outlineCy - ry} ${outlineCx + rx} ${outlineCy - ryk} ${outlineCx + rx} ${outlineCy} c\n`;
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(widthPts, heightPts);
     const sx = (widthPts - size) / 2;
