@@ -111,7 +111,7 @@ export default function ControlsSection({
           </CardContent>
         </Card>
 
-        {/* Shape Background Card */}
+        {/* Shape Outline Card */}
         <Card className={`border-2 transition-colors ${shapeSettings.enabled ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
           <CardContent className="space-y-4 pt-6">
             <div className="flex items-center space-x-3">
@@ -121,7 +121,7 @@ export default function ControlsSection({
                 onCheckedChange={(checked) => onShapeChange({ enabled: checked as boolean })}
               />
               <Label htmlFor="shape-enabled" className="text-base font-medium">
-                Shape Background
+                Shape Outline
               </Label>
             </div>
 
@@ -149,7 +149,7 @@ export default function ControlsSection({
 
                 {(shapeSettings.type === 'circle' || shapeSettings.type === 'square') ? (
                   <div>
-                    <Label>Size (inches)</Label>
+                    <Label>Sticker Size (inches)</Label>
                     <Slider
                       value={[shapeSettings.widthInches]}
                       onValueChange={([value]) => onShapeChange({ widthInches: value, heightInches: value })}
