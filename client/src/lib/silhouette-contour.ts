@@ -18,7 +18,11 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Gap closing offsets - small (0.07") or big (0.12")
+  // Auto-bridge offset (0.02") - always applied to bridge outlines within 0.02" of each other
+  const autoBridgeInches = 0.02;
+  const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
+  
+  // Additional gap closing offsets - small (0.07") or big (0.12")
   let gapClosePixels = 0;
   if (strokeSettings.closeBigGaps) {
     gapClosePixels = Math.round(0.12 * effectiveDPI);
@@ -47,9 +51,27 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 2: If gap closing is enabled, dilate to bridge gaps, fill, then shrink internal mask
-    // This bridges gaps while preserving the overall outline size
-    let bridgedMask = silhouetteMask;
+    // Step 2: Auto-bridge outlines within 0.02" of each other (always applied)
+    // This makes cutting easier by connecting nearby elements
+    let autoBridgedMask = silhouetteMask;
+    if (autoBridgePixels > 0) {
+      const halfAutoBridge = Math.round(autoBridgePixels / 2);
+      const dilatedAuto = dilateSilhouette(silhouetteMask, image.width, image.height, halfAutoBridge);
+      const dilatedAutoWidth = image.width + halfAutoBridge * 2;
+      const dilatedAutoHeight = image.height + halfAutoBridge * 2;
+      const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
+      
+      // Extract center portion
+      autoBridgedMask = new Uint8Array(image.width * image.height);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          autoBridgedMask[y * image.width + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+        }
+      }
+    }
+    
+    // Step 3: If additional gap closing is enabled, apply on top of auto-bridge
+    let bridgedMask = autoBridgedMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
     
@@ -58,7 +80,7 @@ export function createSilhouetteContour(
       const halfGapPixels = Math.round(gapClosePixels / 2);
       
       // Dilate the silhouette
-      const dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfGapPixels);
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
       const dilatedWidth = image.width + halfGapPixels * 2;
       const dilatedHeight = image.height + halfGapPixels * 2;
       
