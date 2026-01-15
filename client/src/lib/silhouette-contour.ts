@@ -818,10 +818,14 @@ export async function downloadContourPDF(
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
   // Draw image on page (convert inches to points)
+  // PDF coordinates: Y=0 is at bottom, Y increases upward
+  // Canvas coordinates: Y=0 is at top, Y increases downward
+  // The image in canvas space is at (imageOffsetX, imageOffsetY) from top-left
+  // In PDF space, we flip Y: bottom of image should be at heightPts - imageOffsetY - imageHeight
   const imageXPts = imageOffsetX * 72;
-  const imageYPts = heightPts - (imageOffsetY * 72) - (resizeSettings.heightInches * 72); // PDF Y is from bottom
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageYPts = heightPts - (imageOffsetY * 72) - imageHeightPts; // Flip Y for PDF
   
   page.drawImage(pngImage, {
     x: imageXPts,
