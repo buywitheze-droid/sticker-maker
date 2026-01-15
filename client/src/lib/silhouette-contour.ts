@@ -70,36 +70,52 @@ export function createSilhouetteContour(
       }
     }
     
-    // Step 3: If additional gap closing is enabled, apply on top of auto-bridge
-    // Only fill gaps between elements - don't change the outer outline
+    // Step 3: If gap closing is enabled, create smooth bridges for outlines within 0.03" 
+    // and fill larger gaps based on selected option
     let bridgedMask = autoBridgedMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
     
     if (gapClosePixels > 0) {
-      // Dilate by half the gap close distance so elements within that distance touch
-      const halfGapPixels = Math.round(gapClosePixels / 2);
+      // First, create smooth bridges for outlines within 0.03" of each other
+      const smoothBridgeInches = 0.03;
+      const smoothBridgePixels = Math.round(smoothBridgeInches * effectiveDPI / 2);
       
-      // Dilate the silhouette
-      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      // Apply smooth bridging first
+      const smoothDilated = dilateSilhouette(autoBridgedMask, image.width, image.height, smoothBridgePixels);
+      const smoothDilatedWidth = image.width + smoothBridgePixels * 2;
+      const smoothDilatedHeight = image.height + smoothBridgePixels * 2;
+      const smoothFilled = fillSilhouette(smoothDilated, smoothDilatedWidth, smoothDilatedHeight);
+      
+      // Extract smooth bridged mask
+      let smoothBridgedMask = new Uint8Array(image.width * image.height);
+      smoothBridgedMask.set(autoBridgedMask);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          const srcX = x + smoothBridgePixels;
+          const srcY = y + smoothBridgePixels;
+          if (smoothFilled[srcY * smoothDilatedWidth + srcX] === 1 && autoBridgedMask[y * image.width + x] === 0) {
+            smoothBridgedMask[y * image.width + x] = 1;
+          }
+        }
+      }
+      
+      // Then apply additional gap closing for larger gaps
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      const dilatedMask = dilateSilhouette(smoothBridgedMask, image.width, image.height, halfGapPixels);
       const dilatedWidth = image.width + halfGapPixels * 2;
       const dilatedHeight = image.height + halfGapPixels * 2;
-      
-      // Fill interior to merge bridged elements into one solid shape
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
       
-      // Start with the original mask and only add gap-filling pixels
-      // (pixels that are in the filled region but not exterior)
+      // Start with smooth bridged mask and add larger gap fills
       bridgedMask = new Uint8Array(image.width * image.height);
-      bridgedMask.set(autoBridgedMask); // Keep original outline
+      bridgedMask.set(smoothBridgedMask);
       
-      // Only add pixels that fill gaps (interior regions that got filled)
       for (let y = 0; y < image.height; y++) {
         for (let x = 0; x < image.width; x++) {
           const srcX = x + halfGapPixels;
           const srcY = y + halfGapPixels;
-          // If the filled version has content here and original didn't, it's a gap fill
-          if (filledDilated[srcY * dilatedWidth + srcX] === 1 && autoBridgedMask[y * image.width + x] === 0) {
+          if (filledDilated[srcY * dilatedWidth + srcX] === 1 && smoothBridgedMask[y * image.width + x] === 0) {
             bridgedMask[y * image.width + x] = 1;
           }
         }
