@@ -1,5 +1,6 @@
-import { StrokeSettings, ResizeSettings } from "@/components/image-editor";
+import { StrokeSettings, ResizeSettings, ShapeSettings } from "@/components/image-editor";
 import { PDFDocument, PDFPage, rgb, PDFName, PDFArray, PDFDict, PDFStream, PDFRef } from 'pdf-lib';
+import { cropImageToContent } from './image-crop';
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>; // Points in inches
@@ -926,6 +927,225 @@ export async function downloadContourPDF(
   pdfDoc.setTitle('Sticker with CutContour');
   pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
   pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  
+  // Save and download
+  const pdfBytes = await pdfDoc.save();
+  const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(pdfBlob);
+  
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// Download PDF with shape background and CutContour spot color outline
+export async function downloadShapePDF(
+  image: HTMLImageElement,
+  shapeSettings: ShapeSettings,
+  resizeSettings: ResizeSettings,
+  filename: string
+): Promise<void> {
+  // Calculate dimensions in points (72 points per inch)
+  const widthPts = shapeSettings.widthInches * 72;
+  const heightPts = shapeSettings.heightInches * 72;
+  
+  // Create PDF document
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([widthPts, heightPts]);
+  const context = pdfDoc.context;
+  
+  // Parse fill color from hex
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16) / 255,
+      g: parseInt(result[2], 16) / 255,
+      b: parseInt(result[3], 16) / 255
+    } : { r: 1, g: 1, b: 1 };
+  };
+  
+  const fillColor = hexToRgb(shapeSettings.fillColor);
+  
+  // Draw the shape background
+  const centerX = widthPts / 2;
+  const centerY = heightPts / 2;
+  
+  if (shapeSettings.type === 'circle') {
+    const radius = Math.min(widthPts, heightPts) / 2;
+    page.drawCircle({
+      x: centerX,
+      y: centerY,
+      size: radius,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
+  } else if (shapeSettings.type === 'oval') {
+    page.drawEllipse({
+      x: centerX,
+      y: centerY,
+      xScale: widthPts / 2,
+      yScale: heightPts / 2,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(widthPts, heightPts);
+    const startX = (widthPts - size) / 2;
+    const startY = (heightPts - size) / 2;
+    page.drawRectangle({
+      x: startX,
+      y: startY,
+      width: size,
+      height: size,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
+  } else {
+    // Rectangle
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: widthPts,
+      height: heightPts,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
+  }
+  
+  // Crop image to remove empty space
+  const croppedCanvas = cropImageToContent(image);
+  let imageCanvas: HTMLCanvasElement;
+  
+  if (croppedCanvas) {
+    imageCanvas = croppedCanvas;
+  } else {
+    // Use original image as canvas
+    imageCanvas = document.createElement('canvas');
+    imageCanvas.width = image.width;
+    imageCanvas.height = image.height;
+    const ctx = imageCanvas.getContext('2d');
+    if (ctx) ctx.drawImage(image, 0, 0);
+  }
+  
+  // Get PNG bytes from cropped image
+  const blob = await new Promise<Blob>((resolve) => {
+    imageCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const pngBytes = new Uint8Array(await blob.arrayBuffer());
+  
+  // Embed image
+  const pngImage = await pdfDoc.embedPng(pngBytes);
+  
+  // Calculate image size and position (centered, 80% of shape size)
+  const imageAspect = imageCanvas.width / imageCanvas.height;
+  const shapeAspect = widthPts / heightPts;
+  
+  let imageWidth, imageHeight;
+  if (imageAspect > shapeAspect) {
+    imageWidth = widthPts * 0.8;
+    imageHeight = imageWidth / imageAspect;
+  } else {
+    imageHeight = heightPts * 0.8;
+    imageWidth = imageHeight * imageAspect;
+  }
+  
+  const imageX = (widthPts - imageWidth) / 2 + (shapeSettings.offsetX || 0);
+  const imageY = (heightPts - imageHeight) / 2 - (shapeSettings.offsetY || 0); // Flip Y offset for PDF
+  
+  page.drawImage(pngImage, {
+    x: imageX,
+    y: imageY,
+    width: imageWidth,
+    height: imageHeight,
+  });
+  
+  // Create CutContour spot color
+  const tintFunction = context.obj({
+    FunctionType: 2,
+    Domain: [0, 1],
+    C0: [0, 0, 0, 0],
+    C1: [0, 1, 0, 0], // Magenta in CMYK
+    N: 1,
+  });
+  const tintFunctionRef = context.register(tintFunction);
+  
+  const separationColorSpace = context.obj([
+    PDFName.of('Separation'),
+    PDFName.of('CutContour'),
+    PDFName.of('DeviceCMYK'),
+    tintFunctionRef,
+  ]);
+  const separationRef = context.register(separationColorSpace);
+  
+  // Add color space to page resources
+  const resources = page.node.Resources();
+  if (resources) {
+    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+    if (!colorSpaceDict) {
+      colorSpaceDict = context.obj({});
+      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+    }
+    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+  }
+  
+  // Build shape outline path with CutContour spot color
+  let pathOps = '/CutContour CS 1 SCN\n';
+  pathOps += '0.5 w\n'; // Line width
+  
+  if (shapeSettings.type === 'circle') {
+    const radius = Math.min(widthPts, heightPts) / 2;
+    // Approximate circle with bezier curves
+    const k = 0.5522847498; // Magic number for circle approximation
+    pathOps += `${centerX + radius} ${centerY} m\n`;
+    pathOps += `${centerX + radius} ${centerY + radius * k} ${centerX + radius * k} ${centerY + radius} ${centerX} ${centerY + radius} c\n`;
+    pathOps += `${centerX - radius * k} ${centerY + radius} ${centerX - radius} ${centerY + radius * k} ${centerX - radius} ${centerY} c\n`;
+    pathOps += `${centerX - radius} ${centerY - radius * k} ${centerX - radius * k} ${centerY - radius} ${centerX} ${centerY - radius} c\n`;
+    pathOps += `${centerX + radius * k} ${centerY - radius} ${centerX + radius} ${centerY - radius * k} ${centerX + radius} ${centerY} c\n`;
+  } else if (shapeSettings.type === 'oval') {
+    const rx = widthPts / 2;
+    const ry = heightPts / 2;
+    const k = 0.5522847498;
+    pathOps += `${centerX + rx} ${centerY} m\n`;
+    pathOps += `${centerX + rx} ${centerY + ry * k} ${centerX + rx * k} ${centerY + ry} ${centerX} ${centerY + ry} c\n`;
+    pathOps += `${centerX - rx * k} ${centerY + ry} ${centerX - rx} ${centerY + ry * k} ${centerX - rx} ${centerY} c\n`;
+    pathOps += `${centerX - rx} ${centerY - ry * k} ${centerX - rx * k} ${centerY - ry} ${centerX} ${centerY - ry} c\n`;
+    pathOps += `${centerX + rx * k} ${centerY - ry} ${centerX + rx} ${centerY - ry * k} ${centerX + rx} ${centerY} c\n`;
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(widthPts, heightPts);
+    const startX = (widthPts - size) / 2;
+    const startY = (heightPts - size) / 2;
+    pathOps += `${startX} ${startY} m\n`;
+    pathOps += `${startX + size} ${startY} l\n`;
+    pathOps += `${startX + size} ${startY + size} l\n`;
+    pathOps += `${startX} ${startY + size} l\n`;
+  } else {
+    // Rectangle
+    pathOps += `0 0 m\n`;
+    pathOps += `${widthPts} 0 l\n`;
+    pathOps += `${widthPts} ${heightPts} l\n`;
+    pathOps += `0 ${heightPts} l\n`;
+  }
+  
+  pathOps += 'h S\n'; // Close and stroke
+  
+  // Append path to content stream
+  const existingContents = page.node.Contents();
+  if (existingContents) {
+    const contentStream = context.stream(pathOps);
+    const contentStreamRef = context.register(contentStream);
+    
+    if (existingContents instanceof PDFArray) {
+      existingContents.push(contentStreamRef);
+    } else {
+      const newContents = context.obj([existingContents, contentStreamRef]);
+      page.node.set(PDFName.of('Contents'), newContents);
+    }
+  }
+  
+  // Set PDF metadata
+  pdfDoc.setTitle('Shape with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'shape']);
   
   // Save and download
   const pdfBytes = await pdfDoc.save();

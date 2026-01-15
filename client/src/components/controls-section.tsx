@@ -312,8 +312,10 @@ export default function ControlsSection({
               
               <div className="text-xs text-gray-500 text-center mt-2">
                 {strokeSettings.enabled 
-                  ? "PDF with raster image + vector contour"
-                  : "PNG with shape background"
+                  ? "PDF with raster image + vector CutContour"
+                  : shapeSettings.enabled
+                    ? "PDF with shape + vector CutContour"
+                    : "PNG image"
                 }
               </div>
             </div>

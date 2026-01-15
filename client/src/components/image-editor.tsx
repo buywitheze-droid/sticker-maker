@@ -9,7 +9,7 @@ import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
-import { downloadContourPDF } from "@/lib/silhouette-contour";
+import { downloadContourPDF, downloadShapePDF } from "@/lib/silhouette-contour";
 
 export interface ImageInfo {
   file: File;
@@ -484,10 +484,19 @@ export default function ImageEditor() {
             resizeSettings,
             filename
           );
+        } else if (shapeSettings.enabled) {
+          // Shape background mode: Download PDF with shape + CutContour spot color
+          const filename = `${nameWithoutExt}_with_shape.pdf`;
+          await downloadShapePDF(
+            imageInfo.image,
+            shapeSettings,
+            resizeSettings,
+            filename
+          );
         } else {
-          // Shape background mode: Download as PNG
+          // No mode selected - just download the image
           const dpi = 300;
-          const filename = `${nameWithoutExt}_with_shape.png`;
+          const filename = `${nameWithoutExt}.png`;
           await downloadCanvas(
             imageInfo.image,
             strokeSettings,
@@ -495,7 +504,7 @@ export default function ImageEditor() {
             resizeSettings.heightInches,
             dpi,
             filename,
-            shapeSettings.enabled ? shapeSettings : undefined
+            undefined
           );
         }
       }
