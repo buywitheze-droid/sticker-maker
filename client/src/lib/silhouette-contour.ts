@@ -70,53 +70,49 @@ export function createSilhouetteContour(
       }
     }
     
-    // Step 3: If gap closing is enabled, create smooth bridges for outlines within 0.03" 
-    // and fill larger gaps based on selected option
+    // Step 3: If gap closing is enabled, only fill interior gaps without changing outer boundary
     let bridgedMask = autoBridgedMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
     
     if (gapClosePixels > 0) {
-      // First, create smooth bridges for outlines within 0.03" of each other
-      const smoothBridgeInches = 0.03;
-      const smoothBridgePixels = Math.round(smoothBridgeInches * effectiveDPI / 2);
-      
-      // Apply smooth bridging first
-      const smoothDilated = dilateSilhouette(autoBridgedMask, image.width, image.height, smoothBridgePixels);
-      const smoothDilatedWidth = image.width + smoothBridgePixels * 2;
-      const smoothDilatedHeight = image.height + smoothBridgePixels * 2;
-      const smoothFilled = fillSilhouette(smoothDilated, smoothDilatedWidth, smoothDilatedHeight);
-      
-      // Extract smooth bridged mask
-      let smoothBridgedMask = new Uint8Array(image.width * image.height);
-      smoothBridgedMask.set(autoBridgedMask);
-      for (let y = 0; y < image.height; y++) {
-        for (let x = 0; x < image.width; x++) {
-          const srcX = x + smoothBridgePixels;
-          const srcY = y + smoothBridgePixels;
-          if (smoothFilled[srcY * smoothDilatedWidth + srcX] === 1 && autoBridgedMask[y * image.width + x] === 0) {
-            smoothBridgedMask[y * image.width + x] = 1;
-          }
-        }
-      }
-      
-      // Then apply additional gap closing for larger gaps
+      // Use morphological closing: dilate, fill holes, then erode back
+      // This closes gaps while preserving the outer boundary shape
       const halfGapPixels = Math.round(gapClosePixels / 2);
-      const dilatedMask = dilateSilhouette(smoothBridgedMask, image.width, image.height, halfGapPixels);
+      
+      // Step 3a: Dilate to connect nearby elements
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
       const dilatedWidth = image.width + halfGapPixels * 2;
       const dilatedHeight = image.height + halfGapPixels * 2;
+      
+      // Step 3b: Fill interior holes in the dilated mask
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
       
-      // Start with smooth bridged mask and add larger gap fills
+      // Step 3c: Find interior gap pixels only (pixels that are gaps surrounded by content)
+      // We identify gaps by finding transparent pixels in original that become solid after fill
       bridgedMask = new Uint8Array(image.width * image.height);
-      bridgedMask.set(smoothBridgedMask);
+      bridgedMask.set(autoBridgedMask); // Start with original
       
-      for (let y = 0; y < image.height; y++) {
-        for (let x = 0; x < image.width; x++) {
-          const srcX = x + halfGapPixels;
-          const srcY = y + halfGapPixels;
-          if (filledDilated[srcY * dilatedWidth + srcX] === 1 && smoothBridgedMask[y * image.width + x] === 0) {
-            bridgedMask[y * image.width + x] = 1;
+      // Only fill pixels that are interior gaps (not on the outer boundary)
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
+            // Check if this pixel is in a filled region
+            const srcX = x + halfGapPixels;
+            const srcY = y + halfGapPixels;
+            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
+              // Check if this is an interior gap (has content on multiple sides in original)
+              const hasTop = autoBridgedMask[(y - 1) * image.width + x] === 1;
+              const hasBottom = autoBridgedMask[(y + 1) * image.width + x] === 1;
+              const hasLeft = autoBridgedMask[y * image.width + (x - 1)] === 1;
+              const hasRight = autoBridgedMask[y * image.width + (x + 1)] === 1;
+              
+              // Only fill if it's between content (gap between elements)
+              const sidesWithContent = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0) + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
+              if (sidesWithContent >= 2) {
+                bridgedMask[y * image.width + x] = 1;
+              }
+            }
           }
         }
       }
