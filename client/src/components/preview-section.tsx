@@ -240,56 +240,67 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      // Calculate preview dimensions based on resize settings - fit to view properly
-      const previewAspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
-      const padding = 40;
-      const availableWidth = canvasWidth - (padding * 2);
-      const availableHeight = canvasHeight - (padding * 2);
+      const viewPadding = 40;
+      const availableWidth = canvasWidth - (viewPadding * 2);
+      const availableHeight = canvasHeight - (viewPadding * 2);
       
-      let maxSize;
-      if (previewAspectRatio > (availableWidth / availableHeight)) {
-        maxSize = availableWidth;
-      } else {
-        maxSize = availableHeight;
-      }
-      
-      let previewWidth, previewHeight;
-      if (previewAspectRatio > 1) {
-        previewWidth = maxSize;
-        previewHeight = maxSize / previewAspectRatio;
-      } else {
-        previewHeight = maxSize;
-        previewWidth = maxSize * previewAspectRatio;
-      }
-      
-      // Always center the preview in the window
-      const previewX = (canvasWidth - previewWidth) / 2;
-      const previewY = (canvasHeight - previewHeight) / 2;
-      
-      // Draw the main image
-      ctx.drawImage(imageInfo.image, previewX, previewY, previewWidth, previewHeight);
-      
-      // Draw CadCut contour if stroke is enabled
       if (strokeSettings.enabled) {
+        // When contour is enabled, create the contour canvas (which includes both image and contour)
         try {
           const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
           
-          // FIXED: Ensure contour renders with proper scaling
-          ctx.save();
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = 1.0;
+          // Calculate the aspect ratio of the contour canvas
+          const contourAspectRatio = contourCanvas.width / contourCanvas.height;
           
-          // Draw the contour canvas with proper scaling
-          ctx.drawImage(contourCanvas, previewX, previewY, previewWidth, previewHeight);
+          // Fit the contour canvas to the available space
+          let displayWidth, displayHeight;
+          if (contourAspectRatio > (availableWidth / availableHeight)) {
+            displayWidth = availableWidth;
+            displayHeight = availableWidth / contourAspectRatio;
+          } else {
+            displayHeight = availableHeight;
+            displayWidth = availableHeight * contourAspectRatio;
+          }
           
-          ctx.restore();
+          // Center in the canvas
+          const displayX = (canvasWidth - displayWidth) / 2;
+          const displayY = (canvasHeight - displayHeight) / 2;
+          
+          // Draw the combined contour+image canvas
+          ctx.drawImage(contourCanvas, displayX, displayY, displayWidth, displayHeight);
+          
         } catch (error) {
           console.error('Contour rendering error:', error);
-          
-          // DEBUGGING: Log the error details
-          console.log('StrokeSettings:', strokeSettings);
-          console.log('Image dimensions:', imageInfo.image.width, imageInfo.image.height);
+          // Fallback: draw image without contour
+          const aspectRatio = imageInfo.image.width / imageInfo.image.height;
+          let w, h;
+          if (aspectRatio > (availableWidth / availableHeight)) {
+            w = availableWidth;
+            h = availableWidth / aspectRatio;
+          } else {
+            h = availableHeight;
+            w = availableHeight * aspectRatio;
+          }
+          const x = (canvasWidth - w) / 2;
+          const y = (canvasHeight - h) / 2;
+          ctx.drawImage(imageInfo.image, x, y, w, h);
         }
+      } else {
+        // No contour - just draw the image
+        const aspectRatio = imageInfo.image.width / imageInfo.image.height;
+        let displayWidth, displayHeight;
+        if (aspectRatio > (availableWidth / availableHeight)) {
+          displayWidth = availableWidth;
+          displayHeight = availableWidth / aspectRatio;
+        } else {
+          displayHeight = availableHeight;
+          displayWidth = availableHeight * aspectRatio;
+        }
+        
+        const displayX = (canvasWidth - displayWidth) / 2;
+        const displayY = (canvasHeight - displayHeight) / 2;
+        
+        ctx.drawImage(imageInfo.image, displayX, displayY, displayWidth, displayHeight);
       }
     };
 
