@@ -53,6 +53,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // For contour mode, draw image based on resize settings
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
+      
+      // Center the preview content in the container after drawing
+      if (containerRef.current) {
+        const container = containerRef.current;
+        requestAnimationFrame(() => {
+          const scrollWidth = container.scrollWidth;
+          const scrollHeight = container.scrollHeight;
+          const clientWidth = container.clientWidth;
+          const clientHeight = container.clientHeight;
+          
+          container.scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
+          container.scrollTop = Math.max(0, (scrollHeight - clientHeight) / 2);
+        });
+      }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
