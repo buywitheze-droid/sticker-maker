@@ -92,20 +92,32 @@ export function createSilhouetteContour(
       bridgedMask = new Uint8Array(image.width * image.height);
       bridgedMask.set(autoBridgedMask); // Start with original
       
-      // Only fill pixels that are interior gaps (not on the outer boundary)
+      // Only fill pixels that bridge content in opposing directions
       for (let y = 1; y < image.height - 1; y++) {
         for (let x = 1; x < image.width - 1; x++) {
           if (autoBridgedMask[y * image.width + x] === 0) {
             const srcX = x + halfGapPixels;
             const srcY = y + halfGapPixels;
             if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
-              const hasTop = autoBridgedMask[(y - 1) * image.width + x] === 1;
-              const hasBottom = autoBridgedMask[(y + 1) * image.width + x] === 1;
-              const hasLeft = autoBridgedMask[y * image.width + (x - 1)] === 1;
-              const hasRight = autoBridgedMask[y * image.width + (x + 1)] === 1;
+              // Check for content in opposing directions within halfGapPixels distance
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
               
-              const sidesWithContent = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0) + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
-              if (sidesWithContent >= 2) {
+              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              // Bridge if content on opposing sides (vertical or horizontal bridge)
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
                 bridgedMask[y * image.width + x] = 1;
               }
             }
