@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds, checkCadCutBounds } from "@/lib/cadcut-bounds";
-import { createCadCutContour } from "@/lib/cadcut-contour";
+import { createSilhouetteContour } from "@/lib/silhouette-contour";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { cropImageToContent } from "@/lib/image-crop";
@@ -247,7 +247,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (strokeSettings.enabled) {
         // When contour is enabled, create the contour canvas (which includes both image and contour)
         try {
-          const contourCanvas = createCadCutContour(imageInfo.image, strokeSettings);
+          const contourCanvas = createSilhouetteContour(imageInfo.image, strokeSettings);
           
           // Calculate the aspect ratio of the contour canvas
           const contourAspectRatio = contourCanvas.width / contourCanvas.height;
