@@ -1061,32 +1061,18 @@ export async function downloadShapePDF(
   const offsetX = (shapeSettings.offsetX || 0);
   const offsetY = (shapeSettings.offsetY || 0);
   const imageX = (widthPts - imageWidth) / 2 + offsetX;
-  const imageY = (heightPts - imageHeight) / 2 + offsetY; // Same direction as PDF Y
+  const imageY = (heightPts - imageHeight) / 2 + offsetY;
   
-  // Draw image using raw PDF operators for consistency
-  const imageName = 'Im1';
-  let imageOps = 'q\n'; // Save graphics state
-  imageOps += `${imageWidth} 0 0 ${imageHeight} ${imageX} ${imageY} cm\n`; // Transform matrix
-  imageOps += `/${imageName} Do\n`; // Draw image
-  imageOps += 'Q\n'; // Restore graphics state
+  // Use pdf-lib's drawImage (same as working contour PDF)
+  page.drawImage(pngImage, {
+    x: imageX,
+    y: imageY,
+    width: imageWidth,
+    height: imageHeight,
+  });
   
-  // Create image content stream
-  const imageStream = context.stream(imageOps);
-  const imageStreamRef = context.register(imageStream);
-  
-  // Add image to page resources
-  const imageRef = context.register(pngImage.ref);
+  // Get resources for adding color space
   let resources = page.node.Resources();
-  if (!resources) {
-    resources = context.obj({});
-    page.node.set(PDFName.of('Resources'), resources);
-  }
-  let xObjectDict = resources.get(PDFName.of('XObject'));
-  if (!xObjectDict) {
-    xObjectDict = context.obj({});
-    resources.set(PDFName.of('XObject'), xObjectDict);
-  }
-  (xObjectDict as PDFDict).set(PDFName.of(imageName), pngImage.ref);
   
   // Create CutContour spot color
   const tintFunction = context.obj({
@@ -1163,8 +1149,26 @@ export async function downloadShapePDF(
   const outlineStream = context.stream(pathOps);
   const outlineStreamRef = context.register(outlineStream);
   
-  // Set page contents: shape fill, then image, then outline
-  const contentsArray = context.obj([shapeStreamRef, imageStreamRef, outlineStreamRef]);
+  // Get existing page contents (includes pdf-lib's drawImage)
+  const existingContents = page.node.Contents();
+  
+  // Build contents array: shape fill first, then existing (image), then outline
+  let contentsArray;
+  if (existingContents instanceof PDFArray) {
+    // Insert shape at beginning, append outline at end
+    const newArray = [shapeStreamRef];
+    for (let i = 0; i < existingContents.size(); i++) {
+      newArray.push(existingContents.get(i));
+    }
+    newArray.push(outlineStreamRef);
+    contentsArray = context.obj(newArray);
+  } else if (existingContents) {
+    // Single content stream from drawImage
+    contentsArray = context.obj([shapeStreamRef, existingContents, outlineStreamRef]);
+  } else {
+    // No existing contents (shouldn't happen after drawImage)
+    contentsArray = context.obj([shapeStreamRef, outlineStreamRef]);
+  }
   page.node.set(PDFName.of('Contents'), contentsArray);
   
   // Set PDF metadata
