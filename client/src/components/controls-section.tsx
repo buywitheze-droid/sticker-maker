@@ -85,12 +85,23 @@ export default function ControlsSection({
                 
                 <div className="flex items-center space-x-3">
                   <Checkbox 
-                    id="bridge-gaps"
-                    checked={strokeSettings.bridgeGaps}
-                    onCheckedChange={(checked) => onStrokeChange({ bridgeGaps: checked as boolean })}
+                    id="close-small-gaps"
+                    checked={strokeSettings.closeSmallGaps}
+                    onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
                   />
-                  <Label htmlFor="bridge-gaps" className="text-sm">
-                    Bridge gaps
+                  <Label htmlFor="close-small-gaps" className="text-sm">
+                    Close small gaps
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-3">
+                  <Checkbox 
+                    id="close-big-gaps"
+                    checked={strokeSettings.closeBigGaps}
+                    onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
+                  />
+                  <Label htmlFor="close-big-gaps" className="text-sm">
+                    Close big gaps
                   </Label>
                 </div>
               </div>

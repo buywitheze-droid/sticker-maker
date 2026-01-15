@@ -18,16 +18,19 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Bridge gap offset (0.08") - only applied when bridgeGaps is enabled
-  // This bridges elements within 0.08" of each other
-  const bridgeGapInches = 0.08;
-  const bridgeGapPixels = strokeSettings.bridgeGaps ? Math.round(bridgeGapInches * effectiveDPI) : 0;
+  // Gap closing offsets - small (0.06") or big (0.11")
+  let gapClosePixels = 0;
+  if (strokeSettings.closeBigGaps) {
+    gapClosePixels = Math.round(0.11 * effectiveDPI);
+  } else if (strokeSettings.closeSmallGaps) {
+    gapClosePixels = Math.round(0.06 * effectiveDPI);
+  }
   
   // User-selected offset on top of base
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
-  // Total offset is base + bridge gap + user selection
-  const totalOffsetPixels = baseOffsetPixels + bridgeGapPixels + userOffsetPixels;
+  // Total offset is base + gap close + user selection
+  const totalOffsetPixels = baseOffsetPixels + gapClosePixels + userOffsetPixels;
   
   // Canvas needs extra space for the total contour offset
   const padding = totalOffsetPixels + 10;
@@ -44,17 +47,17 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 2: If bridge gaps is enabled, first dilate to bridge gaps within 0.9"
+    // Step 2: If gap closing is enabled, first dilate to close gaps
     let bridgedMask = silhouetteMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
     
-    if (bridgeGapPixels > 0) {
-      // Dilate by half the bridge gap distance so elements within 0.9" touch
-      const halfBridgePixels = Math.round(bridgeGapPixels / 2);
-      bridgedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfBridgePixels);
-      bridgedWidth = image.width + halfBridgePixels * 2;
-      bridgedHeight = image.height + halfBridgePixels * 2;
+    if (gapClosePixels > 0) {
+      // Dilate by half the gap close distance so elements touch
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      bridgedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfGapPixels);
+      bridgedWidth = image.width + halfGapPixels * 2;
+      bridgedHeight = image.height + halfGapPixels * 2;
       // Fill interior to merge bridged elements
       bridgedMask = fillSilhouette(bridgedMask, bridgedWidth, bridgedHeight);
     }
