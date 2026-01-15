@@ -89,7 +89,6 @@ export function createSilhouetteContour(
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
       
       // Step 3c: Find interior gap pixels only (pixels that are gaps surrounded by content)
-      // We identify gaps by finding transparent pixels in original that become solid after fill
       bridgedMask = new Uint8Array(image.width * image.height);
       bridgedMask.set(autoBridgedMask); // Start with original
       
@@ -97,17 +96,14 @@ export function createSilhouetteContour(
       for (let y = 1; y < image.height - 1; y++) {
         for (let x = 1; x < image.width - 1; x++) {
           if (autoBridgedMask[y * image.width + x] === 0) {
-            // Check if this pixel is in a filled region
             const srcX = x + halfGapPixels;
             const srcY = y + halfGapPixels;
             if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
-              // Check if this is an interior gap (has content on multiple sides in original)
               const hasTop = autoBridgedMask[(y - 1) * image.width + x] === 1;
               const hasBottom = autoBridgedMask[(y + 1) * image.width + x] === 1;
               const hasLeft = autoBridgedMask[y * image.width + (x - 1)] === 1;
               const hasRight = autoBridgedMask[y * image.width + (x + 1)] === 1;
               
-              // Only fill if it's between content (gap between elements)
               const sidesWithContent = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0) + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
               if (sidesWithContent >= 2) {
                 bridgedMask[y * image.width + x] = 1;
@@ -116,6 +112,39 @@ export function createSilhouetteContour(
           }
         }
       }
+      
+      // Step 3d: After gap closing, create smooth bridges for any outlines within 0.03" of each other
+      const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
+      if (smoothBridgePixels > 0) {
+        // Dilate the result to find outlines within 0.03"
+        const smoothDilated = dilateSilhouette(bridgedMask, image.width, image.height, smoothBridgePixels);
+        const smoothWidth = image.width + smoothBridgePixels * 2;
+        const smoothHeight = image.height + smoothBridgePixels * 2;
+        const smoothFilled = fillSilhouette(smoothDilated, smoothWidth, smoothHeight);
+        
+        // Only add smooth bridge pixels that connect nearby outlines (interior gaps)
+        for (let y = 1; y < image.height - 1; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            if (bridgedMask[y * image.width + x] === 0) {
+              const srcX = x + smoothBridgePixels;
+              const srcY = y + smoothBridgePixels;
+              if (smoothFilled[srcY * smoothWidth + srcX] === 1) {
+                // Check if this connects two nearby outlines
+                const hasTop = bridgedMask[(y - 1) * image.width + x] === 1;
+                const hasBottom = bridgedMask[(y + 1) * image.width + x] === 1;
+                const hasLeft = bridgedMask[y * image.width + (x - 1)] === 1;
+                const hasRight = bridgedMask[y * image.width + (x + 1)] === 1;
+                
+                const sidesWithContent = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0) + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
+                if (sidesWithContent >= 2) {
+                  bridgedMask[y * image.width + x] = 1;
+                }
+              }
+            }
+          }
+        }
+      }
+      
       bridgedWidth = image.width;
       bridgedHeight = image.height;
     }
