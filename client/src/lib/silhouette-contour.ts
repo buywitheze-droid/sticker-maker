@@ -999,18 +999,9 @@ export async function downloadShapePDF(
   // Embed image
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // Calculate image size and position (centered, 80% of shape size)
-  const imageAspect = imageCanvas.width / imageCanvas.height;
-  const shapeAspect = widthPts / heightPts;
-  
-  let imageWidth, imageHeight;
-  if (imageAspect > shapeAspect) {
-    imageWidth = widthPts * 0.8;
-    imageHeight = imageWidth / imageAspect;
-  } else {
-    imageHeight = heightPts * 0.8;
-    imageWidth = imageHeight * imageAspect;
-  }
+  // Calculate image size based on resize settings (same as preview)
+  const imageWidth = resizeSettings.widthInches * 72; // Convert inches to points
+  const imageHeight = resizeSettings.heightInches * 72;
   
   // Image position: centered with optional offset
   // Offset is stored at 300 DPI scale, convert to PDF points (72 per inch)
