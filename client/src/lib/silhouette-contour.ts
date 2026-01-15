@@ -1,5 +1,5 @@
 import { StrokeSettings, ResizeSettings } from "@/components/image-editor";
-import jsPDF from 'jspdf';
+import { PDFDocument, PDFPage, rgb, PDFName, PDFArray, PDFDict, PDFStream, PDFRef } from 'pdf-lib';
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>; // Points in inches
@@ -776,7 +776,7 @@ export function getContourPath(
   }
 }
 
-// Download PDF with raster image and vector contour
+// Download PDF with raster image and vector contour using spot color "CutContour"
 export async function downloadContourPDF(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
@@ -791,14 +791,15 @@ export async function downloadContourPDF(
   
   const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
   
-  // Create PDF with dimensions in inches (jsPDF uses 'in' unit)
-  const pdf = new jsPDF({
-    orientation: widthInches > heightInches ? 'landscape' : 'portrait',
-    unit: 'in',
-    format: [widthInches, heightInches]
-  });
+  // Convert inches to points (72 points per inch)
+  const widthPts = widthInches * 72;
+  const heightPts = heightInches * 72;
   
-  // Create a canvas to get the image as base64 PNG
+  // Create PDF document
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([widthPts, heightPts]);
+  
+  // Create a canvas to get the image as PNG bytes
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return;
@@ -807,30 +808,79 @@ export async function downloadContourPDF(
   tempCanvas.height = image.height;
   tempCtx.drawImage(image, 0, 0);
   
-  const imageDataUrl = tempCanvas.toDataURL('image/png');
+  // Get PNG data as blob then array buffer
+  const blob = await new Promise<Blob>((resolve) => {
+    tempCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const pngBytes = new Uint8Array(await blob.arrayBuffer());
   
-  // Add raster image to PDF (centered with offset)
-  const imageWidthInches = resizeSettings.widthInches;
-  const imageHeightInches = resizeSettings.heightInches;
+  // Embed the PNG image
+  const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  pdf.addImage(
-    imageDataUrl,
-    'PNG',
-    imageOffsetX,
-    imageOffsetY,
-    imageWidthInches,
-    imageHeightInches
-  );
+  // Draw image on page (convert inches to points)
+  const imageXPts = imageOffsetX * 72;
+  const imageYPts = heightPts - (imageOffsetY * 72) - (resizeSettings.heightInches * 72); // PDF Y is from bottom
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
   
-  // Draw vector contour path in magenta
-  pdf.setDrawColor(255, 0, 255); // Magenta
-  pdf.setLineWidth(0.01); // Thin line for cutting
+  page.drawImage(pngImage, {
+    x: imageXPts,
+    y: imageYPts,
+    width: imageWidthPts,
+    height: imageHeightPts,
+  });
   
+  // Build the contour path as PDF operators with spot color
   if (pathPoints.length > 2) {
-    // Start the path
-    pdf.moveTo(pathPoints[0].x, pathPoints[0].y);
+    // Create spot color "CutContour" using Separation color space
+    // The path will be drawn using raw PDF content stream operators
+    const context = pdfDoc.context;
     
-    // Draw smooth curves using Catmull-Rom to Bezier conversion
+    // Create the tint transform function (maps 1.0 tint to magenta in CMYK)
+    const tintFunction = context.obj({
+      FunctionType: 2,
+      Domain: [0, 1],
+      C0: [0, 0, 0, 0],  // 0% tint = no color
+      C1: [0, 1, 0, 0],  // 100% tint = magenta (in CMYK)
+      N: 1,
+    });
+    const tintFunctionRef = context.register(tintFunction);
+    
+    // Create the Separation color space array
+    const separationColorSpace = context.obj([
+      PDFName.of('Separation'),
+      PDFName.of('CutContour'),
+      PDFName.of('DeviceCMYK'),
+      tintFunctionRef,
+    ]);
+    const separationRef = context.register(separationColorSpace);
+    
+    // Add color space to page resources
+    const resources = page.node.Resources();
+    if (resources) {
+      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+      if (!colorSpaceDict) {
+        colorSpaceDict = context.obj({});
+        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+      }
+      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+    }
+    
+    // Build path operators
+    let pathOps = '';
+    
+    // Set spot color for stroking: /CutContour CS 1 SCN
+    pathOps += '/CutContour CS 1 SCN\n';
+    
+    // Set line width (0.5 points = thin line for cutting)
+    pathOps += '0.5 w\n';
+    
+    // Move to first point (convert to points, PDF Y from bottom)
+    const startX = pathPoints[0].x * 72;
+    const startY = heightPts - (pathPoints[0].y * 72);
+    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    // Draw smooth bezier curves
     for (let i = 0; i < pathPoints.length; i++) {
       const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
       const p1 = pathPoints[i];
@@ -838,20 +888,51 @@ export async function downloadContourPDF(
       const p3 = pathPoints[(i + 2) % pathPoints.length];
       
       const tension = 0.5;
-      const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
-      const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
-      const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
-      const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = heightPts - ((p1.y + (p2.y - p0.y) * tension / 3) * 72);
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = heightPts - ((p2.y - (p3.y - p1.y) * tension / 3) * 72);
+      const endX = p2.x * 72;
+      const endY = heightPts - (p2.y * 72);
       
-      // jsPDF uses curveTo for bezier curves
-      (pdf as any).curveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
     
-    // Close and stroke the path
-    pdf.close();
-    pdf.stroke();
+    // Close and stroke
+    pathOps += 'h S\n';
+    
+    // Append to page content stream
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      // Get existing content and append our path
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      // Create array with existing content + new content
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
   }
   
-  // Save the PDF
-  pdf.save(filename);
+  // Set PDF metadata
+  pdfDoc.setTitle('Sticker with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  
+  // Save and download
+  const pdfBytes = await pdfDoc.save();
+  const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(pdfBlob);
+  
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
