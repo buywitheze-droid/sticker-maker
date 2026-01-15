@@ -1071,11 +1071,14 @@ export async function downloadShapePDF(
     const r = Math.min(widthPts, heightPts) / 2;
     const k = 0.5522847498;
     const rk = r * k;
-    pathOps += `${outlineCx + r} ${outlineCy} m\n`;
-    pathOps += `${outlineCx + r} ${outlineCy + rk} ${outlineCx + rk} ${outlineCy + r} ${outlineCx} ${outlineCy + r} c\n`;
-    pathOps += `${outlineCx - rk} ${outlineCy + r} ${outlineCx - r} ${outlineCy + rk} ${outlineCx - r} ${outlineCy} c\n`;
-    pathOps += `${outlineCx - r} ${outlineCy - rk} ${outlineCx - rk} ${outlineCy - r} ${outlineCx} ${outlineCy - r} c\n`;
-    pathOps += `${outlineCx + rk} ${outlineCy - r} ${outlineCx + r} ${outlineCy - rk} ${outlineCx + r} ${outlineCy} c\n`;
+    // Circle needs 0.18" down adjustment
+    const circleYOffset = -0.18 * 72;
+    const circleCy = outlineCy + circleYOffset;
+    pathOps += `${outlineCx + r} ${circleCy} m\n`;
+    pathOps += `${outlineCx + r} ${circleCy + rk} ${outlineCx + rk} ${circleCy + r} ${outlineCx} ${circleCy + r} c\n`;
+    pathOps += `${outlineCx - rk} ${circleCy + r} ${outlineCx - r} ${circleCy + rk} ${outlineCx - r} ${circleCy} c\n`;
+    pathOps += `${outlineCx - r} ${circleCy - rk} ${outlineCx - rk} ${circleCy - r} ${outlineCx} ${circleCy - r} c\n`;
+    pathOps += `${outlineCx + rk} ${circleCy - r} ${outlineCx + r} ${circleCy - rk} ${outlineCx + r} ${circleCy} c\n`;
   } else if (shapeSettings.type === 'oval') {
     const rx = widthPts / 2;
     const ry = heightPts / 2;
