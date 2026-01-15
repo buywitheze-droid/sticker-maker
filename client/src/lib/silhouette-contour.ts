@@ -133,21 +133,74 @@ interface Point {
 }
 
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find all edge pixels first
+  // Step 1: Flood fill from outside to mark all EXTERNAL transparent pixels
+  // This ensures we only trace the outer boundary, not internal gaps
+  const external = new Uint8Array(width * height);
+  const queue: Point[] = [];
+  
+  // Add all border pixels that are transparent to the queue
+  for (let x = 0; x < width; x++) {
+    if (mask[x] === 0) {
+      queue.push({ x, y: 0 });
+      external[x] = 1;
+    }
+    if (mask[(height - 1) * width + x] === 0) {
+      queue.push({ x, y: height - 1 });
+      external[(height - 1) * width + x] = 1;
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    if (mask[y * width] === 0) {
+      queue.push({ x: 0, y });
+      external[y * width] = 1;
+    }
+    if (mask[y * width + (width - 1)] === 0) {
+      queue.push({ x: width - 1, y });
+      external[y * width + (width - 1)] = 1;
+    }
+  }
+  
+  // Flood fill to mark all external transparent pixels
+  const dx4 = [1, -1, 0, 0];
+  const dy4 = [0, 0, 1, -1];
+  
+  while (queue.length > 0) {
+    const p = queue.shift()!;
+    for (let i = 0; i < 4; i++) {
+      const nx = p.x + dx4[i];
+      const ny = p.y + dy4[i];
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const idx = ny * width + nx;
+        if (mask[idx] === 0 && external[idx] === 0) {
+          external[idx] = 1;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+    }
+  }
+  
+  // Step 2: Find outer edge pixels (solid pixels adjacent to EXTERNAL transparent)
   const edgePixels: Point[] = [];
   
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        // Check if on edge (has at least one transparent neighbor)
-        const hasTransparentNeighbor = 
-          x === 0 || x === width - 1 || y === 0 || y === height - 1 ||
-          mask[y * width + (x - 1)] === 0 ||
-          mask[y * width + (x + 1)] === 0 ||
-          mask[(y - 1) * width + x] === 0 ||
-          mask[(y + 1) * width + x] === 0;
+        // Check if adjacent to EXTERNAL transparent pixel
+        let isOuterEdge = false;
+        for (let i = 0; i < 4; i++) {
+          const nx = x + dx4[i];
+          const ny = y + dy4[i];
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            isOuterEdge = true;
+            break;
+          }
+          if (external[ny * width + nx] === 1) {
+            isOuterEdge = true;
+            break;
+          }
+        }
         
-        if (hasTransparentNeighbor) {
+        if (isOuterEdge) {
           edgePixels.push({ x, y });
         }
       }
