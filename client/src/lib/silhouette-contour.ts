@@ -116,29 +116,69 @@ export function createSilhouetteContour(
       // Step 3d: After gap closing, create smooth bridges for any outlines within 0.03" of each other
       const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
       if (smoothBridgePixels > 0) {
-        // Dilate the result to find outlines within 0.03"
-        const smoothDilated = dilateSilhouette(bridgedMask, image.width, image.height, smoothBridgePixels);
-        const smoothWidth = image.width + smoothBridgePixels * 2;
-        const smoothHeight = image.height + smoothBridgePixels * 2;
-        const smoothFilled = fillSilhouette(smoothDilated, smoothWidth, smoothHeight);
+        // Create a distance map from the mask - for each empty pixel, find distance to nearest content
+        const distanceMap = new Float32Array(image.width * image.height);
+        distanceMap.fill(Infinity);
         
-        // Only add smooth bridge pixels that connect nearby outlines (interior gaps)
+        // Initialize with content pixels having distance 0
+        for (let y = 0; y < image.height; y++) {
+          for (let x = 0; x < image.width; x++) {
+            if (bridgedMask[y * image.width + x] === 1) {
+              distanceMap[y * image.width + x] = 0;
+            }
+          }
+        }
+        
+        // Forward pass for distance transform
+        for (let y = 1; y < image.height; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            const idx = y * image.width + x;
+            const topLeft = distanceMap[(y - 1) * image.width + (x - 1)] + 1.414;
+            const top = distanceMap[(y - 1) * image.width + x] + 1;
+            const topRight = distanceMap[(y - 1) * image.width + (x + 1)] + 1.414;
+            const left = distanceMap[y * image.width + (x - 1)] + 1;
+            distanceMap[idx] = Math.min(distanceMap[idx], topLeft, top, topRight, left);
+          }
+        }
+        
+        // Backward pass
+        for (let y = image.height - 2; y >= 0; y--) {
+          for (let x = image.width - 2; x >= 1; x--) {
+            const idx = y * image.width + x;
+            const bottomLeft = distanceMap[(y + 1) * image.width + (x - 1)] + 1.414;
+            const bottom = distanceMap[(y + 1) * image.width + x] + 1;
+            const bottomRight = distanceMap[(y + 1) * image.width + (x + 1)] + 1.414;
+            const right = distanceMap[y * image.width + (x + 1)] + 1;
+            distanceMap[idx] = Math.min(distanceMap[idx], bottomLeft, bottom, bottomRight, right);
+          }
+        }
+        
+        // Find pixels within smoothBridgePixels distance that bridge two separate content areas
         for (let y = 1; y < image.height - 1; y++) {
           for (let x = 1; x < image.width - 1; x++) {
-            if (bridgedMask[y * image.width + x] === 0) {
-              const srcX = x + smoothBridgePixels;
-              const srcY = y + smoothBridgePixels;
-              if (smoothFilled[srcY * smoothWidth + srcX] === 1) {
-                // Check if this connects two nearby outlines
-                const hasTop = bridgedMask[(y - 1) * image.width + x] === 1;
-                const hasBottom = bridgedMask[(y + 1) * image.width + x] === 1;
-                const hasLeft = bridgedMask[y * image.width + (x - 1)] === 1;
-                const hasRight = bridgedMask[y * image.width + (x + 1)] === 1;
-                
-                const sidesWithContent = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0) + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
-                if (sidesWithContent >= 2) {
-                  bridgedMask[y * image.width + x] = 1;
-                }
+            const idx = y * image.width + x;
+            if (bridgedMask[idx] === 0 && distanceMap[idx] <= smoothBridgePixels) {
+              // Check if this pixel bridges content (has content in opposing directions)
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              // Look for content in each direction within smoothBridgePixels
+              for (let d = 1; d <= smoothBridgePixels && !hasContentTop; d++) {
+                if (y - d >= 0 && bridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentBottom; d++) {
+                if (y + d < image.height && bridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && bridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentRight; d++) {
+                if (x + d < image.width && bridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              // Bridge if content on opposing sides (vertical or horizontal bridge)
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[idx] = 1;
               }
             }
           }
