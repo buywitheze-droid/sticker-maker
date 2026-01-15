@@ -55,6 +55,9 @@ export async function downloadCanvas(
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
+  // Ensure transparent background (clear any default white)
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   // Draw background shape if enabled
   if (shapeSettings?.enabled) {
     drawShapeBackground(ctx, shapeSettings, outputWidth, outputHeight);
