@@ -1099,9 +1099,8 @@ export async function downloadShapePDF(
   pathOps += '0.5 w\n'; // Line width
   
   // Calculate outline center - align with where pdf-lib draws the shape
-  // Apply Y offset to move outline up (PDF Y increases upward)
-  // The offset accounts for coordinate system differences between pdf-lib and raw operators
-  const yOffset = imageHeight * 0.1; // Adjust outline position to align with image
+  // Move cutline down by 0.49 inches (35.28 points) for shape backgrounds only
+  const yOffset = -0.49 * 72; // 0.49 inches down (negative = down in PDF coords)
   const outlineCx = cx;
   const outlineCy = cy + yOffset;
   
