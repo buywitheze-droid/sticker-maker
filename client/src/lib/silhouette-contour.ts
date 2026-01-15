@@ -18,12 +18,12 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Gap closing offsets - small (0.06") or big (0.11")
+  // Gap closing offsets - small (0.07") or big (0.12")
   let gapClosePixels = 0;
   if (strokeSettings.closeBigGaps) {
-    gapClosePixels = Math.round(0.11 * effectiveDPI);
+    gapClosePixels = Math.round(0.12 * effectiveDPI);
   } else if (strokeSettings.closeSmallGaps) {
-    gapClosePixels = Math.round(0.06 * effectiveDPI);
+    gapClosePixels = Math.round(0.07 * effectiveDPI);
   }
   
   // User-selected offset on top of base
