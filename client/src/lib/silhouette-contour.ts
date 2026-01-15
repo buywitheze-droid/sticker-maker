@@ -18,8 +18,9 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Bridge gap offset (0.9") - only applied when bridgeGaps is enabled
-  const bridgeGapInches = 0.9;
+  // Bridge gap offset (0.15") - only applied when bridgeGaps is enabled
+  // This bridges elements within 0.15" of each other
+  const bridgeGapInches = 0.15;
   const bridgeGapPixels = strokeSettings.bridgeGaps ? Math.round(bridgeGapInches * effectiveDPI) : 0;
   
   // User-selected offset on top of base
