@@ -246,8 +246,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       if (strokeSettings.enabled) {
         // When contour is enabled, create the contour canvas (which includes both image and contour)
+        // Use magenta for preview to match CutContour output
         try {
-          const contourCanvas = createSilhouetteContour(imageInfo.image, strokeSettings, resizeSettings);
+          const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
+          const contourCanvas = createSilhouetteContour(imageInfo.image, previewStrokeSettings, resizeSettings);
           
           // Calculate the aspect ratio of the contour canvas
           const contourAspectRatio = contourCanvas.width / contourCanvas.height;
