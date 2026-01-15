@@ -495,7 +495,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
             {/* Overlap warning message */}
             {shapeSettings.enabled && cadCutBounds && !cadCutBounds.isWithinBounds && (
-              <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded-lg text-red-700 text-sm text-center">
+              <div className="mt-2 p-2 bg-white border-2 border-red-500 rounded-lg text-black text-sm text-center">
                 Make sure image is within the shape borders. If you see it's safely inside the shape please proceed even if its red!
               </div>
             )}
