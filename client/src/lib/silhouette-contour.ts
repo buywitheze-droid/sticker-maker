@@ -752,14 +752,16 @@ export function getContourPath(
     
     const smoothedPath = smoothPath(boundaryPath, 2);
     
-    // Convert to inches
-    const pathInInches = smoothedPath.map(p => ({
-      x: p.x / effectiveDPI,
-      y: p.y / effectiveDPI
-    }));
-    
+    // Convert to inches and flip Y for PDF coordinate system (Y=0 at bottom)
     const widthInches = dilatedWidth / effectiveDPI;
     const heightInches = dilatedHeight / effectiveDPI;
+    
+    // Flip Y coordinates so (0,0) is bottom-left instead of top-left
+    const pathInInches = smoothedPath.map(p => ({
+      x: p.x / effectiveDPI,
+      y: heightInches - (p.y / effectiveDPI) // Flip Y
+    }));
+    
     const imageOffsetX = totalOffsetPixels / effectiveDPI;
     const imageOffsetY = totalOffsetPixels / effectiveDPI;
     
@@ -818,14 +820,12 @@ export async function downloadContourPDF(
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
   // Draw image on page (convert inches to points)
-  // PDF coordinates: Y=0 is at bottom, Y increases upward
-  // Canvas coordinates: Y=0 is at top, Y increases downward
-  // The image in canvas space is at (imageOffsetX, imageOffsetY) from top-left
-  // In PDF space, we flip Y: bottom of image should be at heightPts - imageOffsetY - imageHeight
+  // Path points are already flipped to PDF coordinates (Y=0 at bottom)
+  // Image Y position: imageOffsetY is from the BOTTOM in this coordinate system
   const imageXPts = imageOffsetX * 72;
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
-  const imageYPts = heightPts - (imageOffsetY * 72) - imageHeightPts; // Flip Y for PDF
+  const imageYPts = imageOffsetY * 72; // Y from bottom
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -879,9 +879,9 @@ export async function downloadContourPDF(
     // Set line width (0.5 points = thin line for cutting)
     pathOps += '0.5 w\n';
     
-    // Move to first point (convert to points, PDF Y from bottom)
+    // Move to first point (convert to points, Y already flipped in path data)
     const startX = pathPoints[0].x * 72;
-    const startY = heightPts - (pathPoints[0].y * 72);
+    const startY = pathPoints[0].y * 72;
     pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
     // Draw smooth bezier curves
@@ -893,11 +893,11 @@ export async function downloadContourPDF(
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = heightPts - ((p1.y + (p2.y - p0.y) * tension / 3) * 72);
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
       const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = heightPts - ((p2.y - (p3.y - p1.y) * tension / 3) * 72);
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
       const endX = p2.x * 72;
-      const endY = heightPts - (p2.y * 72);
+      const endY = p2.y * 72;
       
       pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
