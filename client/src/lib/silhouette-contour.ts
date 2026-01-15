@@ -1089,37 +1089,47 @@ export async function downloadShapePDF(
   }
   
   // Build shape outline path with CutContour spot color
-  let pathOps = '/CutContour CS 1 SCN\n';
+  // Use q/Q to save/restore graphics state and ensure clean coordinate system
+  let pathOps = 'q\n'; // Save graphics state
+  pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n'; // Line width
   
+  // Pre-calculate all coordinates in PDF space (origin at bottom-left, Y increases upward)
+  // These match exactly what pdf-lib uses internally
+  const cx = widthPts / 2;
+  const cy = heightPts / 2;
+  
   if (shapeSettings.type === 'circle') {
-    const radius = Math.min(widthPts, heightPts) / 2;
-    // Approximate circle with bezier curves
+    const r = Math.min(widthPts, heightPts) / 2;
+    // Approximate circle with bezier curves - same as pdf-lib internally
     const k = 0.5522847498; // Magic number for circle approximation
-    pathOps += `${centerX + radius} ${centerY} m\n`;
-    pathOps += `${centerX + radius} ${centerY + radius * k} ${centerX + radius * k} ${centerY + radius} ${centerX} ${centerY + radius} c\n`;
-    pathOps += `${centerX - radius * k} ${centerY + radius} ${centerX - radius} ${centerY + radius * k} ${centerX - radius} ${centerY} c\n`;
-    pathOps += `${centerX - radius} ${centerY - radius * k} ${centerX - radius * k} ${centerY - radius} ${centerX} ${centerY - radius} c\n`;
-    pathOps += `${centerX + radius * k} ${centerY - radius} ${centerX + radius} ${centerY - radius * k} ${centerX + radius} ${centerY} c\n`;
+    const rk = r * k;
+    pathOps += `${cx + r} ${cy} m\n`;
+    pathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
+    pathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
+    pathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
+    pathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
   } else if (shapeSettings.type === 'oval') {
     const rx = widthPts / 2;
     const ry = heightPts / 2;
     const k = 0.5522847498;
-    pathOps += `${centerX + rx} ${centerY} m\n`;
-    pathOps += `${centerX + rx} ${centerY + ry * k} ${centerX + rx * k} ${centerY + ry} ${centerX} ${centerY + ry} c\n`;
-    pathOps += `${centerX - rx * k} ${centerY + ry} ${centerX - rx} ${centerY + ry * k} ${centerX - rx} ${centerY} c\n`;
-    pathOps += `${centerX - rx} ${centerY - ry * k} ${centerX - rx * k} ${centerY - ry} ${centerX} ${centerY - ry} c\n`;
-    pathOps += `${centerX + rx * k} ${centerY - ry} ${centerX + rx} ${centerY - ry * k} ${centerX + rx} ${centerY} c\n`;
+    const rxk = rx * k;
+    const ryk = ry * k;
+    pathOps += `${cx + rx} ${cy} m\n`;
+    pathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
+    pathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
+    pathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
+    pathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(widthPts, heightPts);
-    const startX = (widthPts - size) / 2;
-    const startY = (heightPts - size) / 2;
-    pathOps += `${startX} ${startY} m\n`;
-    pathOps += `${startX + size} ${startY} l\n`;
-    pathOps += `${startX + size} ${startY + size} l\n`;
-    pathOps += `${startX} ${startY + size} l\n`;
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    pathOps += `${sx} ${sy} m\n`;
+    pathOps += `${sx + size} ${sy} l\n`;
+    pathOps += `${sx + size} ${sy + size} l\n`;
+    pathOps += `${sx} ${sy + size} l\n`;
   } else {
-    // Rectangle
+    // Rectangle - full page
     pathOps += `0 0 m\n`;
     pathOps += `${widthPts} 0 l\n`;
     pathOps += `${widthPts} ${heightPts} l\n`;
@@ -1127,19 +1137,23 @@ export async function downloadShapePDF(
   }
   
   pathOps += 'h S\n'; // Close and stroke
+  pathOps += 'Q\n'; // Restore graphics state
   
-  // Append path to content stream
+  // Create new content stream for the outline path
+  const contentStream = context.stream(pathOps);
+  const contentStreamRef = context.register(contentStream);
+  
+  // Append path to page contents
   const existingContents = page.node.Contents();
   if (existingContents) {
-    const contentStream = context.stream(pathOps);
-    const contentStreamRef = context.register(contentStream);
-    
     if (existingContents instanceof PDFArray) {
       existingContents.push(contentStreamRef);
     } else {
       const newContents = context.obj([existingContents, contentStreamRef]);
       page.node.set(PDFName.of('Contents'), newContents);
     }
+  } else {
+    page.node.set(PDFName.of('Contents'), contentStreamRef);
   }
   
   // Set PDF metadata
