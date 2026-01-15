@@ -10,16 +10,22 @@ export function createSilhouetteContour(
   if (!ctx) return canvas;
 
   // Calculate effective DPI based on actual image dimensions and target inches
-  // If no resize settings, use image width and assume reasonable default
   const effectiveDPI = resizeSettings 
     ? image.width / resizeSettings.widthInches
     : image.width / 5; // Default assumption: image represents ~5 inches
   
-  // Convert inch offset to pixels using the effective DPI
-  const offsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  // Base offset (0.015") to create unified silhouette for multi-object images
+  const baseOffsetInches = 0.015;
+  const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Canvas needs extra space for the contour offset
-  const padding = offsetPixels + 10;
+  // User-selected offset on top of base
+  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  
+  // Total offset is base + user selection
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+  
+  // Canvas needs extra space for the total contour offset
+  const padding = totalOffsetPixels + 10;
   canvas.width = image.width + (padding * 2);
   canvas.height = image.height + (padding * 2);
   
@@ -27,35 +33,43 @@ export function createSilhouetteContour(
 
   try {
     // Step 1: Create binary silhouette mask from alpha channel
-    // This treats ALL non-transparent pixels as solid black
     const silhouetteMask = createSilhouetteMask(image);
     if (silhouetteMask.length === 0) {
       ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
-    // Step 2: Dilate the silhouette by offset pixels
-    const dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, offsetPixels);
-    const dilatedWidth = image.width + offsetPixels * 2;
-    const dilatedHeight = image.height + offsetPixels * 2;
+    // Step 2: First dilate by base offset to create unified silhouette
+    // This fills small gaps between multi-object elements
+    const baseDilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, baseOffsetPixels);
+    const baseWidth = image.width + baseOffsetPixels * 2;
+    const baseHeight = image.height + baseOffsetPixels * 2;
     
-    // Step 3: Trace the boundary of the dilated silhouette using Moore-Neighbor algorithm
-    const boundaryPath = traceBoundary(dilatedMask, dilatedWidth, dilatedHeight);
+    // Step 3: Fill the base silhouette to create solid shape
+    const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
+    
+    // Step 4: Dilate the filled silhouette by user-selected offset
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    const dilatedWidth = baseWidth + userOffsetPixels * 2;
+    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    
+    // Step 5: Trace the boundary of the final dilated silhouette
+    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) {
       ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
-    // Step 4: Smooth and simplify the path
+    // Step 6: Smooth and simplify the path
     const smoothedPath = smoothPath(boundaryPath, 2);
     
-    // Step 5: Draw the contour
-    const offsetX = padding - offsetPixels;
-    const offsetY = padding - offsetPixels;
+    // Step 7: Draw the contour
+    const offsetX = padding - totalOffsetPixels;
+    const offsetY = padding - totalOffsetPixels;
     drawSmoothContour(ctx, smoothedPath, strokeSettings.color || '#FFFFFF', offsetX, offsetY);
     
-    // Step 6: Draw the original image on top
+    // Step 8: Draw the original image on top
     ctx.drawImage(image, padding, padding);
     
   } catch (error) {
@@ -64,6 +78,65 @@ export function createSilhouetteContour(
   }
   
   return canvas;
+}
+
+// Fill interior of silhouette using flood fill from edges
+function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const filled = new Uint8Array(mask.length);
+  filled.set(mask);
+  
+  // Mark all exterior transparent pixels by flood filling from edges
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [];
+  
+  // Add all edge pixels that are transparent to the queue
+  for (let x = 0; x < width; x++) {
+    if (mask[x] === 0) queue.push(x);
+    if (mask[(height - 1) * width + x] === 0) queue.push((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y++) {
+    if (mask[y * width] === 0) queue.push(y * width);
+    if (mask[y * width + width - 1] === 0) queue.push(y * width + width - 1);
+  }
+  
+  // Mark initial queue items as visited
+  for (const idx of queue) {
+    visited[idx] = 1;
+  }
+  
+  // Flood fill to find all exterior pixels
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    
+    // Check 4-connected neighbors
+    const neighbors = [
+      { nx: x - 1, ny: y },
+      { nx: x + 1, ny: y },
+      { nx: x, ny: y - 1 },
+      { nx: x, ny: y + 1 }
+    ];
+    
+    for (const { nx, ny } of neighbors) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const nidx = ny * width + nx;
+        if (!visited[nidx] && mask[nidx] === 0) {
+          visited[nidx] = 1;
+          queue.push(nidx);
+        }
+      }
+    }
+  }
+  
+  // Fill all non-exterior transparent pixels (interior holes)
+  for (let i = 0; i < filled.length; i++) {
+    if (filled[i] === 0 && !visited[i]) {
+      filled[i] = 1; // Fill interior holes
+    }
+  }
+  
+  return filled;
 }
 
 function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
