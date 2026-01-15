@@ -958,7 +958,7 @@ export async function downloadShapePDF(
   const page = pdfDoc.addPage([widthPts, heightPts]);
   const context = pdfDoc.context;
   
-  // Parse fill color from hex
+  // Parse fill color from hex to RGB (0-1 range)
   const hexToRgb = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? {
@@ -970,47 +970,55 @@ export async function downloadShapePDF(
   
   const fillColor = hexToRgb(shapeSettings.fillColor);
   
-  // Draw the shape background
-  const centerX = widthPts / 2;
-  const centerY = heightPts / 2;
+  // Center coordinates
+  const cx = widthPts / 2;
+  const cy = heightPts / 2;
+  
+  // Build shape fill path using raw PDF operators for consistency
+  let shapeOps = 'q\n'; // Save graphics state
+  shapeOps += `${fillColor.r} ${fillColor.g} ${fillColor.b} rg\n`; // Set fill color
   
   if (shapeSettings.type === 'circle') {
-    const radius = Math.min(widthPts, heightPts) / 2;
-    page.drawCircle({
-      x: centerX,
-      y: centerY,
-      size: radius,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
+    const r = Math.min(widthPts, heightPts) / 2;
+    const k = 0.5522847498;
+    const rk = r * k;
+    shapeOps += `${cx + r} ${cy} m\n`;
+    shapeOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
+    shapeOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
+    shapeOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
+    shapeOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
   } else if (shapeSettings.type === 'oval') {
-    page.drawEllipse({
-      x: centerX,
-      y: centerY,
-      xScale: widthPts / 2,
-      yScale: heightPts / 2,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
+    const rx = widthPts / 2;
+    const ry = heightPts / 2;
+    const k = 0.5522847498;
+    const rxk = rx * k;
+    const ryk = ry * k;
+    shapeOps += `${cx + rx} ${cy} m\n`;
+    shapeOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
+    shapeOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
+    shapeOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
+    shapeOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(widthPts, heightPts);
-    const startX = (widthPts - size) / 2;
-    const startY = (heightPts - size) / 2;
-    page.drawRectangle({
-      x: startX,
-      y: startY,
-      width: size,
-      height: size,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    shapeOps += `${sx} ${sy} m\n`;
+    shapeOps += `${sx + size} ${sy} l\n`;
+    shapeOps += `${sx + size} ${sy + size} l\n`;
+    shapeOps += `${sx} ${sy + size} l\n`;
   } else {
-    // Rectangle
-    page.drawRectangle({
-      x: 0,
-      y: 0,
-      width: widthPts,
-      height: heightPts,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
+    // Rectangle - full page
+    shapeOps += `0 0 m\n`;
+    shapeOps += `${widthPts} 0 l\n`;
+    shapeOps += `${widthPts} ${heightPts} l\n`;
+    shapeOps += `0 ${heightPts} l\n`;
   }
+  shapeOps += 'h f\n'; // Close and fill
+  shapeOps += 'Q\n'; // Restore graphics state
+  
+  // Create shape fill content stream
+  const shapeStream = context.stream(shapeOps);
+  const shapeStreamRef = context.register(shapeStream);
   
   // Crop image to remove empty space
   const croppedCanvas = cropImageToContent(image);
@@ -1019,7 +1027,6 @@ export async function downloadShapePDF(
   if (croppedCanvas) {
     imageCanvas = croppedCanvas;
   } else {
-    // Use original image as canvas
     imageCanvas = document.createElement('canvas');
     imageCanvas.width = image.width;
     imageCanvas.height = image.height;
@@ -1049,15 +1056,37 @@ export async function downloadShapePDF(
     imageWidth = imageHeight * imageAspect;
   }
   
-  const imageX = (widthPts - imageWidth) / 2 + (shapeSettings.offsetX || 0);
-  const imageY = (heightPts - imageHeight) / 2 - (shapeSettings.offsetY || 0); // Flip Y offset for PDF
+  // Image position: centered with optional offset
+  // In PDF coords, Y=0 is at bottom, positive Y goes up
+  const offsetX = (shapeSettings.offsetX || 0);
+  const offsetY = (shapeSettings.offsetY || 0);
+  const imageX = (widthPts - imageWidth) / 2 + offsetX;
+  const imageY = (heightPts - imageHeight) / 2 + offsetY; // Same direction as PDF Y
   
-  page.drawImage(pngImage, {
-    x: imageX,
-    y: imageY,
-    width: imageWidth,
-    height: imageHeight,
-  });
+  // Draw image using raw PDF operators for consistency
+  const imageName = 'Im1';
+  let imageOps = 'q\n'; // Save graphics state
+  imageOps += `${imageWidth} 0 0 ${imageHeight} ${imageX} ${imageY} cm\n`; // Transform matrix
+  imageOps += `/${imageName} Do\n`; // Draw image
+  imageOps += 'Q\n'; // Restore graphics state
+  
+  // Create image content stream
+  const imageStream = context.stream(imageOps);
+  const imageStreamRef = context.register(imageStream);
+  
+  // Add image to page resources
+  const imageRef = context.register(pngImage.ref);
+  let resources = page.node.Resources();
+  if (!resources) {
+    resources = context.obj({});
+    page.node.set(PDFName.of('Resources'), resources);
+  }
+  let xObjectDict = resources.get(PDFName.of('XObject'));
+  if (!xObjectDict) {
+    xObjectDict = context.obj({});
+    resources.set(PDFName.of('XObject'), xObjectDict);
+  }
+  (xObjectDict as PDFDict).set(PDFName.of(imageName), pngImage.ref);
   
   // Create CutContour spot color
   const tintFunction = context.obj({
@@ -1078,31 +1107,22 @@ export async function downloadShapePDF(
   const separationRef = context.register(separationColorSpace);
   
   // Add color space to page resources
-  const resources = page.node.Resources();
-  if (resources) {
-    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-    if (!colorSpaceDict) {
-      colorSpaceDict = context.obj({});
-      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-    }
-    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+  let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+  if (!colorSpaceDict) {
+    colorSpaceDict = context.obj({});
+    resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
   }
+  (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
   
   // Build shape outline path with CutContour spot color
-  // Use q/Q to save/restore graphics state and ensure clean coordinate system
   let pathOps = 'q\n'; // Save graphics state
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n'; // Line width
   
-  // Pre-calculate all coordinates in PDF space (origin at bottom-left, Y increases upward)
-  // These match exactly what pdf-lib uses internally
-  const cx = widthPts / 2;
-  const cy = heightPts / 2;
-  
+  // Use exact same coordinates as shape fill
   if (shapeSettings.type === 'circle') {
     const r = Math.min(widthPts, heightPts) / 2;
-    // Approximate circle with bezier curves - same as pdf-lib internally
-    const k = 0.5522847498; // Magic number for circle approximation
+    const k = 0.5522847498;
     const rk = r * k;
     pathOps += `${cx + r} ${cy} m\n`;
     pathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
@@ -1139,22 +1159,13 @@ export async function downloadShapePDF(
   pathOps += 'h S\n'; // Close and stroke
   pathOps += 'Q\n'; // Restore graphics state
   
-  // Create new content stream for the outline path
-  const contentStream = context.stream(pathOps);
-  const contentStreamRef = context.register(contentStream);
+  // Create outline content stream
+  const outlineStream = context.stream(pathOps);
+  const outlineStreamRef = context.register(outlineStream);
   
-  // Append path to page contents
-  const existingContents = page.node.Contents();
-  if (existingContents) {
-    if (existingContents instanceof PDFArray) {
-      existingContents.push(contentStreamRef);
-    } else {
-      const newContents = context.obj([existingContents, contentStreamRef]);
-      page.node.set(PDFName.of('Contents'), newContents);
-    }
-  } else {
-    page.node.set(PDFName.of('Contents'), contentStreamRef);
-  }
+  // Set page contents: shape fill, then image, then outline
+  const contentsArray = context.obj([shapeStreamRef, imageStreamRef, outlineStreamRef]);
+  page.node.set(PDFName.of('Contents'), contentsArray);
   
   // Set PDF metadata
   pdfDoc.setTitle('Shape with CutContour');
