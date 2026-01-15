@@ -34,10 +34,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      // Set canvas size based on zoom
+      // Fixed canvas size - content will be centered within
       const baseSize = 400;
-      canvas.width = baseSize * zoom;
-      canvas.height = baseSize * zoom;
+      canvas.width = baseSize;
+      canvas.height = baseSize;
 
       // Clear canvas with background color
       if (backgroundColor === "transparent") {
@@ -52,20 +52,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         // For contour mode, draw image based on resize settings
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
-      }
-      
-      // Center the preview content in the container after drawing
-      if (containerRef.current) {
-        const container = containerRef.current;
-        requestAnimationFrame(() => {
-          const scrollWidth = container.scrollWidth;
-          const scrollHeight = container.scrollHeight;
-          const clientWidth = container.clientWidth;
-          const clientHeight = container.clientHeight;
-          
-          container.scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
-          container.scrollTop = Math.max(0, (scrollHeight - clientHeight) / 2);
-        });
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor]);
 
@@ -463,38 +449,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </Select>
             </div>
 
-            {/* Canvas Container */}
+            {/* Canvas Container - No scrolling, always centered */}
             <div 
               ref={containerRef}
-              className={`relative rounded-lg overflow-auto border ${getBackgroundStyle()}`}
+              className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()}`}
               style={{ 
-                minHeight: '400px',
-                maxHeight: '500px',
+                height: '400px',
                 backgroundColor: getBackgroundColor(),
-                scrollBehavior: 'smooth'
+                overflow: 'hidden'
               }}
             >
-              <div 
-                className="flex items-center justify-center"
-                style={{
-                  minWidth: imageInfo ? `${400 * zoom}px` : '100%',
-                  minHeight: imageInfo ? `${400 * zoom}px` : '100%',
-                  width: imageInfo ? `${400 * zoom}px` : '100%',
-                  height: imageInfo ? `${400 * zoom}px` : '100%'
+              <canvas 
+                ref={canvasRef}
+                className="relative z-10 block"
+                style={{ 
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain'
                 }}
-              >
-                <canvas 
-                  ref={canvasRef}
-                  className="relative z-10 block"
-                  style={{ 
-                    width: '400px',
-                    height: '400px',
-                    transform: `scale(${zoom})`,
-                    transformOrigin: 'center',
-                    imageRendering: zoom > 1 ? 'pixelated' : 'auto'
-                  }}
-                />
-              </div>
+              />
               
               {/* Placeholder when no image */}
               {!imageInfo && (
