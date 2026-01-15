@@ -974,51 +974,42 @@ export async function downloadShapePDF(
   const cx = widthPts / 2;
   const cy = heightPts / 2;
   
-  // Build shape fill path using raw PDF operators for consistency
-  let shapeOps = 'q\n'; // Save graphics state
-  shapeOps += `${fillColor.r} ${fillColor.g} ${fillColor.b} rg\n`; // Set fill color
-  
+  // Draw shape fill using pdf-lib (same approach as working contour PDF)
   if (shapeSettings.type === 'circle') {
-    const r = Math.min(widthPts, heightPts) / 2;
-    const k = 0.5522847498;
-    const rk = r * k;
-    shapeOps += `${cx + r} ${cy} m\n`;
-    shapeOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-    shapeOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-    shapeOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-    shapeOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
+    const radius = Math.min(widthPts, heightPts) / 2;
+    page.drawCircle({
+      x: cx,
+      y: cy,
+      size: radius,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
   } else if (shapeSettings.type === 'oval') {
-    const rx = widthPts / 2;
-    const ry = heightPts / 2;
-    const k = 0.5522847498;
-    const rxk = rx * k;
-    const ryk = ry * k;
-    shapeOps += `${cx + rx} ${cy} m\n`;
-    shapeOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-    shapeOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-    shapeOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-    shapeOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
+    page.drawEllipse({
+      x: cx,
+      y: cy,
+      xScale: widthPts / 2,
+      yScale: heightPts / 2,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
   } else if (shapeSettings.type === 'square') {
     const size = Math.min(widthPts, heightPts);
-    const sx = (widthPts - size) / 2;
-    const sy = (heightPts - size) / 2;
-    shapeOps += `${sx} ${sy} m\n`;
-    shapeOps += `${sx + size} ${sy} l\n`;
-    shapeOps += `${sx + size} ${sy + size} l\n`;
-    shapeOps += `${sx} ${sy + size} l\n`;
+    page.drawRectangle({
+      x: (widthPts - size) / 2,
+      y: (heightPts - size) / 2,
+      width: size,
+      height: size,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
   } else {
     // Rectangle - full page
-    shapeOps += `0 0 m\n`;
-    shapeOps += `${widthPts} 0 l\n`;
-    shapeOps += `${widthPts} ${heightPts} l\n`;
-    shapeOps += `0 ${heightPts} l\n`;
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: widthPts,
+      height: heightPts,
+      color: rgb(fillColor.r, fillColor.g, fillColor.b),
+    });
   }
-  shapeOps += 'h f\n'; // Close and fill
-  shapeOps += 'Q\n'; // Restore graphics state
-  
-  // Create shape fill content stream
-  const shapeStream = context.stream(shapeOps);
-  const shapeStreamRef = context.register(shapeStream);
   
   // Crop image to remove empty space
   const croppedCanvas = cropImageToContent(image);
@@ -1149,27 +1140,17 @@ export async function downloadShapePDF(
   const outlineStream = context.stream(pathOps);
   const outlineStreamRef = context.register(outlineStream);
   
-  // Get existing page contents (includes pdf-lib's drawImage)
+  // Append outline to existing page contents (shape fill + image already drawn by pdf-lib)
   const existingContents = page.node.Contents();
   
-  // Build contents array: shape fill first, then existing (image), then outline
-  let contentsArray;
   if (existingContents instanceof PDFArray) {
-    // Insert shape at beginning, append outline at end
-    const newArray = [shapeStreamRef];
-    for (let i = 0; i < existingContents.size(); i++) {
-      newArray.push(existingContents.get(i));
-    }
-    newArray.push(outlineStreamRef);
-    contentsArray = context.obj(newArray);
+    existingContents.push(outlineStreamRef);
   } else if (existingContents) {
-    // Single content stream from drawImage
-    contentsArray = context.obj([shapeStreamRef, existingContents, outlineStreamRef]);
+    const contentsArray = context.obj([existingContents, outlineStreamRef]);
+    page.node.set(PDFName.of('Contents'), contentsArray);
   } else {
-    // No existing contents (shouldn't happen after drawImage)
-    contentsArray = context.obj([shapeStreamRef, outlineStreamRef]);
+    page.node.set(PDFName.of('Contents'), outlineStreamRef);
   }
-  page.node.set(PDFName.of('Contents'), contentsArray);
   
   // Set PDF metadata
   pdfDoc.setTitle('Shape with CutContour');
