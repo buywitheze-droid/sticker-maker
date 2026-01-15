@@ -28,21 +28,11 @@ export function createSilhouetteContour(
     }
     
     // Step 2: Dilate the silhouette by offset pixels
-    let dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, offsetPixels);
-    let dilatedWidth = image.width + offsetPixels * 2;
-    let dilatedHeight = image.height + offsetPixels * 2;
+    const dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, offsetPixels);
+    const dilatedWidth = image.width + offsetPixels * 2;
+    const dilatedHeight = image.height + offsetPixels * 2;
     
-    // Step 2.5: For small offsets (0.04" = ~12px), apply gap bridging
-    // This closes narrow entrances/gaps that are tighter than the offset
-    const isSmallOffset = strokeSettings.width <= 0.05;
-    if (isSmallOffset) {
-      // Bridge gaps by: dilate by bridgeRadius, then erode back
-      // This fills narrow channels while preserving the overall shape
-      const bridgeRadius = Math.max(8, offsetPixels); // Bridge gaps up to 16px wide
-      dilatedMask = bridgeNarrowGaps(dilatedMask, dilatedWidth, dilatedHeight, bridgeRadius);
-    }
-    
-    // Step 3: Trace the boundary of the dilated silhouette using flood-fill method
+    // Step 3: Trace the boundary of the dilated silhouette using Moore-Neighbor algorithm
     const boundaryPath = traceBoundary(dilatedMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) {
@@ -89,71 +79,6 @@ function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
   }
   
   return mask;
-}
-
-// Bridge narrow gaps using morphological closing (dilate then erode)
-// This fills tight entrances/channels while preserving the overall shape
-function bridgeNarrowGaps(mask: Uint8Array, width: number, height: number, bridgeRadius: number): Uint8Array {
-  // Step 1: Dilate to close gaps
-  const dilated = new Uint8Array(width * height);
-  
-  // Precompute circle offsets for dilation
-  const circleOffsets: { dx: number; dy: number }[] = [];
-  for (let dy = -bridgeRadius; dy <= bridgeRadius; dy++) {
-    for (let dx = -bridgeRadius; dx <= bridgeRadius; dx++) {
-      if (dx * dx + dy * dy <= bridgeRadius * bridgeRadius) {
-        circleOffsets.push({ dx, dy });
-      }
-    }
-  }
-  
-  // Dilate
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] === 1) {
-        for (const { dx, dy } of circleOffsets) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            dilated[ny * width + nx] = 1;
-          }
-        }
-      }
-    }
-  }
-  
-  // Step 2: Erode back to restore original size (but keep gaps filled)
-  const eroded = new Uint8Array(width * height);
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (dilated[y * width + x] === 1) {
-        // Check if ALL pixels in circle are solid (erosion condition)
-        let allSolid = true;
-        for (const { dx, dy } of circleOffsets) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || nx >= width || ny < 0 || ny >= height || dilated[ny * width + nx] === 0) {
-            allSolid = false;
-            break;
-          }
-        }
-        if (allSolid) {
-          eroded[y * width + x] = 1;
-        }
-      }
-    }
-  }
-  
-  // Step 3: Union with original mask (keep original pixels + newly bridged areas)
-  // This ensures we don't lose any original content
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i] === 1) {
-      eroded[i] = 1;
-    }
-  }
-  
-  return eroded;
 }
 
 function dilateSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
