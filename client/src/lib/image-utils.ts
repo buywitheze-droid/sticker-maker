@@ -245,18 +245,22 @@ async function drawHighResImage(
 
   // Draw stroke/outline if enabled
   if (strokeSettings.enabled && strokeSettings.width > 0) {
+    // Calculate stroke width in pixels using effective DPI
+    const effectiveDPI = drawWidth / (canvasWidth / 300); // Approximate DPI based on canvas
+    const strokeWidthPx = Math.round(strokeSettings.width * effectiveDPI);
+    
     // Create temporary canvas for high-quality stroke processing
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d');
     if (!tempCtx) return;
     
     // Set size with padding for stroke
-    const padding = strokeSettings.width * 2;
+    const padding = strokeWidthPx * 2;
     tempCanvas.width = drawWidth + padding;
     tempCanvas.height = drawHeight + padding;
     
     // Draw image centered in temp canvas
-    tempCtx.drawImage(image, strokeSettings.width, strokeSettings.width, drawWidth, drawHeight);
+    tempCtx.drawImage(image, strokeWidthPx, strokeWidthPx, drawWidth, drawHeight);
     
     // Get image data for processing
     const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
@@ -278,10 +282,10 @@ async function drawHighResImage(
     
     // For each opaque pixel, mark stroke area efficiently
     for (const pixel of opaquePixels) {
-      const minX = Math.max(0, pixel.x - strokeSettings.width);
-      const maxX = Math.min(tempCanvas.width - 1, pixel.x + strokeSettings.width);
-      const minY = Math.max(0, pixel.y - strokeSettings.width);
-      const maxY = Math.min(tempCanvas.height - 1, pixel.y + strokeSettings.width);
+      const minX = Math.max(0, pixel.x - strokeWidthPx);
+      const maxX = Math.min(tempCanvas.width - 1, pixel.x + strokeWidthPx);
+      const minY = Math.max(0, pixel.y - strokeWidthPx);
+      const maxY = Math.min(tempCanvas.height - 1, pixel.y + strokeWidthPx);
       
       for (let sy = minY; sy <= maxY; sy++) {
         for (let sx = minX; sx <= maxX; sx++) {
@@ -289,7 +293,7 @@ async function drawHighResImage(
           const dy = sy - pixel.y;
           
           // Use circular brush
-          if (dx * dx + dy * dy <= strokeSettings.width * strokeSettings.width) {
+          if (dx * dx + dy * dy <= strokeWidthPx * strokeWidthPx) {
             const strokeIdx = (sy * tempCanvas.width + sx) * 4;
             strokeMask[strokeIdx + 3] = 255;
           }

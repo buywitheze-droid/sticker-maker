@@ -247,7 +247,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (strokeSettings.enabled) {
         // When contour is enabled, create the contour canvas (which includes both image and contour)
         try {
-          const contourCanvas = createSilhouetteContour(imageInfo.image, strokeSettings);
+          const contourCanvas = createSilhouetteContour(imageInfo.image, strokeSettings, resizeSettings);
           
           // Calculate the aspect ratio of the contour canvas
           const contourAspectRatio = contourCanvas.width / contourCanvas.height;

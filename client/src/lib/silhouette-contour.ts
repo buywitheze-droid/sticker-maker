@@ -1,15 +1,22 @@
-import { StrokeSettings } from "@/components/image-editor";
+import { StrokeSettings, ResizeSettings } from "@/components/image-editor";
 
 export function createSilhouetteContour(
   image: HTMLImageElement,
-  strokeSettings: StrokeSettings
+  strokeSettings: StrokeSettings,
+  resizeSettings?: ResizeSettings
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  // Convert inch offset to pixels (at 300 DPI)
-  const offsetPixels = Math.round(strokeSettings.width * 300);
+  // Calculate effective DPI based on actual image dimensions and target inches
+  // If no resize settings, use image width and assume reasonable default
+  const effectiveDPI = resizeSettings 
+    ? image.width / resizeSettings.widthInches
+    : image.width / 5; // Default assumption: image represents ~5 inches
+  
+  // Convert inch offset to pixels using the effective DPI
+  const offsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
   // Canvas needs extra space for the contour offset
   const padding = offsetPixels + 10;
