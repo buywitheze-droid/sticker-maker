@@ -22,10 +22,10 @@ export function createSilhouetteContour(
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
   
-  // Additional gap closing offsets - small (0.07") or big (0.12")
+  // Additional gap closing offsets - small (0.07") or big (0.17")
   let gapClosePixels = 0;
   if (strokeSettings.closeBigGaps) {
-    gapClosePixels = Math.round(0.12 * effectiveDPI);
+    gapClosePixels = Math.round(0.17 * effectiveDPI);
   } else if (strokeSettings.closeSmallGaps) {
     gapClosePixels = Math.round(0.07 * effectiveDPI);
   }
