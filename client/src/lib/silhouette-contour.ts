@@ -974,42 +974,7 @@ export async function downloadShapePDF(
   const cx = widthPts / 2;
   const cy = heightPts / 2;
   
-  // Draw shape fill using pdf-lib (same approach as working contour PDF)
-  if (shapeSettings.type === 'circle') {
-    const radius = Math.min(widthPts, heightPts) / 2;
-    page.drawCircle({
-      x: cx,
-      y: cy,
-      size: radius,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
-  } else if (shapeSettings.type === 'oval') {
-    page.drawEllipse({
-      x: cx,
-      y: cy,
-      xScale: widthPts / 2,
-      yScale: heightPts / 2,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
-  } else if (shapeSettings.type === 'square') {
-    const size = Math.min(widthPts, heightPts);
-    page.drawRectangle({
-      x: (widthPts - size) / 2,
-      y: (heightPts - size) / 2,
-      width: size,
-      height: size,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
-  } else {
-    // Rectangle - full page
-    page.drawRectangle({
-      x: 0,
-      y: 0,
-      width: widthPts,
-      height: heightPts,
-      color: rgb(fillColor.r, fillColor.g, fillColor.b),
-    });
-  }
+  // No shape fill - only draw the cutline outline later
   
   // Crop image to remove empty space
   const croppedCanvas = cropImageToContent(image);
@@ -1098,11 +1063,9 @@ export async function downloadShapePDF(
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n'; // Line width
   
-  // Calculate outline center - align with where pdf-lib draws the shape
-  // Move cutline down by 0.49 inches (35.28 points) for shape backgrounds only
-  const yOffset = -0.49 * 72; // 0.49 inches down (negative = down in PDF coords)
+  // Calculate outline center - use page center (same as shape would be)
   const outlineCx = cx;
-  const outlineCy = cy + yOffset;
+  const outlineCy = cy;
   
   if (shapeSettings.type === 'circle') {
     const r = Math.min(widthPts, heightPts) / 2;
