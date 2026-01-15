@@ -491,9 +491,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               )}
             </div>
 
-            {/* Zoom indicator */}
-            <div className="mt-2 text-center text-sm text-gray-500">
-              Zoom: {Math.round(zoom * 100)}% (scroll to zoom)
+            {/* Zoom indicator and reset */}
+            <div className="mt-2 flex items-center justify-center gap-3 text-sm text-gray-500">
+              <span>Zoom: {Math.round(zoom * 100)}%</span>
+              {zoom !== 1 && (
+                <button 
+                  onClick={() => setZoom(1)}
+                  className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 rounded transition-colors"
+                >
+                  Reset
+                </button>
+              )}
             </div>
           </CardContent>
         </Card>
