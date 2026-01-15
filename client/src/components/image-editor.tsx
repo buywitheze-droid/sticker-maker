@@ -559,7 +559,7 @@ export default function ImageEditor() {
               {/* Top arrow */}
               <div></div>
               <button
-                onClick={() => handlePositionChange(0, -10)}
+                onClick={() => handlePositionChange(0, -20)}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Up"
@@ -572,7 +572,7 @@ export default function ImageEditor() {
               
               {/* Left and Right arrows */}
               <button
-                onClick={() => handlePositionChange(-10, 0)}
+                onClick={() => handlePositionChange(-20, 0)}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Left"
@@ -594,7 +594,7 @@ export default function ImageEditor() {
               </button>
               
               <button
-                onClick={() => handlePositionChange(10, 0)}
+                onClick={() => handlePositionChange(20, 0)}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Right"
@@ -607,7 +607,7 @@ export default function ImageEditor() {
               {/* Bottom arrow */}
               <div></div>
               <button
-                onClick={() => handlePositionChange(0, 10)}
+                onClick={() => handlePositionChange(0, 20)}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 title="Move Down"
