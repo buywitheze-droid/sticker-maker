@@ -71,6 +71,7 @@ export function createSilhouetteContour(
     }
     
     // Step 3: If additional gap closing is enabled, apply on top of auto-bridge
+    // Only fill gaps between elements - don't change the outer outline
     let bridgedMask = autoBridgedMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
@@ -87,13 +88,20 @@ export function createSilhouetteContour(
       // Fill interior to merge bridged elements into one solid shape
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
       
-      // Extract the center portion (same size as original) - this gives us bridged mask
+      // Start with the original mask and only add gap-filling pixels
+      // (pixels that are in the filled region but not exterior)
       bridgedMask = new Uint8Array(image.width * image.height);
+      bridgedMask.set(autoBridgedMask); // Keep original outline
+      
+      // Only add pixels that fill gaps (interior regions that got filled)
       for (let y = 0; y < image.height; y++) {
         for (let x = 0; x < image.width; x++) {
           const srcX = x + halfGapPixels;
           const srcY = y + halfGapPixels;
-          bridgedMask[y * image.width + x] = filledDilated[srcY * dilatedWidth + srcX];
+          // If the filled version has content here and original didn't, it's a gap fill
+          if (filledDilated[srcY * dilatedWidth + srcX] === 1 && autoBridgedMask[y * image.width + x] === 0) {
+            bridgedMask[y * image.width + x] = 1;
+          }
         }
       }
       bridgedWidth = image.width;
