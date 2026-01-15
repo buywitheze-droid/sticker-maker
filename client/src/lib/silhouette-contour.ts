@@ -1013,12 +1013,13 @@ export async function downloadShapePDF(
   }
   
   // Image position: centered with optional offset
-  // In PDF coords, Y=0 is at bottom, positive Y goes up
-  // Canvas Y increases downward, so we need to flip the Y offset
-  const offsetX = (shapeSettings.offsetX || 0);
-  const offsetY = (shapeSettings.offsetY || 0);
-  const imageX = (widthPts - imageWidth) / 2 + offsetX;
-  const imageY = (heightPts - imageHeight) / 2 - offsetY; // Flip Y: canvas down = PDF up
+  // Offset is stored at 300 DPI scale, convert to PDF points (72 per inch)
+  // Canvas Y increases downward, PDF Y increases upward - flip Y offset
+  const dpiToPoints = 72 / 300; // Convert 300 DPI pixels to points
+  const offsetXPts = (shapeSettings.offsetX || 0) * dpiToPoints;
+  const offsetYPts = (shapeSettings.offsetY || 0) * dpiToPoints;
+  const imageX = (widthPts - imageWidth) / 2 + offsetXPts;
+  const imageY = (heightPts - imageHeight) / 2 - offsetYPts; // Flip Y: canvas down = PDF up
   
   // Use pdf-lib's drawImage (same as working contour PDF)
   page.drawImage(pngImage, {
