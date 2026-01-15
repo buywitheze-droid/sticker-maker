@@ -1064,8 +1064,8 @@ export async function downloadShapePDF(
     const r = Math.min(widthPts, heightPts) / 2;
     const k = 0.5522847498;
     const rk = r * k;
-    // Circle needs 0.18" down adjustment
-    const circleYOffset = -0.18 * 72;
+    // Circle needs 0.20" up adjustment
+    const circleYOffset = 0.20 * 72;
     const circleCy = outlineCy + circleYOffset;
     pathOps += `${outlineCx + r} ${circleCy} m\n`;
     pathOps += `${outlineCx + r} ${circleCy + rk} ${outlineCx + rk} ${circleCy + r} ${outlineCx} ${circleCy + r} c\n`;
