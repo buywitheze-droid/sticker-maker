@@ -23,6 +23,7 @@ export interface StrokeSettings {
   color: string;
   enabled: boolean;
   alphaThreshold: number;
+  bridgeGaps: boolean; // Bridge gaps within 0.9" of each other
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
@@ -55,6 +56,7 @@ export default function ImageEditor() {
     color: "#ffffff",
     enabled: false,
     alphaThreshold: 128, // Auto-detected from alpha channel
+    bridgeGaps: false, // Bridge gaps within 0.9" of each other
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

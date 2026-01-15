@@ -82,6 +82,17 @@ export default function ControlsSection({
                     </SelectContent>
                   </Select>
                 </div>
+                
+                <div className="flex items-center space-x-3">
+                  <Checkbox 
+                    id="bridge-gaps"
+                    checked={strokeSettings.bridgeGaps}
+                    onCheckedChange={(checked) => onStrokeChange({ bridgeGaps: checked as boolean })}
+                  />
+                  <Label htmlFor="bridge-gaps" className="text-sm">
+                    Bridge gaps
+                  </Label>
+                </div>
               </div>
             )}
           </CardContent>

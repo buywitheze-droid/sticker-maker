@@ -18,11 +18,15 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
+  // Bridge gap offset (0.9") - only applied when bridgeGaps is enabled
+  const bridgeGapInches = 0.9;
+  const bridgeGapPixels = strokeSettings.bridgeGaps ? Math.round(bridgeGapInches * effectiveDPI) : 0;
+  
   // User-selected offset on top of base
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
-  // Total offset is base + user selection
-  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+  // Total offset is base + bridge gap + user selection
+  const totalOffsetPixels = baseOffsetPixels + bridgeGapPixels + userOffsetPixels;
   
   // Canvas needs extra space for the total contour offset
   const padding = totalOffsetPixels + 10;
@@ -39,16 +43,30 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 2: First dilate by base offset to create unified silhouette
-    // This fills small gaps between multi-object elements
-    const baseDilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, baseOffsetPixels);
-    const baseWidth = image.width + baseOffsetPixels * 2;
-    const baseHeight = image.height + baseOffsetPixels * 2;
+    // Step 2: If bridge gaps is enabled, first dilate to bridge gaps within 0.9"
+    let bridgedMask = silhouetteMask;
+    let bridgedWidth = image.width;
+    let bridgedHeight = image.height;
     
-    // Step 3: Fill the base silhouette to create solid shape
+    if (bridgeGapPixels > 0) {
+      // Dilate by half the bridge gap distance so elements within 0.9" touch
+      const halfBridgePixels = Math.round(bridgeGapPixels / 2);
+      bridgedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfBridgePixels);
+      bridgedWidth = image.width + halfBridgePixels * 2;
+      bridgedHeight = image.height + halfBridgePixels * 2;
+      // Fill interior to merge bridged elements
+      bridgedMask = fillSilhouette(bridgedMask, bridgedWidth, bridgedHeight);
+    }
+    
+    // Step 3: Dilate by base offset to create unified silhouette
+    const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
+    const baseWidth = bridgedWidth + baseOffsetPixels * 2;
+    const baseHeight = bridgedHeight + baseOffsetPixels * 2;
+    
+    // Step 4: Fill the base silhouette to create solid shape
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // Step 4: Dilate the filled silhouette by user-selected offset
+    // Step 5: Dilate the filled silhouette by user-selected offset
     const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
     const dilatedWidth = baseWidth + userOffsetPixels * 2;
     const dilatedHeight = baseHeight + userOffsetPixels * 2;
