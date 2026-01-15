@@ -29,8 +29,8 @@ export function createSilhouetteContour(
   // User-selected offset on top of base
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
-  // Total offset is base + gap close + user selection
-  const totalOffsetPixels = baseOffsetPixels + gapClosePixels + userOffsetPixels;
+  // Total offset is base + user selection (gap close doesn't add to outline size)
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   // Canvas needs extra space for the total contour offset
   const padding = totalOffsetPixels + 10;
@@ -47,19 +47,25 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 2: If gap closing is enabled, first dilate to close gaps
+    // Step 2: If gap closing is enabled, use morphological close (dilate + fill + erode)
+    // This bridges gaps without changing the overall outline size
     let bridgedMask = silhouetteMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
     
     if (gapClosePixels > 0) {
-      // Dilate by half the gap close distance so elements touch
+      // Dilate by half the gap close distance so elements within that distance touch
       const halfGapPixels = Math.round(gapClosePixels / 2);
-      bridgedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfGapPixels);
-      bridgedWidth = image.width + halfGapPixels * 2;
-      bridgedHeight = image.height + halfGapPixels * 2;
+      const dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
       // Fill interior to merge bridged elements
-      bridgedMask = fillSilhouette(bridgedMask, bridgedWidth, bridgedHeight);
+      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+      // Erode back to restore original outline size (only where there's content)
+      bridgedMask = erodeSilhouette(filledDilated, dilatedWidth, dilatedHeight, halfGapPixels);
+      // bridgedMask is now same size as original
+      bridgedWidth = image.width;
+      bridgedHeight = image.height;
     }
     
     // Step 3: Dilate by base offset to create unified silhouette
@@ -227,6 +233,55 @@ function dilateSilhouette(mask: Uint8Array, width: number, height: number, radiu
   }
   
   return dilated;
+}
+
+// Erode silhouette - shrink the mask by removing pixels near edges
+function erodeSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const newWidth = width - radius * 2;
+  const newHeight = height - radius * 2;
+  
+  if (newWidth <= 0 || newHeight <= 0 || radius <= 0) {
+    return new Uint8Array(width * height);
+  }
+  
+  const eroded = new Uint8Array(newWidth * newHeight);
+  
+  // Precompute circle offsets for checking
+  const circleOffsets: { dx: number; dy: number }[] = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy <= radius * radius) {
+        circleOffsets.push({ dx, dy });
+      }
+    }
+  }
+  
+  // Erode: a pixel is solid only if ALL pixels in its radius are solid
+  for (let y = 0; y < newHeight; y++) {
+    for (let x = 0; x < newWidth; x++) {
+      const srcX = x + radius;
+      const srcY = y + radius;
+      
+      let allSolid = true;
+      for (const { dx, dy } of circleOffsets) {
+        const checkX = srcX + dx;
+        const checkY = srcY + dy;
+        if (checkX >= 0 && checkX < width && checkY >= 0 && checkY < height) {
+          if (mask[checkY * width + checkX] === 0) {
+            allSolid = false;
+            break;
+          }
+        } else {
+          allSolid = false;
+          break;
+        }
+      }
+      
+      eroded[y * newWidth + x] = allSolid ? 1 : 0;
+    }
+  }
+  
+  return eroded;
 }
 
 interface Point {
