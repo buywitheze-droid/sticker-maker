@@ -51,7 +51,7 @@ export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 0.05, // Default 0.05 inches offset
+    width: 0.07, // Default medium offset
     color: "#ffffff",
     enabled: false,
     alphaThreshold: 128, // Auto-detected from alpha channel

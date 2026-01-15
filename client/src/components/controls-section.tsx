@@ -68,17 +68,19 @@ export default function ControlsSection({
               <div className="space-y-4 mt-4">
                 <div>
                   <Label>Contour Offset</Label>
-                  <Slider
-                    value={[strokeSettings.width]}
-                    onValueChange={([value]) => onStrokeChange({ width: value })}
-                    min={0.00}
-                    max={1.00}
-                    step={0.01}
-                    className="mt-2"
-                  />
-                  <div className="text-sm text-gray-500 mt-1">
-                    {strokeSettings.width.toFixed(2)}" offset
-                  </div>
+                  <Select
+                    value={strokeSettings.width.toString()}
+                    onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
+                  >
+                    <SelectTrigger className="mt-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0.04">Small (0.04")</SelectItem>
+                      <SelectItem value="0.07">Medium (0.07")</SelectItem>
+                      <SelectItem value="0.14">Large (0.14")</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             )}
