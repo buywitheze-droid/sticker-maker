@@ -47,8 +47,8 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 2: If gap closing is enabled, use morphological close (dilate + fill + erode)
-    // This bridges gaps without changing the overall outline size
+    // Step 2: If gap closing is enabled, dilate to bridge gaps, fill, then shrink internal mask
+    // This bridges gaps while preserving the overall outline size
     let bridgedMask = silhouetteMask;
     let bridgedWidth = image.width;
     let bridgedHeight = image.height;
@@ -56,14 +56,24 @@ export function createSilhouetteContour(
     if (gapClosePixels > 0) {
       // Dilate by half the gap close distance so elements within that distance touch
       const halfGapPixels = Math.round(gapClosePixels / 2);
+      
+      // Dilate the silhouette
       const dilatedMask = dilateSilhouette(silhouetteMask, image.width, image.height, halfGapPixels);
       const dilatedWidth = image.width + halfGapPixels * 2;
       const dilatedHeight = image.height + halfGapPixels * 2;
-      // Fill interior to merge bridged elements
+      
+      // Fill interior to merge bridged elements into one solid shape
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
-      // Erode back to restore original outline size (only where there's content)
-      bridgedMask = erodeSilhouette(filledDilated, dilatedWidth, dilatedHeight, halfGapPixels);
-      // bridgedMask is now same size as original
+      
+      // Extract the center portion (same size as original) - this gives us bridged mask
+      bridgedMask = new Uint8Array(image.width * image.height);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          const srcX = x + halfGapPixels;
+          const srcY = y + halfGapPixels;
+          bridgedMask[y * image.width + x] = filledDilated[srcY * dilatedWidth + srcX];
+        }
+      }
       bridgedWidth = image.width;
       bridgedHeight = image.height;
     }
