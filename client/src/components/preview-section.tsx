@@ -458,14 +458,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 backgroundColor: getBackgroundColor(),
                 overflow: 'hidden'
               }}
+              onWheel={(e) => {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                  // Scroll up = zoom in
+                  setZoom(prev => Math.min(prev + 0.2, 3));
+                } else {
+                  // Scroll down = zoom out
+                  setZoom(prev => Math.max(prev - 0.2, 0.2));
+                }
+              }}
             >
               <canvas 
                 ref={canvasRef}
                 className="relative z-10 block"
                 style={{ 
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  objectFit: 'contain'
+                  width: '400px',
+                  height: '400px',
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'center'
                 }}
               />
               
@@ -480,27 +491,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               )}
             </div>
 
-            {/* Preview Controls */}
-            <div className="mt-4 flex justify-between items-center">
-              <div className="flex space-x-2">
-                <Button variant="ghost" size="sm" onClick={handleZoomOut} disabled={zoom <= 0.5}>
-                  <ZoomOut className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleResetZoom}>
-                  <RotateCcw className="w-4 h-4 mr-1" />
-                  Reset
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleFitToView} disabled={!imageInfo}>
-                  <ImageIcon className="w-4 h-4 mr-1" />
-                  Fit to View
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleZoomIn} disabled={zoom >= 3}>
-                  <ZoomIn className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="text-sm text-gray-600">
-                Zoom: {Math.round(zoom * 100)}%
-              </div>
+            {/* Zoom indicator */}
+            <div className="mt-2 text-center text-sm text-gray-500">
+              Zoom: {Math.round(zoom * 100)}% (scroll to zoom)
             </div>
           </CardContent>
         </Card>
