@@ -305,13 +305,16 @@ export default function ControlsSection({
             
             <div className="space-y-3">
               <Button 
-                onClick={() => onDownload('download-package')}
+                onClick={() => onDownload('standard')}
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-              >Download</Button>
+              >Download PDF</Button>
               
               <div className="text-xs text-gray-500 text-center mt-2">
-                Includes original upload + design with cutlines
+                {strokeSettings.enabled 
+                  ? "PDF with raster image + vector contour"
+                  : "PNG with shape background"
+                }
               </div>
             </div>
           </CardContent>

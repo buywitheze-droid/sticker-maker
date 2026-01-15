@@ -1,4 +1,13 @@
 import { StrokeSettings, ResizeSettings } from "@/components/image-editor";
+import jsPDF from 'jspdf';
+
+export interface ContourPathResult {
+  pathPoints: Array<{ x: number; y: number }>; // Points in inches
+  widthInches: number;
+  heightInches: number;
+  imageOffsetX: number; // Image position offset in inches
+  imageOffsetY: number;
+}
 
 export function createSilhouetteContour(
   image: HTMLImageElement,
@@ -638,4 +647,211 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   // Reset shadow
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
+}
+
+// Get contour path points for vector export
+export function getContourPath(
+  image: HTMLImageElement,
+  strokeSettings: StrokeSettings,
+  resizeSettings: ResizeSettings
+): ContourPathResult | null {
+  const effectiveDPI = image.width / resizeSettings.widthInches;
+  
+  const baseOffsetInches = 0.015;
+  const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
+  
+  const autoBridgeInches = 0.02;
+  const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
+  
+  let gapClosePixels = 0;
+  if (strokeSettings.closeBigGaps) {
+    gapClosePixels = Math.round(0.17 * effectiveDPI);
+  } else if (strokeSettings.closeSmallGaps) {
+    gapClosePixels = Math.round(0.07 * effectiveDPI);
+  }
+  
+  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+  
+  try {
+    const silhouetteMask = createSilhouetteMask(image);
+    if (silhouetteMask.length === 0) return null;
+    
+    let autoBridgedMask = silhouetteMask;
+    if (autoBridgePixels > 0) {
+      const halfAutoBridge = Math.round(autoBridgePixels / 2);
+      const dilatedAuto = dilateSilhouette(silhouetteMask, image.width, image.height, halfAutoBridge);
+      const dilatedAutoWidth = image.width + halfAutoBridge * 2;
+      const dilatedAutoHeight = image.height + halfAutoBridge * 2;
+      const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
+      
+      autoBridgedMask = new Uint8Array(image.width * image.height);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          autoBridgedMask[y * image.width + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+        }
+      }
+    }
+    
+    let bridgedMask = autoBridgedMask;
+    
+    if (gapClosePixels > 0) {
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
+      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+      
+      bridgedMask = new Uint8Array(image.width * image.height);
+      bridgedMask.set(autoBridgedMask);
+      
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
+            const srcX = x + halfGapPixels;
+            const srcY = y + halfGapPixels;
+            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[y * image.width + x] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    const baseDilatedMask = dilateSilhouette(bridgedMask, image.width, image.height, baseOffsetPixels);
+    const baseWidth = image.width + baseOffsetPixels * 2;
+    const baseHeight = image.height + baseOffsetPixels * 2;
+    
+    const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
+    
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    const dilatedWidth = baseWidth + userOffsetPixels * 2;
+    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    
+    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    
+    if (boundaryPath.length < 3) return null;
+    
+    const smoothedPath = smoothPath(boundaryPath, 2);
+    
+    // Convert to inches
+    const pathInInches = smoothedPath.map(p => ({
+      x: p.x / effectiveDPI,
+      y: p.y / effectiveDPI
+    }));
+    
+    const widthInches = dilatedWidth / effectiveDPI;
+    const heightInches = dilatedHeight / effectiveDPI;
+    const imageOffsetX = totalOffsetPixels / effectiveDPI;
+    const imageOffsetY = totalOffsetPixels / effectiveDPI;
+    
+    return {
+      pathPoints: pathInInches,
+      widthInches,
+      heightInches,
+      imageOffsetX,
+      imageOffsetY
+    };
+  } catch (error) {
+    console.error('Error getting contour path:', error);
+    return null;
+  }
+}
+
+// Download PDF with raster image and vector contour
+export async function downloadContourPDF(
+  image: HTMLImageElement,
+  strokeSettings: StrokeSettings,
+  resizeSettings: ResizeSettings,
+  filename: string
+): Promise<void> {
+  const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+  if (!contourResult) {
+    console.error('Failed to generate contour path');
+    return;
+  }
+  
+  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
+  
+  // Create PDF with dimensions in inches (jsPDF uses 'in' unit)
+  const pdf = new jsPDF({
+    orientation: widthInches > heightInches ? 'landscape' : 'portrait',
+    unit: 'in',
+    format: [widthInches, heightInches]
+  });
+  
+  // Create a canvas to get the image as base64 PNG
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return;
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  const imageDataUrl = tempCanvas.toDataURL('image/png');
+  
+  // Add raster image to PDF (centered with offset)
+  const imageWidthInches = resizeSettings.widthInches;
+  const imageHeightInches = resizeSettings.heightInches;
+  
+  pdf.addImage(
+    imageDataUrl,
+    'PNG',
+    imageOffsetX,
+    imageOffsetY,
+    imageWidthInches,
+    imageHeightInches
+  );
+  
+  // Draw vector contour path in magenta
+  pdf.setDrawColor(255, 0, 255); // Magenta
+  pdf.setLineWidth(0.01); // Thin line for cutting
+  
+  if (pathPoints.length > 2) {
+    // Start the path
+    pdf.moveTo(pathPoints[0].x, pathPoints[0].y);
+    
+    // Draw smooth curves using Catmull-Rom to Bezier conversion
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
+      const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
+      const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
+      const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
+      
+      // jsPDF uses curveTo for bezier curves
+      (pdf as any).curveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+    
+    // Close and stroke the path
+    pdf.close();
+    pdf.stroke();
+  }
+  
+  // Save the PDF
+  pdf.save(filename);
 }

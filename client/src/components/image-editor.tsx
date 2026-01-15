@@ -9,6 +9,7 @@ import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
+import { downloadContourPDF } from "@/lib/silhouette-contour";
 
 export interface ImageInfo {
   file: File;
@@ -472,21 +473,31 @@ export default function ImageEditor() {
         }
       } else {
         // Standard download - shape background or contour outline
-        const dpi = 300;
         const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
-        const filename = shapeSettings.enabled ? 
-          `${nameWithoutExt}_with_shape.png` : 
-          `${nameWithoutExt}_with_contour.png`;
         
-        await downloadCanvas(
-          imageInfo.image,
-          strokeSettings,
-          resizeSettings.widthInches,
-          resizeSettings.heightInches,
-          dpi,
-          filename,
-          shapeSettings.enabled ? shapeSettings : undefined
-        );
+        if (strokeSettings.enabled) {
+          // Contour mode: Download PDF with raster image + vector contour
+          const filename = `${nameWithoutExt}_with_contour.pdf`;
+          await downloadContourPDF(
+            imageInfo.image,
+            strokeSettings,
+            resizeSettings,
+            filename
+          );
+        } else {
+          // Shape background mode: Download as PNG
+          const dpi = 300;
+          const filename = `${nameWithoutExt}_with_shape.png`;
+          await downloadCanvas(
+            imageInfo.image,
+            strokeSettings,
+            resizeSettings.widthInches,
+            resizeSettings.heightInches,
+            dpi,
+            filename,
+            shapeSettings.enabled ? shapeSettings : undefined
+          );
+        }
       }
     } catch (error) {
       console.error("Download failed:", error);
