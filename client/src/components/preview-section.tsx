@@ -434,8 +434,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             {/* Background Color Selector */}
             <div className="mb-4 flex items-center space-x-3">
               <Palette className="w-4 h-4 text-gray-600" />
+              <span className="text-sm text-gray-600">Preview Color:</span>
               <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
