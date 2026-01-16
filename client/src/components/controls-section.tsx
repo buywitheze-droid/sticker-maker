@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -5,7 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
+import { useToast } from "@/hooks/use-toast";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -17,6 +20,7 @@ interface ControlsSectionProps {
   onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
+  canvasRef?: React.RefObject<HTMLCanvasElement>;
 }
 
 export default function ControlsSection({
@@ -28,8 +32,85 @@ export default function ControlsSection({
   onShapeChange,
   onDownload,
   isProcessing,
-  imageInfo
+  imageInfo,
+  canvasRef
 }: ControlsSectionProps) {
+  const { toast } = useToast();
+  const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [cutlineConfirmed, setCutlineConfirmed] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
+  const handleSendDesign = async () => {
+    if (!customerName.trim() || !customerEmail.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please enter your full name and email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!cutlineConfirmed) {
+      toast({
+        title: "Confirmation Required",
+        description: "Please confirm the cutline looks good before sending.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setShowConfirmDialog(true);
+  };
+
+  const confirmAndSend = async () => {
+    setShowConfirmDialog(false);
+    setIsSending(true);
+
+    try {
+      let designDataUrl = "";
+      
+      if (canvasRef?.current) {
+        designDataUrl = canvasRef.current.toDataURL("image/png");
+      }
+
+      const response = await fetch("/api/send-design", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          customerName: customerName.trim(),
+          customerEmail: customerEmail.trim(),
+          designData: designDataUrl,
+          fileName: imageInfo?.file?.name || "design.png",
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to send design");
+      }
+
+      toast({
+        title: "Design Sent!",
+        description: "Your design has been sent successfully. We'll be in touch soon!",
+      });
+
+      setCustomerName("");
+      setCustomerEmail("");
+      setCutlineConfirmed(false);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send design. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
   
   const calculateOutputInfo = () => {
     const pixelWidth = Math.round(resizeSettings.widthInches * resizeSettings.outputDPI);
@@ -298,30 +379,85 @@ export default function ControlsSection({
 
 
 
-        {/* Download Section */}
+        {/* Send Design Section */}
         <Card>
           <CardContent className="p-6">
-            <h3 className="text-base font-medium text-gray-900 mb-4">Download</h3>
+            <h3 className="text-base font-medium text-gray-900 mb-4">Send Design</h3>
             
-            <div className="space-y-3">
-              <Button 
-                onClick={() => onDownload('standard')}
-                disabled={!imageInfo || isProcessing}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-              >Download PDF</Button>
-              
-              <div className="text-xs text-gray-500 text-center mt-2">
-                {strokeSettings.enabled 
-                  ? "PDF with raster image + vector CutContour"
-                  : shapeSettings.enabled
-                    ? "PDF with shape + vector CutContour"
-                    : "PNG image"
-                }
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="customer-name">Full Name</Label>
+                <Input
+                  id="customer-name"
+                  type="text"
+                  placeholder="Enter your full name"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="mt-1"
+                />
               </div>
+
+              <div>
+                <Label htmlFor="customer-email">Email Address</Label>
+                <Input
+                  id="customer-email"
+                  type="email"
+                  placeholder="Enter your email address"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+
+              <div className="flex items-start space-x-3 pt-2">
+                <Checkbox 
+                  id="cutline-confirm"
+                  checked={cutlineConfirmed}
+                  onCheckedChange={(checked) => setCutlineConfirmed(checked as boolean)}
+                />
+                <Label htmlFor="cutline-confirm" className="text-sm leading-tight cursor-pointer">
+                  Cutline looks good in my sticker. Please proceed.
+                </Label>
+              </div>
+
+              <Button 
+                onClick={handleSendDesign}
+                disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || !cutlineConfirmed}
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                {isSending ? "Sending..." : "Send Design"}
+              </Button>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Submission</DialogTitle>
+            <DialogDescription>
+              You're about to send your design for processing. Please confirm that:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <ul className="list-disc list-inside space-y-2 text-sm text-gray-600">
+              <li>The cutline looks correct on your sticker</li>
+              <li>Your name and email are correct</li>
+              <li>You're ready to proceed with this design</li>
+            </ul>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmAndSend} className="bg-blue-500 hover:bg-blue-600">
+              Confirm & Send
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

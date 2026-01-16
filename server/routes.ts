@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
+import sgMail from "@sendgrid/mail";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -123,6 +124,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         error: "Failed to extract image metadata", 
         details: error instanceof Error ? error.message : "Unknown error" 
+      });
+    }
+  });
+
+  // Send design submission to sales email
+  app.post("/api/send-design", async (req, res) => {
+    try {
+      const { customerName, customerEmail, designData, fileName } = req.body;
+
+      if (!customerName || !customerEmail) {
+        return res.status(400).json({ error: "Name and email are required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(customerEmail)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      const sendGridApiKey = process.env.SENDGRID_API_KEY;
+      
+      if (!sendGridApiKey) {
+        console.error("SendGrid API key not configured");
+        return res.status(500).json({ error: "Email service not configured" });
+      }
+
+      sgMail.setApiKey(sendGridApiKey);
+
+      // Prepare email content
+      const emailContent = `
+New Design Submission
+
+Customer Details:
+- Full Name: ${customerName}
+- Email: ${customerEmail}
+- File Name: ${fileName || "Not provided"}
+- Submission Time: ${new Date().toLocaleString()}
+
+The customer has confirmed that the cutline looks good and is ready to proceed with this design.
+`;
+
+      const htmlContent = `
+<h2>New Design Submission</h2>
+
+<h3>Customer Details:</h3>
+<ul>
+  <li><strong>Full Name:</strong> ${customerName}</li>
+  <li><strong>Email:</strong> <a href="mailto:${customerEmail}">${customerEmail}</a></li>
+  <li><strong>File Name:</strong> ${fileName || "Not provided"}</li>
+  <li><strong>Submission Time:</strong> ${new Date().toLocaleString()}</li>
+</ul>
+
+<p>The customer has confirmed that the cutline looks good and is ready to proceed with this design.</p>
+
+${designData ? '<p><strong>Design image is attached.</strong></p>' : '<p><em>No design image was attached.</em></p>'}
+`;
+
+      // Build email message
+      const msg: sgMail.MailDataRequired = {
+        to: "sales@dtfmasters.com",
+        from: "sales@dtfmasters.com",
+        subject: `New Sticker Design Submission from ${customerName}`,
+        text: emailContent,
+        html: htmlContent,
+      };
+
+      // If there's design data, attach it
+      if (designData && designData.startsWith("data:image")) {
+        const base64Data = designData.split(",")[1];
+        if (base64Data) {
+          msg.attachments = [
+            {
+              content: base64Data,
+              filename: fileName || "design.png",
+              type: "image/png",
+              disposition: "attachment",
+            },
+          ];
+        }
+      }
+
+      await sgMail.send(msg);
+
+      res.json({ success: true, message: "Design sent successfully" });
+    } catch (error) {
+      console.error("Email sending error:", error);
+      res.status(500).json({
+        error: "Failed to send design",
+        details: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });

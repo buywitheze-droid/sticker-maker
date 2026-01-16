@@ -632,6 +632,7 @@ export default function ImageEditor() {
         onDownload={handleDownload}
         isProcessing={isProcessing}
         imageInfo={imageInfo}
+        canvasRef={canvasRef}
       />
       
       {/* Processing Modal */}
