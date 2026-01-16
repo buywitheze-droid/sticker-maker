@@ -444,7 +444,7 @@ export default function ControlsSection({
             <div className="space-y-3">
               <Button 
                 onClick={() => onDownload('standard')}
-                disabled={!imageInfo || isProcessing}
+                disabled={!imageInfo || isProcessing || !customerName.trim() || !customerEmail.trim() || (!strokeSettings.enabled && !shapeSettings.enabled)}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
               >Download PDF</Button>
             </div>
