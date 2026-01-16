@@ -129,7 +129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Send design submission to sales email
-  app.post("/api/send-design", async (req, res) => {
+  app.post("/api/send-design", upload.none(), async (req, res) => {
     try {
       const { customerName, customerEmail, customerNotes, designData, fileName } = req.body;
 
