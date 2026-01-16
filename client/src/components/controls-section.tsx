@@ -432,6 +432,15 @@ export default function ControlsSection({
               <p className="text-xs text-gray-500 text-center pt-2">
                 We'll save this file and match it to your order using the email provided here. You're all set to complete your order on our website! 😊
               </p>
+
+              <Button 
+                onClick={() => onDownload('standard', 'png')}
+                disabled={!imageInfo || isProcessing || (!strokeSettings.enabled && !shapeSettings.enabled)}
+                variant="outline"
+                className="w-full"
+              >
+                Download Design
+              </Button>
             </div>
           </CardContent>
         </Card>
