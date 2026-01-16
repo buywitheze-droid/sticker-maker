@@ -432,15 +432,30 @@ export default function ControlsSection({
               <p className="text-xs text-gray-500 text-center pt-2">
                 We'll save this file and match it to your order using the email provided here. You're all set to complete your order on our website! 😊
               </p>
+            </div>
+          </CardContent>
+        </Card>
 
+        {/* Download Section */}
+        <Card>
+          <CardContent className="p-6">
+            <h3 className="text-base font-medium text-gray-900 mb-4">Download</h3>
+            
+            <div className="space-y-3">
               <Button 
-                onClick={() => onDownload('standard', 'png')}
-                disabled={!imageInfo || isProcessing || (!strokeSettings.enabled && !shapeSettings.enabled)}
-                variant="outline"
-                className="w-full"
-              >
-                Download Design
-              </Button>
+                onClick={() => onDownload('standard')}
+                disabled={!imageInfo || isProcessing}
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+              >Download PDF</Button>
+              
+              <div className="text-xs text-gray-500 text-center mt-2">
+                {strokeSettings.enabled 
+                  ? "PDF with raster image + vector CutContour"
+                  : shapeSettings.enabled
+                    ? "PDF with shape + vector CutContour"
+                    : "PNG image"
+                }
+              </div>
             </div>
           </CardContent>
         </Card>
