@@ -447,15 +447,6 @@ export default function ControlsSection({
                 disabled={!imageInfo || isProcessing}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
               >Download PDF</Button>
-              
-              <div className="text-xs text-gray-500 text-center mt-2">
-                {strokeSettings.enabled 
-                  ? "PDF with raster image + vector CutContour"
-                  : shapeSettings.enabled
-                    ? "PDF with shape + vector CutContour"
-                    : "PNG image"
-                }
-              </div>
             </div>
           </CardContent>
         </Card>
