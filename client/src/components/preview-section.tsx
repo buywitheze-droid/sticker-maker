@@ -500,16 +500,43 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            {/* Zoom indicator and reset */}
-            <div className="mt-2 flex items-center justify-center gap-3 text-sm text-gray-500">
-              <span>Zoom: {Math.round(zoom * 100)}%</span>
+            {/* Zoom controls */}
+            <div className="mt-3 flex items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setZoom(prev => Math.max(prev - 0.2, 0.2))}
+                className="h-8 w-8 p-0"
+                title="Zoom Out"
+              >
+                <ZoomOut className="h-4 w-4" />
+              </Button>
+              
+              <span className="text-sm text-gray-500 min-w-[60px] text-center">
+                {Math.round(zoom * 100)}%
+              </span>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setZoom(prev => Math.min(prev + 0.2, 3))}
+                className="h-8 w-8 p-0"
+                title="Zoom In"
+              >
+                <ZoomIn className="h-4 w-4" />
+              </Button>
+              
               {zoom !== 1 && (
-                <button 
+                <Button 
+                  variant="outline"
+                  size="sm"
                   onClick={() => setZoom(1)}
-                  className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 rounded transition-colors"
+                  className="h-8 px-2 ml-2"
+                  title="Reset Zoom"
                 >
+                  <RotateCcw className="h-3 w-3 mr-1" />
                   Reset
-                </button>
+                </Button>
               )}
             </div>
           </CardContent>

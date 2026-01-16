@@ -131,7 +131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send design submission to sales email
   app.post("/api/send-design", async (req, res) => {
     try {
-      const { customerName, customerEmail, designData, fileName } = req.body;
+      const { customerName, customerEmail, customerNotes, designData, fileName } = req.body;
 
       if (!customerName || !customerEmail) {
         return res.status(400).json({ error: "Name and email are required" });
@@ -153,6 +153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sgMail.setApiKey(sendGridApiKey);
 
       // Prepare email content
+      const notesSection = customerNotes ? `\nCustomer Notes:\n${customerNotes}\n` : "";
       const emailContent = `
 New Design Submission
 
@@ -161,10 +162,13 @@ Customer Details:
 - Email: ${customerEmail}
 - File Name: ${fileName || "Not provided"}
 - Submission Time: ${new Date().toLocaleString()}
-
+${notesSection}
 The customer has confirmed that the cutline looks good and is ready to proceed with this design.
 `;
 
+      const htmlNotesSection = customerNotes 
+        ? `<h3>Customer Notes:</h3><p style="background-color: #f3f4f6; padding: 12px; border-radius: 6px; white-space: pre-wrap;">${customerNotes}</p>` 
+        : "";
       const htmlContent = `
 <h2>New Design Submission</h2>
 
@@ -175,6 +179,8 @@ The customer has confirmed that the cutline looks good and is ready to proceed w
   <li><strong>File Name:</strong> ${fileName || "Not provided"}</li>
   <li><strong>Submission Time:</strong> ${new Date().toLocaleString()}</li>
 </ul>
+
+${htmlNotesSection}
 
 <p>The customer has confirmed that the cutline looks good and is ready to proceed with this design.</p>
 

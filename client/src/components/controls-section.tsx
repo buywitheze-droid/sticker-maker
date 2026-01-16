@@ -38,6 +38,7 @@ export default function ControlsSection({
   const { toast } = useToast();
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
+  const [customerNotes, setCustomerNotes] = useState("");
   const [cutlineConfirmed, setCutlineConfirmed] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -83,6 +84,7 @@ export default function ControlsSection({
         body: JSON.stringify({
           customerName: customerName.trim(),
           customerEmail: customerEmail.trim(),
+          customerNotes: customerNotes.trim(),
           designData: designDataUrl,
           fileName: imageInfo?.file?.name || "design.png",
         }),
@@ -100,6 +102,7 @@ export default function ControlsSection({
 
       setCustomerName("");
       setCustomerEmail("");
+      setCustomerNotes("");
       setCutlineConfirmed(false);
     } catch (error) {
       toast({
@@ -406,6 +409,17 @@ export default function ControlsSection({
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
                   className="mt-1"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="customer-notes">Notes to add (optional)</Label>
+                <textarea
+                  id="customer-notes"
+                  placeholder="Add any special instructions or notes..."
+                  value={customerNotes}
+                  onChange={(e) => setCustomerNotes(e.target.value)}
+                  className="mt-1 w-full min-h-[80px] px-3 py-2 text-sm border rounded-md border-input bg-background resize-y"
                 />
               </div>
 
