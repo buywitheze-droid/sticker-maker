@@ -39,7 +39,6 @@ export default function ControlsSection({
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
-  const [cutlineConfirmed, setCutlineConfirmed] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
@@ -53,10 +52,10 @@ export default function ControlsSection({
       return;
     }
 
-    if (!cutlineConfirmed) {
+    if (!strokeSettings.enabled && !shapeSettings.enabled) {
       toast({
-        title: "Confirmation Required",
-        description: "Please confirm the cutline looks good before sending.",
+        title: "Outline Required",
+        description: "Please select either Contour Outline or Shape Outline before sending.",
         variant: "destructive",
       });
       return;
@@ -103,7 +102,6 @@ export default function ControlsSection({
       setCustomerName("");
       setCustomerEmail("");
       setCustomerNotes("");
-      setCutlineConfirmed(false);
     } catch (error) {
       toast({
         title: "Error",
@@ -423,20 +421,9 @@ export default function ControlsSection({
                 />
               </div>
 
-              <div className="flex items-start space-x-3 pt-2">
-                <Checkbox 
-                  id="cutline-confirm"
-                  checked={cutlineConfirmed}
-                  onCheckedChange={(checked) => setCutlineConfirmed(checked as boolean)}
-                />
-                <Label htmlFor="cutline-confirm" className="text-sm leading-tight cursor-pointer">
-                  Cutline looks good in my sticker. Please proceed.
-                </Label>
-              </div>
-
               <Button 
                 onClick={handleSendDesign}
-                disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || !cutlineConfirmed}
+                disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || (!strokeSettings.enabled && !shapeSettings.enabled)}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
               >
                 {isSending ? "Sending..." : "Send Design"}
@@ -461,9 +448,9 @@ export default function ControlsSection({
           </DialogHeader>
           <div className="py-4">
             <ul className="list-disc list-inside space-y-2 text-sm text-gray-600">
-              <li>The cutline looks correct on your sticker</li>
+              <li>Your design and outline look correct</li>
               <li>Your name and email are correct</li>
-              <li>You're ready to proceed with this design</li>
+              <li>You're ready to submit this design</li>
             </ul>
           </div>
           <DialogFooter>
