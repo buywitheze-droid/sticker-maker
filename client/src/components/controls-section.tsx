@@ -72,7 +72,26 @@ export default function ControlsSection({
       let designDataUrl = "";
       
       if (canvasRef?.current) {
-        designDataUrl = canvasRef.current.toDataURL("image/png");
+        // Compress the image to reduce size for email
+        const canvas = canvasRef.current;
+        const maxSize = 1200; // Max dimension for email
+        
+        // Check if we need to resize
+        if (canvas.width > maxSize || canvas.height > maxSize) {
+          const scale = Math.min(maxSize / canvas.width, maxSize / canvas.height);
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = Math.round(canvas.width * scale);
+          tempCanvas.height = Math.round(canvas.height * scale);
+          const tempCtx = tempCanvas.getContext('2d');
+          if (tempCtx) {
+            tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
+            designDataUrl = tempCanvas.toDataURL("image/jpeg", 0.8);
+          } else {
+            designDataUrl = canvas.toDataURL("image/jpeg", 0.8);
+          }
+        } else {
+          designDataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        }
       }
 
       const response = await fetch("/api/send-design", {
