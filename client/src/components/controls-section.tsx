@@ -385,7 +385,10 @@ export default function ControlsSection({
         {/* Send Design Section */}
         <Card>
           <CardContent className="p-6">
-            <h3 className="text-base font-medium text-gray-900 mb-4">Send Design</h3>
+            <h3 className="text-base font-medium text-gray-900 mb-2">Send Design</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              After design approval, place your order with the desired size and quantity. We'll match the approved file to your order using your name and email.
+            </p>
             
             <div className="space-y-4">
               <div>
