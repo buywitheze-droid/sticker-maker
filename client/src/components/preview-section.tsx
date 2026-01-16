@@ -461,16 +461,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 backgroundColor: getBackgroundColor(),
                 overflow: 'hidden'
               }}
-              onWheel={(e) => {
-                e.preventDefault();
-                if (e.deltaY < 0) {
-                  // Scroll up = zoom in
-                  setZoom(prev => Math.min(prev + 0.2, 3));
-                } else {
-                  // Scroll down = zoom out
-                  setZoom(prev => Math.max(prev - 0.2, 0.2));
-                }
-              }}
             >
               <canvas 
                 ref={canvasRef}
