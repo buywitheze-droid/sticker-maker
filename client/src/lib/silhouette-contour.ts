@@ -681,15 +681,20 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
 function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
   
-  const smoothed: Point[] = [];
+  // Step 1: Remove tiny spikes/bumps that deviate sharply from the overall curve
+  let cleaned = removeSpikes(points, 8, 0.3);
   
-  for (let i = 0; i < points.length; i++) {
+  // Step 2: Apply larger window smoothing to eliminate remaining small variations
+  const largeWindow = 4;
+  let smoothed: Point[] = [];
+  
+  for (let i = 0; i < cleaned.length; i++) {
     let sumX = 0, sumY = 0, count = 0;
     
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + points.length) % points.length;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
+    for (let j = -largeWindow; j <= largeWindow; j++) {
+      const idx = (i + j + cleaned.length) % cleaned.length;
+      sumX += cleaned[idx].x;
+      sumY += cleaned[idx].y;
       count++;
     }
     
@@ -699,8 +704,107 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
+  // Step 3: Second pass with original window for fine-tuning
+  let fineSmoothed: Point[] = [];
+  for (let i = 0; i < smoothed.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + smoothed.length) % smoothed.length;
+      sumX += smoothed[idx].x;
+      sumY += smoothed[idx].y;
+      count++;
+    }
+    
+    fineSmoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
+  }
+  
+  // Step 4: Remove any remaining tiny bumps
+  fineSmoothed = removeSpikes(fineSmoothed, 6, 0.4);
+  
   // Simplify to reduce point count
-  return douglasPeucker(smoothed, 1.0);
+  return douglasPeucker(fineSmoothed, 1.0);
+}
+
+// Remove spikes/bumps by detecting points that deviate significantly from the line between neighbors
+function removeSpikes(points: Point[], neighborDistance: number, threshold: number): Point[] {
+  if (points.length < neighborDistance * 2 + 3) return points;
+  
+  const result: Point[] = [];
+  const isSpike = new Array(points.length).fill(false);
+  
+  // Detect spikes: points where the angle formed is too sharp or deviation is too large
+  for (let i = 0; i < points.length; i++) {
+    const prevIdx = (i - neighborDistance + points.length) % points.length;
+    const nextIdx = (i + neighborDistance) % points.length;
+    
+    const prev = points[prevIdx];
+    const curr = points[i];
+    const next = points[nextIdx];
+    
+    // Calculate the expected position (midpoint of prev and next)
+    const expectedX = (prev.x + next.x) / 2;
+    const expectedY = (prev.y + next.y) / 2;
+    
+    // Calculate distance from expected to actual
+    const deviation = Math.sqrt((curr.x - expectedX) ** 2 + (curr.y - expectedY) ** 2);
+    
+    // Calculate the distance between prev and next
+    const spanDistance = Math.sqrt((next.x - prev.x) ** 2 + (next.y - prev.y) ** 2);
+    
+    // If deviation is large relative to the span, it's likely a spike
+    if (spanDistance > 0 && deviation / spanDistance > threshold) {
+      // Check if this creates a sharp angle (spike detection)
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+      
+      const dot = v1x * v2x + v1y * v2y;
+      const mag1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      const mag2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      
+      if (mag1 > 0 && mag2 > 0) {
+        const cosAngle = dot / (mag1 * mag2);
+        // If angle is sharp (cosine closer to -1), mark as spike
+        if (cosAngle < 0.3) {
+          isSpike[i] = true;
+        }
+      }
+    }
+  }
+  
+  // Replace spikes with interpolated positions
+  for (let i = 0; i < points.length; i++) {
+    if (isSpike[i]) {
+      // Find non-spike neighbors
+      let prevGood = i - 1;
+      while (prevGood >= 0 && isSpike[(prevGood + points.length) % points.length]) {
+        prevGood--;
+      }
+      let nextGood = i + 1;
+      while (nextGood < points.length * 2 && isSpike[nextGood % points.length]) {
+        nextGood++;
+      }
+      
+      const prev = points[(prevGood + points.length) % points.length];
+      const next = points[nextGood % points.length];
+      
+      // Interpolate
+      const t = 0.5;
+      result.push({
+        x: prev.x + (next.x - prev.x) * t,
+        y: prev.y + (next.y - prev.y) * t
+      });
+    } else {
+      result.push(points[i]);
+    }
+  }
+  
+  return result;
 }
 
 function douglasPeucker(points: Point[], epsilon: number): Point[] {
