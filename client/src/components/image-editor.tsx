@@ -111,8 +111,8 @@ export default function ImageEditor() {
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
       // Validate image size to prevent crashes
-      if (image.width * image.height > 8000000) { // 8MP limit
-        alert('Image is too large. Please upload an image smaller than 8 megapixels.');
+      if (image.width * image.height > 160000000) { // 160MP limit
+        alert('Image is too large. Please upload an image smaller than 160 megapixels.');
         return;
       }
       
