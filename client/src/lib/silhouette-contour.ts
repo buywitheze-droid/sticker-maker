@@ -1385,3 +1385,285 @@ export async function downloadShapePDF(
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+// Generate Contour PDF as base64 string (for email attachment)
+export async function generateContourPDFBase64(
+  image: HTMLImageElement,
+  strokeSettings: StrokeSettings,
+  resizeSettings: ResizeSettings
+): Promise<string | null> {
+  const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+  if (!contourResult) {
+    console.error('Failed to generate contour path');
+    return null;
+  }
+  
+  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
+  
+  const widthPts = widthInches * 72;
+  const heightPts = heightInches * 72;
+  
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([widthPts, heightPts]);
+  
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return null;
+  
+  tempCanvas.width = image.width;
+  tempCanvas.height = image.height;
+  tempCtx.drawImage(image, 0, 0);
+  
+  const blob = await new Promise<Blob>((resolve) => {
+    tempCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const pngBytes = new Uint8Array(await blob.arrayBuffer());
+  
+  const pngImage = await pdfDoc.embedPng(pngBytes);
+  
+  const imageXPts = imageOffsetX * 72;
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageYPts = imageOffsetY * 72;
+  
+  page.drawImage(pngImage, {
+    x: imageXPts,
+    y: imageYPts,
+    width: imageWidthPts,
+    height: imageHeightPts,
+  });
+  
+  if (pathPoints.length > 2) {
+    const context = pdfDoc.context;
+    
+    const tintFunction = context.obj({
+      FunctionType: 2,
+      Domain: [0, 1],
+      C0: [0, 0, 0, 0],
+      C1: [0, 1, 0, 0],
+      N: 1,
+    });
+    const tintFunctionRef = context.register(tintFunction);
+    
+    const separationColorSpace = context.obj([
+      PDFName.of('Separation'),
+      PDFName.of('CutContour'),
+      PDFName.of('DeviceCMYK'),
+      tintFunctionRef,
+    ]);
+    const separationRef = context.register(separationColorSpace);
+    
+    const resources = page.node.Resources();
+    if (resources) {
+      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+      if (!colorSpaceDict) {
+        colorSpaceDict = context.obj({});
+        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+      }
+      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+    }
+    
+    let pathOps = '';
+    pathOps += '/CutContour CS 1 SCN\n';
+    pathOps += '0.5 w\n';
+    
+    const startX = pathPoints[0].x * 72;
+    const startY = pathPoints[0].y * 72;
+    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+      const endX = p2.x * 72;
+      const endY = p2.y * 72;
+      
+      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    
+    pathOps += 'h S\n';
+    
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
+  }
+  
+  pdfDoc.setTitle('Sticker with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  
+  const pdfBytes = await pdfDoc.save();
+  
+  let binary = '';
+  for (let i = 0; i < pdfBytes.length; i++) {
+    binary += String.fromCharCode(pdfBytes[i]);
+  }
+  return btoa(binary);
+}
+
+// Generate Shape PDF as base64 string (for email attachment)
+export async function generateShapePDFBase64(
+  image: HTMLImageElement,
+  shapeSettings: ShapeSettings,
+  resizeSettings: ResizeSettings
+): Promise<string | null> {
+  const widthPts = shapeSettings.widthInches * 72;
+  const heightPts = shapeSettings.heightInches * 72;
+  
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([widthPts, heightPts]);
+  const context = pdfDoc.context;
+  
+  const cx = widthPts / 2;
+  const cy = heightPts / 2;
+  
+  const croppedCanvas = cropImageToContent(image);
+  let imageCanvas: HTMLCanvasElement;
+  
+  if (croppedCanvas) {
+    imageCanvas = croppedCanvas;
+  } else {
+    imageCanvas = document.createElement('canvas');
+    imageCanvas.width = image.width;
+    imageCanvas.height = image.height;
+    const ctx = imageCanvas.getContext('2d');
+    if (ctx) ctx.drawImage(image, 0, 0);
+  }
+  
+  const blob = await new Promise<Blob>((resolve) => {
+    imageCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const pngBytes = new Uint8Array(await blob.arrayBuffer());
+  
+  const pngImage = await pdfDoc.embedPng(pngBytes);
+  
+  const imageWidth = resizeSettings.widthInches * 72;
+  const imageHeight = resizeSettings.heightInches * 72;
+  
+  const dpiToPoints = 72 / 300;
+  const offsetXPts = (shapeSettings.offsetX || 0) * dpiToPoints;
+  const offsetYPts = (shapeSettings.offsetY || 0) * dpiToPoints;
+  const imageX = (widthPts - imageWidth) / 2 + offsetXPts;
+  const imageY = (heightPts - imageHeight) / 2 - offsetYPts;
+  
+  page.drawImage(pngImage, {
+    x: imageX,
+    y: imageY,
+    width: imageWidth,
+    height: imageHeight,
+  });
+  
+  let resources = page.node.Resources();
+  
+  const tintFunction = context.obj({
+    FunctionType: 2,
+    Domain: [0, 1],
+    C0: [0, 0, 0, 0],
+    C1: [0, 1, 0, 0],
+    N: 1,
+  });
+  const tintFunctionRef = context.register(tintFunction);
+  
+  const separationColorSpace = context.obj([
+    PDFName.of('Separation'),
+    PDFName.of('CutContour'),
+    PDFName.of('DeviceCMYK'),
+    tintFunctionRef,
+  ]);
+  const separationRef = context.register(separationColorSpace);
+  
+  if (resources) {
+    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+    if (!colorSpaceDict) {
+      colorSpaceDict = context.obj({});
+      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+    }
+    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+  }
+  
+  let pathOps = 'q\n';
+  pathOps += '/CutContour CS 1 SCN\n';
+  pathOps += '0.5 w\n';
+  
+  const outlineCx = cx;
+  const outlineCy = cy;
+  
+  if (shapeSettings.type === 'circle') {
+    const r = Math.min(widthPts, heightPts) / 2;
+    const k = 0.5522847498;
+    const rk = r * k;
+    const circleCy = outlineCy;
+    pathOps += `${outlineCx + r} ${circleCy} m\n`;
+    pathOps += `${outlineCx + r} ${circleCy + rk} ${outlineCx + rk} ${circleCy + r} ${outlineCx} ${circleCy + r} c\n`;
+    pathOps += `${outlineCx - rk} ${circleCy + r} ${outlineCx - r} ${circleCy + rk} ${outlineCx - r} ${circleCy} c\n`;
+    pathOps += `${outlineCx - r} ${circleCy - rk} ${outlineCx - rk} ${circleCy - r} ${outlineCx} ${circleCy - r} c\n`;
+    pathOps += `${outlineCx + rk} ${circleCy - r} ${outlineCx + r} ${circleCy - rk} ${outlineCx + r} ${circleCy} c\n`;
+  } else if (shapeSettings.type === 'oval') {
+    const rx = widthPts / 2;
+    const ry = heightPts / 2;
+    const k = 0.5522847498;
+    const rxk = rx * k;
+    const ryk = ry * k;
+    pathOps += `${outlineCx + rx} ${outlineCy} m\n`;
+    pathOps += `${outlineCx + rx} ${outlineCy + ryk} ${outlineCx + rxk} ${outlineCy + ry} ${outlineCx} ${outlineCy + ry} c\n`;
+    pathOps += `${outlineCx - rxk} ${outlineCy + ry} ${outlineCx - rx} ${outlineCy + ryk} ${outlineCx - rx} ${outlineCy} c\n`;
+    pathOps += `${outlineCx - rx} ${outlineCy - ryk} ${outlineCx - rxk} ${outlineCy - ry} ${outlineCx} ${outlineCy - ry} c\n`;
+    pathOps += `${outlineCx + rxk} ${outlineCy - ry} ${outlineCx + rx} ${outlineCy - ryk} ${outlineCx + rx} ${outlineCy} c\n`;
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(widthPts, heightPts);
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    pathOps += `${sx} ${sy} m\n`;
+    pathOps += `${sx + size} ${sy} l\n`;
+    pathOps += `${sx + size} ${sy + size} l\n`;
+    pathOps += `${sx} ${sy + size} l\n`;
+  } else {
+    pathOps += `0 0 m\n`;
+    pathOps += `${widthPts} 0 l\n`;
+    pathOps += `${widthPts} ${heightPts} l\n`;
+    pathOps += `0 ${heightPts} l\n`;
+  }
+  
+  pathOps += 'h S\n';
+  pathOps += 'Q\n';
+  
+  const outlineStream = context.stream(pathOps);
+  const outlineStreamRef = context.register(outlineStream);
+  
+  const existingContents = page.node.Contents();
+  
+  if (existingContents instanceof PDFArray) {
+    existingContents.push(outlineStreamRef);
+  } else if (existingContents) {
+    const contentsArray = context.obj([existingContents, outlineStreamRef]);
+    page.node.set(PDFName.of('Contents'), contentsArray);
+  } else {
+    page.node.set(PDFName.of('Contents'), outlineStreamRef);
+  }
+  
+  pdfDoc.setTitle('Shape with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  
+  const pdfBytes = await pdfDoc.save();
+  
+  let binary = '';
+  for (let i = 0; i < pdfBytes.length; i++) {
+    binary += String.fromCharCode(pdfBytes[i]);
+  }
+  return btoa(binary);
+}

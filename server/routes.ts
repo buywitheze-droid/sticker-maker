@@ -131,7 +131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send design submission to sales email
   app.post("/api/send-design", upload.none(), async (req, res) => {
     try {
-      const { customerName, customerEmail, customerNotes, designData, fileName } = req.body;
+      const { customerName, customerEmail, customerNotes, pdfData, fileName } = req.body;
 
       if (!customerName || !customerEmail) {
         return res.status(400).json({ error: "Name and email are required" });
@@ -184,7 +184,7 @@ ${htmlNotesSection}
 
 <p>The customer has confirmed that the cutline looks good and is ready to proceed with this design.</p>
 
-${designData ? '<p><strong>Design image is attached.</strong></p>' : '<p><em>No design image was attached.</em></p>'}
+${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : '<p><em>No design file was attached.</em></p>'}
 `;
 
       // Build email message
@@ -196,19 +196,16 @@ ${designData ? '<p><strong>Design image is attached.</strong></p>' : '<p><em>No 
         html: htmlContent,
       };
 
-      // If there's design data, attach it
-      if (designData && designData.startsWith("data:image")) {
-        const base64Data = designData.split(",")[1];
-        if (base64Data) {
-          msg.attachments = [
-            {
-              content: base64Data,
-              filename: fileName || "design.png",
-              type: "image/png",
-              disposition: "attachment",
-            },
-          ];
-        }
+      // If there's PDF data, attach it
+      if (pdfData) {
+        msg.attachments = [
+          {
+            content: pdfData,
+            filename: fileName || "design.pdf",
+            type: "application/pdf",
+            disposition: "attachment",
+          },
+        ];
       }
 
       await sgMail.send(msg);

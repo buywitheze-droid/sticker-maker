@@ -9,6 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
 import { useToast } from "@/hooks/use-toast";
+import { generateContourPDFBase64, generateShapePDFBase64 } from "@/lib/silhouette-contour";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -69,36 +70,30 @@ export default function ControlsSection({
     setIsSending(true);
 
     try {
-      let designDataUrl = "";
+      let pdfBase64 = "";
       
-      if (canvasRef?.current) {
-        // Compress the image to reduce size for email
-        const canvas = canvasRef.current;
-        const maxSize = 600; // Max dimension for email
-        
-        // Always resize and compress
-        const scale = Math.min(maxSize / canvas.width, maxSize / canvas.height, 1);
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = Math.round(canvas.width * scale);
-        tempCanvas.height = Math.round(canvas.height * scale);
-        const tempCtx = tempCanvas.getContext('2d');
-        if (tempCtx) {
-          tempCtx.fillStyle = '#FFFFFF';
-          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-          tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
-          designDataUrl = tempCanvas.toDataURL("image/jpeg", 0.5);
-        } else {
-          designDataUrl = canvas.toDataURL("image/jpeg", 0.5);
+      if (imageInfo?.image) {
+        // Generate PDF with CutContour (same as download)
+        if (strokeSettings.enabled) {
+          const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings);
+          pdfBase64 = result || "";
+        } else if (shapeSettings.enabled) {
+          const result = await generateShapePDFBase64(imageInfo.image, shapeSettings, resizeSettings);
+          pdfBase64 = result || "";
         }
       }
 
-      // Use FormData for multipart upload (more efficient than base64 JSON)
+      if (!pdfBase64) {
+        throw new Error("Failed to generate PDF. Please try again.");
+      }
+
+      // Use FormData for multipart upload
       const formData = new FormData();
       formData.append('customerName', customerName.trim());
       formData.append('customerEmail', customerEmail.trim());
       formData.append('customerNotes', customerNotes.trim());
-      formData.append('designData', designDataUrl);
-      formData.append('fileName', imageInfo?.file?.name || "design.png");
+      formData.append('pdfData', pdfBase64);
+      formData.append('fileName', (imageInfo?.file?.name || "design").replace(/\.[^/.]+$/, '') + ".pdf");
 
       const response = await fetch("/api/send-design", {
         method: "POST",
