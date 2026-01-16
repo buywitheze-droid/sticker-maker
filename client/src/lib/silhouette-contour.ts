@@ -224,8 +224,12 @@ export function createSilhouetteContour(
     const dilatedWidth = baseWidth + userOffsetPixels * 2;
     const dilatedHeight = baseHeight + userOffsetPixels * 2;
     
-    // Step 5: Trace the boundary of the final dilated silhouette
-    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    // Step 5a: Auto-bridge any touching or nearly touching contours after dilation
+    // This detects where contour outlines are touching and fills the gaps
+    const bridgedFinalMask = bridgeTouchingContours(finalDilatedMask, dilatedWidth, dilatedHeight, effectiveDPI);
+    
+    // Step 6: Trace the boundary of the final dilated silhouette
+    const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) {
       ctx.drawImage(image, padding, padding);
@@ -308,6 +312,148 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   }
   
   return filled;
+}
+
+// Bridge touching or nearly touching contours after dilation
+// This fills small gaps where two contour outlines meet or nearly meet
+function bridgeTouchingContours(mask: Uint8Array, width: number, height: number, effectiveDPI: number): Uint8Array {
+  const result = new Uint8Array(mask.length);
+  result.set(mask);
+  
+  // Bridge gaps up to 0.03" (touching threshold)
+  const bridgeThresholdPixels = Math.max(2, Math.round(0.03 * effectiveDPI));
+  
+  // Find gaps that are surrounded by content on multiple sides
+  // This indicates where two contour regions are touching
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      
+      if (mask[idx] === 0) {
+        // Check if this empty pixel is between content regions
+        let contentDirections = 0;
+        let hasContentTop = false, hasContentBottom = false;
+        let hasContentLeft = false, hasContentRight = false;
+        
+        // Look for content in each direction within bridgeThreshold
+        for (let d = 1; d <= bridgeThresholdPixels; d++) {
+          if (!hasContentTop && y - d >= 0 && mask[(y - d) * width + x] === 1) {
+            hasContentTop = true;
+          }
+          if (!hasContentBottom && y + d < height && mask[(y + d) * width + x] === 1) {
+            hasContentBottom = true;
+          }
+          if (!hasContentLeft && x - d >= 0 && mask[y * width + (x - d)] === 1) {
+            hasContentLeft = true;
+          }
+          if (!hasContentRight && x + d < width && mask[y * width + (x + d)] === 1) {
+            hasContentRight = true;
+          }
+        }
+        
+        // Also check diagonal directions for better corner detection
+        let hasContentTopLeft = false, hasContentTopRight = false;
+        let hasContentBottomLeft = false, hasContentBottomRight = false;
+        
+        for (let d = 1; d <= bridgeThresholdPixels; d++) {
+          if (!hasContentTopLeft && y - d >= 0 && x - d >= 0 && mask[(y - d) * width + (x - d)] === 1) {
+            hasContentTopLeft = true;
+          }
+          if (!hasContentTopRight && y - d >= 0 && x + d < width && mask[(y - d) * width + (x + d)] === 1) {
+            hasContentTopRight = true;
+          }
+          if (!hasContentBottomLeft && y + d < height && x - d >= 0 && mask[(y + d) * width + (x - d)] === 1) {
+            hasContentBottomLeft = true;
+          }
+          if (!hasContentBottomRight && y + d < height && x + d < width && mask[(y + d) * width + (x + d)] === 1) {
+            hasContentBottomRight = true;
+          }
+        }
+        
+        // Count content directions
+        if (hasContentTop) contentDirections++;
+        if (hasContentBottom) contentDirections++;
+        if (hasContentLeft) contentDirections++;
+        if (hasContentRight) contentDirections++;
+        
+        // Bridge if:
+        // 1. Content on opposing sides (vertical or horizontal)
+        // 2. OR content on 3+ directions (corner case)
+        // 3. OR diagonal touching (content on diagonal + adjacent)
+        const hasOpposingSides = (hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight);
+        const hasDiagonalTouch = (hasContentTopLeft && hasContentBottomRight) || 
+                                  (hasContentTopRight && hasContentBottomLeft);
+        const isCorner = contentDirections >= 3;
+        
+        if (hasOpposingSides || isCorner || hasDiagonalTouch) {
+          result[idx] = 1;
+        }
+      }
+    }
+  }
+  
+  // Second pass: fill any remaining tiny interior holes created by the bridging
+  // Use flood fill from edges to identify exterior, then fill non-exterior gaps
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [];
+  
+  // Add all edge pixels that are still transparent to the queue
+  for (let x = 0; x < width; x++) {
+    if (result[x] === 0 && !visited[x]) {
+      queue.push(x);
+      visited[x] = 1;
+    }
+    const bottomIdx = (height - 1) * width + x;
+    if (result[bottomIdx] === 0 && !visited[bottomIdx]) {
+      queue.push(bottomIdx);
+      visited[bottomIdx] = 1;
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    const leftIdx = y * width;
+    if (result[leftIdx] === 0 && !visited[leftIdx]) {
+      queue.push(leftIdx);
+      visited[leftIdx] = 1;
+    }
+    const rightIdx = y * width + width - 1;
+    if (result[rightIdx] === 0 && !visited[rightIdx]) {
+      queue.push(rightIdx);
+      visited[rightIdx] = 1;
+    }
+  }
+  
+  // Flood fill to find all exterior pixels
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    
+    const neighbors = [
+      { nx: x - 1, ny: y },
+      { nx: x + 1, ny: y },
+      { nx: x, ny: y - 1 },
+      { nx: x, ny: y + 1 }
+    ];
+    
+    for (const { nx, ny } of neighbors) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const nidx = ny * width + nx;
+        if (!visited[nidx] && result[nidx] === 0) {
+          visited[nidx] = 1;
+          queue.push(nidx);
+        }
+      }
+    }
+  }
+  
+  // Fill all non-exterior transparent pixels (tiny interior holes)
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] === 0 && !visited[i]) {
+      result[i] = 1;
+    }
+  }
+  
+  return result;
 }
 
 function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
