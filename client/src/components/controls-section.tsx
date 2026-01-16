@@ -90,7 +90,7 @@ export default function ControlsSection({
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.message || "Failed to send design");
+        throw new Error(error.error || error.message || "Failed to send design");
       }
 
       toast({
