@@ -893,7 +893,8 @@ export async function downloadContourPDF(
   
   const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
   
-  const bleedInches = 0.04; // 0.04" bleed around the contour
+  // Bleed is Large (0.14") offset, or Huge (0.25") if Large is selected
+  const bleedInches = strokeSettings.width >= 0.14 ? 0.25 : 0.14;
   const bleedPts = bleedInches * 72;
   
   // Page size includes bleed area
@@ -1081,7 +1082,8 @@ export async function generateContourPDFBase64(
   
   const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
   
-  const bleedInches = 0.04; // 0.04" bleed around the contour
+  // Bleed is Large (0.14") offset, or Huge (0.25") if Large is selected
+  const bleedInches = strokeSettings.width >= 0.14 ? 0.25 : 0.14;
   const bleedPts = bleedInches * 72;
   
   // Page size includes bleed area

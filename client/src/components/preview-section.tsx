@@ -215,7 +215,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const displayY = (canvasHeight - displayHeight) / 2;
           
           // Draw background fill color behind the contour (with bleed simulation)
-          const bleedPixels = 0.04 * (displayWidth / (resizeSettings.widthInches + strokeSettings.width * 2 + 0.03));
+          // Bleed is Large (0.14") offset, or Huge (0.25") if Large is selected
+          const bleedInches = strokeSettings.width >= 0.14 ? 0.25 : 0.14;
+          const bleedPixels = bleedInches * (displayWidth / (resizeSettings.widthInches + strokeSettings.width * 2 + 0.03));
           
           // Create a temporary canvas to extract the contour shape for filling
           const tempCanvas = document.createElement('canvas');
