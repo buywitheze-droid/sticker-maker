@@ -916,34 +916,14 @@ export async function downloadContourPDF(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill using the same path as the cutline (no bleed expansion)
+  // Draw background fill as a full page rectangle (will be cut to contour shape)
   if (pathPoints.length > 2) {
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the contour path as a filled shape
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
-    bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    // Fill entire page with background color
+    bgPathOps += `0 0 ${widthPts.toFixed(4)} ${heightPts.toFixed(4)} re f\n`;
     
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
-      const endX = p2.x * 72 + bleedPts;
-      const endY = p2.y * 72 + bleedPts;
-      
-      bgPathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
-    }
-    
-    bgPathOps += 'h f\n'; // Close and fill
     bgPathOps += 'Q\n';
     
     const bgStream = context.stream(bgPathOps);
@@ -1105,34 +1085,14 @@ export async function generateContourPDFBase64(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill using the same path as the cutline (no bleed expansion)
+  // Draw background fill as a full page rectangle (will be cut to contour shape)
   if (pathPoints.length > 2) {
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the contour path as a filled shape
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
-    bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    // Fill entire page with background color
+    bgPathOps += `0 0 ${widthPts.toFixed(4)} ${heightPts.toFixed(4)} re f\n`;
     
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
-      const endX = p2.x * 72 + bleedPts;
-      const endY = p2.y * 72 + bleedPts;
-      
-      bgPathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
-    }
-    
-    bgPathOps += 'h f\n'; // Close and fill
     bgPathOps += 'Q\n';
     
     const bgStream = context.stream(bgPathOps);
