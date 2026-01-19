@@ -916,46 +916,34 @@ export async function downloadContourPDF(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed - expand outward from the cutline
+  // Draw background fill with bleed - scale path outward from center
   if (pathPoints.length > 2) {
-    // Calculate expanded path points (offset outward by bleed amount)
-    const expandedPoints: Array<{x: number, y: number}> = [];
-    const bleedInchesOffset = bleedInches;
-    
-    for (let i = 0; i < pathPoints.length; i++) {
-      const prev = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const curr = pathPoints[i];
-      const next = pathPoints[(i + 1) % pathPoints.length];
-      
-      // Calculate direction vectors
-      const dx1 = curr.x - prev.x;
-      const dy1 = curr.y - prev.y;
-      const dx2 = next.x - curr.x;
-      const dy2 = next.y - curr.y;
-      
-      // Calculate outward normals (perpendicular, pointing outward)
-      // For counter-clockwise path in PDF coords, outward normal is (dy, -dx)
-      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
-      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
-      
-      const nx1 = dy1 / len1;
-      const ny1 = -dx1 / len1;
-      const nx2 = dy2 / len2;
-      const ny2 = -dx2 / len2;
-      
-      // Average the normals for a smooth offset
-      let nx = (nx1 + nx2) / 2;
-      let ny = (ny1 + ny2) / 2;
-      const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
-      nx /= nlen;
-      ny /= nlen;
-      
-      // Offset the point outward
-      expandedPoints.push({
-        x: curr.x + nx * bleedInchesOffset,
-        y: curr.y + ny * bleedInchesOffset
-      });
+    // Calculate centroid of the path
+    let centroidX = 0, centroidY = 0;
+    for (const p of pathPoints) {
+      centroidX += p.x;
+      centroidY += p.y;
     }
+    centroidX /= pathPoints.length;
+    centroidY /= pathPoints.length;
+    
+    // Calculate the average radius from centroid to path points
+    let avgRadius = 0;
+    for (const p of pathPoints) {
+      const dx = p.x - centroidX;
+      const dy = p.y - centroidY;
+      avgRadius += Math.sqrt(dx * dx + dy * dy);
+    }
+    avgRadius /= pathPoints.length;
+    
+    // Scale factor to expand by bleed amount
+    const scaleFactor = avgRadius > 0 ? (avgRadius + bleedInches) / avgRadius : 1;
+    
+    // Create expanded path by scaling from centroid
+    const expandedPoints: Array<{x: number, y: number}> = pathPoints.map(p => ({
+      x: centroidX + (p.x - centroidX) * scaleFactor,
+      y: centroidY + (p.y - centroidY) * scaleFactor
+    }));
     
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
@@ -1144,46 +1132,34 @@ export async function generateContourPDFBase64(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed - expand outward from the cutline
+  // Draw background fill with bleed - scale path outward from center
   if (pathPoints.length > 2) {
-    // Calculate expanded path points (offset outward by bleed amount)
-    const expandedPoints: Array<{x: number, y: number}> = [];
-    const bleedInchesOffset = bleedInches;
-    
-    for (let i = 0; i < pathPoints.length; i++) {
-      const prev = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const curr = pathPoints[i];
-      const next = pathPoints[(i + 1) % pathPoints.length];
-      
-      // Calculate direction vectors
-      const dx1 = curr.x - prev.x;
-      const dy1 = curr.y - prev.y;
-      const dx2 = next.x - curr.x;
-      const dy2 = next.y - curr.y;
-      
-      // Calculate outward normals (perpendicular, pointing outward)
-      // For counter-clockwise path in PDF coords, outward normal is (dy, -dx)
-      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
-      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
-      
-      const nx1 = dy1 / len1;
-      const ny1 = -dx1 / len1;
-      const nx2 = dy2 / len2;
-      const ny2 = -dx2 / len2;
-      
-      // Average the normals for a smooth offset
-      let nx = (nx1 + nx2) / 2;
-      let ny = (ny1 + ny2) / 2;
-      const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
-      nx /= nlen;
-      ny /= nlen;
-      
-      // Offset the point outward
-      expandedPoints.push({
-        x: curr.x + nx * bleedInchesOffset,
-        y: curr.y + ny * bleedInchesOffset
-      });
+    // Calculate centroid of the path
+    let centroidX = 0, centroidY = 0;
+    for (const p of pathPoints) {
+      centroidX += p.x;
+      centroidY += p.y;
     }
+    centroidX /= pathPoints.length;
+    centroidY /= pathPoints.length;
+    
+    // Calculate the average radius from centroid to path points
+    let avgRadius = 0;
+    for (const p of pathPoints) {
+      const dx = p.x - centroidX;
+      const dy = p.y - centroidY;
+      avgRadius += Math.sqrt(dx * dx + dy * dy);
+    }
+    avgRadius /= pathPoints.length;
+    
+    // Scale factor to expand by bleed amount
+    const scaleFactor = avgRadius > 0 ? (avgRadius + bleedInches) / avgRadius : 1;
+    
+    // Create expanded path by scaling from centroid
+    const expandedPoints: Array<{x: number, y: number}> = pathPoints.map(p => ({
+      x: centroidX + (p.x - centroidX) * scaleFactor,
+      y: centroidY + (p.y - centroidY) * scaleFactor
+    }));
     
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
