@@ -934,14 +934,14 @@ export async function downloadContourPDF(
       const dy2 = next.y - curr.y;
       
       // Calculate outward normals (perpendicular, pointing outward)
-      // For a clockwise path, outward normal is (-dy, dx)
+      // For counter-clockwise path in PDF coords, outward normal is (dy, -dx)
       const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
       const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
       
-      const nx1 = -dy1 / len1;
-      const ny1 = dx1 / len1;
-      const nx2 = -dy2 / len2;
-      const ny2 = dx2 / len2;
+      const nx1 = dy1 / len1;
+      const ny1 = -dx1 / len1;
+      const nx2 = dy2 / len2;
+      const ny2 = -dx2 / len2;
       
       // Average the normals for a smooth offset
       let nx = (nx1 + nx2) / 2;
@@ -1162,14 +1162,14 @@ export async function generateContourPDFBase64(
       const dy2 = next.y - curr.y;
       
       // Calculate outward normals (perpendicular, pointing outward)
-      // For a clockwise path, outward normal is (-dy, dx)
+      // For counter-clockwise path in PDF coords, outward normal is (dy, -dx)
       const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
       const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
       
-      const nx1 = -dy1 / len1;
-      const ny1 = dx1 / len1;
-      const nx2 = -dy2 / len2;
-      const ny2 = dx2 / len2;
+      const nx1 = dy1 / len1;
+      const ny1 = -dx1 / len1;
+      const nx2 = dy2 / len2;
+      const ny2 = -dx2 / len2;
       
       // Average the normals for a smooth offset
       let nx = (nx1 + nx2) / 2;
