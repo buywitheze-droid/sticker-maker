@@ -74,7 +74,6 @@ export default function ControlsSection({
       let pdfBase64 = "";
       
       if (imageInfo?.image) {
-        // Generate PDF with CutContour (same as download)
         if (strokeSettings.enabled) {
           const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings);
           pdfBase64 = result || "";
@@ -88,7 +87,6 @@ export default function ControlsSection({
         throw new Error("Failed to generate PDF. Please try again.");
       }
 
-      // Use FormData for multipart upload
       const formData = new FormData();
       formData.append('customerName', customerName.trim());
       formData.append('customerEmail', customerEmail.trim());
@@ -142,7 +140,6 @@ export default function ControlsSection({
     <div className="lg:col-span-1">
       <h2 className="text-lg font-semibold text-white mb-4">Adjustments</h2>
       <div className="space-y-6">
-
 
         {/* Contour Outline Card */}
         <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
@@ -241,94 +238,27 @@ export default function ControlsSection({
                   </Select>
                 </div>
 
-                {(shapeSettings.type === 'circle' || shapeSettings.type === 'square') ? (
-                  <div>
-                    <Label>Sticker Size (inches)</Label>
-                    <Slider
-                      value={[shapeSettings.widthInches]}
-                      onValueChange={([value]) => onShapeChange({ widthInches: value, heightInches: value })}
-                      min={1}
-                      max={12}
-                      step={0.1}
-                      className="mt-2"
-                    />
-                    <div className="text-sm text-gray-500 mt-1">
-                      {shapeSettings.widthInches}"
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      <Label>Width (inches)</Label>
-                      <Slider
-                        value={[shapeSettings.widthInches]}
-                        onValueChange={([value]) => onShapeChange({ widthInches: value })}
-                        min={1}
-                        max={12}
-                        step={0.1}
-                        className="mt-2"
-                      />
-                      <div className="text-sm text-gray-500 mt-1">
-                        {shapeSettings.widthInches}"
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label>Height (inches)</Label>
-                      <Slider
-                        value={[shapeSettings.heightInches]}
-                        onValueChange={([value]) => onShapeChange({ heightInches: value })}
-                        min={1}
-                        max={12}
-                        step={0.1}
-                        className="mt-2"
-                      />
-                      <div className="text-sm text-gray-500 mt-1">
-                        {shapeSettings.heightInches}"
-                      </div>
-                    </div>
-                  </>
-                )}
-
                 <div>
-                  <Label>Image Size (inches)</Label>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div>
-                      <Label className="text-xs text-gray-500">Width</Label>
-                      <Slider
-                        value={[resizeSettings.widthInches]}
-                        onValueChange={([value]) => onResizeChange({ widthInches: value })}
-                        min={0.5}
-                        max={12}
-                        step={0.1}
-                        className="mt-1"
-                      />
-                      <div className="text-xs text-gray-500">
-                        {resizeSettings.widthInches}"
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-500">Height</Label>
-                      <Slider
-                        value={[resizeSettings.heightInches]}
-                        onValueChange={([value]) => onResizeChange({ heightInches: value })}
-                        min={0.5}
-                        max={12}
-                        step={0.1}
-                        className="mt-1"
-                      />
-                      <div className="text-xs text-gray-500">
-                        {resizeSettings.heightInches}"
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <Checkbox
-                      checked={resizeSettings.maintainAspectRatio}
-                      onCheckedChange={(checked) => onResizeChange({ maintainAspectRatio: !!checked })}
-                    />
-                    <Label className="text-xs">Lock aspect ratio</Label>
-                  </div>
+                  <Label>Offset (margin around design)</Label>
+                  <Select
+                    value={shapeSettings.offset.toString()}
+                    onValueChange={(value) => onShapeChange({ offset: parseFloat(value) })}
+                  >
+                    <SelectTrigger className="mt-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0.0625">1/16" (0.0625")</SelectItem>
+                      <SelectItem value="0.125">1/8" (0.125")</SelectItem>
+                      <SelectItem value="0.1875">3/16" (0.1875")</SelectItem>
+                      <SelectItem value="0.25">1/4" (0.25")</SelectItem>
+                      <SelectItem value="0.375">3/8" (0.375")</SelectItem>
+                      <SelectItem value="0.5">1/2" (0.5")</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Shape size adjusts automatically based on your design
+                  </p>
                 </div>
 
                 <div>
@@ -387,10 +317,6 @@ export default function ControlsSection({
             )}
           </CardContent>
         </Card>
-
-
-
-
 
         {/* Send Design Section */}
         <Card>

@@ -10,7 +10,7 @@ import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
 import { downloadContourPDF } from "@/lib/contour-outline";
-import { downloadShapePDF } from "@/lib/shape-outline";
+import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
@@ -35,25 +35,23 @@ export default function ImageEditor() {
   const [shapeSettings, setShapeSettings] = useState<ShapeSettings>({
     enabled: false,
     type: 'square',
-    widthInches: 4.0,
-    heightInches: 4.0,
+    offset: 0.125, // Default 1/8" offset around design
     fillColor: '#FFFFFF',
     strokeEnabled: false,
     strokeWidth: 2,
     strokeColor: '#000000',
-    offsetX: 0,
-    offsetY: 0,
   });
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 16, y: 16 }); // Initial position: top-right
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Function to update CadCut bounds checking
-  const updateCadCutBounds = useCallback((shapeWidthInches: number, shapeHeightInches: number) => {
+  // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
+  const updateCadCutBounds = useCallback((
+    shapeWidthInches: number, 
+    shapeHeightInches: number,
+    currentShapeSettings: ShapeSettings
+  ) => {
     if (!imageInfo) {
       setCadCutBounds(null);
       return;
@@ -65,13 +63,13 @@ export default function ImageEditor() {
 
     const bounds = checkCadCutBounds(
       imageInfo.image,
-      shapeSettings,
+      currentShapeSettings,
       shapeWidthPixels,
       shapeHeightPixels
     );
 
     setCadCutBounds(bounds);
-  }, [imageInfo, shapeSettings]);
+  }, [imageInfo]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
@@ -119,15 +117,14 @@ export default function ImageEditor() {
           heightInches,
         }));
         
-        // Update shape settings and check bounds
-        setShapeSettings(prev => ({
-          ...prev,
+        // Initial bounds check using auto-sized shape dimensions
+        const shapeDims = calculateShapeDimensions(
           widthInches,
           heightInches,
-        }));
-        
-        // Initial bounds check
-        updateCadCutBounds(widthInches, heightInches);
+          shapeSettings.type,
+          shapeSettings.offset
+        );
+        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
       };
       
       croppedImage.onerror = () => {
@@ -140,7 +137,7 @@ export default function ImageEditor() {
       console.error('Error processing uploaded image:', error);
       handleFallbackImage(file, image);
     }
-  }, []);
+  }, [shapeSettings, updateCadCutBounds]);
 
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
@@ -172,13 +169,14 @@ export default function ImageEditor() {
         heightInches,
       }));
       
-      setShapeSettings(prev => ({
-        ...prev,
+      // Initial bounds check using auto-sized shape dimensions
+      const shapeDims = calculateShapeDimensions(
         widthInches,
         heightInches,
-      }));
-
-      updateCadCutBounds(widthInches, heightInches);
+        shapeSettings.type,
+        shapeSettings.offset
+      );
+      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
     };
 
     if (croppedCanvas) {
@@ -186,7 +184,7 @@ export default function ImageEditor() {
     } else {
       processImage();
     }
-  }, [updateCadCutBounds]);
+  }, [shapeSettings, updateCadCutBounds]);
 
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {
@@ -201,9 +199,20 @@ export default function ImageEditor() {
         updated.widthInches = parseFloat((newSettings.heightInches * aspectRatio).toFixed(1));
       }
       
+      // Recalculate bounds with auto-sized shape dimensions
+      if (shapeSettings.enabled) {
+        const shapeDims = calculateShapeDimensions(
+          updated.widthInches,
+          updated.heightInches,
+          shapeSettings.type,
+          shapeSettings.offset
+        );
+        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
+      }
+      
       return updated;
     });
-  }, [imageInfo]);
+  }, [imageInfo, shapeSettings, updateCadCutBounds]);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     const updated = { ...strokeSettings, ...newSettings };
@@ -216,73 +225,8 @@ export default function ImageEditor() {
     setStrokeSettings(updated);
   }, [strokeSettings]);
 
-  const handlePositionChange = useCallback((deltaX: number, deltaY: number) => {
-    setShapeSettings(prev => ({
-      ...prev,
-      offsetX: prev.offsetX + deltaX,
-      offsetY: prev.offsetY + deltaY,
-    }));
-  }, []);
-
-  const handleMenuMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.target === e.currentTarget || (e.target as HTMLElement).closest('.menu-header')) {
-      setIsDragging(true);
-      const rect = e.currentTarget.getBoundingClientRect();
-      setDragOffset({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      });
-      e.preventDefault();
-    }
-  }, []);
-
-  const handleMenuMouseMove = useCallback((e: MouseEvent) => {
-    if (!isDragging) return;
-    
-    const previewContainer = document.querySelector('.preview-container');
-    if (!previewContainer) return;
-    
-    const containerRect = previewContainer.getBoundingClientRect();
-    const newX = e.clientX - containerRect.left - dragOffset.x;
-    const newY = e.clientY - containerRect.top - dragOffset.y;
-    
-    // Keep menu within bounds
-    const menuWidth = 96; // w-24 = 96px
-    const menuHeight = 120; // Approximate height
-    const maxX = containerRect.width - menuWidth;
-    const maxY = containerRect.height - menuHeight;
-    
-    setMenuPosition({
-      x: Math.max(0, Math.min(newX, maxX)),
-      y: Math.max(0, Math.min(newY, maxY)),
-    });
-  }, [isDragging, dragOffset]);
-
-  const handleMenuMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  // Add global event listeners for dragging
-  useEffect(() => {
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMenuMouseMove);
-      document.addEventListener('mouseup', handleMenuMouseUp);
-      return () => {
-        document.removeEventListener('mousemove', handleMenuMouseMove);
-        document.removeEventListener('mouseup', handleMenuMouseUp);
-      };
-    }
-  }, [isDragging, handleMenuMouseMove, handleMenuMouseUp]);
-
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
     const updated = { ...shapeSettings, ...newSettings };
-    
-    // Auto-adjust height for square shapes
-    if (updated.type === 'square' && newSettings.widthInches !== undefined) {
-      updated.heightInches = newSettings.widthInches;
-    } else if (updated.type === 'square' && newSettings.heightInches !== undefined) {
-      updated.widthInches = newSettings.heightInches;
-    }
     
     // If enabling shape, disable stroke for mutual exclusion
     if (newSettings.enabled === true) {
@@ -291,11 +235,17 @@ export default function ImageEditor() {
     
     setShapeSettings(updated);
     
-    // Update CadCut bounds when shape settings change
-    if (imageInfo && (newSettings.widthInches || newSettings.heightInches || newSettings.type)) {
-      updateCadCutBounds(updated.widthInches, updated.heightInches);
+    // Recalculate bounds with auto-sized shape dimensions - pass updated settings to avoid stale closure
+    if (updated.enabled && imageInfo) {
+      const shapeDims = calculateShapeDimensions(
+        resizeSettings.widthInches,
+        resizeSettings.heightInches,
+        updated.type,
+        updated.offset
+      );
+      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, updated);
     }
-  }, [shapeSettings, imageInfo, updateCadCutBounds]);
+  }, [shapeSettings, imageInfo, resizeSettings, updateCadCutBounds]);
 
 
 
@@ -311,9 +261,15 @@ export default function ImageEditor() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Calculate output dimensions
-        const outputWidth = shapeSettings.widthInches * 300;
-        const outputHeight = shapeSettings.heightInches * 300;
+        // Calculate output dimensions using auto-sizing
+        const shapeDims = calculateShapeDimensions(
+          resizeSettings.widthInches,
+          resizeSettings.heightInches,
+          shapeSettings.type,
+          shapeSettings.offset
+        );
+        const outputWidth = shapeDims.widthInches * 300;
+        const outputHeight = shapeDims.heightInches * 300;
         
         canvas.width = outputWidth;
         canvas.height = outputHeight;
@@ -375,11 +331,9 @@ export default function ImageEditor() {
           imageWidth = imageHeight * imageAspect;
         }
         
-        // Apply manual position offset
-        const baseImageX = (outputWidth - imageWidth) / 2;
-        const baseImageY = (outputHeight - imageHeight) / 2;
-        const imageX = baseImageX + (shapeSettings.offsetX || 0);
-        const imageY = baseImageY + (shapeSettings.offsetY || 0);
+        // Center the design in the shape (no manual offset needed)
+        const imageX = (outputWidth - imageWidth) / 2;
+        const imageY = (outputHeight - imageHeight) / 2;
         
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
 
@@ -505,86 +459,6 @@ export default function ImageEditor() {
           cadCutBounds={cadCutBounds}
         />
         
-        {/* Draggable Position Control Menu */}
-        {imageInfo && shapeSettings.enabled && (
-          <div 
-            className="absolute bg-white dark:bg-gray-800 rounded-lg shadow-lg p-2 border border-gray-200 dark:border-gray-700 cursor-move select-none"
-            style={{ 
-              left: `${menuPosition.x}px`, 
-              top: `${menuPosition.y}px`,
-              right: 'auto',
-              zIndex: 10
-            }}
-            onMouseDown={handleMenuMouseDown}
-          >
-            <div className="text-xs text-gray-600 dark:text-gray-400 text-center mb-2 font-medium menu-header">
-              Position
-            </div>
-            <div className="grid grid-cols-3 gap-1 w-24 h-24">
-              {/* Top arrow */}
-              <div></div>
-              <button
-                onClick={() => handlePositionChange(0, -20)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                title="Move Up"
-              >
-                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-              <div></div>
-              
-              {/* Left and Right arrows */}
-              <button
-                onClick={() => handlePositionChange(-20, 0)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                title="Move Left"
-              >
-                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-              </button>
-              
-              <button
-                onClick={() => setShapeSettings(prev => ({ ...prev, offsetX: 0, offsetY: 0 }))}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 h-6 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 rounded transition-colors"
-                title="Reset Position"
-              >
-                <svg className="w-3 h-3 text-blue-600 dark:text-blue-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v3.586l1.707-1.707a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8 10.586V7z" clipRule="evenodd" />
-                </svg>
-              </button>
-              
-              <button
-                onClick={() => handlePositionChange(20, 0)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                title="Move Right"
-              >
-                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                </svg>
-              </button>
-              
-              {/* Bottom arrow */}
-              <div></div>
-              <button
-                onClick={() => handlePositionChange(0, 20)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="flex items-center justify-center w-6 h-6 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                title="Move Down"
-              >
-                <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-              <div></div>
-            </div>
-          </div>
-        )}
       </div>
       
       <ControlsSection

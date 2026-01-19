@@ -2,14 +2,53 @@ import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
 
+export function calculateShapeDimensions(
+  designWidthInches: number,
+  designHeightInches: number,
+  shapeType: ShapeSettings['type'],
+  offset: number
+): { widthInches: number; heightInches: number } {
+  const totalOffset = offset * 2; // offset on each side
+  
+  if (shapeType === 'circle') {
+    // Circle uses the larger dimension to ensure design fits
+    const diameter = Math.max(designWidthInches, designHeightInches) + totalOffset;
+    return { widthInches: diameter, heightInches: diameter };
+  } else if (shapeType === 'square') {
+    // Square uses the larger dimension
+    const size = Math.max(designWidthInches, designHeightInches) + totalOffset;
+    return { widthInches: size, heightInches: size };
+  } else if (shapeType === 'oval') {
+    // Oval follows the design aspect ratio
+    return {
+      widthInches: designWidthInches + totalOffset,
+      heightInches: designHeightInches + totalOffset
+    };
+  } else {
+    // Rectangle follows the design aspect ratio
+    return {
+      widthInches: designWidthInches + totalOffset,
+      heightInches: designHeightInches + totalOffset
+    };
+  }
+}
+
 export async function downloadShapePDF(
   image: HTMLImageElement,
   shapeSettings: ShapeSettings,
   resizeSettings: ResizeSettings,
   filename: string
 ): Promise<void> {
-  const widthPts = shapeSettings.widthInches * 72;
-  const heightPts = shapeSettings.heightInches * 72;
+  // Calculate shape size based on design size + offset
+  const { widthInches, heightInches } = calculateShapeDimensions(
+    resizeSettings.widthInches,
+    resizeSettings.heightInches,
+    shapeSettings.type,
+    shapeSettings.offset
+  );
+  
+  const widthPts = widthInches * 72;
+  const heightPts = heightInches * 72;
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
@@ -41,11 +80,9 @@ export async function downloadShapePDF(
   const imageWidth = resizeSettings.widthInches * 72;
   const imageHeight = resizeSettings.heightInches * 72;
   
-  const dpiToPoints = 72 / 300;
-  const offsetXPts = (shapeSettings.offsetX || 0) * dpiToPoints;
-  const offsetYPts = (shapeSettings.offsetY || 0) * dpiToPoints;
-  const imageX = (widthPts - imageWidth) / 2 + offsetXPts;
-  const imageY = (heightPts - imageHeight) / 2 - offsetYPts;
+  // Center the image in the shape
+  const imageX = (widthPts - imageWidth) / 2;
+  const imageY = (heightPts - imageHeight) / 2;
   
   page.drawImage(pngImage, {
     x: imageX,
@@ -164,8 +201,16 @@ export async function generateShapePDFBase64(
   shapeSettings: ShapeSettings,
   resizeSettings: ResizeSettings
 ): Promise<string | null> {
-  const widthPts = shapeSettings.widthInches * 72;
-  const heightPts = shapeSettings.heightInches * 72;
+  // Calculate shape size based on design size + offset
+  const { widthInches, heightInches } = calculateShapeDimensions(
+    resizeSettings.widthInches,
+    resizeSettings.heightInches,
+    shapeSettings.type,
+    shapeSettings.offset
+  );
+  
+  const widthPts = widthInches * 72;
+  const heightPts = heightInches * 72;
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
@@ -197,11 +242,9 @@ export async function generateShapePDFBase64(
   const imageWidth = resizeSettings.widthInches * 72;
   const imageHeight = resizeSettings.heightInches * 72;
   
-  const dpiToPoints = 72 / 300;
-  const offsetXPts = (shapeSettings.offsetX || 0) * dpiToPoints;
-  const offsetYPts = (shapeSettings.offsetY || 0) * dpiToPoints;
-  const imageX = (widthPts - imageWidth) / 2 + offsetXPts;
-  const imageY = (heightPts - imageHeight) / 2 - offsetYPts;
+  // Center the image in the shape
+  const imageX = (widthPts - imageWidth) / 2;
+  const imageY = (heightPts - imageHeight) / 2;
   
   page.drawImage(pngImage, {
     x: imageX,
