@@ -916,48 +916,21 @@ export async function downloadContourPDF(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed - scale path outward from center
+  // Draw background fill using the same path as the cutline (no bleed expansion)
   if (pathPoints.length > 2) {
-    // Calculate centroid of the path
-    let centroidX = 0, centroidY = 0;
-    for (const p of pathPoints) {
-      centroidX += p.x;
-      centroidY += p.y;
-    }
-    centroidX /= pathPoints.length;
-    centroidY /= pathPoints.length;
-    
-    // Calculate the average radius from centroid to path points
-    let avgRadius = 0;
-    for (const p of pathPoints) {
-      const dx = p.x - centroidX;
-      const dy = p.y - centroidY;
-      avgRadius += Math.sqrt(dx * dx + dy * dy);
-    }
-    avgRadius /= pathPoints.length;
-    
-    // Scale factor to expand by bleed amount
-    const scaleFactor = avgRadius > 0 ? (avgRadius + bleedInches) / avgRadius : 1;
-    
-    // Create expanded path by scaling from centroid
-    const expandedPoints: Array<{x: number, y: number}> = pathPoints.map(p => ({
-      x: centroidX + (p.x - centroidX) * scaleFactor,
-      y: centroidY + (p.y - centroidY) * scaleFactor
-    }));
-    
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the expanded contour path
-    const startX = expandedPoints[0].x * 72 + bleedPts;
-    const startY = expandedPoints[0].y * 72 + bleedPts;
+    // Draw the contour path as a filled shape
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
     bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
-    for (let i = 0; i < expandedPoints.length; i++) {
-      const p0 = expandedPoints[(i - 1 + expandedPoints.length) % expandedPoints.length];
-      const p1 = expandedPoints[i];
-      const p2 = expandedPoints[(i + 1) % expandedPoints.length];
-      const p3 = expandedPoints[(i + 2) % expandedPoints.length];
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
@@ -1132,48 +1105,21 @@ export async function generateContourPDFBase64(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed - scale path outward from center
+  // Draw background fill using the same path as the cutline (no bleed expansion)
   if (pathPoints.length > 2) {
-    // Calculate centroid of the path
-    let centroidX = 0, centroidY = 0;
-    for (const p of pathPoints) {
-      centroidX += p.x;
-      centroidY += p.y;
-    }
-    centroidX /= pathPoints.length;
-    centroidY /= pathPoints.length;
-    
-    // Calculate the average radius from centroid to path points
-    let avgRadius = 0;
-    for (const p of pathPoints) {
-      const dx = p.x - centroidX;
-      const dy = p.y - centroidY;
-      avgRadius += Math.sqrt(dx * dx + dy * dy);
-    }
-    avgRadius /= pathPoints.length;
-    
-    // Scale factor to expand by bleed amount
-    const scaleFactor = avgRadius > 0 ? (avgRadius + bleedInches) / avgRadius : 1;
-    
-    // Create expanded path by scaling from centroid
-    const expandedPoints: Array<{x: number, y: number}> = pathPoints.map(p => ({
-      x: centroidX + (p.x - centroidX) * scaleFactor,
-      y: centroidY + (p.y - centroidY) * scaleFactor
-    }));
-    
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the expanded contour path
-    const startX = expandedPoints[0].x * 72 + bleedPts;
-    const startY = expandedPoints[0].y * 72 + bleedPts;
+    // Draw the contour path as a filled shape
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
     bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
-    for (let i = 0; i < expandedPoints.length; i++) {
-      const p0 = expandedPoints[(i - 1 + expandedPoints.length) % expandedPoints.length];
-      const p1 = expandedPoints[i];
-      const p2 = expandedPoints[(i + 1) % expandedPoints.length];
-      const p3 = expandedPoints[(i + 2) % expandedPoints.length];
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
