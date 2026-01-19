@@ -916,23 +916,7 @@ export async function downloadContourPDF(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill as a full page rectangle (will be cut to contour shape)
-  if (pathPoints.length > 2) {
-    let bgPathOps = 'q\n';
-    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
-    
-    // Fill entire page with background color
-    bgPathOps += `0 0 ${widthPts.toFixed(4)} ${heightPts.toFixed(4)} re f\n`;
-    
-    bgPathOps += 'Q\n';
-    
-    const bgStream = context.stream(bgPathOps);
-    const bgStreamRef = context.register(bgStream);
-    
-    // Insert background as first content stream
-    page.node.set(PDFName.of('Contents'), bgStreamRef);
-  }
-  
+  // First, prepare the image
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return;
@@ -948,12 +932,52 @@ export async function downloadContourPDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // Adjust image position for bleed
+  // Image position
   const imageXPts = imageOffsetX * 72 + bleedPts;
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72 + bleedPts;
   
+  // Build the bezier path string (used for both fill and cutline)
+  const buildBezierPath = (): string => {
+    let path = '';
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
+    path += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
+      
+      path += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    return path;
+  };
+  
+  if (pathPoints.length > 2) {
+    // Draw background fill using exact same path as cutline
+    let bgPathOps = 'q\n';
+    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
+    bgPathOps += buildBezierPath();
+    bgPathOps += 'h f\n';
+    bgPathOps += 'Q\n';
+    
+    const bgStream = context.stream(bgPathOps);
+    const bgStreamRef = context.register(bgStream);
+    page.node.set(PDFName.of('Contents'), bgStreamRef);
+  }
+  
+  // Draw image on top of fill
   page.drawImage(pngImage, {
     x: imageXPts,
     y: imageYPts,
@@ -962,6 +986,7 @@ export async function downloadContourPDF(
   });
   
   if (pathPoints.length > 2) {
+    // Setup CutContour spot color
     const tintFunction = context.obj({
       FunctionType: 2,
       Domain: [0, 1],
@@ -989,32 +1014,11 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Cut line at exact position (with bleed offset for page coordinates)
+    // Draw cutline using exact same path as fill
     let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
-    
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
-    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
-    
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
-      const endX = p2.x * 72 + bleedPts;
-      const endY = p2.y * 72 + bleedPts;
-      
-      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
-    }
-    
+    pathOps += buildBezierPath();
     pathOps += 'h S\n';
     pathOps += 'Q\n';
     
@@ -1085,23 +1089,7 @@ export async function generateContourPDFBase64(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill as a full page rectangle (will be cut to contour shape)
-  if (pathPoints.length > 2) {
-    let bgPathOps = 'q\n';
-    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
-    
-    // Fill entire page with background color
-    bgPathOps += `0 0 ${widthPts.toFixed(4)} ${heightPts.toFixed(4)} re f\n`;
-    
-    bgPathOps += 'Q\n';
-    
-    const bgStream = context.stream(bgPathOps);
-    const bgStreamRef = context.register(bgStream);
-    
-    // Insert background as first content stream
-    page.node.set(PDFName.of('Contents'), bgStreamRef);
-  }
-  
+  // First, prepare the image
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return null;
@@ -1117,12 +1105,52 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // Adjust image position for bleed
+  // Image position
   const imageXPts = imageOffsetX * 72 + bleedPts;
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72 + bleedPts;
   
+  // Build the bezier path string (used for both fill and cutline)
+  const buildBezierPath = (): string => {
+    let path = '';
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
+    path += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
+      
+      path += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    return path;
+  };
+  
+  if (pathPoints.length > 2) {
+    // Draw background fill using exact same path as cutline
+    let bgPathOps = 'q\n';
+    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
+    bgPathOps += buildBezierPath();
+    bgPathOps += 'h f\n';
+    bgPathOps += 'Q\n';
+    
+    const bgStream = context.stream(bgPathOps);
+    const bgStreamRef = context.register(bgStream);
+    page.node.set(PDFName.of('Contents'), bgStreamRef);
+  }
+  
+  // Draw image on top of fill
   page.drawImage(pngImage, {
     x: imageXPts,
     y: imageYPts,
@@ -1131,6 +1159,7 @@ export async function generateContourPDFBase64(
   });
   
   if (pathPoints.length > 2) {
+    // Setup CutContour spot color
     const tintFunction = context.obj({
       FunctionType: 2,
       Domain: [0, 1],
@@ -1158,32 +1187,11 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Cut line at exact position (with bleed offset for page coordinates)
+    // Draw cutline using exact same path as fill
     let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
-    
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
-    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
-    
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
-      const endX = p2.x * 72 + bleedPts;
-      const endY = p2.y * 72 + bleedPts;
-      
-      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
-    }
-    
+    pathOps += buildBezierPath();
     pathOps += 'h S\n';
     pathOps += 'Q\n';
     
