@@ -214,6 +214,51 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const displayX = (canvasWidth - displayWidth) / 2;
           const displayY = (canvasHeight - displayHeight) / 2;
           
+          // Draw background fill color behind the contour (with bleed simulation)
+          const bleedPixels = 0.04 * (displayWidth / (resizeSettings.widthInches + strokeSettings.width * 2 + 0.03));
+          
+          // Create a temporary canvas to extract the contour shape for filling
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = contourCanvas.width;
+          tempCanvas.height = contourCanvas.height;
+          const tempCtx = tempCanvas.getContext('2d');
+          
+          if (tempCtx) {
+            // Draw the contour canvas to get the alpha mask
+            tempCtx.drawImage(contourCanvas, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const data = imageData.data;
+            
+            // Create a filled version - replace all non-transparent pixels with fill color
+            const fillCanvas = document.createElement('canvas');
+            fillCanvas.width = contourCanvas.width;
+            fillCanvas.height = contourCanvas.height;
+            const fillCtx = fillCanvas.getContext('2d');
+            
+            if (fillCtx) {
+              // Parse the fill color
+              const hex = strokeSettings.fillColor.replace('#', '');
+              const r = parseInt(hex.substring(0, 2), 16);
+              const g = parseInt(hex.substring(2, 4), 16);
+              const b = parseInt(hex.substring(4, 6), 16);
+              
+              // Fill with background color where there's content
+              const fillData = fillCtx.createImageData(fillCanvas.width, fillCanvas.height);
+              for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] > 0) { // If pixel has any alpha
+                  fillData.data[i] = r;
+                  fillData.data[i + 1] = g;
+                  fillData.data[i + 2] = b;
+                  fillData.data[i + 3] = 255;
+                }
+              }
+              fillCtx.putImageData(fillData, 0, 0);
+              
+              // Draw the fill first, then the contour on top
+              ctx.drawImage(fillCanvas, displayX - bleedPixels, displayY - bleedPixels, displayWidth + bleedPixels * 2, displayHeight + bleedPixels * 2);
+            }
+          }
+          
           ctx.drawImage(contourCanvas, displayX, displayY, displayWidth, displayHeight);
           
         } catch (error) {
