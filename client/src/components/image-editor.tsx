@@ -9,46 +9,11 @@ import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
-import { downloadContourPDF, downloadShapePDF } from "@/lib/silhouette-contour";
+import { downloadContourPDF } from "@/lib/contour-outline";
+import { downloadShapePDF } from "@/lib/shape-outline";
 
-export interface ImageInfo {
-  file: File;
-  image: HTMLImageElement;
-  originalWidth: number;
-  originalHeight: number;
-  dpi: number;
-}
-
-export interface StrokeSettings {
-  width: number; // Offset in inches (0-1 range)
-  color: string;
-  enabled: boolean;
-  alphaThreshold: number;
-  closeSmallGaps: boolean; // Close gaps within 0.06" of each other
-  closeBigGaps: boolean; // Close gaps within 0.11" of each other
-}
-
-export type StrokeMode = 'none' | 'contour' | 'shape';
-
-export interface ResizeSettings {
-  widthInches: number;
-  heightInches: number;
-  maintainAspectRatio: boolean;
-  outputDPI: number;
-}
-
-export interface ShapeSettings {
-  enabled: boolean;
-  type: 'square' | 'rectangle' | 'circle' | 'oval';
-  widthInches: number;
-  heightInches: number;
-  fillColor: string;
-  strokeEnabled: boolean;
-  strokeWidth: number;
-  strokeColor: string;
-  offsetX: number;
-  offsetY: number;
-}
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
 
 export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);

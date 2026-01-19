@@ -9,7 +9,8 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
 import { useToast } from "@/hooks/use-toast";
-import { generateContourPDFBase64, generateShapePDFBase64 } from "@/lib/silhouette-contour";
+import { generateContourPDFBase64 } from "@/lib/contour-outline";
+import { generateShapePDFBase64 } from "@/lib/shape-outline";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;

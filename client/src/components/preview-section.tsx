@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds, checkCadCutBounds } from "@/lib/cadcut-bounds";
-import { createSilhouetteContour } from "@/lib/silhouette-contour";
+import { createSilhouetteContour } from "@/lib/contour-outline";
 import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { cropImageToContent } from "@/lib/image-crop";
