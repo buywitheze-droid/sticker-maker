@@ -197,6 +197,23 @@ export default function ControlsSection({
                     Close big gaps
                   </Label>
                 </div>
+
+                <div>
+                  <Label>Sticker Background Color</Label>
+                  <div className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="color"
+                      value={strokeSettings.fillColor}
+                      onChange={(e) => onStrokeChange({ fillColor: e.target.value })}
+                      className="w-8 h-8 rounded border"
+                    />
+                    <span className="text-sm text-gray-600">{strokeSettings.fillColor}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500 mt-2">
+                  This selected color is not a preview it will be printed
+                </p>
               </div>
             )}
           </CardContent>

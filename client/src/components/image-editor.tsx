@@ -25,6 +25,7 @@ export default function ImageEditor() {
     alphaThreshold: 128, // Auto-detected from alpha channel
     closeSmallGaps: false, // Close gaps within 0.06" of each other
     closeBigGaps: false, // Close gaps within 0.11" of each other
+    fillColor: '#FFFFFF', // Sticker background color
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

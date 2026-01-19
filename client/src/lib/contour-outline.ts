@@ -893,11 +893,64 @@ export async function downloadContourPDF(
   
   const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
   
-  const widthPts = widthInches * 72;
-  const heightPts = heightInches * 72;
+  const bleedInches = 0.04; // 0.04" bleed around the contour
+  const bleedPts = bleedInches * 72;
+  
+  // Page size includes bleed area
+  const widthPts = widthInches * 72 + (bleedPts * 2);
+  const heightPts = heightInches * 72 + (bleedPts * 2);
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
+  const context = pdfDoc.context;
+  
+  // Convert hex fill color to RGB values (0-1 range)
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16) / 255,
+      g: parseInt(result[2], 16) / 255,
+      b: parseInt(result[3], 16) / 255
+    } : { r: 1, g: 1, b: 1 };
+  };
+  const fillRgb = hexToRgb(strokeSettings.fillColor);
+  
+  // Draw background fill with bleed (expanded contour path)
+  if (pathPoints.length > 2) {
+    let bgPathOps = 'q\n';
+    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
+    
+    // Draw the contour path expanded by bleed amount
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
+    bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
+      
+      bgPathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    
+    bgPathOps += 'h f\n'; // Close and fill
+    bgPathOps += 'Q\n';
+    
+    const bgStream = context.stream(bgPathOps);
+    const bgStreamRef = context.register(bgStream);
+    
+    // Insert background as first content stream
+    page.node.set(PDFName.of('Contents'), bgStreamRef);
+  }
   
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
@@ -914,10 +967,11 @@ export async function downloadContourPDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  const imageXPts = imageOffsetX * 72;
+  // Adjust image position for bleed
+  const imageXPts = imageOffsetX * 72 + bleedPts;
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
-  const imageYPts = imageOffsetY * 72;
+  const imageYPts = imageOffsetY * 72 + bleedPts;
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -927,8 +981,6 @@ export async function downloadContourPDF(
   });
   
   if (pathPoints.length > 2) {
-    const context = pdfDoc.context;
-    
     const tintFunction = context.obj({
       FunctionType: 2,
       Domain: [0, 1],
@@ -956,12 +1008,13 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    let pathOps = '';
+    // Cut line at exact position (with bleed offset for page coordinates)
+    let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
     
-    const startX = pathPoints[0].x * 72;
-    const startY = pathPoints[0].y * 72;
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
     pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
     for (let i = 0; i < pathPoints.length; i++) {
@@ -971,17 +1024,18 @@ export async function downloadContourPDF(
       const p3 = pathPoints[(i + 2) % pathPoints.length];
       
       const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
       
       pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
     
     pathOps += 'h S\n';
+    pathOps += 'Q\n';
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -1027,11 +1081,64 @@ export async function generateContourPDFBase64(
   
   const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
   
-  const widthPts = widthInches * 72;
-  const heightPts = heightInches * 72;
+  const bleedInches = 0.04; // 0.04" bleed around the contour
+  const bleedPts = bleedInches * 72;
+  
+  // Page size includes bleed area
+  const widthPts = widthInches * 72 + (bleedPts * 2);
+  const heightPts = heightInches * 72 + (bleedPts * 2);
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
+  const context = pdfDoc.context;
+  
+  // Convert hex fill color to RGB values (0-1 range)
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16) / 255,
+      g: parseInt(result[2], 16) / 255,
+      b: parseInt(result[3], 16) / 255
+    } : { r: 1, g: 1, b: 1 };
+  };
+  const fillRgb = hexToRgb(strokeSettings.fillColor);
+  
+  // Draw background fill with bleed (expanded contour path)
+  if (pathPoints.length > 2) {
+    let bgPathOps = 'q\n';
+    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
+    
+    // Draw the contour path expanded by bleed amount
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
+    bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
+      
+      bgPathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    
+    bgPathOps += 'h f\n'; // Close and fill
+    bgPathOps += 'Q\n';
+    
+    const bgStream = context.stream(bgPathOps);
+    const bgStreamRef = context.register(bgStream);
+    
+    // Insert background as first content stream
+    page.node.set(PDFName.of('Contents'), bgStreamRef);
+  }
   
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
@@ -1048,10 +1155,11 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  const imageXPts = imageOffsetX * 72;
+  // Adjust image position for bleed
+  const imageXPts = imageOffsetX * 72 + bleedPts;
   const imageWidthPts = resizeSettings.widthInches * 72;
   const imageHeightPts = resizeSettings.heightInches * 72;
-  const imageYPts = imageOffsetY * 72;
+  const imageYPts = imageOffsetY * 72 + bleedPts;
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -1061,8 +1169,6 @@ export async function generateContourPDFBase64(
   });
   
   if (pathPoints.length > 2) {
-    const context = pdfDoc.context;
-    
     const tintFunction = context.obj({
       FunctionType: 2,
       Domain: [0, 1],
@@ -1090,12 +1196,13 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    let pathOps = '';
+    // Cut line at exact position (with bleed offset for page coordinates)
+    let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
     
-    const startX = pathPoints[0].x * 72;
-    const startY = pathPoints[0].y * 72;
+    const startX = pathPoints[0].x * 72 + bleedPts;
+    const startY = pathPoints[0].y * 72 + bleedPts;
     pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
     for (let i = 0; i < pathPoints.length; i++) {
@@ -1105,17 +1212,18 @@ export async function generateContourPDFBase64(
       const p3 = pathPoints[(i + 2) % pathPoints.length];
       
       const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72 + bleedPts;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72 + bleedPts;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72 + bleedPts;
+      const endX = p2.x * 72 + bleedPts;
+      const endY = p2.y * 72 + bleedPts;
       
       pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
     
     pathOps += 'h S\n';
+    pathOps += 'Q\n';
     
     const existingContents = page.node.Contents();
     if (existingContents) {
