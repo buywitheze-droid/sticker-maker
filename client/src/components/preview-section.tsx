@@ -22,7 +22,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
-    const [backgroundColor, setBackgroundColor] = useState("#FFFFFF");
+    const [backgroundColor, setBackgroundColor] = useState("#4A4A4A");
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
