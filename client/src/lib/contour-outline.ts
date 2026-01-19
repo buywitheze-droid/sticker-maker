@@ -916,21 +916,60 @@ export async function downloadContourPDF(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed (expanded contour path)
+  // Draw background fill with bleed - expand outward from the cutline
   if (pathPoints.length > 2) {
+    // Calculate expanded path points (offset outward by bleed amount)
+    const expandedPoints: Array<{x: number, y: number}> = [];
+    const bleedInchesOffset = bleedInches;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const prev = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const curr = pathPoints[i];
+      const next = pathPoints[(i + 1) % pathPoints.length];
+      
+      // Calculate direction vectors
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      
+      // Calculate outward normals (perpendicular, pointing outward)
+      // For a clockwise path, outward normal is (-dy, dx)
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+      
+      const nx1 = -dy1 / len1;
+      const ny1 = dx1 / len1;
+      const nx2 = -dy2 / len2;
+      const ny2 = dx2 / len2;
+      
+      // Average the normals for a smooth offset
+      let nx = (nx1 + nx2) / 2;
+      let ny = (ny1 + ny2) / 2;
+      const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+      nx /= nlen;
+      ny /= nlen;
+      
+      // Offset the point outward
+      expandedPoints.push({
+        x: curr.x + nx * bleedInchesOffset,
+        y: curr.y + ny * bleedInchesOffset
+      });
+    }
+    
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the contour path expanded by bleed amount
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
+    // Draw the expanded contour path
+    const startX = expandedPoints[0].x * 72 + bleedPts;
+    const startY = expandedPoints[0].y * 72 + bleedPts;
     bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
+    for (let i = 0; i < expandedPoints.length; i++) {
+      const p0 = expandedPoints[(i - 1 + expandedPoints.length) % expandedPoints.length];
+      const p1 = expandedPoints[i];
+      const p2 = expandedPoints[(i + 1) % expandedPoints.length];
+      const p3 = expandedPoints[(i + 2) % expandedPoints.length];
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
@@ -1105,21 +1144,60 @@ export async function generateContourPDFBase64(
   };
   const fillRgb = hexToRgb(strokeSettings.fillColor);
   
-  // Draw background fill with bleed (expanded contour path)
+  // Draw background fill with bleed - expand outward from the cutline
   if (pathPoints.length > 2) {
+    // Calculate expanded path points (offset outward by bleed amount)
+    const expandedPoints: Array<{x: number, y: number}> = [];
+    const bleedInchesOffset = bleedInches;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const prev = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const curr = pathPoints[i];
+      const next = pathPoints[(i + 1) % pathPoints.length];
+      
+      // Calculate direction vectors
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      
+      // Calculate outward normals (perpendicular, pointing outward)
+      // For a clockwise path, outward normal is (-dy, dx)
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+      
+      const nx1 = -dy1 / len1;
+      const ny1 = dx1 / len1;
+      const nx2 = -dy2 / len2;
+      const ny2 = dx2 / len2;
+      
+      // Average the normals for a smooth offset
+      let nx = (nx1 + nx2) / 2;
+      let ny = (ny1 + ny2) / 2;
+      const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+      nx /= nlen;
+      ny /= nlen;
+      
+      // Offset the point outward
+      expandedPoints.push({
+        x: curr.x + nx * bleedInchesOffset,
+        y: curr.y + ny * bleedInchesOffset
+      });
+    }
+    
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
     
-    // Draw the contour path expanded by bleed amount
-    const startX = pathPoints[0].x * 72 + bleedPts;
-    const startY = pathPoints[0].y * 72 + bleedPts;
+    // Draw the expanded contour path
+    const startX = expandedPoints[0].x * 72 + bleedPts;
+    const startY = expandedPoints[0].y * 72 + bleedPts;
     bgPathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
-    for (let i = 0; i < pathPoints.length; i++) {
-      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[(i + 1) % pathPoints.length];
-      const p3 = pathPoints[(i + 2) % pathPoints.length];
+    for (let i = 0; i < expandedPoints.length; i++) {
+      const p0 = expandedPoints[(i - 1 + expandedPoints.length) % expandedPoints.length];
+      const p1 = expandedPoints[i];
+      const p2 = expandedPoints[(i + 1) % expandedPoints.length];
+      const p3 = expandedPoints[(i + 2) % expandedPoints.length];
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72 + bleedPts;
