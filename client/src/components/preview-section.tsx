@@ -228,11 +228,42 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             tempCtx.drawImage(contourCanvas, 0, 0);
             const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
             const data = imageData.data;
+            const width = tempCanvas.width;
+            const height = tempCanvas.height;
             
-            // Create a filled version - replace all non-transparent pixels with fill color
+            // Create a mask to identify interior pixels using flood fill from edges
+            const exterior = new Uint8Array(width * height);
+            const stack: Array<{x: number, y: number}> = [];
+            
+            // Start flood fill from all edge pixels that are transparent
+            for (let x = 0; x < width; x++) {
+              if (data[x * 4 + 3] === 0) stack.push({x, y: 0});
+              if (data[((height - 1) * width + x) * 4 + 3] === 0) stack.push({x, y: height - 1});
+            }
+            for (let y = 0; y < height; y++) {
+              if (data[(y * width) * 4 + 3] === 0) stack.push({x: 0, y});
+              if (data[(y * width + width - 1) * 4 + 3] === 0) stack.push({x: width - 1, y});
+            }
+            
+            // Flood fill to mark all exterior transparent pixels
+            while (stack.length > 0) {
+              const {x, y} = stack.pop()!;
+              const idx = y * width + x;
+              if (x < 0 || x >= width || y < 0 || y >= height) continue;
+              if (exterior[idx] === 1) continue;
+              if (data[idx * 4 + 3] > 0) continue; // Stop at non-transparent pixels
+              
+              exterior[idx] = 1;
+              stack.push({x: x + 1, y});
+              stack.push({x: x - 1, y});
+              stack.push({x, y: y + 1});
+              stack.push({x, y: y - 1});
+            }
+            
+            // Create filled canvas - fill interior (non-exterior transparent) with background color
             const fillCanvas = document.createElement('canvas');
-            fillCanvas.width = contourCanvas.width;
-            fillCanvas.height = contourCanvas.height;
+            fillCanvas.width = width;
+            fillCanvas.height = height;
             const fillCtx = fillCanvas.getContext('2d');
             
             if (fillCtx) {
@@ -242,19 +273,23 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               const g = parseInt(hex.substring(2, 4), 16);
               const b = parseInt(hex.substring(4, 6), 16);
               
-              // Fill with background color where there's content
-              const fillData = fillCtx.createImageData(fillCanvas.width, fillCanvas.height);
-              for (let i = 0; i < data.length; i += 4) {
-                if (data[i + 3] > 0) { // If pixel has any alpha
-                  fillData.data[i] = r;
-                  fillData.data[i + 1] = g;
-                  fillData.data[i + 2] = b;
-                  fillData.data[i + 3] = 255;
+              // Fill interior pixels and content pixels with background color
+              const fillData = fillCtx.createImageData(width, height);
+              for (let i = 0; i < width * height; i++) {
+                const isExterior = exterior[i] === 1;
+                const hasContent = data[i * 4 + 3] > 0;
+                
+                if (!isExterior || hasContent) {
+                  // Interior or has content - fill with background color
+                  fillData.data[i * 4] = r;
+                  fillData.data[i * 4 + 1] = g;
+                  fillData.data[i * 4 + 2] = b;
+                  fillData.data[i * 4 + 3] = 255;
                 }
               }
               fillCtx.putImageData(fillData, 0, 0);
               
-              // Draw the fill first, then the contour on top
+              // Draw the fill first (with bleed), then the contour on top
               ctx.drawImage(fillCanvas, displayX - bleedPixels, displayY - bleedPixels, displayWidth + bleedPixels * 2, displayHeight + bleedPixels * 2);
             }
           }
