@@ -248,12 +248,23 @@ export default function ControlsSection({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="0.0625">1/16" (0.0625")</SelectItem>
-                      <SelectItem value="0.125">1/8" (0.125")</SelectItem>
-                      <SelectItem value="0.1875">3/16" (0.1875")</SelectItem>
-                      <SelectItem value="0.25">1/4" (0.25")</SelectItem>
-                      <SelectItem value="0.375">3/8" (0.375")</SelectItem>
-                      <SelectItem value="0.5">1/2" (0.5")</SelectItem>
+                      {(shapeSettings.type === 'circle' || shapeSettings.type === 'oval') ? (
+                        <>
+                          <SelectItem value="0.40">Tiny (0.40")</SelectItem>
+                          <SelectItem value="0.48">Small (0.48")</SelectItem>
+                          <SelectItem value="0.56">Medium (0.56")</SelectItem>
+                          <SelectItem value="0.64">Big (0.64")</SelectItem>
+                          <SelectItem value="0.72">Huge (0.72")</SelectItem>
+                        </>
+                      ) : (
+                        <>
+                          <SelectItem value="0.0625">Tiny (0.0625")</SelectItem>
+                          <SelectItem value="0.125">Small (0.125")</SelectItem>
+                          <SelectItem value="0.1875">Medium (0.1875")</SelectItem>
+                          <SelectItem value="0.25">Big (0.25")</SelectItem>
+                          <SelectItem value="0.375">Huge (0.375")</SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-gray-500 mt-1">

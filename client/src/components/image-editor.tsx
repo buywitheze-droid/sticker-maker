@@ -226,11 +226,22 @@ export default function ImageEditor() {
   }, [strokeSettings]);
 
   const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
-    const updated = { ...shapeSettings, ...newSettings };
+    let updated = { ...shapeSettings, ...newSettings };
     
     // If enabling shape, disable stroke for mutual exclusion
     if (newSettings.enabled === true) {
       setStrokeSettings(prev => ({ ...prev, enabled: false }));
+    }
+    
+    // Auto-reset offset when switching between shape type categories
+    if (newSettings.type !== undefined && newSettings.type !== shapeSettings.type) {
+      const wasCircular = shapeSettings.type === 'circle' || shapeSettings.type === 'oval';
+      const isCircular = newSettings.type === 'circle' || newSettings.type === 'oval';
+      
+      if (wasCircular !== isCircular) {
+        // Switch to appropriate default offset for new shape category
+        updated.offset = isCircular ? 0.40 : 0.125; // Tiny for circular, Small for rectangular
+      }
     }
     
     setShapeSettings(updated);
