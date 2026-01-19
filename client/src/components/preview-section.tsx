@@ -117,11 +117,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.fill();
       
-      if (shapeSettings.strokeEnabled) {
-        ctx.strokeStyle = shapeSettings.strokeColor;
-        ctx.lineWidth = shapeSettings.strokeWidth;
-        ctx.stroke();
-      }
+      // Always draw CutContour outline in magenta (same as contour outline)
+      ctx.strokeStyle = '#FF00FF';
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
       const croppedCanvas = cropImageToContent(imageInfo.image);
       const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;

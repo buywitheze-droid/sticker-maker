@@ -285,45 +285,9 @@ export default function ControlsSection({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <Label>Shape Stroke</Label>
-                  <Checkbox
-                    checked={shapeSettings.strokeEnabled}
-                    onCheckedChange={(checked) => onShapeChange({ strokeEnabled: !!checked })}
-                  />
-                </div>
-
-                {shapeSettings.strokeEnabled && (
-                  <>
-                    <div>
-                      <Label>Stroke Width</Label>
-                      <Slider
-                        value={[shapeSettings.strokeWidth]}
-                        onValueChange={([value]) => onShapeChange({ strokeWidth: value })}
-                        min={1}
-                        max={10}
-                        step={1}
-                        className="mt-2"
-                      />
-                      <div className="text-sm text-gray-500 mt-1">
-                        {shapeSettings.strokeWidth}px
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label>Stroke Color</Label>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <input
-                          type="color"
-                          value={shapeSettings.strokeColor}
-                          onChange={(e) => onShapeChange({ strokeColor: e.target.value })}
-                          className="w-8 h-8 rounded border"
-                        />
-                        <span className="text-sm text-gray-600">{shapeSettings.strokeColor}</span>
-                      </div>
-                    </div>
-                  </>
-                )}
+                <p className="text-xs text-gray-500 mt-2">
+                  Cut outline uses CutContour spot color (shown in magenta)
+                </p>
               </div>
             )}
           </CardContent>
