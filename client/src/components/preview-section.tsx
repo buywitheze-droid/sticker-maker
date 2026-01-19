@@ -75,6 +75,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         shapeSettings.offset
       );
 
+      const bleedInches = 0.04; // 0.04" bleed around the shape
       const padding = 40;
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);
@@ -91,8 +92,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const shapeX = (canvasWidth - shapeWidth) / 2;
       const shapeY = (canvasHeight - shapeHeight) / 2;
+      
+      // Calculate bleed in pixels based on shape scale
+      const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
+      const bleedPixels = bleedInches * shapePixelsPerInch;
 
+      // Draw background with bleed (larger shape for the fill)
       ctx.fillStyle = shapeSettings.fillColor;
+      ctx.beginPath();
+      
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidth, shapeHeight) / 2 + bleedPixels;
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'oval') {
+        const centerX = shapeX + shapeWidth / 2;
+        const centerY = shapeY + shapeHeight / 2;
+        const radiusX = shapeWidth / 2 + bleedPixels;
+        const radiusY = shapeHeight / 2 + bleedPixels;
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(shapeWidth, shapeHeight);
+        const startX = shapeX + (shapeWidth - size) / 2 - bleedPixels;
+        const startY = shapeY + (shapeHeight - size) / 2 - bleedPixels;
+        ctx.rect(startX, startY, size + bleedPixels * 2, size + bleedPixels * 2);
+      } else {
+        ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
+      }
+      
+      ctx.fill();
+      
+      // Draw CutContour outline at exact cut position (without bleed)
+      ctx.strokeStyle = '#FF00FF';
+      ctx.lineWidth = 2;
       ctx.beginPath();
       
       if (shapeSettings.type === 'circle') {
@@ -115,17 +148,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
       }
       
-      ctx.fill();
-      
-      // Always draw CutContour outline in magenta (same as contour outline)
-      ctx.strokeStyle = '#FF00FF';
-      ctx.lineWidth = 2;
       ctx.stroke();
 
       const croppedCanvas = cropImageToContent(imageInfo.image);
       const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
       
-      const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
+      // Reuse shapePixelsPerInch from above for image sizing
       const imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
       const imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
 

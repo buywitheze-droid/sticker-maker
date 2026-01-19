@@ -47,8 +47,16 @@ export async function downloadShapePDF(
     shapeSettings.offset
   );
   
-  const widthPts = widthInches * 72;
-  const heightPts = heightInches * 72;
+  const bleedInches = 0.04; // 0.04" bleed around the shape
+  const bleedPts = bleedInches * 72;
+  
+  // Page size includes bleed area
+  const widthPts = widthInches * 72 + (bleedPts * 2);
+  const heightPts = heightInches * 72 + (bleedPts * 2);
+  
+  // Shape dimensions for cut line (without bleed)
+  const shapeWidthPts = widthInches * 72;
+  const shapeHeightPts = heightInches * 72;
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
@@ -77,10 +85,68 @@ export async function downloadShapePDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // Convert hex fill color to RGB values (0-1 range)
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16) / 255,
+      g: parseInt(result[2], 16) / 255,
+      b: parseInt(result[3], 16) / 255
+    } : { r: 1, g: 1, b: 1 };
+  };
+  const fillRgb = hexToRgb(shapeSettings.fillColor);
+  
+  // Draw background shape with bleed (fills entire page)
+  let bgPathOps = 'q\n';
+  bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
+  
+  if (shapeSettings.type === 'circle') {
+    const r = Math.min(widthPts, heightPts) / 2; // Include bleed
+    const k = 0.5522847498;
+    const rk = r * k;
+    bgPathOps += `${cx + r} ${cy} m\n`;
+    bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
+    bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
+    bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
+    bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
+  } else if (shapeSettings.type === 'oval') {
+    const rx = widthPts / 2; // Include bleed
+    const ry = heightPts / 2;
+    const k = 0.5522847498;
+    const rxk = rx * k;
+    const ryk = ry * k;
+    bgPathOps += `${cx + rx} ${cy} m\n`;
+    bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
+    bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
+    bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
+    bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(widthPts, heightPts); // Include bleed
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    bgPathOps += `${sx} ${sy} m\n`;
+    bgPathOps += `${sx + size} ${sy} l\n`;
+    bgPathOps += `${sx + size} ${sy + size} l\n`;
+    bgPathOps += `${sx} ${sy + size} l\n`;
+  } else {
+    bgPathOps += `0 0 m\n`;
+    bgPathOps += `${widthPts} 0 l\n`;
+    bgPathOps += `${widthPts} ${heightPts} l\n`;
+    bgPathOps += `0 ${heightPts} l\n`;
+  }
+  bgPathOps += 'h f\n'; // Close and fill
+  bgPathOps += 'Q\n';
+  
+  const bgStream = context.stream(bgPathOps);
+  const bgStreamRef = context.register(bgStream);
+  
+  // Insert background as first content stream
+  page.node.set(PDFName.of('Contents'), bgStreamRef);
+  
   const imageWidth = resizeSettings.widthInches * 72;
   const imageHeight = resizeSettings.heightInches * 72;
   
-  // Center the image in the shape
+  // Center the image in the page (which includes bleed)
   const imageX = (widthPts - imageWidth) / 2;
   const imageY = (heightPts - imageHeight) / 2;
   
@@ -119,6 +185,7 @@ export async function downloadShapePDF(
     (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
   }
   
+  // Cut line path (at exact cut position, without bleed)
   let pathOps = 'q\n';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
@@ -127,7 +194,7 @@ export async function downloadShapePDF(
   const outlineCy = cy;
   
   if (shapeSettings.type === 'circle') {
-    const r = Math.min(widthPts, heightPts) / 2;
+    const r = Math.min(shapeWidthPts, shapeHeightPts) / 2; // Without bleed
     const k = 0.5522847498;
     const rk = r * k;
     const circleCy = outlineCy;
@@ -137,8 +204,8 @@ export async function downloadShapePDF(
     pathOps += `${outlineCx - r} ${circleCy - rk} ${outlineCx - rk} ${circleCy - r} ${outlineCx} ${circleCy - r} c\n`;
     pathOps += `${outlineCx + rk} ${circleCy - r} ${outlineCx + r} ${circleCy - rk} ${outlineCx + r} ${circleCy} c\n`;
   } else if (shapeSettings.type === 'oval') {
-    const rx = widthPts / 2;
-    const ry = heightPts / 2;
+    const rx = shapeWidthPts / 2; // Without bleed
+    const ry = shapeHeightPts / 2;
     const k = 0.5522847498;
     const rxk = rx * k;
     const ryk = ry * k;
@@ -148,7 +215,7 @@ export async function downloadShapePDF(
     pathOps += `${outlineCx - rx} ${outlineCy - ryk} ${outlineCx - rxk} ${outlineCy - ry} ${outlineCx} ${outlineCy - ry} c\n`;
     pathOps += `${outlineCx + rxk} ${outlineCy - ry} ${outlineCx + rx} ${outlineCy - ryk} ${outlineCx + rx} ${outlineCy} c\n`;
   } else if (shapeSettings.type === 'square') {
-    const size = Math.min(widthPts, heightPts);
+    const size = Math.min(shapeWidthPts, shapeHeightPts); // Without bleed
     const sx = (widthPts - size) / 2;
     const sy = (heightPts - size) / 2;
     pathOps += `${sx} ${sy} m\n`;
@@ -156,10 +223,11 @@ export async function downloadShapePDF(
     pathOps += `${sx + size} ${sy + size} l\n`;
     pathOps += `${sx} ${sy + size} l\n`;
   } else {
-    pathOps += `0 0 m\n`;
-    pathOps += `${widthPts} 0 l\n`;
-    pathOps += `${widthPts} ${heightPts} l\n`;
-    pathOps += `0 ${heightPts} l\n`;
+    // Rectangle without bleed
+    pathOps += `${bleedPts} ${bleedPts} m\n`;
+    pathOps += `${bleedPts + shapeWidthPts} ${bleedPts} l\n`;
+    pathOps += `${bleedPts + shapeWidthPts} ${bleedPts + shapeHeightPts} l\n`;
+    pathOps += `${bleedPts} ${bleedPts + shapeHeightPts} l\n`;
   }
   
   pathOps += 'h S\n';

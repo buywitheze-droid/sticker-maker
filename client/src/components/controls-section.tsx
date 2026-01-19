@@ -273,7 +273,7 @@ export default function ControlsSection({
                 </div>
 
                 <div>
-                  <Label>Fill Color</Label>
+                  <Label>Sticker Background Color</Label>
                   <div className="flex items-center space-x-2 mt-2">
                     <input
                       type="color"
@@ -286,7 +286,7 @@ export default function ControlsSection({
                 </div>
 
                 <p className="text-xs text-gray-500 mt-2">
-                  Cut outline uses CutContour spot color (shown in magenta)
+                  This selected color is not a preview it will be printed
                 </p>
               </div>
             )}
