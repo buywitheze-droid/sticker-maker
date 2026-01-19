@@ -938,12 +938,12 @@ export async function downloadContourPDF(
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72 + bleedPts;
   
-  // Build the bezier path string (used for both fill and cutline)
-  const buildBezierPath = (): string => {
-    let path = '';
+  // Build the bezier path string ONCE (used for both fill and cutline)
+  let bezierPathString = '';
+  if (pathPoints.length > 2) {
     const startX = pathPoints[0].x * 72 + bleedPts;
     const startY = pathPoints[0].y * 72 + bleedPts;
-    path += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    bezierPathString += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
     for (let i = 0; i < pathPoints.length; i++) {
       const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
@@ -959,16 +959,43 @@ export async function downloadContourPDF(
       const endX = p2.x * 72 + bleedPts;
       const endY = p2.y * 72 + bleedPts;
       
-      path += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+      bezierPathString += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
-    return path;
-  };
+  }
   
-  if (pathPoints.length > 2) {
-    // Draw background fill using exact same path as cutline
+  // Setup CutContour spot color first (needed for combined stream)
+  const tintFunction = context.obj({
+    FunctionType: 2,
+    Domain: [0, 1],
+    C0: [0, 0, 0, 0],
+    C1: [0, 1, 0, 0],
+    N: 1,
+  });
+  const tintFunctionRef = context.register(tintFunction);
+  
+  const separationColorSpace = context.obj([
+    PDFName.of('Separation'),
+    PDFName.of('CutContour'),
+    PDFName.of('DeviceCMYK'),
+    tintFunctionRef,
+  ]);
+  const separationRef = context.register(separationColorSpace);
+  
+  const resources = page.node.Resources();
+  if (resources) {
+    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+    if (!colorSpaceDict) {
+      colorSpaceDict = context.obj({});
+      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+    }
+    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+  }
+  
+  // Draw background fill first
+  if (bezierPathString) {
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
-    bgPathOps += buildBezierPath();
+    bgPathOps += bezierPathString;
     bgPathOps += 'h f\n';
     bgPathOps += 'Q\n';
     
@@ -985,40 +1012,12 @@ export async function downloadContourPDF(
     height: imageHeightPts,
   });
   
-  if (pathPoints.length > 2) {
-    // Setup CutContour spot color
-    const tintFunction = context.obj({
-      FunctionType: 2,
-      Domain: [0, 1],
-      C0: [0, 0, 0, 0],
-      C1: [0, 1, 0, 0],
-      N: 1,
-    });
-    const tintFunctionRef = context.register(tintFunction);
-    
-    const separationColorSpace = context.obj([
-      PDFName.of('Separation'),
-      PDFName.of('CutContour'),
-      PDFName.of('DeviceCMYK'),
-      tintFunctionRef,
-    ]);
-    const separationRef = context.register(separationColorSpace);
-    
-    const resources = page.node.Resources();
-    if (resources) {
-      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-      if (!colorSpaceDict) {
-        colorSpaceDict = context.obj({});
-        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-      }
-      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
-    }
-    
-    // Draw cutline using exact same path as fill
+  // Draw cutline using the SAME path string
+  if (bezierPathString) {
     let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
-    pathOps += buildBezierPath();
+    pathOps += bezierPathString;
     pathOps += 'h S\n';
     pathOps += 'Q\n';
     
@@ -1111,12 +1110,12 @@ export async function generateContourPDFBase64(
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72 + bleedPts;
   
-  // Build the bezier path string (used for both fill and cutline)
-  const buildBezierPath = (): string => {
-    let path = '';
+  // Build the bezier path string ONCE (used for both fill and cutline)
+  let bezierPathString = '';
+  if (pathPoints.length > 2) {
     const startX = pathPoints[0].x * 72 + bleedPts;
     const startY = pathPoints[0].y * 72 + bleedPts;
-    path += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    bezierPathString += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
     
     for (let i = 0; i < pathPoints.length; i++) {
       const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
@@ -1132,16 +1131,43 @@ export async function generateContourPDFBase64(
       const endX = p2.x * 72 + bleedPts;
       const endY = p2.y * 72 + bleedPts;
       
-      path += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+      bezierPathString += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
     }
-    return path;
-  };
+  }
   
-  if (pathPoints.length > 2) {
-    // Draw background fill using exact same path as cutline
+  // Setup CutContour spot color first (needed for combined stream)
+  const tintFunction = context.obj({
+    FunctionType: 2,
+    Domain: [0, 1],
+    C0: [0, 0, 0, 0],
+    C1: [0, 1, 0, 0],
+    N: 1,
+  });
+  const tintFunctionRef = context.register(tintFunction);
+  
+  const separationColorSpace = context.obj([
+    PDFName.of('Separation'),
+    PDFName.of('CutContour'),
+    PDFName.of('DeviceCMYK'),
+    tintFunctionRef,
+  ]);
+  const separationRef = context.register(separationColorSpace);
+  
+  const resources = page.node.Resources();
+  if (resources) {
+    let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+    if (!colorSpaceDict) {
+      colorSpaceDict = context.obj({});
+      resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+    }
+    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+  }
+  
+  // Draw background fill first
+  if (bezierPathString) {
     let bgPathOps = 'q\n';
     bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
-    bgPathOps += buildBezierPath();
+    bgPathOps += bezierPathString;
     bgPathOps += 'h f\n';
     bgPathOps += 'Q\n';
     
@@ -1158,40 +1184,12 @@ export async function generateContourPDFBase64(
     height: imageHeightPts,
   });
   
-  if (pathPoints.length > 2) {
-    // Setup CutContour spot color
-    const tintFunction = context.obj({
-      FunctionType: 2,
-      Domain: [0, 1],
-      C0: [0, 0, 0, 0],
-      C1: [0, 1, 0, 0],
-      N: 1,
-    });
-    const tintFunctionRef = context.register(tintFunction);
-    
-    const separationColorSpace = context.obj([
-      PDFName.of('Separation'),
-      PDFName.of('CutContour'),
-      PDFName.of('DeviceCMYK'),
-      tintFunctionRef,
-    ]);
-    const separationRef = context.register(separationColorSpace);
-    
-    const resources = page.node.Resources();
-    if (resources) {
-      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-      if (!colorSpaceDict) {
-        colorSpaceDict = context.obj({});
-        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-      }
-      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
-    }
-    
-    // Draw cutline using exact same path as fill
+  // Draw cutline using the SAME path string
+  if (bezierPathString) {
     let pathOps = 'q\n';
     pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
-    pathOps += buildBezierPath();
+    pathOps += bezierPathString;
     pathOps += 'h S\n';
     pathOps += 'Q\n';
     
