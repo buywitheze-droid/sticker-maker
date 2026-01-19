@@ -22,7 +22,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
-    const [backgroundColor, setBackgroundColor] = useState("#4A4A4A");
+    const [backgroundColor, setBackgroundColor] = useState("#1f2937");
+    
+    const getColorName = (color: string) => {
+      const colorMap: Record<string, string> = {
+        "transparent": "Transparent",
+        "#ffffff": "White",
+        "#000000": "Black",
+        "#f3f4f6": "Light Gray",
+        "#1f2937": "Dark Gray",
+        "#3b82f6": "Blue",
+        "#ef4444": "Red",
+        "#10b981": "Green",
+      };
+      return colorMap[color] || color;
+    };
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
@@ -233,7 +247,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               <span className="text-sm text-gray-600">Preview Color:</span>
               <Select value={backgroundColor} onValueChange={setBackgroundColor}>
                 <SelectTrigger className="w-32">
-                  <SelectValue />
+                  <SelectValue>{getColorName(backgroundColor)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="transparent">Transparent</SelectItem>
