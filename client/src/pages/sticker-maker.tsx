@@ -7,17 +7,17 @@ export default function StickerMaker() {
   const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
 
   return (
-    <div className="bg-black min-h-screen">
+    <div className="bg-white min-h-screen">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <header className="bg-black border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <img src={elephantLogo} alt="Sticker Outline logo" className="w-10 h-10 object-contain" />
-            <h1 className="text-xl font-semibold text-black">Sticker Outline</h1>
+            <img src={elephantLogo} alt="Sticker Outline logo" className="w-10 h-10 object-contain invert" />
+            <h1 className="text-xl font-semibold text-white">Sticker Outline</h1>
           </div>
-          <div className="flex items-center space-x-2 text-sm text-black/70">
+          <div className="flex items-center space-x-2 text-sm text-white/70">
             <span>We are here to feed your sticker addiction</span>
-            <img src={devilLogo} alt="Devil logo" className="w-6 h-6 object-contain" />
+            <img src={devilLogo} alt="Devil logo" className="w-6 h-6 object-contain invert" />
           </div>
         </div>
       </header>
