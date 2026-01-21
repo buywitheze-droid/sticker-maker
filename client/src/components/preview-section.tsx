@@ -23,6 +23,105 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
     const [backgroundColor, setBackgroundColor] = useState("#1f2937");
+    const lastImageRef = useRef<string | null>(null);
+    
+    // Auto-set zoom to 75% for images with no empty space around them
+    useEffect(() => {
+      if (!imageInfo) {
+        lastImageRef.current = null;
+        return;
+      }
+      
+      // Only check when image changes
+      const imageKey = `${imageInfo.image.src}-${imageInfo.image.width}-${imageInfo.image.height}`;
+      if (lastImageRef.current === imageKey) return;
+      lastImageRef.current = imageKey;
+      
+      // Check if image has minimal empty space around the edges
+      const hasMinimalEmptySpace = checkImageHasMinimalEmptySpace(imageInfo.image);
+      if (hasMinimalEmptySpace) {
+        setZoom(0.75);
+      } else {
+        setZoom(1);
+      }
+    }, [imageInfo]);
+    
+    // Check if image content extends close to the edges (minimal empty space)
+    const checkImageHasMinimalEmptySpace = (image: HTMLImageElement): boolean => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return false;
+        
+        canvas.width = image.width;
+        canvas.height = image.height;
+        ctx.drawImage(image, 0, 0);
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        // Check edges for content - if content is within 5% of any edge, it's "no empty space"
+        const margin = Math.max(5, Math.floor(Math.min(canvas.width, canvas.height) * 0.05));
+        
+        let hasContentNearTop = false;
+        let hasContentNearBottom = false;
+        let hasContentNearLeft = false;
+        let hasContentNearRight = false;
+        
+        // Sample pixels near edges (every 10th pixel for performance)
+        const step = 10;
+        
+        // Check top edge
+        for (let y = 0; y < margin && !hasContentNearTop; y++) {
+          for (let x = 0; x < canvas.width; x += step) {
+            const idx = (y * canvas.width + x) * 4;
+            if (data[idx + 3] > 128) { // Alpha > 128
+              hasContentNearTop = true;
+              break;
+            }
+          }
+        }
+        
+        // Check bottom edge
+        for (let y = canvas.height - margin; y < canvas.height && !hasContentNearBottom; y++) {
+          for (let x = 0; x < canvas.width; x += step) {
+            const idx = (y * canvas.width + x) * 4;
+            if (data[idx + 3] > 128) {
+              hasContentNearBottom = true;
+              break;
+            }
+          }
+        }
+        
+        // Check left edge
+        for (let x = 0; x < margin && !hasContentNearLeft; x++) {
+          for (let y = 0; y < canvas.height; y += step) {
+            const idx = (y * canvas.width + x) * 4;
+            if (data[idx + 3] > 128) {
+              hasContentNearLeft = true;
+              break;
+            }
+          }
+        }
+        
+        // Check right edge
+        for (let x = canvas.width - margin; x < canvas.width && !hasContentNearRight; x++) {
+          for (let y = 0; y < canvas.height; y += step) {
+            const idx = (y * canvas.width + x) * 4;
+            if (data[idx + 3] > 128) {
+              hasContentNearRight = true;
+              break;
+            }
+          }
+        }
+        
+        // If content is near 3+ edges, consider it "no empty space"
+        const edgesWithContent = [hasContentNearTop, hasContentNearBottom, hasContentNearLeft, hasContentNearRight].filter(Boolean).length;
+        return edgesWithContent >= 3;
+      } catch {
+        return false;
+      }
+    };
     
     const getColorName = (color: string) => {
       const colorMap: Record<string, string> = {
