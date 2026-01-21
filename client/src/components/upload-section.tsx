@@ -79,7 +79,7 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         <CardContent className="p-4">
           <p className="font-bold text-center text-lg" style={{ 
             fontFamily: "'Inter', sans-serif",
-            color: '#FF6B00'
+            color: 'black'
           }}>
             The <span style={{ color: 'red' }}>red</span> outline you see is your <span style={{ color: 'red' }}>CUT LINE</span> - that's exactly where the magic scissors will snip!
           </p>
