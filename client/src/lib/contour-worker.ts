@@ -13,6 +13,7 @@ interface WorkerMessage {
     alphaThreshold: number;
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
+    backgroundColor: string;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -151,6 +152,7 @@ function processContour(
     alphaThreshold: number;
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
+    backgroundColor: string;
   },
   effectiveDPI: number
 ): ImageData {
@@ -243,7 +245,7 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY);
+  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY);
   
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
@@ -647,16 +649,22 @@ function drawContourToData(
   width: number, 
   height: number, 
   path: Point[], 
-  colorHex: string, 
+  strokeColorHex: string,
+  backgroundColorHex: string, 
   offsetX: number, 
   offsetY: number
 ): void {
-  const r = parseInt(colorHex.slice(1, 3), 16);
-  const g = parseInt(colorHex.slice(3, 5), 16);
-  const b = parseInt(colorHex.slice(5, 7), 16);
+  const r = parseInt(strokeColorHex.slice(1, 3), 16);
+  const g = parseInt(strokeColorHex.slice(3, 5), 16);
+  const b = parseInt(strokeColorHex.slice(5, 7), 16);
   
-  // Fill contour with white background first
-  fillContour(output, width, height, path, offsetX, offsetY, 255, 255, 255);
+  // Parse background color
+  const bgR = parseInt(backgroundColorHex.slice(1, 3), 16);
+  const bgG = parseInt(backgroundColorHex.slice(3, 5), 16);
+  const bgB = parseInt(backgroundColorHex.slice(5, 7), 16);
+  
+  // Fill contour with user-selected background color first
+  fillContour(output, width, height, path, offsetX, offsetY, bgR, bgG, bgB);
   
   // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {

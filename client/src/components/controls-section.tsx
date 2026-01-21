@@ -198,6 +198,19 @@ export default function ControlsSection({
                     Close big gaps
                   </Label>
                 </div>
+
+                <div>
+                  <Label>Select your sticker background color</Label>
+                  <div className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="color"
+                      value={strokeSettings.backgroundColor}
+                      onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
+                      className="w-10 h-10 rounded cursor-pointer border border-gray-300"
+                    />
+                    <span className="text-sm text-gray-600">{strokeSettings.backgroundColor}</span>
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>

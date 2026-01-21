@@ -7,6 +7,7 @@ export interface ContourPathResult {
   heightInches: number;
   imageOffsetX: number;
   imageOffsetY: number;
+  backgroundColor: string;
 }
 
 interface Point {
@@ -1341,7 +1342,8 @@ export function getContourPath(
       widthInches,
       heightInches,
       imageOffsetX,
-      imageOffsetY
+      imageOffsetY,
+      backgroundColor: strokeSettings.backgroundColor
     };
   } catch (error) {
     console.error('Error getting contour path:', error);
@@ -1495,7 +1497,7 @@ export async function generateContourPDFBase64(
     return null;
   }
   
-  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY } = contourResult;
+  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
   
   const widthPts = widthInches * 72;
   const heightPts = heightInches * 72;
@@ -1503,6 +1505,42 @@ export async function generateContourPDFBase64(
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
   
+  // Create background raster image with the contour shape filled
+  const bgCanvas = document.createElement('canvas');
+  const bgCtx = bgCanvas.getContext('2d');
+  if (!bgCtx) return null;
+  
+  const bgDPI = 300;
+  bgCanvas.width = Math.round(widthInches * bgDPI);
+  bgCanvas.height = Math.round(heightInches * bgDPI);
+  
+  // Fill the contour path with the background color
+  bgCtx.fillStyle = backgroundColor;
+  bgCtx.beginPath();
+  if (pathPoints.length > 0) {
+    bgCtx.moveTo(pathPoints[0].x * bgDPI, (heightInches - pathPoints[0].y) * bgDPI);
+    for (let i = 1; i < pathPoints.length; i++) {
+      bgCtx.lineTo(pathPoints[i].x * bgDPI, (heightInches - pathPoints[i].y) * bgDPI);
+    }
+    bgCtx.closePath();
+    bgCtx.fill();
+  }
+  
+  const bgBlob = await new Promise<Blob>((resolve) => {
+    bgCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const bgPngBytes = new Uint8Array(await bgBlob.arrayBuffer());
+  const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
+  
+  // Draw the background raster image first
+  page.drawImage(bgPngImage, {
+    x: 0,
+    y: 0,
+    width: widthPts,
+    height: heightPts,
+  });
+  
+  // Now draw the design image on top
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return null;

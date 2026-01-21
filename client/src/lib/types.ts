@@ -13,6 +13,7 @@ export interface StrokeSettings {
   alphaThreshold: number;
   closeSmallGaps: boolean;
   closeBigGaps: boolean;
+  backgroundColor: string;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
