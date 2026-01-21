@@ -145,7 +145,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.color}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${resizeSettings.outputDPI}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.color}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.outputDPI}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
     }, [imageInfo, strokeSettings, resizeSettings]);
 
     useEffect(() => {
