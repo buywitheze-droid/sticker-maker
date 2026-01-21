@@ -1293,6 +1293,7 @@ export function getContourPath(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings
 ): ContourPathResult | null {
+  // This function now matches the Web Worker algorithm exactly
   const effectiveDPI = image.width / resizeSettings.widthInches;
   
   const baseOffsetInches = 0.015;
@@ -1301,20 +1302,31 @@ export function getContourPath(
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
   
-  let gapClosePixels = 0;
-  if (strokeSettings.closeBigGaps) {
-    gapClosePixels = Math.round(0.19 * effectiveDPI);
-  } else if (strokeSettings.closeSmallGaps) {
-    gapClosePixels = Math.round(0.07 * effectiveDPI);
-  }
-  
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   try {
-    const silhouetteMask = createSilhouetteMask(image);
+    // Get image data with alpha threshold (matches worker)
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return null;
+    
+    tempCanvas.width = image.width;
+    tempCanvas.height = image.height;
+    tempCtx.drawImage(image, 0, 0);
+    const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+    const data = imageData.data;
+    
+    // Create silhouette mask with alpha threshold (matches worker)
+    const silhouetteMask = new Uint8Array(image.width * image.height);
+    const threshold = strokeSettings.alphaThreshold || 128;
+    for (let i = 0; i < silhouetteMask.length; i++) {
+      silhouetteMask[i] = data[i * 4 + 3] >= threshold ? 1 : 0;
+    }
+    
     if (silhouetteMask.length === 0) return null;
     
+    // Auto bridge step (matches worker)
     let autoBridgedMask = silhouetteMask;
     if (autoBridgePixels > 0) {
       const halfAutoBridge = Math.round(autoBridgePixels / 2);
@@ -1331,136 +1343,31 @@ export function getContourPath(
       }
     }
     
-    let bridgedMask = autoBridgedMask;
-    
-    if (gapClosePixels > 0) {
-      const halfGapPixels = Math.round(gapClosePixels / 2);
-      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
-      const dilatedWidth = image.width + halfGapPixels * 2;
-      const dilatedHeight = image.height + halfGapPixels * 2;
-      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
-      
-      bridgedMask = new Uint8Array(image.width * image.height);
-      bridgedMask.set(autoBridgedMask);
-      
-      for (let y = 1; y < image.height - 1; y++) {
-        for (let x = 1; x < image.width - 1; x++) {
-          if (autoBridgedMask[y * image.width + x] === 0) {
-            const srcX = x + halfGapPixels;
-            const srcY = y + halfGapPixels;
-            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
-              let hasContentTop = false, hasContentBottom = false;
-              let hasContentLeft = false, hasContentRight = false;
-              
-              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
-                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
-                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
-                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
-                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
-              }
-              
-              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
-                bridgedMask[y * image.width + x] = 1;
-              }
-            }
-          }
-        }
-      }
-      
-      // Smooth bridge step (matches preview)
-      const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
-      if (smoothBridgePixels > 0) {
-        const distanceMap = new Float32Array(image.width * image.height);
-        distanceMap.fill(Infinity);
-        
-        for (let y = 0; y < image.height; y++) {
-          for (let x = 0; x < image.width; x++) {
-            if (bridgedMask[y * image.width + x] === 1) {
-              distanceMap[y * image.width + x] = 0;
-            }
-          }
-        }
-        
-        for (let y = 1; y < image.height; y++) {
-          for (let x = 1; x < image.width - 1; x++) {
-            const idx = y * image.width + x;
-            const topLeft = distanceMap[(y - 1) * image.width + (x - 1)] + 1.414;
-            const top = distanceMap[(y - 1) * image.width + x] + 1;
-            const topRight = distanceMap[(y - 1) * image.width + (x + 1)] + 1.414;
-            const left = distanceMap[y * image.width + (x - 1)] + 1;
-            distanceMap[idx] = Math.min(distanceMap[idx], topLeft, top, topRight, left);
-          }
-        }
-        
-        for (let y = image.height - 2; y >= 0; y--) {
-          for (let x = image.width - 2; x >= 1; x--) {
-            const idx = y * image.width + x;
-            const bottomLeft = distanceMap[(y + 1) * image.width + (x - 1)] + 1.414;
-            const bottom = distanceMap[(y + 1) * image.width + x] + 1;
-            const bottomRight = distanceMap[(y + 1) * image.width + (x + 1)] + 1.414;
-            const right = distanceMap[y * image.width + (x + 1)] + 1;
-            distanceMap[idx] = Math.min(distanceMap[idx], bottomLeft, bottom, bottomRight, right);
-          }
-        }
-        
-        for (let y = 1; y < image.height - 1; y++) {
-          for (let x = 1; x < image.width - 1; x++) {
-            const idx = y * image.width + x;
-            if (bridgedMask[idx] === 0 && distanceMap[idx] <= smoothBridgePixels) {
-              let hasContentTop = false, hasContentBottom = false;
-              let hasContentLeft = false, hasContentRight = false;
-              
-              for (let d = 1; d <= smoothBridgePixels && !hasContentTop; d++) {
-                if (y - d >= 0 && bridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
-              }
-              for (let d = 1; d <= smoothBridgePixels && !hasContentBottom; d++) {
-                if (y + d < image.height && bridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
-              }
-              for (let d = 1; d <= smoothBridgePixels && !hasContentLeft; d++) {
-                if (x - d >= 0 && bridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
-              }
-              for (let d = 1; d <= smoothBridgePixels && !hasContentRight; d++) {
-                if (x + d < image.width && bridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
-              }
-              
-              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
-                bridgedMask[idx] = 1;
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    const baseDilatedMask = dilateSilhouette(bridgedMask, image.width, image.height, baseOffsetPixels);
+    // Base dilation (matches worker - NO gap closing through mask dilation)
+    const baseDilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, baseOffsetPixels);
     const baseWidth = image.width + baseOffsetPixels * 2;
     const baseHeight = image.height + baseOffsetPixels * 2;
     
+    // Fill silhouette (matches worker)
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
+    // User offset dilation (matches worker)
     const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
     const dilatedWidth = baseWidth + userOffsetPixels * 2;
     const dilatedHeight = baseHeight + userOffsetPixels * 2;
     
-    // Apply bridging for touching contours (matches preview)
-    const bridgedFinalMask = bridgeTouchingContours(finalDilatedMask, dilatedWidth, dilatedHeight, effectiveDPI);
-    
-    const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
+    // Trace boundary (matches worker - NO bridgeTouchingContours)
+    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) return null;
     
+    // Smooth path (matches worker)
     let smoothedPath = smoothPath(boundaryPath, 2);
     
-    // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
+    // Fix crossings (matches worker)
     smoothedPath = fixOffsetCrossings(smoothedPath);
     
-    // Apply gap closing using U/N shapes based on settings
+    // Apply gap closing using U/N shapes based on settings (matches worker)
     const gapThresholdPixels = strokeSettings.closeBigGaps 
       ? Math.round(0.19 * effectiveDPI) 
       : strokeSettings.closeSmallGaps 
