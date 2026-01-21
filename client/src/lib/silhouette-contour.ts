@@ -1014,7 +1014,8 @@ function flattenConcaveVertices(points: Point[]): Point[] {
   
   let i = 0;
   while (i < n) {
-    const prev = points[(i - 1 + n) % n];
+    const prevIdx = (i - 1 + n) % n;
+    const prev = points[prevIdx];
     const curr = points[i];
     const next = points[(i + 1) % n];
     
@@ -1043,20 +1044,25 @@ function flattenConcaveVertices(points: Point[]): Point[] {
         // Determine if concave (cross < 0) or convex (cross > 0)
         if (cross < 0) {
           // Concave turn - use N shape to smooth inward
+          // Remove any previous points that would overshoot
+          trimOvershootingPoints(result, curr, 3);
+          
           const mergePoints = generateNShape(prev, next, depth);
-          // Add merge points (skip first which is prev, and last which is next)
           for (let m = 1; m < mergePoints.length - 1; m++) {
             result.push(mergePoints[m]);
           }
-          i++; // Skip the sharp vertex
+          // Skip ahead past any points that would continue the overshoot
+          i = skipOvershootingPoints(points, i + 1, next, n);
           continue;
         } else if (cross > 0 && angle > Math.PI / 2) {
           // Very sharp convex turn - use U shape
+          trimOvershootingPoints(result, curr, 3);
+          
           const mergePoints = generateUShape(prev, next, depth);
           for (let m = 1; m < mergePoints.length - 1; m++) {
             result.push(mergePoints[m]);
           }
-          i++;
+          i = skipOvershootingPoints(points, i + 1, next, n);
           continue;
         }
       }
@@ -1064,6 +1070,92 @@ function flattenConcaveVertices(points: Point[]): Point[] {
     
     result.push(curr);
     i++;
+  }
+  
+  // Final pass: remove any remaining overshoot artifacts
+  return removeOvershootArtifacts(result);
+}
+
+// Remove points from result that overshoot past the merge point
+function trimOvershootingPoints(result: Point[], mergePoint: Point, lookback: number): void {
+  if (result.length < 2) return;
+  
+  // Check last few points - if they're moving away from where the merge will connect, remove them
+  for (let trim = 0; trim < Math.min(lookback, result.length - 1); trim++) {
+    const lastIdx = result.length - 1;
+    const last = result[lastIdx];
+    const secondLast = result[lastIdx - 1];
+    
+    // Check if last point is further from merge than second last (overshooting)
+    const distLast = Math.sqrt((last.x - mergePoint.x) ** 2 + (last.y - mergePoint.y) ** 2);
+    const distSecond = Math.sqrt((secondLast.x - mergePoint.x) ** 2 + (secondLast.y - mergePoint.y) ** 2);
+    
+    if (distLast > distSecond + 2) {
+      result.pop(); // Remove the overshooting point
+    } else {
+      break;
+    }
+  }
+}
+
+// Skip points that would continue past the merge
+function skipOvershootingPoints(points: Point[], startIdx: number, targetPoint: Point, n: number): number {
+  let idx = startIdx;
+  let prevDist = Infinity;
+  
+  // Skip points that are moving away from the target
+  while (idx < n) {
+    const p = points[idx];
+    const dist = Math.sqrt((p.x - targetPoint.x) ** 2 + (p.y - targetPoint.y) ** 2);
+    
+    if (dist < prevDist || dist < 5) {
+      // Getting closer or close enough - stop skipping
+      break;
+    }
+    
+    prevDist = dist;
+    idx++;
+  }
+  
+  return idx;
+}
+
+// Remove remaining overshoot artifacts (points that stick out)
+function removeOvershootArtifacts(points: Point[]): Point[] {
+  if (points.length < 5) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev2 = points[(i - 2 + n) % n];
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    const next2 = points[(i + 2) % n];
+    
+    // Check if this point sticks out (further from the line between neighbors)
+    const lineX = next.x - prev.x;
+    const lineY = next.y - prev.y;
+    const lineLen = Math.sqrt(lineX * lineX + lineY * lineY);
+    
+    if (lineLen > 0) {
+      // Distance from curr to line between prev and next
+      const toPointX = curr.x - prev.x;
+      const toPointY = curr.y - prev.y;
+      const cross = Math.abs(lineX * toPointY - lineY * toPointX) / lineLen;
+      
+      // If point sticks out significantly compared to its neighbors
+      const prevCross = Math.abs(lineX * (prev2.y - prev.y) - lineY * (prev2.x - prev.x)) / lineLen;
+      const nextCross = Math.abs(lineX * (next2.y - prev.y) - lineY * (next2.x - prev.x)) / lineLen;
+      
+      // Skip this point if it's a spike (much further from line than neighbors)
+      if (cross > 10 && cross > prevCross * 2 && cross > nextCross * 2) {
+        continue; // Skip this overshooting point
+      }
+    }
+    
+    result.push(curr);
   }
   
   return result.length >= 3 ? result : points;
