@@ -26,7 +26,6 @@ export default function ImageEditor() {
     closeSmallGaps: false, // Close gaps within 0.06" of each other
     closeBigGaps: false, // Close gaps within 0.19" of each other
     backgroundColor: "#ffffff", // Default white background for contour
-    bleedEnabled: true, // Enable 0.10" background bleed by default
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

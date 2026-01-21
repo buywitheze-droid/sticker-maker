@@ -14,7 +14,6 @@ interface WorkerMessage {
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
-    bleedEnabled: boolean;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -154,7 +153,6 @@ function processContour(
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
-    bleedEnabled: boolean;
   },
   effectiveDPI: number
 ): ImageData {
@@ -171,8 +169,8 @@ function processContour(
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
-  // Add bleed to padding only if enabled
-  const bleedInches = strokeSettings.bleedEnabled ? 0.10 : 0;
+  // Add bleed to padding so expanded background isn't clipped
+  const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   const padding = totalOffsetPixels + bleedPixels + 10;
   const canvasWidth = width + (padding * 2);
@@ -250,7 +248,7 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI, strokeSettings.bleedEnabled);
+  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
   
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
