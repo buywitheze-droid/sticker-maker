@@ -225,21 +225,173 @@ function createOrderedContour(edgePixels: ContourPoint[]): ContourPoint[] {
 function smoothContour(contour: ContourPoint[]): ContourPoint[] {
   if (contour.length < 3) return contour;
   
-  const smoothed: ContourPoint[] = [];
+  // First pass: basic smoothing
+  let smoothed: ContourPoint[] = [];
   
   for (let i = 0; i < contour.length; i++) {
     const prev = contour[(i - 1 + contour.length) % contour.length];
     const curr = contour[i];
     const next = contour[(i + 1) % contour.length];
     
-    // Simple smoothing - average with neighbors
     const smoothX = (prev.x + curr.x * 2 + next.x) / 4;
     const smoothY = (prev.y + curr.y * 2 + next.y) / 4;
     
     smoothed.push({ x: Math.round(smoothX), y: Math.round(smoothY) });
   }
   
+  // Second pass: apply merge paths at sharp turns
+  smoothed = applyMergePaths(smoothed);
+  
+  // Third pass: remove overshooting points
+  smoothed = removeOvershootingPoints(smoothed);
+  
   return smoothed;
+}
+
+// Generate U-shaped merge path (for outward curves)
+function generateUShape(start: ContourPoint, end: ContourPoint, depth: number): ContourPoint[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  const perpX = -dy / len;
+  const perpY = dx / len;
+  
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.5, y: quarterY + perpY * depth * 0.5 },
+    { x: midX + perpX * depth, y: midY + perpY * depth },
+    { x: threeQuarterX + perpX * depth * 0.5, y: threeQuarterY + perpY * depth * 0.5 },
+    end
+  ];
+}
+
+// Generate N-shaped merge path (for inward/concave transitions)
+function generateNShape(start: ContourPoint, end: ContourPoint, depth: number): ContourPoint[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  const perpX = dy / len;
+  const perpY = -dx / len;
+  
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.3, y: quarterY + perpY * depth * 0.3 },
+    { x: midX + perpX * depth * 0.5, y: midY + perpY * depth * 0.5 },
+    { x: threeQuarterX + perpX * depth * 0.3, y: threeQuarterY + perpY * depth * 0.3 },
+    end
+  ];
+}
+
+// Apply merge paths at sharp direction changes
+function applyMergePaths(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 6) return points;
+  
+  const result: ContourPoint[] = [];
+  const n = points.length;
+  
+  let i = 0;
+  while (i < n) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0 && len2 > 0) {
+      const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+      const cross = v1x * v2y - v1y * v2x;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      // Sharp turn (more than 60 degrees)
+      if (angle > Math.PI / 3) {
+        const sharpness = angle / Math.PI;
+        const baseDepth = Math.min(len1, len2) * 0.3;
+        const depth = baseDepth * (0.5 + sharpness * 0.5);
+        
+        if (cross < 0) {
+          // Concave turn - use N shape
+          const mergePoints = generateNShape(prev, next, depth);
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++;
+          continue;
+        } else if (cross > 0 && angle > Math.PI / 2) {
+          // Sharp convex turn - use U shape
+          const mergePoints = generateUShape(prev, next, depth);
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++;
+          continue;
+        }
+      }
+    }
+    
+    result.push(curr);
+    i++;
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Remove points that overshoot or stick out beyond the smooth path
+function removeOvershootingPoints(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 5) return points;
+  
+  const result: ContourPoint[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const lineX = next.x - prev.x;
+    const lineY = next.y - prev.y;
+    const lineLen = Math.sqrt(lineX * lineX + lineY * lineY);
+    
+    if (lineLen > 0) {
+      const toPointX = curr.x - prev.x;
+      const toPointY = curr.y - prev.y;
+      const cross = Math.abs(lineX * toPointY - lineY * toPointX) / lineLen;
+      
+      // Skip if point sticks out too far (is a spike)
+      if (cross > 15) {
+        continue;
+      }
+    }
+    
+    result.push(curr);
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 function applyIntelligentOffset(
