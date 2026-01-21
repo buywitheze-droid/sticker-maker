@@ -144,15 +144,29 @@ export default function ControlsSection({
         {/* Contour Outline Card */}
         <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50' : 'border-gray-200'}`}>
           <CardContent className="space-y-4 pt-6">
-            <div className="flex items-center space-x-3">
-              <Checkbox 
-                id="stroke-enabled"
-                checked={strokeSettings.enabled}
-                onCheckedChange={(checked) => onStrokeChange({ enabled: checked as boolean })}
-              />
-              <Label htmlFor="stroke-enabled" className="text-base font-medium">
-                Contour Outline
-              </Label>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <Checkbox 
+                  id="stroke-enabled"
+                  checked={strokeSettings.enabled}
+                  onCheckedChange={(checked) => onStrokeChange({ enabled: checked as boolean })}
+                />
+                <Label htmlFor="stroke-enabled" className="text-base font-medium">
+                  Contour Outline
+                </Label>
+              </div>
+              {strokeSettings.enabled && (
+                <div className="flex items-center space-x-2">
+                  <Checkbox 
+                    id="bleed-enabled"
+                    checked={strokeSettings.bleedEnabled}
+                    onCheckedChange={(checked) => onStrokeChange({ bleedEnabled: checked as boolean })}
+                  />
+                  <Label htmlFor="bleed-enabled" className="text-sm">
+                    Bleed
+                  </Label>
+                </div>
+              )}
             </div>
             
             {strokeSettings.enabled && (

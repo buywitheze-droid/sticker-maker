@@ -1404,8 +1404,8 @@ export function getContourPath(
       smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
     }
     
-    // Add bleed to dimensions so expanded background fits within page
-    const bleedInches = 0.10;
+    // Add bleed to dimensions so expanded background fits within page (only if bleed enabled)
+    const bleedInches = strokeSettings.bleedEnabled ? 0.10 : 0;
     const widthInches = dilatedWidth / effectiveDPI + (bleedInches * 2);
     const heightInches = dilatedHeight / effectiveDPI + (bleedInches * 2);
     
@@ -1466,16 +1466,11 @@ export async function downloadContourPDF(
     bgCanvas.width = Math.round(widthInches * bgDPI);
     bgCanvas.height = Math.round(heightInches * bgDPI);
     
-    // Close all gaps for solid bleed fill
-    const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
-    
-    // Use stroke + fill approach for guaranteed solid coverage with bleed
-    const bleedInches = 0.10;
+    // Use stroke + fill approach for guaranteed solid coverage with optional bleed
+    const bleedInches = strokeSettings.bleedEnabled ? 0.10 : 0;
     const bleedPixels = bleedInches * bgDPI;
     
     const fillColor = backgroundColor || '#ffffff';
-    
-    // Use the original pathPoints - closeGapsForBleedInches may cause issues
     const drawPath = pathPoints;
     
     bgCtx.fillStyle = fillColor;
@@ -1486,16 +1481,16 @@ export async function downloadContourPDF(
     
     // pathPoints Y is already flipped in getContourPath (heightInches - y), so:
     // - For canvas: use Y directly (canvas origin is top-left)
-    // - For PDF: flip Y back (PDF origin is bottom-left)
     if (drawPath.length > 0) {
       bgCtx.beginPath();
-      // Canvas uses top-left origin, pathPoints Y is already flipped for this
       bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
       for (let i = 1; i < drawPath.length; i++) {
         bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
       }
       bgCtx.closePath();
-      bgCtx.stroke(); // Bleed area
+      if (bleedPixels > 0) {
+        bgCtx.stroke(); // Bleed area (only if bleed enabled)
+      }
       bgCtx.fill();   // Inner area
     }
     
