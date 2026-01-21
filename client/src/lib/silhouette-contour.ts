@@ -866,10 +866,12 @@ function applyChaikinSmoothing(points: Point[], iterations: number): Point[] {
 function removeSelfIntersections(points: Point[]): Point[] {
   if (points.length < 4) return points;
   
-  let result = [...points];
+  // First: remove narrow concave regions where path doubles back on itself
+  let result = removeNarrowConcaveRegions(points);
+  
   let changed = true;
   let iterations = 0;
-  const maxIterations = 50; // More iterations for complex paths
+  const maxIterations = 50;
   
   while (changed && iterations < maxIterations) {
     changed = false;
@@ -884,7 +886,6 @@ function removeSelfIntersections(points: Point[]): Point[] {
       
       // Check against all non-adjacent segments
       for (let j = i + 2; j < n; j++) {
-        // Skip if segments share a point (adjacent)
         if (j === i + 1 || (i === 0 && j === n - 1)) continue;
         
         const p3 = result[j];
@@ -893,12 +894,10 @@ function removeSelfIntersections(points: Point[]): Point[] {
         const intersection = lineSegmentIntersection(p1, p2, p3, p4);
         
         if (intersection) {
-          // Determine which portion to keep (keep the larger portion)
           const loopSize = j - i;
           const remainingSize = n - loopSize;
           
           if (loopSize <= remainingSize) {
-            // Remove the loop between i and j
             const newPoints: Point[] = [];
             for (let k = 0; k <= i; k++) {
               newPoints.push(result[k]);
@@ -909,7 +908,6 @@ function removeSelfIntersections(points: Point[]): Point[] {
             }
             result = newPoints;
           } else {
-            // Keep the loop, remove the other part
             const newPoints: Point[] = [];
             newPoints.push(intersection);
             for (let k = i + 1; k <= j; k++) {
@@ -925,8 +923,76 @@ function removeSelfIntersections(points: Point[]): Point[] {
     }
   }
   
-  // Additional pass: detect and fix near-intersections (T-shapes where lines get very close)
+  // Additional passes
   result = fixNearIntersections(result);
+  result = removeNarrowConcaveRegions(result);
+  
+  return result;
+}
+
+// Remove narrow concave regions where the path comes close to itself
+// This is the main cause of Y and T shaped crossings at straight-to-curve transitions
+function removeNarrowConcaveRegions(points: Point[]): Point[] {
+  if (points.length < 10) return points;
+  
+  const minSeparation = 5; // Minimum distance between non-adjacent path sections
+  let result = [...points];
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = 20;
+  
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    
+    const n = result.length;
+    
+    // Find pairs of points that are too close but far apart in the path
+    for (let i = 0; i < n && !changed; i++) {
+      const pi = result[i];
+      
+      // Check against points that are far away in path distance
+      for (let j = i + 5; j < n - 3; j++) {
+        const pathDist = Math.min(j - i, n - (j - i));
+        if (pathDist < 8) continue; // Must be far apart in path
+        
+        const pj = result[j];
+        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+        
+        if (dist < minSeparation) {
+          // Found a narrow region - bridge across it
+          // Keep the shorter path around
+          const path1Len = j - i;
+          const path2Len = n - path1Len;
+          
+          if (path1Len < path2Len) {
+            // Remove points between i and j, replace with midpoint
+            const midPoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
+            const newPoints: Point[] = [];
+            for (let k = 0; k <= i; k++) {
+              newPoints.push(result[k]);
+            }
+            newPoints.push(midPoint);
+            for (let k = j; k < n; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
+          } else {
+            // Keep path from i to j, remove the rest
+            const midPoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
+            const newPoints: Point[] = [midPoint];
+            for (let k = i; k <= j; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
+          }
+          
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
   
   return result;
 }
