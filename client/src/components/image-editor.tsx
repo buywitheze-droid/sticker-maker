@@ -24,7 +24,7 @@ export default function ImageEditor() {
     enabled: false,
     alphaThreshold: 128, // Auto-detected from alpha channel
     closeSmallGaps: false, // Close gaps within 0.06" of each other
-    closeBigGaps: false, // Close gaps within 0.11" of each other
+    closeBigGaps: false, // Close gaps within 0.13" of each other
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
