@@ -30,8 +30,10 @@ function expandPathOutwardInches(path: Array<{ x: number; y: number }>, expansio
   if (path.length < 3) return path;
   
   // Determine winding direction: positive area = counter-clockwise, negative = clockwise
+  // For CCW polygons, the perpendicular normals point INWARD, so we need to negate
+  // For CW polygons, the perpendicular normals point OUTWARD, so we keep them
   const signedArea = getPolygonSignedAreaInches(path);
-  const windingMultiplier = signedArea >= 0 ? 1 : -1;
+  const windingMultiplier = signedArea >= 0 ? -1 : 1;
   
   const expanded: Array<{ x: number; y: number }> = [];
   const n = path.length;
@@ -1293,7 +1295,8 @@ export function getContourPath(
     width: strokeSettings.width, 
     alphaThreshold: strokeSettings.alphaThreshold,
     closeSmallGaps: strokeSettings.closeSmallGaps,
-    closeBigGaps: strokeSettings.closeBigGaps
+    closeBigGaps: strokeSettings.closeBigGaps,
+    backgroundColor: strokeSettings.backgroundColor
   });
   const effectiveDPI = image.width / resizeSettings.widthInches;
   
