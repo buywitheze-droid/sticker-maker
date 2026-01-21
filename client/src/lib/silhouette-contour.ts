@@ -751,7 +751,10 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 1: Remove tiny spikes/bumps that deviate sharply from the overall curve
   let cleaned = removeSpikes(points, 8, 0.3);
   
-  // Step 2: Apply larger window smoothing to eliminate remaining small variations
+  // Step 2: Remove self-intersections (Y-shaped crossings)
+  cleaned = removeSelfIntersections(cleaned);
+  
+  // Step 3: Apply larger window smoothing to eliminate remaining small variations
   const largeWindow = 4;
   let smoothed: Point[] = [];
   
@@ -771,7 +774,7 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 3: Second pass with original window for fine-tuning
+  // Step 4: Second pass with original window for fine-tuning
   let fineSmoothed: Point[] = [];
   for (let i = 0; i < smoothed.length; i++) {
     let sumX = 0, sumY = 0, count = 0;
@@ -789,11 +792,102 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 4: Remove any remaining tiny bumps
+  // Step 5: Remove any remaining tiny bumps
   fineSmoothed = removeSpikes(fineSmoothed, 6, 0.4);
+  
+  // Step 6: Final pass to remove any intersections created by smoothing
+  fineSmoothed = removeSelfIntersections(fineSmoothed);
   
   // Simplify to reduce point count
   return douglasPeucker(fineSmoothed, 1.0);
+}
+
+// Detect and remove self-intersecting segments (Y-shaped crossings)
+function removeSelfIntersections(points: Point[]): Point[] {
+  if (points.length < 4) return points;
+  
+  let result = [...points];
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = 10; // Prevent infinite loops
+  
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    
+    // Find intersection between non-adjacent segments
+    for (let i = 0; i < result.length - 2 && !changed; i++) {
+      const p1 = result[i];
+      const p2 = result[i + 1];
+      
+      // Check against all segments that are at least 2 positions ahead
+      for (let j = i + 2; j < result.length - 1; j++) {
+        // Skip adjacent segments (they share a point, so always "intersect")
+        if (j === i + 1) continue;
+        
+        const p3 = result[j];
+        const p4 = result[j + 1];
+        
+        const intersection = lineSegmentIntersection(p1, p2, p3, p4);
+        
+        if (intersection) {
+          // Found an intersection - remove the loop
+          // Keep points 0 to i, add intersection point, then j+1 to end
+          const newPoints: Point[] = [];
+          
+          for (let k = 0; k <= i; k++) {
+            newPoints.push(result[k]);
+          }
+          
+          // Add the intersection point
+          newPoints.push(intersection);
+          
+          for (let k = j + 1; k < result.length; k++) {
+            newPoints.push(result[k]);
+          }
+          
+          result = newPoints;
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  
+  return result;
+}
+
+// Check if two line segments intersect and return the intersection point
+function lineSegmentIntersection(
+  p1: Point, p2: Point, 
+  p3: Point, p4: Point
+): Point | null {
+  const d1x = p2.x - p1.x;
+  const d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x;
+  const d2y = p4.y - p3.y;
+  
+  const cross = d1x * d2y - d1y * d2x;
+  
+  // Lines are parallel or nearly parallel
+  if (Math.abs(cross) < 0.0001) return null;
+  
+  const dx = p3.x - p1.x;
+  const dy = p3.y - p1.y;
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  // Check if intersection is within both segments (with small margin)
+  const margin = 0.01;
+  if (t > margin && t < 1 - margin && u > margin && u < 1 - margin) {
+    return {
+      x: p1.x + t * d1x,
+      y: p1.y + t * d1y
+    };
+  }
+  
+  return null;
 }
 
 // Remove spikes/bumps by detecting points that deviate significantly from the line between neighbors

@@ -236,10 +236,90 @@ function createOrderedContour(edgePixels: Point[], width: number, height: number
     return angleA - angleB;
   });
   
-  // Simplify to reduce point count while maintaining shape
-  const simplified = douglasPeucker(sorted, 1.5);
+  // Remove self-intersections (Y-shaped crossings) before simplification
+  const cleanedPath = removeSelfIntersections(sorted);
   
-  return simplified;
+  // Simplify to reduce point count while maintaining shape
+  const simplified = douglasPeucker(cleanedPath, 1.5);
+  
+  // Final pass to remove any intersections created by simplification
+  return removeSelfIntersections(simplified);
+}
+
+// Detect and remove self-intersecting segments (Y-shaped crossings)
+function removeSelfIntersections(points: Point[]): Point[] {
+  if (points.length < 4) return points;
+  
+  let result = [...points];
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = 10;
+  
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    
+    for (let i = 0; i < result.length - 2 && !changed; i++) {
+      const p1 = result[i];
+      const p2 = result[i + 1];
+      
+      for (let j = i + 2; j < result.length - 1; j++) {
+        if (j === i + 1) continue;
+        
+        const p3 = result[j];
+        const p4 = result[j + 1];
+        
+        const intersection = lineSegmentIntersection(p1, p2, p3, p4);
+        
+        if (intersection) {
+          const newPoints: Point[] = [];
+          
+          for (let k = 0; k <= i; k++) {
+            newPoints.push(result[k]);
+          }
+          
+          newPoints.push(intersection);
+          
+          for (let k = j + 1; k < result.length; k++) {
+            newPoints.push(result[k]);
+          }
+          
+          result = newPoints;
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  
+  return result;
+}
+
+function lineSegmentIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | null {
+  const d1x = p2.x - p1.x;
+  const d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x;
+  const d2y = p4.y - p3.y;
+  
+  const cross = d1x * d2y - d1y * d2x;
+  
+  if (Math.abs(cross) < 0.0001) return null;
+  
+  const dx = p3.x - p1.x;
+  const dy = p3.y - p1.y;
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  const margin = 0.01;
+  if (t > margin && t < 1 - margin && u > margin && u < 1 - margin) {
+    return {
+      x: p1.x + t * d1x,
+      y: p1.y + t * d1y
+    };
+  }
+  
+  return null;
 }
 
 function douglasPeucker(points: Point[], epsilon: number): Point[] {
