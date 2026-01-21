@@ -237,7 +237,18 @@ export function createSilhouetteContour(
     }
     
     // Step 6: Smooth and simplify the path
-    const smoothedPath = smoothPath(boundaryPath, 2);
+    let smoothedPath = smoothPath(boundaryPath, 2);
+    
+    // Apply gap closing using U/N shapes based on settings
+    const gapThresholdPixels = strokeSettings.closeBigGaps 
+      ? Math.round(0.19 * effectiveDPI) 
+      : strokeSettings.closeSmallGaps 
+        ? Math.round(0.07 * effectiveDPI) 
+        : 0;
+    
+    if (gapThresholdPixels > 0) {
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+    }
     
     // Step 7: Draw the contour
     const offsetX = padding - totalOffsetPixels;
@@ -944,6 +955,112 @@ function removeNarrowConcaveRegions(points: Point[]): Point[] {
   result = removeTightLoops(result);
   
   return result;
+}
+
+// Close gaps by detecting where paths are close and applying U/N shapes
+function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
+  if (points.length < 20) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const processed = new Set<number>();
+  
+  // Find all gap locations where path points are within threshold but far apart in path order
+  const gaps: Array<{i: number, j: number, dist: number}> = [];
+  
+  for (let i = 0; i < n; i++) {
+    const pi = points[i];
+    
+    // Look for points far ahead in path order but close spatially
+    for (let j = i + 20; j < n - 10; j++) {
+      const pj = points[j];
+      const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+      
+      if (dist < gapThreshold) {
+        // Found a gap - points are close but path travels far between them
+        gaps.push({i, j, dist});
+        break; // Only record first gap from this point
+      }
+    }
+  }
+  
+  if (gaps.length === 0) return points;
+  
+  // Sort gaps by path position
+  gaps.sort((a, b) => a.i - b.i);
+  
+  // Process path, applying U/N shapes at gap locations
+  let currentIdx = 0;
+  
+  for (const gap of gaps) {
+    // Skip overlapping gaps
+    if (gap.i < currentIdx) continue;
+    
+    // Add points before the gap
+    for (let k = currentIdx; k <= gap.i; k++) {
+      if (!processed.has(k)) {
+        result.push(points[k]);
+        processed.add(k);
+      }
+    }
+    
+    // Create a U or N shape to bridge the gap
+    const p1 = points[gap.i];
+    const p2 = points[gap.j];
+    
+    // Determine direction of the bridge
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    
+    // Get direction perpendicular to the gap
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const gapDist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (gapDist > 0.5) {
+      // Perpendicular direction (rotate 90 degrees)
+      const perpX = -dy / gapDist;
+      const perpY = dx / gapDist;
+      
+      // Determine which direction to bulge based on path direction
+      const checkIdx = Math.max(0, gap.i - 5);
+      const checkPt = points[checkIdx];
+      const crossProduct = (checkPt.x - p1.x) * perpY - (checkPt.y - p1.y) * perpX;
+      
+      // Bulge amount - proportional to gap size
+      const bulgeAmount = Math.min(gapDist * 0.3, gapThreshold * 0.4);
+      const bulgeDir = crossProduct > 0 ? 1 : -1;
+      
+      // Create U-shape points
+      const ctrl1X = p1.x + perpX * bulgeAmount * bulgeDir;
+      const ctrl1Y = p1.y + perpY * bulgeAmount * bulgeDir;
+      const ctrlMidX = midX + perpX * bulgeAmount * 1.5 * bulgeDir;
+      const ctrlMidY = midY + perpY * bulgeAmount * 1.5 * bulgeDir;
+      const ctrl2X = p2.x + perpX * bulgeAmount * bulgeDir;
+      const ctrl2Y = p2.y + perpY * bulgeAmount * bulgeDir;
+      
+      // Add the U-shape points
+      result.push({x: ctrl1X, y: ctrl1Y});
+      result.push({x: ctrlMidX, y: ctrlMidY});
+      result.push({x: ctrl2X, y: ctrl2Y});
+    }
+    
+    // Skip all points between i and j (the gap portion of the path)
+    for (let k = gap.i + 1; k < gap.j; k++) {
+      processed.add(k);
+    }
+    
+    currentIdx = gap.j;
+  }
+  
+  // Add remaining points
+  for (let k = currentIdx; k < n; k++) {
+    if (!processed.has(k)) {
+      result.push(points[k]);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 // Generate U-shaped merge path (for outward curves)
