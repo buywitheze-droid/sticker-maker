@@ -55,13 +55,13 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors cursor-pointer"
+        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-cyan-400 hover:bg-cyan-50 transition-colors cursor-pointer"
       >
         <div className="flex flex-col items-center">
           <Upload className="w-12 h-12 text-gray-400 mb-4" />
           <p className="text-gray-600 mb-2">Drop your PNG image here</p>
           <p className="text-sm text-gray-500 mb-4">or click to browse</p>
-          <button className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+          <button className="bg-cyan-500 text-black px-4 py-2 rounded-lg hover:bg-cyan-600 transition-colors">
             Choose File
           </button>
         </div>

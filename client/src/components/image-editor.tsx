@@ -508,7 +508,7 @@ export default function ImageEditor() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
             <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-cyan-500"></div>
               <div className="text-gray-700">
                 <div className="font-medium">Processing image...</div>
                 <div className="text-sm text-gray-500 mt-1">

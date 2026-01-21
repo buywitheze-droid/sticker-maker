@@ -142,7 +142,7 @@ export default function ControlsSection({
       <div className="space-y-6">
 
         {/* Contour Outline Card */}
-        <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+        <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50' : 'border-gray-200'}`}>
           <CardContent className="space-y-4 pt-6">
             <div className="flex items-center space-x-3">
               <Checkbox 
@@ -337,7 +337,7 @@ export default function ControlsSection({
               <Button 
                 onClick={handleSendDesign}
                 disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || (!strokeSettings.enabled && !shapeSettings.enabled)}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
               >
                 {isSending ? "Sending..." : "Send Design"}
               </Button>
@@ -358,7 +358,7 @@ export default function ControlsSection({
               <Button 
                 onClick={() => onDownload('standard')}
                 disabled={!imageInfo || isProcessing || (!strokeSettings.enabled && !shapeSettings.enabled)}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
               >Download PDF</Button>
             </div>
           </CardContent>
@@ -385,7 +385,7 @@ export default function ControlsSection({
             <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={confirmAndSend} className="bg-blue-500 hover:bg-blue-600">
+            <Button onClick={confirmAndSend} className="bg-cyan-500 hover:bg-cyan-600 text-black">
               Confirm & Send
             </Button>
           </DialogFooter>
