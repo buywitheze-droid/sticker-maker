@@ -55,7 +55,7 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-cyan-400 hover:bg-cyan-50 transition-colors cursor-pointer"
+        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-white hover:border-cyan-400 hover:bg-cyan-50 transition-colors cursor-pointer"
       >
         <div className="flex flex-col items-center">
           <Upload className="w-12 h-12 text-gray-400 mb-4" />
