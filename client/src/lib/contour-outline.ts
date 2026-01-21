@@ -1413,42 +1413,35 @@ export async function downloadContourPDF(
   filename: string
 ): Promise<void> {
   try {
-    console.log('[downloadContourPDF] Starting PDF generation');
+    // Small delay to allow loading indicator to render
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
     const contourResult = getContourPath(image, strokeSettings, resizeSettings);
     if (!contourResult) {
       console.error('Failed to generate contour path');
       return;
     }
-    console.log('[downloadContourPDF] Got contour result, pathPoints:', contourResult.pathPoints.length);
   
     const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
-    console.log('[downloadContourPDF] backgroundColor:', backgroundColor);
   
     const widthPts = widthInches * 72;
     const heightPts = heightInches * 72;
-    console.log('[downloadContourPDF] Creating PDF document, size:', widthPts, 'x', heightPts);
     
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([widthPts, heightPts]);
-    console.log('[downloadContourPDF] PDF page created');
     
     // Create background raster image with the contour shape filled (with bleed)
     const bgCanvas = document.createElement('canvas');
     const bgCtx = bgCanvas.getContext('2d');
-    if (!bgCtx) {
-      console.error('[downloadContourPDF] Failed to get bgCtx');
-      return;
-    }
+    if (!bgCtx) return;
     
     const bgDPI = 300;
     bgCanvas.width = Math.round(widthInches * bgDPI);
     bgCanvas.height = Math.round(heightInches * bgDPI);
-    console.log('[downloadContourPDF] Background canvas:', bgCanvas.width, 'x', bgCanvas.height);
     
     // Expand path outward by 0.04" for background bleed
     const bleedInches = 0.04;
     const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
-    console.log('[downloadContourPDF] Expanded path points:', expandedPathPoints.length);
     
     bgCtx.fillStyle = backgroundColor || '#ffffff';
     
@@ -1462,7 +1455,6 @@ export async function downloadContourPDF(
       bgCtx.closePath();
       bgCtx.fill();
     }
-    console.log('[downloadContourPDF] Filled expanded path');
     
     // Fill the original path to ensure full coverage
     bgCtx.beginPath();
@@ -1474,7 +1466,6 @@ export async function downloadContourPDF(
       bgCtx.closePath();
       bgCtx.fill();
     }
-    console.log('[downloadContourPDF] Filled original path');
     
     const bgBlob = await new Promise<Blob>((resolve, reject) => {
       bgCanvas.toBlob((b) => {
@@ -1482,10 +1473,8 @@ export async function downloadContourPDF(
         else reject(new Error('Failed to create blob from canvas'));
       }, 'image/png');
     });
-    console.log('[downloadContourPDF] Created bgBlob:', bgBlob.size, 'bytes');
     const bgPngBytes = new Uint8Array(await bgBlob.arrayBuffer());
     const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
-    console.log('[downloadContourPDF] Embedded background PNG');
     
     // Draw the background raster image first
     page.drawImage(bgPngImage, {
@@ -1494,15 +1483,11 @@ export async function downloadContourPDF(
       width: widthPts,
       height: heightPts,
     });
-    console.log('[downloadContourPDF] Drew background image');
     
     // Now draw the design image on top
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d');
-    if (!tempCtx) {
-      console.error('[downloadContourPDF] Failed to get tempCtx');
-      return;
-    }
+    if (!tempCtx) return;
     
     tempCanvas.width = image.width;
     tempCanvas.height = image.height;
@@ -1514,7 +1499,6 @@ export async function downloadContourPDF(
         else reject(new Error('Failed to create blob from design canvas'));
       }, 'image/png');
     });
-    console.log('[downloadContourPDF] Created design blob:', blob.size, 'bytes');
     const pngBytes = new Uint8Array(await blob.arrayBuffer());
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
