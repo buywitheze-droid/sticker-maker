@@ -721,6 +721,65 @@ function applyMergeCurves(points: Point[]): Point[] {
 function removeOvershootingPoints(points: Point[]): Point[] {
   if (points.length < 5) return points;
   
+  // First pass: detect and unite crossing junctions
+  let result = uniteJunctions(points);
+  
+  // Second pass: remove remaining spikes
+  result = removeSpikesFromPath(result);
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Detect where path segments cross or nearly touch and unite them
+function uniteJunctions(points: Point[]): Point[] {
+  if (points.length < 8) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const skipIndices = new Set<number>();
+  
+  // Find all junction points where the path comes close to itself
+  for (let i = 0; i < n; i++) {
+    if (skipIndices.has(i)) continue;
+    
+    const pi = points[i];
+    let foundJunction = false;
+    
+    // Look for another point that's close but far in path order (indicating a loop/crossing)
+    for (let j = i + 5; j < Math.min(i + 40, n); j++) {
+      const pathDist = j - i;
+      if (pathDist < 6) continue;
+      
+      const pj = points[j];
+      const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+      
+      // If points are close together (within 8 pixels) but far apart in path order
+      if (dist < 8) {
+        // Found a junction - skip all points between i and j (the loop going out of bounds)
+        for (let k = i + 1; k < j; k++) {
+          skipIndices.add(k);
+        }
+        
+        // Add a smooth merge point at the junction
+        const mergePoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
+        result.push(mergePoint);
+        foundJunction = true;
+        break;
+      }
+    }
+    
+    if (!foundJunction) {
+      result.push(pi);
+    }
+  }
+  
+  return result;
+}
+
+// Remove individual spike points
+function removeSpikesFromPath(points: Point[]): Point[] {
+  if (points.length < 5) return points;
+  
   const result: Point[] = [];
   const n = points.length;
   
@@ -738,8 +797,8 @@ function removeOvershootingPoints(points: Point[]): Point[] {
       const toPointY = curr.y - prev.y;
       const cross = Math.abs(lineX * toPointY - lineY * toPointX) / lineLen;
       
-      // Skip if point sticks out too far (is a spike)
-      if (cross > 15) {
+      // Skip if point sticks out too far
+      if (cross > 12) {
         continue;
       }
     }
@@ -747,7 +806,7 @@ function removeOvershootingPoints(points: Point[]): Point[] {
     result.push(curr);
   }
   
-  return result.length >= 3 ? result : points;
+  return result;
 }
 
 function removeSpikes(points: Point[], neighborDistance: number, threshold: number): Point[] {
