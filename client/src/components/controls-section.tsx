@@ -199,18 +199,31 @@ export default function ControlsSection({
                   </Label>
                 </div>
 
-                <div>
-                  <Label>Select your sticker background color</Label>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <input
-                      type="color"
-                      value={strokeSettings.backgroundColor}
-                      onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                      className="w-10 h-10 rounded cursor-pointer border border-gray-300"
-                    />
-                    <span className="text-sm text-gray-600">{strokeSettings.backgroundColor}</span>
-                  </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="bleed-enabled"
+                    checked={strokeSettings.bleedEnabled}
+                    onCheckedChange={(checked) => onStrokeChange({ bleedEnabled: checked as boolean })}
+                  />
+                  <Label htmlFor="bleed-enabled" className="text-sm">
+                    Enable background bleed (0.10")
+                  </Label>
                 </div>
+
+                {strokeSettings.bleedEnabled && (
+                  <div>
+                    <Label>Select your sticker background color</Label>
+                    <div className="flex items-center space-x-2 mt-2">
+                      <input
+                        type="color"
+                        value={strokeSettings.backgroundColor}
+                        onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
+                        className="w-10 h-10 rounded cursor-pointer border border-gray-300"
+                      />
+                      <span className="text-sm text-gray-600">{strokeSettings.backgroundColor}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
