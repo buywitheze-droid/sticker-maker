@@ -78,10 +78,8 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
       <Card className="mt-4">
         <CardContent className="p-4">
           <p className="font-bold text-center text-lg" style={{ 
-            fontFamily: "'Fredoka One', cursive",
-            color: 'black',
-            WebkitTextStroke: '1px red',
-            textShadow: '1px 1px 0 red, -1px -1px 0 red, 1px -1px 0 red, -1px 1px 0 red'
+            fontFamily: "'Inter', sans-serif",
+            color: '#FF6B00'
           }}>
             The red outline you see is your CUT LINE - that's exactly where the magic scissors will snip!
           </p>
