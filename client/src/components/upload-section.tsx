@@ -74,15 +74,12 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         />
       </div>
 
-      {/* Fun Sticker Facts */}
+      {/* Cut Line Info */}
       <Card className="mt-4">
         <CardContent className="p-4">
-          <h3 className="text-sm font-medium text-gray-900 mb-2">Fun Sticker Facts!</h3>
-          <div className="space-y-2 text-sm text-gray-600">
-            <p>Did you know? The first stickers were invented in the 1880s and people went absolutely crazy for them!</p>
-            <p className="text-red-600 font-medium">The red outline you see is your CUT LINE - that's exactly where the magic scissors will snip!</p>
-            <p>Stickers are basically tiny billboards for your personality. Stick them everywhere and let the world know you're awesome!</p>
-          </div>
+          <p className="text-red-600 font-bold text-center text-lg" style={{ fontFamily: "'Fredoka One', cursive" }}>
+            The red outline you see is your CUT LINE - that's exactly where the magic scissors will snip!
+          </p>
         </CardContent>
       </Card>
     </div>
