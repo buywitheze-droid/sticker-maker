@@ -246,45 +246,56 @@ function createOrderedContour(edgePixels: Point[], width: number, height: number
   return removeSelfIntersections(simplified);
 }
 
-// Detect and remove self-intersecting segments (Y-shaped crossings)
+// Detect and remove self-intersecting segments (Y-shaped and T-shaped crossings)
 function removeSelfIntersections(points: Point[]): Point[] {
   if (points.length < 4) return points;
   
   let result = [...points];
   let changed = true;
   let iterations = 0;
-  const maxIterations = 10;
+  const maxIterations = 50;
   
   while (changed && iterations < maxIterations) {
     changed = false;
     iterations++;
     
-    for (let i = 0; i < result.length - 2 && !changed; i++) {
+    const n = result.length;
+    
+    for (let i = 0; i < n && !changed; i++) {
       const p1 = result[i];
-      const p2 = result[i + 1];
+      const p2 = result[(i + 1) % n];
       
-      for (let j = i + 2; j < result.length - 1; j++) {
-        if (j === i + 1) continue;
+      for (let j = i + 2; j < n; j++) {
+        if (j === i + 1 || (i === 0 && j === n - 1)) continue;
         
         const p3 = result[j];
-        const p4 = result[j + 1];
+        const p4 = result[(j + 1) % n];
         
         const intersection = lineSegmentIntersection(p1, p2, p3, p4);
         
         if (intersection) {
-          const newPoints: Point[] = [];
+          const loopSize = j - i;
+          const remainingSize = n - loopSize;
           
-          for (let k = 0; k <= i; k++) {
-            newPoints.push(result[k]);
+          if (loopSize <= remainingSize) {
+            const newPoints: Point[] = [];
+            for (let k = 0; k <= i; k++) {
+              newPoints.push(result[k]);
+            }
+            newPoints.push(intersection);
+            for (let k = j + 1; k < n; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
+          } else {
+            const newPoints: Point[] = [];
+            newPoints.push(intersection);
+            for (let k = i + 1; k <= j; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
           }
           
-          newPoints.push(intersection);
-          
-          for (let k = j + 1; k < result.length; k++) {
-            newPoints.push(result[k]);
-          }
-          
-          result = newPoints;
           changed = true;
           break;
         }
@@ -292,7 +303,59 @@ function removeSelfIntersections(points: Point[]): Point[] {
     }
   }
   
+  result = fixNearIntersections(result);
+  
   return result;
+}
+
+function fixNearIntersections(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const result: Point[] = [];
+  const minDistance = 2;
+  
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    let tooClose = false;
+    
+    for (let j = 0; j < points.length - 1; j++) {
+      if (Math.abs(i - j) <= 2 || Math.abs(i - j) >= points.length - 2) continue;
+      
+      const segStart = points[j];
+      const segEnd = points[j + 1];
+      
+      const dist = pointToSegmentDistance(current, segStart, segEnd);
+      
+      if (dist < minDistance) {
+        tooClose = true;
+        break;
+      }
+    }
+    
+    if (!tooClose) {
+      result.push(current);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+function pointToSegmentDistance(p: Point, segStart: Point, segEnd: Point): number {
+  const dx = segEnd.x - segStart.x;
+  const dy = segEnd.y - segStart.y;
+  const lengthSq = dx * dx + dy * dy;
+  
+  if (lengthSq === 0) {
+    return Math.sqrt((p.x - segStart.x) ** 2 + (p.y - segStart.y) ** 2);
+  }
+  
+  let t = ((p.x - segStart.x) * dx + (p.y - segStart.y) * dy) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  const nearestX = segStart.x + t * dx;
+  const nearestY = segStart.y + t * dy;
+  
+  return Math.sqrt((p.x - nearestX) ** 2 + (p.y - nearestY) ** 2);
 }
 
 function lineSegmentIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | null {
@@ -311,7 +374,7 @@ function lineSegmentIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Po
   const t = (dx * d2y - dy * d2x) / cross;
   const u = (dx * d1y - dy * d1x) / cross;
   
-  const margin = 0.01;
+  const margin = 0.001;
   if (t > margin && t < 1 - margin && u > margin && u < 1 - margin) {
     return {
       x: p1.x + t * d1x,

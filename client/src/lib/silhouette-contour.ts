@@ -802,51 +802,62 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   return douglasPeucker(fineSmoothed, 1.0);
 }
 
-// Detect and remove self-intersecting segments (Y-shaped crossings)
+// Detect and remove self-intersecting segments (Y-shaped and T-shaped crossings)
 function removeSelfIntersections(points: Point[]): Point[] {
   if (points.length < 4) return points;
   
   let result = [...points];
   let changed = true;
   let iterations = 0;
-  const maxIterations = 10; // Prevent infinite loops
+  const maxIterations = 50; // More iterations for complex paths
   
   while (changed && iterations < maxIterations) {
     changed = false;
     iterations++;
     
-    // Find intersection between non-adjacent segments
-    for (let i = 0; i < result.length - 2 && !changed; i++) {
+    const n = result.length;
+    
+    // Check all segment pairs for intersections
+    for (let i = 0; i < n && !changed; i++) {
       const p1 = result[i];
-      const p2 = result[i + 1];
+      const p2 = result[(i + 1) % n];
       
-      // Check against all segments that are at least 2 positions ahead
-      for (let j = i + 2; j < result.length - 1; j++) {
-        // Skip adjacent segments (they share a point, so always "intersect")
-        if (j === i + 1) continue;
+      // Check against all non-adjacent segments
+      for (let j = i + 2; j < n; j++) {
+        // Skip if segments share a point (adjacent)
+        if (j === i + 1 || (i === 0 && j === n - 1)) continue;
         
         const p3 = result[j];
-        const p4 = result[j + 1];
+        const p4 = result[(j + 1) % n];
         
         const intersection = lineSegmentIntersection(p1, p2, p3, p4);
         
         if (intersection) {
-          // Found an intersection - remove the loop
-          // Keep points 0 to i, add intersection point, then j+1 to end
-          const newPoints: Point[] = [];
+          // Determine which portion to keep (keep the larger portion)
+          const loopSize = j - i;
+          const remainingSize = n - loopSize;
           
-          for (let k = 0; k <= i; k++) {
-            newPoints.push(result[k]);
+          if (loopSize <= remainingSize) {
+            // Remove the loop between i and j
+            const newPoints: Point[] = [];
+            for (let k = 0; k <= i; k++) {
+              newPoints.push(result[k]);
+            }
+            newPoints.push(intersection);
+            for (let k = j + 1; k < n; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
+          } else {
+            // Keep the loop, remove the other part
+            const newPoints: Point[] = [];
+            newPoints.push(intersection);
+            for (let k = i + 1; k <= j; k++) {
+              newPoints.push(result[k]);
+            }
+            result = newPoints;
           }
           
-          // Add the intersection point
-          newPoints.push(intersection);
-          
-          for (let k = j + 1; k < result.length; k++) {
-            newPoints.push(result[k]);
-          }
-          
-          result = newPoints;
           changed = true;
           break;
         }
@@ -854,7 +865,64 @@ function removeSelfIntersections(points: Point[]): Point[] {
     }
   }
   
+  // Additional pass: detect and fix near-intersections (T-shapes where lines get very close)
+  result = fixNearIntersections(result);
+  
   return result;
+}
+
+// Fix near-intersections where lines come very close but don't technically cross
+function fixNearIntersections(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const result: Point[] = [];
+  const minDistance = 2; // Minimum distance threshold in pixels
+  
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    let tooClose = false;
+    
+    // Check if this point is too close to any non-adjacent segment
+    for (let j = 0; j < points.length - 1; j++) {
+      // Skip adjacent segments
+      if (Math.abs(i - j) <= 2 || Math.abs(i - j) >= points.length - 2) continue;
+      
+      const segStart = points[j];
+      const segEnd = points[j + 1];
+      
+      const dist = pointToSegmentDistance(current, segStart, segEnd);
+      
+      if (dist < minDistance) {
+        tooClose = true;
+        break;
+      }
+    }
+    
+    if (!tooClose) {
+      result.push(current);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Calculate distance from point to line segment
+function pointToSegmentDistance(p: Point, segStart: Point, segEnd: Point): number {
+  const dx = segEnd.x - segStart.x;
+  const dy = segEnd.y - segStart.y;
+  const lengthSq = dx * dx + dy * dy;
+  
+  if (lengthSq === 0) {
+    return Math.sqrt((p.x - segStart.x) ** 2 + (p.y - segStart.y) ** 2);
+  }
+  
+  let t = ((p.x - segStart.x) * dx + (p.y - segStart.y) * dy) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  const nearestX = segStart.x + t * dx;
+  const nearestY = segStart.y + t * dy;
+  
+  return Math.sqrt((p.x - nearestX) ** 2 + (p.y - nearestY) ** 2);
 }
 
 // Check if two line segments intersect and return the intersection point
@@ -878,8 +946,8 @@ function lineSegmentIntersection(
   const t = (dx * d2y - dy * d2x) / cross;
   const u = (dx * d1y - dy * d1x) / cross;
   
-  // Check if intersection is within both segments (with small margin)
-  const margin = 0.01;
+  // Check if intersection is within both segments (very small margin for better detection)
+  const margin = 0.001;
   if (t > margin && t < 1 - margin && u > margin && u < 1 - margin) {
     return {
       x: p1.x + t * d1x,
