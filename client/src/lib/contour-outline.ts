@@ -595,7 +595,159 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   
   fineSmoothed = removeSpikes(fineSmoothed, 6, 0.4);
   
+  // Apply U and N shaped merge curves to ALL direction changes
+  fineSmoothed = applyMergeCurves(fineSmoothed);
+  
+  // Remove any overshooting points
+  fineSmoothed = removeOvershootingPoints(fineSmoothed);
+  
   return douglasPeucker(fineSmoothed, 1.0);
+}
+
+// Generate U-shaped merge path (for outward curves)
+function generateUShapeMerge(start: Point, end: Point, depth: number): Point[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  const perpX = -dy / len;
+  const perpY = dx / len;
+  
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.5, y: quarterY + perpY * depth * 0.5 },
+    { x: midX + perpX * depth, y: midY + perpY * depth },
+    { x: threeQuarterX + perpX * depth * 0.5, y: threeQuarterY + perpY * depth * 0.5 },
+    end
+  ];
+}
+
+// Generate N-shaped merge path (for inward/concave transitions)
+function generateNShapeMerge(start: Point, end: Point, depth: number): Point[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  const perpX = dy / len;
+  const perpY = -dx / len;
+  
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.3, y: quarterY + perpY * depth * 0.3 },
+    { x: midX + perpX * depth * 0.5, y: midY + perpY * depth * 0.5 },
+    { x: threeQuarterX + perpX * depth * 0.3, y: threeQuarterY + perpY * depth * 0.3 },
+    end
+  ];
+}
+
+// Apply merge curves at ALL direction changes
+function applyMergeCurves(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  let i = 0;
+  while (i < n) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0.5 && len2 > 0.5) {
+      const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+      const cross = v1x * v2y - v1y * v2x;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      // Apply to ANY direction change (more than 15 degrees)
+      if (angle > Math.PI / 12) {
+        const sharpness = angle / Math.PI;
+        const baseDepth = Math.min(len1, len2) * 0.4;
+        const depth = Math.max(1, baseDepth * (0.3 + sharpness * 0.7));
+        
+        if (cross < 0) {
+          // Concave turn (inward) - use N shape
+          const mergePoints = generateNShapeMerge(prev, next, depth);
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++;
+          continue;
+        } else if (cross > 0) {
+          // Convex turn (outward) - use U shape
+          const mergePoints = generateUShapeMerge(prev, next, depth);
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++;
+          continue;
+        }
+      }
+    }
+    
+    result.push(curr);
+    i++;
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Remove points that overshoot or stick out beyond the smooth path
+function removeOvershootingPoints(points: Point[]): Point[] {
+  if (points.length < 5) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const lineX = next.x - prev.x;
+    const lineY = next.y - prev.y;
+    const lineLen = Math.sqrt(lineX * lineX + lineY * lineY);
+    
+    if (lineLen > 0) {
+      const toPointX = curr.x - prev.x;
+      const toPointY = curr.y - prev.y;
+      const cross = Math.abs(lineX * toPointY - lineY * toPointX) / lineLen;
+      
+      // Skip if point sticks out too far (is a spike)
+      if (cross > 15) {
+        continue;
+      }
+    }
+    
+    result.push(curr);
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 function removeSpikes(points: Point[], neighborDistance: number, threshold: number): Point[] {

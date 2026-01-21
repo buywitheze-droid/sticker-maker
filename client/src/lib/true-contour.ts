@@ -302,7 +302,7 @@ function generateNShape(start: ContourPoint, end: ContourPoint, depth: number): 
   ];
 }
 
-// Apply merge paths at sharp direction changes
+// Apply merge paths at ALL direction changes (any curve)
 function applyMergePaths(points: ContourPoint[]): ContourPoint[] {
   if (points.length < 6) return points;
   
@@ -323,27 +323,28 @@ function applyMergePaths(points: ContourPoint[]): ContourPoint[] {
     const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
     const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
     
-    if (len1 > 0 && len2 > 0) {
+    if (len1 > 0.5 && len2 > 0.5) {
       const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
       const cross = v1x * v2y - v1y * v2x;
       const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
       
-      // Sharp turn (more than 60 degrees)
-      if (angle > Math.PI / 3) {
+      // Apply to ANY direction change (more than 15 degrees)
+      if (angle > Math.PI / 12) {
+        // Scale depth based on turn sharpness - small turns get small curves, sharp turns get larger
         const sharpness = angle / Math.PI;
-        const baseDepth = Math.min(len1, len2) * 0.3;
-        const depth = baseDepth * (0.5 + sharpness * 0.5);
+        const baseDepth = Math.min(len1, len2) * 0.4;
+        const depth = Math.max(1, baseDepth * (0.3 + sharpness * 0.7));
         
         if (cross < 0) {
-          // Concave turn - use N shape
+          // Concave turn (inward) - use N shape
           const mergePoints = generateNShape(prev, next, depth);
           for (let m = 1; m < mergePoints.length - 1; m++) {
             result.push(mergePoints[m]);
           }
           i++;
           continue;
-        } else if (cross > 0 && angle > Math.PI / 2) {
-          // Sharp convex turn - use U shape
+        } else if (cross > 0) {
+          // Convex turn (outward) - use U shape
           const mergePoints = generateUShape(prev, next, depth);
           for (let m = 1; m < mergePoints.length - 1; m++) {
             result.push(mergePoints[m]);
