@@ -6,9 +6,9 @@ export default function StickerMaker() {
   const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
 
   return (
-    <div className="bg-gray-800 min-h-screen">
+    <div className="bg-black min-h-screen">
       {/* Header */}
-      <header className="bg-black border-b border-gray-800 px-6 py-4">
+      <header className="bg-black border-b border-gray-700 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center">
