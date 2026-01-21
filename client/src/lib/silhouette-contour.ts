@@ -968,17 +968,23 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   // Find all gap locations where path points are within threshold but far apart in path order
   const gaps: Array<{i: number, j: number, dist: number}> = [];
   
-  for (let i = 0; i < n; i++) {
+  // OPTIMIZATION: Use stride to reduce iterations (check every 5th point for large paths)
+  const stride = n > 500 ? 5 : n > 200 ? 3 : 1;
+  const thresholdSq = gapThreshold * gapThreshold; // Avoid sqrt in inner loop
+  
+  for (let i = 0; i < n; i += stride) {
     const pi = points[i];
     
     // Look for points far ahead in path order but close spatially
-    for (let j = i + 20; j < n - 10; j++) {
+    // OPTIMIZATION: Limit search range and use stride
+    const maxSearch = Math.min(n - 10, i + 500); // Limit how far we search
+    for (let j = i + 50; j < maxSearch; j += stride) {
       const pj = points[j];
-      const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+      const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
       
-      if (dist < gapThreshold) {
+      if (distSq < thresholdSq) {
         // Found a gap - points are close but path travels far between them
-        gaps.push({i, j, dist});
+        gaps.push({i, j, dist: Math.sqrt(distSq)});
         break; // Only record first gap from this point
       }
     }
