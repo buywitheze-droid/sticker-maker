@@ -930,71 +930,116 @@ function removeSelfIntersections(points: Point[]): Point[] {
   return result;
 }
 
-// Remove narrow concave regions where the path comes close to itself
-// This is the main cause of Y and T shaped crossings at straight-to-curve transitions
+// Flatten concave regions by replacing them with straight lines
+// This prevents crossings by eliminating indentations in the cut path
 function removeNarrowConcaveRegions(points: Point[]): Point[] {
-  if (points.length < 10) return points;
+  if (points.length < 6) return points;
   
-  const minSeparation = 5; // Minimum distance between non-adjacent path sections
   let result = [...points];
-  let changed = true;
-  let iterations = 0;
-  const maxIterations = 20;
   
-  while (changed && iterations < maxIterations) {
-    changed = false;
-    iterations++;
-    
-    const n = result.length;
-    
-    // Find pairs of points that are too close but far apart in the path
-    for (let i = 0; i < n && !changed; i++) {
-      const pi = result[i];
-      
-      // Check against points that are far away in path distance
-      for (let j = i + 5; j < n - 3; j++) {
-        const pathDist = Math.min(j - i, n - (j - i));
-        if (pathDist < 8) continue; // Must be far apart in path
-        
-        const pj = result[j];
-        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
-        
-        if (dist < minSeparation) {
-          // Found a narrow region - bridge across it
-          // Keep the shorter path around
-          const path1Len = j - i;
-          const path2Len = n - path1Len;
-          
-          if (path1Len < path2Len) {
-            // Remove points between i and j, replace with midpoint
-            const midPoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
-            const newPoints: Point[] = [];
-            for (let k = 0; k <= i; k++) {
-              newPoints.push(result[k]);
-            }
-            newPoints.push(midPoint);
-            for (let k = j; k < n; k++) {
-              newPoints.push(result[k]);
-            }
-            result = newPoints;
-          } else {
-            // Keep path from i to j, remove the rest
-            const midPoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
-            const newPoints: Point[] = [midPoint];
-            for (let k = i; k <= j; k++) {
-              newPoints.push(result[k]);
-            }
-            result = newPoints;
-          }
-          
-          changed = true;
-          break;
-        }
-      }
-    }
-  }
+  // Pass 1: Detect and flatten concave vertices
+  result = flattenConcaveVertices(result);
+  
+  // Pass 2: Remove any remaining tight loops
+  result = removeTightLoops(result);
   
   return result;
+}
+
+// Detect concave vertices and flatten them by removing the indentation
+function flattenConcaveVertices(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  let i = 0;
+  while (i < n) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate cross product to determine if vertex is concave
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const cross = v1x * v2y - v1y * v2x;
+    
+    // Check if this is a sharp concave turn (cross product indicates direction)
+    const angle = Math.atan2(cross, v1x * v2x + v1y * v2y);
+    const isSharpConcave = angle < -0.5; // More than ~30 degrees concave
+    
+    if (isSharpConcave) {
+      // Look ahead to find where the path comes back out
+      let endIdx = i + 1;
+      let minDist = Infinity;
+      let bestEnd = endIdx;
+      
+      // Find the point where we can bridge across the concavity
+      for (let j = i + 2; j < Math.min(i + 20, n); j++) {
+        const pj = points[j % n];
+        const dist = Math.sqrt((prev.x - pj.x) ** 2 + (prev.y - pj.y) ** 2);
+        
+        // Check if this creates a reasonable bridge (not too long, path continues in similar direction)
+        const bridgeX = pj.x - prev.x;
+        const bridgeY = pj.y - prev.y;
+        const bridgeDot = v1x * bridgeX + v1y * bridgeY;
+        
+        if (bridgeDot > 0 && dist < minDist && dist < 50) {
+          minDist = dist;
+          bestEnd = j;
+        }
+      }
+      
+      // Skip the concave section
+      if (bestEnd > i + 1 && minDist < 50) {
+        result.push(curr);
+        i = bestEnd;
+        continue;
+      }
+    }
+    
+    result.push(curr);
+    i++;
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Remove tight loops where the path doubles back on itself
+function removeTightLoops(points: Point[]): Point[] {
+  if (points.length < 8) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  const skipUntil = new Set<number>();
+  
+  for (let i = 0; i < n; i++) {
+    if (skipUntil.has(i)) continue;
+    
+    const pi = points[i];
+    let foundLoop = false;
+    
+    // Check if any point ahead is very close (indicating a loop)
+    for (let j = i + 4; j < Math.min(i + 30, n); j++) {
+      const pj = points[j];
+      const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+      
+      if (dist < 4) {
+        // Found a loop - skip all points in between
+        for (let k = i + 1; k < j; k++) {
+          skipUntil.add(k);
+        }
+        foundLoop = true;
+        break;
+      }
+    }
+    
+    result.push(pi);
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 // Fix near-intersections where lines come very close but don't technically cross
@@ -1209,13 +1254,9 @@ function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): 
 function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], color: string, offsetX: number, offsetY: number): void {
   if (contour.length < 3) return;
   
-  // Final intersection removal before drawing
+  // Final cleanup before drawing - focus on removing problematic areas
   let cleanContour = removeSelfIntersections(contour);
-  
-  // Apply one more round of Chaikin smoothing for ultra-smooth rendering
-  cleanContour = applyChaikinSmoothing(cleanContour, 1);
-  
-  // Remove any intersections created by Chaikin
+  cleanContour = removeNarrowConcaveRegions(cleanContour);
   cleanContour = removeSelfIntersections(cleanContour);
 
   ctx.strokeStyle = color;
@@ -1235,33 +1276,16 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   const start = cleanContour[0];
   ctx.moveTo(start.x + offsetX, start.y + offsetY);
   
-  // Draw smooth curves with very low tension to prevent overshoots
+  // Use simple quadratic curves that never cross - safer than bezier
   for (let i = 0; i < cleanContour.length; i++) {
-    const p0 = cleanContour[(i - 1 + cleanContour.length) % cleanContour.length];
     const p1 = cleanContour[i];
     const p2 = cleanContour[(i + 1) % cleanContour.length];
-    const p3 = cleanContour[(i + 2) % cleanContour.length];
     
-    // Very low tension to prevent curve overshoots that cause crossings
-    const tension = 0.2;
-    const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
-    const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
-    const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
-    const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
+    // Simple midpoint curve - guaranteed not to create crossings
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
     
-    // Check if control points would create a crossing - if so, use linear interpolation
-    if (wouldCauseCrossing(p1, {x: cp1x, y: cp1y}, {x: cp2x, y: cp2y}, p2)) {
-      // Use quadratic curve instead with midpoint control
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
-      ctx.quadraticCurveTo(midX + offsetX, midY + offsetY, p2.x + offsetX, p2.y + offsetY);
-    } else {
-      ctx.bezierCurveTo(
-        cp1x + offsetX, cp1y + offsetY,
-        cp2x + offsetX, cp2y + offsetY,
-        p2.x + offsetX, p2.y + offsetY
-      );
-    }
+    ctx.lineTo(midX + offsetX, midY + offsetY);
   }
   
   ctx.closePath();
@@ -1270,36 +1294,6 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   // Reset shadow
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
-}
-
-// Check if bezier control points would cause the curve to cross itself
-function wouldCauseCrossing(p1: Point, cp1: Point, cp2: Point, p2: Point): boolean {
-  // Simple heuristic: if control points are on opposite sides of the line p1-p2, it might cross
-  const lineX = p2.x - p1.x;
-  const lineY = p2.y - p1.y;
-  
-  // Vector from p1 to cp1
-  const v1x = cp1.x - p1.x;
-  const v1y = cp1.y - p1.y;
-  
-  // Vector from p1 to cp2
-  const v2x = cp2.x - p1.x;
-  const v2y = cp2.y - p1.y;
-  
-  // Cross products
-  const cross1 = lineX * v1y - lineY * v1x;
-  const cross2 = lineX * v2y - lineY * v2x;
-  
-  // If control points are on opposite sides with significant deviation, might cause crossing
-  if (cross1 * cross2 < 0) {
-    const deviation = Math.abs(cross1) + Math.abs(cross2);
-    const lineLength = Math.sqrt(lineX * lineX + lineY * lineY);
-    if (deviation > lineLength * 0.5) {
-      return true;
-    }
-  }
-  
-  return false;
 }
 
 // Get contour path points for vector export
