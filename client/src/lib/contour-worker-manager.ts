@@ -23,6 +23,7 @@ interface ProcessRequest {
     alphaThreshold: number;
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
+    backgroundColor: string;
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -107,6 +108,7 @@ class ContourWorkerManager {
       alphaThreshold: number;
       closeSmallGaps: boolean;
       closeBigGaps: boolean;
+      backgroundColor: string;
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -179,6 +181,7 @@ class ContourWorkerManager {
       alphaThreshold: number;
       closeSmallGaps: boolean;
       closeBigGaps: boolean;
+      backgroundColor: string;
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -212,6 +215,7 @@ export async function processContourInWorker(
     alphaThreshold: number;
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
+    backgroundColor: string;
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
