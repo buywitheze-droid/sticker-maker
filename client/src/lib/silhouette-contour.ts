@@ -1142,6 +1142,15 @@ function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): 
 
 function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], color: string, offsetX: number, offsetY: number): void {
   if (contour.length < 3) return;
+  
+  // Final intersection removal before drawing
+  let cleanContour = removeSelfIntersections(contour);
+  
+  // Apply one more round of Chaikin smoothing for ultra-smooth rendering
+  cleanContour = applyChaikinSmoothing(cleanContour, 1);
+  
+  // Remove any intersections created by Chaikin
+  cleanContour = removeSelfIntersections(cleanContour);
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
@@ -1157,28 +1166,36 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   ctx.beginPath();
   
   // Start from the first point
-  const start = contour[0];
+  const start = cleanContour[0];
   ctx.moveTo(start.x + offsetX, start.y + offsetY);
   
-  // Draw smooth curves through points using Catmull-Rom to Bezier conversion
-  for (let i = 0; i < contour.length; i++) {
-    const p0 = contour[(i - 1 + contour.length) % contour.length];
-    const p1 = contour[i];
-    const p2 = contour[(i + 1) % contour.length];
-    const p3 = contour[(i + 2) % contour.length];
+  // Draw smooth curves with very low tension to prevent overshoots
+  for (let i = 0; i < cleanContour.length; i++) {
+    const p0 = cleanContour[(i - 1 + cleanContour.length) % cleanContour.length];
+    const p1 = cleanContour[i];
+    const p2 = cleanContour[(i + 1) % cleanContour.length];
+    const p3 = cleanContour[(i + 2) % cleanContour.length];
     
-    // Catmull-Rom to cubic Bezier conversion
-    const tension = 0.5;
+    // Very low tension to prevent curve overshoots that cause crossings
+    const tension = 0.2;
     const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
     const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
     const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
     const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
     
-    ctx.bezierCurveTo(
-      cp1x + offsetX, cp1y + offsetY,
-      cp2x + offsetX, cp2y + offsetY,
-      p2.x + offsetX, p2.y + offsetY
-    );
+    // Check if control points would create a crossing - if so, use linear interpolation
+    if (wouldCauseCrossing(p1, {x: cp1x, y: cp1y}, {x: cp2x, y: cp2y}, p2)) {
+      // Use quadratic curve instead with midpoint control
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      ctx.quadraticCurveTo(midX + offsetX, midY + offsetY, p2.x + offsetX, p2.y + offsetY);
+    } else {
+      ctx.bezierCurveTo(
+        cp1x + offsetX, cp1y + offsetY,
+        cp2x + offsetX, cp2y + offsetY,
+        p2.x + offsetX, p2.y + offsetY
+      );
+    }
   }
   
   ctx.closePath();
@@ -1187,6 +1204,36 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   // Reset shadow
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
+}
+
+// Check if bezier control points would cause the curve to cross itself
+function wouldCauseCrossing(p1: Point, cp1: Point, cp2: Point, p2: Point): boolean {
+  // Simple heuristic: if control points are on opposite sides of the line p1-p2, it might cross
+  const lineX = p2.x - p1.x;
+  const lineY = p2.y - p1.y;
+  
+  // Vector from p1 to cp1
+  const v1x = cp1.x - p1.x;
+  const v1y = cp1.y - p1.y;
+  
+  // Vector from p1 to cp2
+  const v2x = cp2.x - p1.x;
+  const v2y = cp2.y - p1.y;
+  
+  // Cross products
+  const cross1 = lineX * v1y - lineY * v1x;
+  const cross2 = lineX * v2y - lineY * v2x;
+  
+  // If control points are on opposite sides with significant deviation, might cause crossing
+  if (cross1 * cross2 < 0) {
+    const deviation = Math.abs(cross1) + Math.abs(cross2);
+    const lineLength = Math.sqrt(lineX * lineX + lineY * lineY);
+    if (deviation > lineLength * 0.5) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 // Get contour path points for vector export
