@@ -946,7 +946,66 @@ function removeNarrowConcaveRegions(points: Point[]): Point[] {
   return result;
 }
 
-// Detect concave vertices and flatten them by removing the indentation
+// Generate U-shaped merge path (for outward curves)
+function generateUShape(start: Point, end: Point, depth: number): Point[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  // Direction perpendicular to the line between start and end
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  // Perpendicular direction (outward)
+  const perpX = -dy / len;
+  const perpY = dx / len;
+  
+  // Create U shape with 3 control points
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.5, y: quarterY + perpY * depth * 0.5 },
+    { x: midX + perpX * depth, y: midY + perpY * depth },
+    { x: threeQuarterX + perpX * depth * 0.5, y: threeQuarterY + perpY * depth * 0.5 },
+    end
+  ];
+}
+
+// Generate N-shaped merge path (for inward/concave transitions)
+function generateNShape(start: Point, end: Point, depth: number): Point[] {
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return [start, end];
+  
+  // Perpendicular direction (inward - opposite of U)
+  const perpX = dy / len;
+  const perpY = -dx / len;
+  
+  // Create gentle N shape
+  const quarterX = (start.x + midX) / 2;
+  const quarterY = (start.y + midY) / 2;
+  const threeQuarterX = (midX + end.x) / 2;
+  const threeQuarterY = (midY + end.y) / 2;
+  
+  return [
+    start,
+    { x: quarterX + perpX * depth * 0.3, y: quarterY + perpY * depth * 0.3 },
+    { x: midX + perpX * depth * 0.5, y: midY + perpY * depth * 0.5 },
+    { x: threeQuarterX + perpX * depth * 0.3, y: threeQuarterY + perpY * depth * 0.3 },
+    end
+  ];
+}
+
+// Detect sharp direction changes and insert appropriate merge shapes
 function flattenConcaveVertices(points: Point[]): Point[] {
   if (points.length < 6) return points;
   
@@ -959,44 +1018,47 @@ function flattenConcaveVertices(points: Point[]): Point[] {
     const curr = points[i];
     const next = points[(i + 1) % n];
     
-    // Calculate cross product to determine if vertex is concave
+    // Calculate vectors
     const v1x = curr.x - prev.x;
     const v1y = curr.y - prev.y;
     const v2x = next.x - curr.x;
     const v2y = next.y - curr.y;
-    const cross = v1x * v2y - v1y * v2x;
     
-    // Check if this is a sharp concave turn (cross product indicates direction)
-    const angle = Math.atan2(cross, v1x * v2x + v1y * v2y);
-    const isSharpConcave = angle < -0.5; // More than ~30 degrees concave
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
     
-    if (isSharpConcave) {
-      // Look ahead to find where the path comes back out
-      let endIdx = i + 1;
-      let minDist = Infinity;
-      let bestEnd = endIdx;
+    if (len1 > 0 && len2 > 0) {
+      // Calculate angle between vectors
+      const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+      const cross = v1x * v2y - v1y * v2x;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
       
-      // Find the point where we can bridge across the concavity
-      for (let j = i + 2; j < Math.min(i + 20, n); j++) {
-        const pj = points[j % n];
-        const dist = Math.sqrt((prev.x - pj.x) ** 2 + (prev.y - pj.y) ** 2);
+      // Sharp turn detected (more than 60 degrees)
+      if (angle > Math.PI / 3) {
+        // Calculate merge depth based on how sharp the turn is
+        const sharpness = angle / Math.PI; // 0 to 1
+        const baseDepth = Math.min(len1, len2) * 0.3;
+        const depth = baseDepth * (0.5 + sharpness * 0.5);
         
-        // Check if this creates a reasonable bridge (not too long, path continues in similar direction)
-        const bridgeX = pj.x - prev.x;
-        const bridgeY = pj.y - prev.y;
-        const bridgeDot = v1x * bridgeX + v1y * bridgeY;
-        
-        if (bridgeDot > 0 && dist < minDist && dist < 50) {
-          minDist = dist;
-          bestEnd = j;
+        // Determine if concave (cross < 0) or convex (cross > 0)
+        if (cross < 0) {
+          // Concave turn - use N shape to smooth inward
+          const mergePoints = generateNShape(prev, next, depth);
+          // Add merge points (skip first which is prev, and last which is next)
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++; // Skip the sharp vertex
+          continue;
+        } else if (cross > 0 && angle > Math.PI / 2) {
+          // Very sharp convex turn - use U shape
+          const mergePoints = generateUShape(prev, next, depth);
+          for (let m = 1; m < mergePoints.length - 1; m++) {
+            result.push(mergePoints[m]);
+          }
+          i++;
+          continue;
         }
-      }
-      
-      // Skip the concave section
-      if (bestEnd > i + 1 && minDist < 50) {
-        result.push(curr);
-        i = bestEnd;
-        continue;
       }
     }
     
