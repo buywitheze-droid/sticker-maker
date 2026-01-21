@@ -13,7 +13,7 @@ export default function StickerMaker() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <img src={elephantLogo} alt="Sticker Outline logo" className="w-10 h-10 object-contain" />
-            <h1 className="text-xl font-semibold text-black">Sticker Outline</h1>
+            <h1 className="text-2xl text-black" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>Sticker Outline</h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-black/70">
             <span>We are here to feed your sticker addiction</span>
