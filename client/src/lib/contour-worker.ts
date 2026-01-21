@@ -647,6 +647,16 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   return result.length >= 3 ? result : points;
 }
 
+// Close all gaps for solid bleed fill - uses aggressive gap closing
+function closeGapsForBleed(points: Point[], gapThreshold: number): Point[] {
+  // Apply gap closing multiple times with progressively smaller thresholds
+  // to catch all gaps and create a fully merged solid shape
+  let result = closeGapsWithShapes(points, gapThreshold);
+  result = closeGapsWithShapes(result, gapThreshold * 0.5);
+  result = closeGapsWithShapes(result, gapThreshold * 0.25);
+  return result;
+}
+
 function getPolygonSignedArea(path: Point[]): number {
   let area = 0;
   const n = path.length;
@@ -829,14 +839,19 @@ function drawContourToData(
   const bgG = parseInt(bgColorHex.slice(3, 5), 16);
   const bgB = parseInt(bgColorHex.slice(5, 7), 16);
   
-  // Expand path outward by 0.10" for background bleed
+  // For the bleed fill, close ALL gaps aggressively to ensure solid coverage
+  // Use a large threshold (0.5" = ~150px at 300 DPI) to close any gaps
+  const maxGapThreshold = Math.round(0.5 * effectiveDPI);
+  const fullyClosedPath = closeGapsForBleed(path, maxGapThreshold);
+  
+  // Expand the fully-closed path outward by 0.10" for background bleed
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
-  const expandedPath = expandPathOutward(path, bleedPixels);
+  const expandedPath = expandPathOutward(fullyClosedPath, bleedPixels);
   
-  // Fill with expanded path first (background with bleed), then fill original path to ensure coverage
+  // Fill with expanded path first (background with bleed), then fill original closed path to ensure coverage
   fillContour(output, width, height, expandedPath, offsetX, offsetY, bgR, bgG, bgB);
-  fillContour(output, width, height, path, offsetX, offsetY, bgR, bgG, bgB);
+  fillContour(output, width, height, fullyClosedPath, offsetX, offsetY, bgR, bgG, bgB);
   
   // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {

@@ -72,6 +72,26 @@ function expandPathOutwardInches(path: Array<{ x: number; y: number }>, expansio
   return expanded;
 }
 
+// Close all gaps for solid bleed fill - uses aggressive gap closing with inch-based paths
+function closeGapsForBleedInches(points: Array<{ x: number; y: number }>, maxGapInches: number): Array<{ x: number; y: number }> {
+  // Convert to pixel-like format for the gap closing algorithm
+  // Use 300 DPI as reference for conversion
+  const refDPI = 300;
+  const pixelPoints: Array<{ x: number; y: number }> = points.map(p => ({ 
+    x: p.x * refDPI, 
+    y: p.y * refDPI 
+  }));
+  const gapThresholdPixels = maxGapInches * refDPI;
+  
+  // Apply gap closing multiple times with progressively smaller thresholds
+  let result = closeGapsWithShapes(pixelPoints, gapThresholdPixels);
+  result = closeGapsWithShapes(result, gapThresholdPixels * 0.5);
+  result = closeGapsWithShapes(result, gapThresholdPixels * 0.25);
+  
+  // Convert back to inches
+  return result.map(p => ({ x: p.x / refDPI, y: p.y / refDPI }));
+}
+
 export function createSilhouetteContour(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
@@ -1446,9 +1466,12 @@ export async function downloadContourPDF(
     bgCanvas.width = Math.round(widthInches * bgDPI);
     bgCanvas.height = Math.round(heightInches * bgDPI);
     
+    // Close all gaps for solid bleed fill
+    const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
+    
     // Expand path outward by 0.10" for background bleed
     const bleedInches = 0.10;
-    const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
+    const expandedPathPoints = expandPathOutwardInches(fullyClosedPath, bleedInches);
     
     bgCtx.fillStyle = backgroundColor || '#ffffff';
     
@@ -1463,12 +1486,12 @@ export async function downloadContourPDF(
       bgCtx.fill();
     }
     
-    // Fill the original path to ensure full coverage
+    // Fill the fully closed path to ensure full coverage
     bgCtx.beginPath();
-    if (pathPoints.length > 0) {
-      bgCtx.moveTo(pathPoints[0].x * bgDPI, (heightInches - pathPoints[0].y) * bgDPI);
-      for (let i = 1; i < pathPoints.length; i++) {
-        bgCtx.lineTo(pathPoints[i].x * bgDPI, (heightInches - pathPoints[i].y) * bgDPI);
+    if (fullyClosedPath.length > 0) {
+      bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
+      for (let i = 1; i < fullyClosedPath.length; i++) {
+        bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
       }
       bgCtx.closePath();
       bgCtx.fill();
@@ -1642,9 +1665,12 @@ export async function generateContourPDFBase64(
   bgCanvas.width = Math.round(widthInches * bgDPI);
   bgCanvas.height = Math.round(heightInches * bgDPI);
   
+  // Close all gaps for solid bleed fill (matches worker)
+  const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
+  
   // Expand path outward by 0.10" for background bleed (matches worker)
   const bleedInches = 0.10;
-  const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
+  const expandedPathPoints = expandPathOutwardInches(fullyClosedPath, bleedInches);
   
   bgCtx.fillStyle = backgroundColor;
   
@@ -1659,12 +1685,12 @@ export async function generateContourPDFBase64(
     bgCtx.fill();
   }
   
-  // Fill the original path to ensure full coverage
+  // Fill the fully closed path to ensure full coverage
   bgCtx.beginPath();
-  if (pathPoints.length > 0) {
-    bgCtx.moveTo(pathPoints[0].x * bgDPI, (heightInches - pathPoints[0].y) * bgDPI);
-    for (let i = 1; i < pathPoints.length; i++) {
-      bgCtx.lineTo(pathPoints[i].x * bgDPI, (heightInches - pathPoints[i].y) * bgDPI);
+  if (fullyClosedPath.length > 0) {
+    bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
+    for (let i = 1; i < fullyClosedPath.length; i++) {
+      bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
     }
     bgCtx.closePath();
     bgCtx.fill();
