@@ -1,7 +1,7 @@
 import { useState } from "react";
 import ImageEditor from "@/components/image-editor";
 import elephantLogo from "@assets/generated_images/mother_and_baby_elephant_silhouette.png";
-import tridentLogo from "@assets/generated_images/evil_trident_devil_logo.png";
+import devilLogo from "@assets/generated_images/mischievous_devil_face_silhouette.png";
 
 export default function StickerMaker() {
   const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
@@ -17,7 +17,7 @@ export default function StickerMaker() {
           </div>
           <div className="flex items-center space-x-2 text-sm text-black/70">
             <span>We are here to feed your sticker addiction</span>
-            <img src={tridentLogo} alt="Trident logo" className="w-6 h-6 object-contain" />
+            <img src={devilLogo} alt="Devil logo" className="w-6 h-6 object-contain" />
           </div>
         </div>
       </header>
