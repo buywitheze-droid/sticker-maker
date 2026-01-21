@@ -1372,6 +1372,70 @@ export function getContourPath(
           }
         }
       }
+      
+      // Smooth bridge step (matches preview)
+      const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
+      if (smoothBridgePixels > 0) {
+        const distanceMap = new Float32Array(image.width * image.height);
+        distanceMap.fill(Infinity);
+        
+        for (let y = 0; y < image.height; y++) {
+          for (let x = 0; x < image.width; x++) {
+            if (bridgedMask[y * image.width + x] === 1) {
+              distanceMap[y * image.width + x] = 0;
+            }
+          }
+        }
+        
+        for (let y = 1; y < image.height; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            const idx = y * image.width + x;
+            const topLeft = distanceMap[(y - 1) * image.width + (x - 1)] + 1.414;
+            const top = distanceMap[(y - 1) * image.width + x] + 1;
+            const topRight = distanceMap[(y - 1) * image.width + (x + 1)] + 1.414;
+            const left = distanceMap[y * image.width + (x - 1)] + 1;
+            distanceMap[idx] = Math.min(distanceMap[idx], topLeft, top, topRight, left);
+          }
+        }
+        
+        for (let y = image.height - 2; y >= 0; y--) {
+          for (let x = image.width - 2; x >= 1; x--) {
+            const idx = y * image.width + x;
+            const bottomLeft = distanceMap[(y + 1) * image.width + (x - 1)] + 1.414;
+            const bottom = distanceMap[(y + 1) * image.width + x] + 1;
+            const bottomRight = distanceMap[(y + 1) * image.width + (x + 1)] + 1.414;
+            const right = distanceMap[y * image.width + (x + 1)] + 1;
+            distanceMap[idx] = Math.min(distanceMap[idx], bottomLeft, bottom, bottomRight, right);
+          }
+        }
+        
+        for (let y = 1; y < image.height - 1; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            const idx = y * image.width + x;
+            if (bridgedMask[idx] === 0 && distanceMap[idx] <= smoothBridgePixels) {
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              for (let d = 1; d <= smoothBridgePixels && !hasContentTop; d++) {
+                if (y - d >= 0 && bridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentBottom; d++) {
+                if (y + d < image.height && bridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && bridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= smoothBridgePixels && !hasContentRight; d++) {
+                if (x + d < image.width && bridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[idx] = 1;
+              }
+            }
+          }
+        }
+      }
     }
     
     const baseDilatedMask = dilateSilhouette(bridgedMask, image.width, image.height, baseOffsetPixels);
@@ -1384,7 +1448,10 @@ export function getContourPath(
     const dilatedWidth = baseWidth + userOffsetPixels * 2;
     const dilatedHeight = baseHeight + userOffsetPixels * 2;
     
-    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    // Apply bridging for touching contours (matches preview)
+    const bridgedFinalMask = bridgeTouchingContours(finalDilatedMask, dilatedWidth, dilatedHeight, effectiveDPI);
+    
+    const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) return null;
     
