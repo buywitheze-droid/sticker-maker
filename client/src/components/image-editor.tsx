@@ -110,7 +110,16 @@ export default function ImageEditor() {
         setImageInfo(newImageInfo);
         
         // Update resize settings based on cropped image
-        const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
+        let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
+        
+        // Auto-resize to 4" if larger dimension is bigger than 6"
+        const maxDimension = Math.max(widthInches, heightInches);
+        if (maxDimension > 6) {
+          const scale = 4 / maxDimension;
+          widthInches = widthInches * scale;
+          heightInches = heightInches * scale;
+        }
+        
         setResizeSettings(prev => ({
           ...prev,
           widthInches,
@@ -151,7 +160,15 @@ export default function ImageEditor() {
     })() : image;
 
     const processImage = () => {
-      const { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
+      let { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
+      
+      // Auto-resize to 4" if larger dimension is bigger than 6"
+      const maxDimension = Math.max(widthInches, heightInches);
+      if (maxDimension > 6) {
+        const scale = 4 / maxDimension;
+        widthInches = widthInches * scale;
+        heightInches = heightInches * scale;
+      }
 
       const newImageInfo: ImageInfo = {
         file,
