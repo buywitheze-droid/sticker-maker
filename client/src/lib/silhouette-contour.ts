@@ -456,26 +456,93 @@ function bridgeTouchingContours(mask: Uint8Array, width: number, height: number,
   return result;
 }
 
+// Performance threshold: images above this pixel count get downsampled for contour detection
+const HIGH_DETAIL_THRESHOLD = 400000; // ~632x632 pixels
+const MAX_PROCESSING_SIZE = 600; // Max dimension for processing high-detail images
+
+interface MaskResult {
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  scale: number; // Scale factor used (1.0 = no downsampling)
+}
+
 function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
+  const result = createOptimizedSilhouetteMask(image);
+  
+  // If no downsampling was applied, return the mask directly
+  if (result.scale === 1.0) {
+    return result.mask;
+  }
+  
+  // Upscale the mask back to original dimensions
+  return upscaleMask(result.mask, result.width, result.height, image.width, image.height);
+}
+
+function createOptimizedSilhouetteMask(image: HTMLImageElement): MaskResult {
+  const totalPixels = image.width * image.height;
+  
+  // For smaller/simpler images, process at full resolution
+  if (totalPixels <= HIGH_DETAIL_THRESHOLD) {
+    return {
+      mask: createMaskAtResolution(image, image.width, image.height),
+      width: image.width,
+      height: image.height,
+      scale: 1.0
+    };
+  }
+  
+  // For high-detail images, downsample for faster processing
+  const maxDim = Math.max(image.width, image.height);
+  const scale = MAX_PROCESSING_SIZE / maxDim;
+  const processWidth = Math.round(image.width * scale);
+  const processHeight = Math.round(image.height * scale);
+  
+  return {
+    mask: createMaskAtResolution(image, processWidth, processHeight),
+    width: processWidth,
+    height: processHeight,
+    scale: scale
+  };
+}
+
+function createMaskAtResolution(image: HTMLImageElement, targetWidth: number, targetHeight: number): Uint8Array {
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return new Uint8Array(0);
 
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
+  tempCanvas.width = targetWidth;
+  tempCanvas.height = targetHeight;
   
-  tempCtx.drawImage(image, 0, 0);
-  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  // Draw image scaled to target size - browser handles the resampling
+  tempCtx.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
   const data = imageData.data;
   
   // Create binary silhouette: 1 = any visible pixel (alpha > 0), 0 = fully transparent
   // Using a low threshold (10) to catch even semi-transparent edges
-  const mask = new Uint8Array(image.width * image.height);
+  const mask = new Uint8Array(targetWidth * targetHeight);
   for (let i = 0; i < mask.length; i++) {
     mask[i] = data[i * 4 + 3] > 10 ? 1 : 0;
   }
   
   return mask;
+}
+
+function upscaleMask(mask: Uint8Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number): Uint8Array {
+  const result = new Uint8Array(dstWidth * dstHeight);
+  const scaleX = srcWidth / dstWidth;
+  const scaleY = srcHeight / dstHeight;
+  
+  for (let y = 0; y < dstHeight; y++) {
+    const srcY = Math.min(Math.floor(y * scaleY), srcHeight - 1);
+    for (let x = 0; x < dstWidth; x++) {
+      const srcX = Math.min(Math.floor(x * scaleX), srcWidth - 1);
+      result[y * dstWidth + x] = mask[srcY * srcWidth + srcX];
+    }
+  }
+  
+  return result;
 }
 
 function dilateSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {

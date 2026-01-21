@@ -58,25 +58,87 @@ export function createCadCutContour(
   return canvas;
 }
 
+// Performance threshold for high-detail image optimization
+const HIGH_DETAIL_THRESHOLD = 400000; // ~632x632 pixels
+const MAX_PROCESSING_SIZE = 600;
+
+interface OptimizedMaskResult {
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  scale: number;
+}
+
 function createAlphaMask(image: HTMLImageElement): Uint8Array {
+  const result = createOptimizedAlphaMask(image);
+  
+  if (result.scale === 1.0) {
+    return result.mask;
+  }
+  
+  return upscaleAlphaMask(result.mask, result.width, result.height, image.width, image.height);
+}
+
+function createOptimizedAlphaMask(image: HTMLImageElement): OptimizedMaskResult {
+  const totalPixels = image.width * image.height;
+  
+  if (totalPixels <= HIGH_DETAIL_THRESHOLD) {
+    return {
+      mask: createAlphaMaskAtResolution(image, image.width, image.height),
+      width: image.width,
+      height: image.height,
+      scale: 1.0
+    };
+  }
+  
+  const maxDim = Math.max(image.width, image.height);
+  const scale = MAX_PROCESSING_SIZE / maxDim;
+  const processWidth = Math.round(image.width * scale);
+  const processHeight = Math.round(image.height * scale);
+  
+  return {
+    mask: createAlphaMaskAtResolution(image, processWidth, processHeight),
+    width: processWidth,
+    height: processHeight,
+    scale: scale
+  };
+}
+
+function createAlphaMaskAtResolution(image: HTMLImageElement, targetWidth: number, targetHeight: number): Uint8Array {
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return new Uint8Array(0);
 
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
+  tempCanvas.width = targetWidth;
+  tempCanvas.height = targetHeight;
   
-  tempCtx.drawImage(image, 0, 0);
-  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  tempCtx.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
   const data = imageData.data;
   
   // Create binary mask: 1 = solid pixel (alpha >= 128), 0 = transparent
-  const mask = new Uint8Array(image.width * image.height);
+  const mask = new Uint8Array(targetWidth * targetHeight);
   for (let i = 0; i < mask.length; i++) {
     mask[i] = data[i * 4 + 3] >= 128 ? 1 : 0;
   }
   
   return mask;
+}
+
+function upscaleAlphaMask(mask: Uint8Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number): Uint8Array {
+  const result = new Uint8Array(dstWidth * dstHeight);
+  const scaleX = srcWidth / dstWidth;
+  const scaleY = srcHeight / dstHeight;
+  
+  for (let y = 0; y < dstHeight; y++) {
+    const srcY = Math.min(Math.floor(y * scaleY), srcHeight - 1);
+    for (let x = 0; x < dstWidth; x++) {
+      const srcX = Math.min(Math.floor(x * scaleX), srcWidth - 1);
+      result[y * dstWidth + x] = mask[srcY * srcWidth + srcX];
+    }
+  }
+  
+  return result;
 }
 
 function dilateMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {

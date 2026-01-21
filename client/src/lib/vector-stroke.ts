@@ -491,6 +491,10 @@ function downloadAsSVG(
   URL.revokeObjectURL(url);
 }
 
+// Performance optimization for high-detail images
+const VECTOR_HIGH_DETAIL_THRESHOLD = 400000;
+const VECTOR_MAX_PROCESSING_SIZE = 600;
+
 function createMagentaCutContour(
   image: HTMLImageElement,
   ctx: CanvasRenderingContext2D,
@@ -505,23 +509,45 @@ function createMagentaCutContour(
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return canvas;
   
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
-  tempCtx.drawImage(image, 0, 0);
+  const totalPixels = image.width * image.height;
+  let processWidth = image.width;
+  let processHeight = image.height;
+  let pixelScale = 1.0;
+  
+  // Downsample high-detail images for faster boundary detection
+  if (totalPixels > VECTOR_HIGH_DETAIL_THRESHOLD) {
+    const maxDim = Math.max(image.width, image.height);
+    pixelScale = VECTOR_MAX_PROCESSING_SIZE / maxDim;
+    processWidth = Math.round(image.width * pixelScale);
+    processHeight = Math.round(image.height * pixelScale);
+  }
+  
+  tempCanvas.width = processWidth;
+  tempCanvas.height = processHeight;
+  tempCtx.drawImage(image, 0, 0, processWidth, processHeight);
   
   // Get image data to analyze transparency
-  const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+  const imageData = tempCtx.getImageData(0, 0, processWidth, processHeight);
   const data = imageData.data;
   
   // Find transparent boundary pixels
-  const boundaryPixels = findTransparentBoundary(data, image.width, image.height);
+  const boundaryPixels = findTransparentBoundary(data, processWidth, processHeight);
   
   if (boundaryPixels.length === 0) {
     return canvas;
   }
   
+  // Scale boundary pixels back to original resolution if downsampled
+  let adjustedPixels = boundaryPixels;
+  if (pixelScale !== 1.0) {
+    adjustedPixels = boundaryPixels.map(p => ({
+      x: Math.round(p.x / pixelScale),
+      y: Math.round(p.y / pixelScale)
+    }));
+  }
+  
   // Convert boundary pixels to smooth vector path
-  const vectorPath = pixelsToVectorPath(boundaryPixels, scaleFactor);
+  const vectorPath = pixelsToVectorPath(adjustedPixels, scaleFactor);
   
   // Draw magenta cut contour
   drawMagentaCutPath(ctx, vectorPath, scaleFactor);
