@@ -475,147 +475,83 @@ function dilateSilhouette(mask: Uint8Array, width: number, height: number, radiu
 }
 
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
-  const edgePixels: Point[] = [];
-  
-  for (let y = 0; y < height; y++) {
+  // MATCHES WORKER EXACTLY - Simple boundary tracing
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        const hasTransparentNeighbor = 
-          x === 0 || x === width - 1 || y === 0 || y === height - 1 ||
-          mask[y * width + (x - 1)] === 0 ||
-          mask[y * width + (x + 1)] === 0 ||
-          mask[(y - 1) * width + x] === 0 ||
-          mask[(y + 1) * width + x] === 0;
-        
-        if (hasTransparentNeighbor) {
-          edgePixels.push({ x, y });
-        }
+        startX = x;
+        startY = y;
+        break outer;
       }
     }
   }
   
-  if (edgePixels.length === 0) return [];
+  if (startX === -1) return [];
   
-  const edgeSet = new Set(edgePixels.map(p => `${p.x},${p.y}`));
+  const path: Point[] = [];
+  const directions = [
+    { dx: 1, dy: 0 },
+    { dx: 1, dy: 1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: -1, dy: -1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: -1 }
+  ];
   
-  let startPixel = edgePixels[0];
-  for (const p of edgePixels) {
-    if (p.y < startPixel.y || (p.y === startPixel.y && p.x < startPixel.x)) {
-      startPixel = p;
-    }
-  }
+  let x = startX, y = startY;
+  let dir = 0;
+  const maxSteps = width * height * 2;
+  let steps = 0;
   
-  const boundary: Point[] = [];
-  const visited = new Set<string>();
-  
-  const dx = [1, 1, 0, -1, -1, -1, 0, 1];
-  const dy = [0, 1, 1, 1, 0, -1, -1, -1];
-  
-  let current = startPixel;
-  let prevDir = 4;
-  
-  const maxIterations = edgePixels.length * 2;
-  
-  for (let iter = 0; iter < maxIterations; iter++) {
-    const key = `${current.x},${current.y}`;
-    
-    if (boundary.length > 0 && current.x === startPixel.x && current.y === startPixel.y) {
-      break;
-    }
-    
-    if (!visited.has(key)) {
-      boundary.push({ x: current.x, y: current.y });
-      visited.add(key);
-    }
+  do {
+    path.push({ x, y });
     
     let found = false;
-    const searchStart = (prevDir + 5) % 8;
-    
     for (let i = 0; i < 8; i++) {
-      const dir = (searchStart + i) % 8;
-      const nx = current.x + dx[dir];
-      const ny = current.y + dy[dir];
-      const nkey = `${nx},${ny}`;
+      const checkDir = (dir + 6 + i) % 8;
+      const nx = x + directions[checkDir].dx;
+      const ny = y + directions[checkDir].dy;
       
-      if (edgeSet.has(nkey) && !visited.has(nkey)) {
-        current = { x: nx, y: ny };
-        prevDir = dir;
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
+        x = nx;
+        y = ny;
+        dir = checkDir;
         found = true;
         break;
       }
     }
     
-    if (!found) {
-      for (let i = 0; i < 8; i++) {
-        const nx = current.x + dx[i];
-        const ny = current.y + dy[i];
-        const nkey = `${nx},${ny}`;
-        
-        if (edgeSet.has(nkey) && !visited.has(nkey)) {
-          current = { x: nx, y: ny };
-          prevDir = i;
-          found = true;
-          break;
-        }
-      }
-    }
-    
     if (!found) break;
-  }
+    steps++;
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
   
-  return boundary;
+  return path;
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {
+  // MATCHES WORKER EXACTLY - simple moving average smoothing
   if (points.length < windowSize * 2 + 1) return points;
   
-  let cleaned = removeSpikes(points, 8, 0.3);
+  const result: Point[] = [];
+  const n = points.length;
   
-  const largeWindow = 4;
-  let smoothed: Point[] = [];
-  
-  for (let i = 0; i < cleaned.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
-    for (let j = -largeWindow; j <= largeWindow; j++) {
-      const idx = (i + j + cleaned.length) % cleaned.length;
-      sumX += cleaned[idx].x;
-      sumY += cleaned[idx].y;
-      count++;
-    }
-    
-    smoothed.push({
-      x: sumX / count,
-      y: sumY / count
-    });
-  }
-  
-  let fineSmoothed: Point[] = [];
-  for (let i = 0; i < smoothed.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
+  for (let i = 0; i < n; i++) {
+    let sumX = 0, sumY = 0;
     for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + smoothed.length) % smoothed.length;
-      sumX += smoothed[idx].x;
-      sumY += smoothed[idx].y;
-      count++;
+      const idx = (i + j + n) % n;
+      sumX += points[idx].x;
+      sumY += points[idx].y;
     }
-    
-    fineSmoothed.push({
-      x: sumX / count,
-      y: sumY / count
+    result.push({
+      x: sumX / (windowSize * 2 + 1),
+      y: sumY / (windowSize * 2 + 1)
     });
   }
   
-  fineSmoothed = removeSpikes(fineSmoothed, 6, 0.4);
-  
-  // Apply U and N shaped merge curves to ALL direction changes
-  fineSmoothed = applyMergeCurves(fineSmoothed);
-  
-  // Remove any overshooting points
-  fineSmoothed = removeOvershootingPoints(fineSmoothed);
-  
-  return douglasPeucker(fineSmoothed, 1.0);
+  return result;
 }
 
 // Generate U-shaped merge path (for outward curves)
@@ -927,7 +863,9 @@ function detectAndFixLineCrossings(points: Point[]): Point[] {
   for (let i = 0; i < n; i += stride) {
     // Check if we should skip this point
     let shouldSkip = false;
-    for (const [start, end] of skipUntil.entries()) {
+    const entries = Array.from(skipUntil.entries());
+    for (let e = 0; e < entries.length; e++) {
+      const [start, end] = entries[e];
       if (i > start && i < end) {
         shouldSkip = true;
         break;
@@ -1294,6 +1232,13 @@ export function getContourPath(
   resizeSettings: ResizeSettings
 ): ContourPathResult | null {
   // This function now matches the Web Worker algorithm exactly
+  console.log('[getContourPath] Starting with NEW algorithm matching worker');
+  console.log('[getContourPath] strokeSettings:', { 
+    width: strokeSettings.width, 
+    alphaThreshold: strokeSettings.alphaThreshold,
+    closeSmallGaps: strokeSettings.closeSmallGaps,
+    closeBigGaps: strokeSettings.closeBigGaps
+  });
   const effectiveDPI = image.width / resizeSettings.widthInches;
   
   const baseOffsetInches = 0.015;
@@ -1363,9 +1308,11 @@ export function getContourPath(
     
     // Smooth path (matches worker)
     let smoothedPath = smoothPath(boundaryPath, 2);
+    console.log('[getContourPath] After smooth, path points:', smoothedPath.length);
     
     // Fix crossings (matches worker)
     smoothedPath = fixOffsetCrossings(smoothedPath);
+    console.log('[getContourPath] After fixOffsetCrossings, path points:', smoothedPath.length);
     
     // Apply gap closing using U/N shapes based on settings (matches worker)
     const gapThresholdPixels = strokeSettings.closeBigGaps 
