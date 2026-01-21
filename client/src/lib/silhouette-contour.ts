@@ -748,20 +748,20 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
 function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
   
-  // Step 1: Remove tiny spikes/bumps that deviate sharply from the overall curve
-  let cleaned = removeSpikes(points, 8, 0.3);
+  // Step 1: Remove self-intersections first
+  let cleaned = removeSelfIntersections(points);
   
-  // Step 2: Remove self-intersections (Y-shaped crossings)
-  cleaned = removeSelfIntersections(cleaned);
+  // Step 2: Remove tiny spikes/bumps that deviate sharply from the overall curve
+  cleaned = removeSpikes(cleaned, 10, 0.25);
   
-  // Step 3: Apply larger window smoothing to eliminate remaining small variations
-  const largeWindow = 4;
+  // Step 3: Apply very aggressive smoothing with large window
+  const extraLargeWindow = 8;
   let smoothed: Point[] = [];
   
   for (let i = 0; i < cleaned.length; i++) {
     let sumX = 0, sumY = 0, count = 0;
     
-    for (let j = -largeWindow; j <= largeWindow; j++) {
+    for (let j = -extraLargeWindow; j <= extraLargeWindow; j++) {
       const idx = (i + j + cleaned.length) % cleaned.length;
       sumX += cleaned[idx].x;
       sumY += cleaned[idx].y;
@@ -774,15 +774,44 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 4: Second pass with original window for fine-tuning
-  let fineSmoothed: Point[] = [];
+  // Step 4: Remove intersections after first smoothing pass
+  smoothed = removeSelfIntersections(smoothed);
+  
+  // Step 5: Second smoothing pass with medium window
+  const mediumWindow = 6;
+  let medSmoothed: Point[] = [];
+  
   for (let i = 0; i < smoothed.length; i++) {
     let sumX = 0, sumY = 0, count = 0;
     
-    for (let j = -windowSize; j <= windowSize; j++) {
+    for (let j = -mediumWindow; j <= mediumWindow; j++) {
       const idx = (i + j + smoothed.length) % smoothed.length;
       sumX += smoothed[idx].x;
       sumY += smoothed[idx].y;
+      count++;
+    }
+    
+    medSmoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
+  }
+  
+  // Step 6: Apply Chaikin's corner cutting for ultra-smooth curves
+  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 2);
+  
+  // Step 7: Remove any remaining intersections
+  chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
+  
+  // Step 8: Final smoothing pass
+  let fineSmoothed: Point[] = [];
+  for (let i = 0; i < chaikinSmoothed.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + chaikinSmoothed.length) % chaikinSmoothed.length;
+      sumX += chaikinSmoothed[idx].x;
+      sumY += chaikinSmoothed[idx].y;
       count++;
     }
     
@@ -792,14 +821,45 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 5: Remove any remaining tiny bumps
-  fineSmoothed = removeSpikes(fineSmoothed, 6, 0.4);
+  // Step 9: Remove spikes one more time
+  fineSmoothed = removeSpikes(fineSmoothed, 6, 0.35);
   
-  // Step 6: Final pass to remove any intersections created by smoothing
+  // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Simplify to reduce point count
-  return douglasPeucker(fineSmoothed, 1.0);
+  // Simplify to reduce point count with higher tolerance for smoother result
+  return douglasPeucker(fineSmoothed, 1.5);
+}
+
+// Chaikin's corner cutting algorithm for smooth curves
+function applyChaikinSmoothing(points: Point[], iterations: number): Point[] {
+  if (points.length < 3) return points;
+  
+  let result = [...points];
+  
+  for (let iter = 0; iter < iterations; iter++) {
+    const newPoints: Point[] = [];
+    const n = result.length;
+    
+    for (let i = 0; i < n; i++) {
+      const p0 = result[i];
+      const p1 = result[(i + 1) % n];
+      
+      // Create two new points at 1/4 and 3/4 along the segment
+      newPoints.push({
+        x: p0.x * 0.75 + p1.x * 0.25,
+        y: p0.y * 0.75 + p1.y * 0.25
+      });
+      newPoints.push({
+        x: p0.x * 0.25 + p1.x * 0.75,
+        y: p0.y * 0.25 + p1.y * 0.75
+      });
+    }
+    
+    result = newPoints;
+  }
+  
+  return result;
 }
 
 // Detect and remove self-intersecting segments (Y-shaped and T-shaped crossings)
