@@ -1388,7 +1388,21 @@ export function getContourPath(
     
     if (boundaryPath.length < 3) return null;
     
-    const smoothedPath = smoothPath(boundaryPath, 2);
+    let smoothedPath = smoothPath(boundaryPath, 2);
+    
+    // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
+    smoothedPath = fixOffsetCrossings(smoothedPath);
+    
+    // Apply gap closing using U/N shapes based on settings
+    const gapThresholdPixels = strokeSettings.closeBigGaps 
+      ? Math.round(0.19 * effectiveDPI) 
+      : strokeSettings.closeSmallGaps 
+        ? Math.round(0.07 * effectiveDPI) 
+        : 0;
+    
+    if (gapThresholdPixels > 0) {
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+    }
     
     const widthInches = dilatedWidth / effectiveDPI;
     const heightInches = dilatedHeight / effectiveDPI;
