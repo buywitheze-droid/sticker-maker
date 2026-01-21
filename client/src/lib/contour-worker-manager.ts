@@ -26,6 +26,7 @@ interface ProcessRequest {
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
+  previewMode?: boolean;
 }
 
 type ProgressCallback = (progress: number) => void;
@@ -133,7 +134,8 @@ class ContourWorkerManager {
       imageData: clonedData,
       strokeSettings,
       effectiveDPI: resizeSettings.outputDPI,
-      resizeSettings
+      resizeSettings,
+      previewMode: true
     };
 
     const resultData = await this.processInWorker(request, onProgress);
@@ -162,7 +164,8 @@ class ContourWorkerManager {
         type: 'process',
         imageData: request.imageData,
         strokeSettings: request.strokeSettings,
-        effectiveDPI: request.effectiveDPI
+        effectiveDPI: request.effectiveDPI,
+        previewMode: request.previewMode ?? true
       }, [request.imageData.data.buffer]);
     });
   }

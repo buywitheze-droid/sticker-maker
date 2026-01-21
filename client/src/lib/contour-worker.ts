@@ -15,6 +15,7 @@ interface WorkerMessage {
     closeBigGaps: boolean;
   };
   effectiveDPI: number;
+  previewMode?: boolean;
 }
 
 interface WorkerResponse {
@@ -25,21 +26,46 @@ interface WorkerResponse {
 }
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
-  const { type, imageData, strokeSettings, effectiveDPI } = e.data;
+  const { type, imageData, strokeSettings, effectiveDPI, previewMode } = e.data;
   
   if (type === 'process') {
     try {
       postProgress(10);
       
-      const result = processContour(imageData, strokeSettings, effectiveDPI);
+      // For preview mode with large images, process at lower resolution
+      const maxPreviewDimension = 800;
+      const shouldDownscale = previewMode && 
+        (imageData.width > maxPreviewDimension || imageData.height > maxPreviewDimension);
+      
+      let processedData: ImageData;
+      let scale = 1;
+      
+      if (shouldDownscale) {
+        scale = Math.min(maxPreviewDimension / imageData.width, maxPreviewDimension / imageData.height);
+        const scaledWidth = Math.round(imageData.width * scale);
+        const scaledHeight = Math.round(imageData.height * scale);
+        const scaledData = downscaleImageData(imageData, scaledWidth, scaledHeight);
+        const scaledDPI = effectiveDPI * scale;
+        
+        postProgress(15);
+        const result = processContour(scaledData, strokeSettings, scaledDPI);
+        postProgress(90);
+        
+        // Upscale result back to original size
+        processedData = upscaleImageData(result, 
+          Math.round(result.width / scale), 
+          Math.round(result.height / scale));
+      } else {
+        processedData = processContour(imageData, strokeSettings, effectiveDPI);
+      }
       
       postProgress(100);
       
       const response: WorkerResponse = {
         type: 'result',
-        imageData: result
+        imageData: processedData
       };
-      (self as unknown as Worker).postMessage(response, [result.data.buffer]);
+      (self as unknown as Worker).postMessage(response, [processedData.data.buffer]);
     } catch (error) {
       const response: WorkerResponse = {
         type: 'error',
@@ -49,6 +75,67 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
     }
   }
 };
+
+function downscaleImageData(imageData: ImageData, newWidth: number, newHeight: number): ImageData {
+  const { width, height, data } = imageData;
+  const newData = new Uint8ClampedArray(newWidth * newHeight * 4);
+  
+  const xRatio = width / newWidth;
+  const yRatio = height / newHeight;
+  
+  for (let y = 0; y < newHeight; y++) {
+    for (let x = 0; x < newWidth; x++) {
+      const srcX = Math.floor(x * xRatio);
+      const srcY = Math.floor(y * yRatio);
+      const srcIdx = (srcY * width + srcX) * 4;
+      const dstIdx = (y * newWidth + x) * 4;
+      
+      newData[dstIdx] = data[srcIdx];
+      newData[dstIdx + 1] = data[srcIdx + 1];
+      newData[dstIdx + 2] = data[srcIdx + 2];
+      newData[dstIdx + 3] = data[srcIdx + 3];
+    }
+  }
+  
+  return new ImageData(newData, newWidth, newHeight);
+}
+
+function upscaleImageData(imageData: ImageData, newWidth: number, newHeight: number): ImageData {
+  const { width, height, data } = imageData;
+  const newData = new Uint8ClampedArray(newWidth * newHeight * 4);
+  
+  const xRatio = width / newWidth;
+  const yRatio = height / newHeight;
+  
+  for (let y = 0; y < newHeight; y++) {
+    for (let x = 0; x < newWidth; x++) {
+      // Bilinear interpolation for smoother upscaling
+      const srcX = x * xRatio;
+      const srcY = y * yRatio;
+      const x0 = Math.floor(srcX);
+      const y0 = Math.floor(srcY);
+      const x1 = Math.min(x0 + 1, width - 1);
+      const y1 = Math.min(y0 + 1, height - 1);
+      
+      const xWeight = srcX - x0;
+      const yWeight = srcY - y0;
+      
+      const idx00 = (y0 * width + x0) * 4;
+      const idx10 = (y0 * width + x1) * 4;
+      const idx01 = (y1 * width + x0) * 4;
+      const idx11 = (y1 * width + x1) * 4;
+      const dstIdx = (y * newWidth + x) * 4;
+      
+      for (let c = 0; c < 4; c++) {
+        const top = data[idx00 + c] * (1 - xWeight) + data[idx10 + c] * xWeight;
+        const bottom = data[idx01 + c] * (1 - xWeight) + data[idx11 + c] * xWeight;
+        newData[dstIdx + c] = Math.round(top * (1 - yWeight) + bottom * yWeight);
+      }
+    }
+  }
+  
+  return new ImageData(newData, newWidth, newHeight);
+}
 
 function postProgress(percent: number) {
   const response: WorkerResponse = { type: 'progress', progress: percent };
