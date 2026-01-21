@@ -15,6 +15,61 @@ interface Point {
   y: number;
 }
 
+function getPolygonSignedAreaInches(path: Array<{ x: number; y: number }>): number {
+  let area = 0;
+  const n = path.length;
+  for (let i = 0; i < n; i++) {
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    area += (curr.x * next.y) - (next.x * curr.y);
+  }
+  return area / 2;
+}
+
+function expandPathOutwardInches(path: Array<{ x: number; y: number }>, expansionInches: number): Array<{ x: number; y: number }> {
+  if (path.length < 3) return path;
+  
+  // Determine winding direction: positive area = counter-clockwise, negative = clockwise
+  const signedArea = getPolygonSignedAreaInches(path);
+  const windingMultiplier = signedArea >= 0 ? 1 : -1;
+  
+  const expanded: Array<{ x: number; y: number }> = [];
+  const n = path.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    const e1x = curr.x - prev.x;
+    const e1y = curr.y - prev.y;
+    const e2x = next.x - curr.x;
+    const e2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(e1x * e1x + e1y * e1y) || 1;
+    const len2 = Math.sqrt(e2x * e2x + e2y * e2y) || 1;
+    
+    const n1x = -e1y / len1;
+    const n1y = e1x / len1;
+    const n2x = -e2y / len2;
+    const n2y = e2x / len2;
+    
+    let nx = (n1x + n2x) / 2;
+    let ny = (n1y + n2y) / 2;
+    const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+    nx /= nlen;
+    ny /= nlen;
+    
+    // Apply winding multiplier to ensure outward expansion
+    expanded.push({
+      x: curr.x + nx * expansionInches * windingMultiplier,
+      y: curr.y + ny * expansionInches * windingMultiplier
+    });
+  }
+  
+  return expanded;
+}
+
 export function createSilhouetteContour(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
@@ -1514,8 +1569,24 @@ export async function generateContourPDFBase64(
   bgCanvas.width = Math.round(widthInches * bgDPI);
   bgCanvas.height = Math.round(heightInches * bgDPI);
   
-  // Fill the contour path with the background color
+  // Expand path outward by 0.04" for background bleed (matches worker)
+  const bleedInches = 0.04;
+  const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
+  
   bgCtx.fillStyle = backgroundColor;
+  
+  // Fill the expanded path first (with bleed)
+  bgCtx.beginPath();
+  if (expandedPathPoints.length > 0) {
+    bgCtx.moveTo(expandedPathPoints[0].x * bgDPI, (heightInches - expandedPathPoints[0].y) * bgDPI);
+    for (let i = 1; i < expandedPathPoints.length; i++) {
+      bgCtx.lineTo(expandedPathPoints[i].x * bgDPI, (heightInches - expandedPathPoints[i].y) * bgDPI);
+    }
+    bgCtx.closePath();
+    bgCtx.fill();
+  }
+  
+  // Fill the original path to ensure full coverage
   bgCtx.beginPath();
   if (pathPoints.length > 0) {
     bgCtx.moveTo(pathPoints[0].x * bgDPI, (heightInches - pathPoints[0].y) * bgDPI);

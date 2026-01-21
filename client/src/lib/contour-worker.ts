@@ -245,7 +245,7 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY);
+  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
   
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
@@ -644,6 +644,165 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   return result.length >= 3 ? result : points;
 }
 
+function getPolygonSignedArea(path: Point[]): number {
+  let area = 0;
+  const n = path.length;
+  for (let i = 0; i < n; i++) {
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    area += (curr.x * next.y) - (next.x * curr.y);
+  }
+  return area / 2;
+}
+
+function expandPathOutward(path: Point[], expansionPixels: number): Point[] {
+  if (path.length < 3) return path;
+  
+  // Determine winding direction: positive area = counter-clockwise, negative = clockwise
+  const signedArea = getPolygonSignedArea(path);
+  const windingMultiplier = signedArea >= 0 ? 1 : -1;
+  
+  const expanded: Point[] = [];
+  const n = path.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    // Calculate edge vectors
+    const e1x = curr.x - prev.x;
+    const e1y = curr.y - prev.y;
+    const e2x = next.x - curr.x;
+    const e2y = next.y - curr.y;
+    
+    // Calculate perpendicular normals
+    const len1 = Math.sqrt(e1x * e1x + e1y * e1y) || 1;
+    const len2 = Math.sqrt(e2x * e2x + e2y * e2y) || 1;
+    
+    const n1x = -e1y / len1;
+    const n1y = e1x / len1;
+    const n2x = -e2y / len2;
+    const n2y = e2x / len2;
+    
+    // Average the normals for smooth expansion
+    let nx = (n1x + n2x) / 2;
+    let ny = (n1y + n2y) / 2;
+    const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+    nx /= nlen;
+    ny /= nlen;
+    
+    // Apply winding multiplier to ensure outward expansion
+    expanded.push({
+      x: curr.x + nx * expansionPixels * windingMultiplier,
+      y: curr.y + ny * expansionPixels * windingMultiplier
+    });
+  }
+  
+  return expanded;
+}
+
+function fillContourToMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  path: Point[],
+  offsetX: number,
+  offsetY: number
+): void {
+  if (path.length < 3) return;
+  
+  // Use scanline fill algorithm
+  const edges: Array<{ yMin: number; yMax: number; xAtYMin: number; slope: number }> = [];
+  
+  for (let i = 0; i < path.length; i++) {
+    const p1 = path[i];
+    const p2 = path[(i + 1) % path.length];
+    
+    const x1 = Math.round(p1.x + offsetX);
+    const y1 = Math.round(p1.y + offsetY);
+    const x2 = Math.round(p2.x + offsetX);
+    const y2 = Math.round(p2.y + offsetY);
+    
+    if (y1 === y2) continue; // Skip horizontal edges
+    
+    const yMin = Math.min(y1, y2);
+    const yMax = Math.max(y1, y2);
+    const xAtYMin = y1 < y2 ? x1 : x2;
+    const slope = (x2 - x1) / (y2 - y1);
+    
+    edges.push({ yMin, yMax, xAtYMin, slope });
+  }
+  
+  // Find y range
+  let minY = height, maxY = 0;
+  for (const edge of edges) {
+    minY = Math.min(minY, edge.yMin);
+    maxY = Math.max(maxY, edge.yMax);
+  }
+  minY = Math.max(0, minY);
+  maxY = Math.min(height - 1, maxY);
+  
+  // Scanline fill
+  for (let y = minY; y <= maxY; y++) {
+    const intersections: number[] = [];
+    
+    for (const edge of edges) {
+      if (y >= edge.yMin && y < edge.yMax) {
+        const x = edge.xAtYMin + (y - edge.yMin) * edge.slope;
+        intersections.push(x);
+      }
+    }
+    
+    intersections.sort((a, b) => a - b);
+    
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      const xStart = Math.max(0, Math.round(intersections[i]));
+      const xEnd = Math.min(width - 1, Math.round(intersections[i + 1]));
+      
+      for (let x = xStart; x <= xEnd; x++) {
+        mask[y * width + x] = 1;
+      }
+    }
+  }
+}
+
+function dilateMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radius: number
+): Uint8Array {
+  const result = new Uint8Array(width * height);
+  
+  // Pre-compute circle offsets for the dilation radius
+  const offsets: Array<{ dx: number; dy: number }> = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy <= radius * radius) {
+        offsets.push({ dx, dy });
+      }
+    }
+  }
+  
+  // For each pixel in the mask, if it's set, set all pixels within radius
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x]) {
+        for (const { dx, dy } of offsets) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            result[ny * width + nx] = 1;
+          }
+        }
+      }
+    }
+  }
+  
+  return result;
+}
+
 function drawContourToData(
   output: Uint8ClampedArray, 
   width: number, 
@@ -652,7 +811,8 @@ function drawContourToData(
   strokeColorHex: string,
   backgroundColorHex: string, 
   offsetX: number, 
-  offsetY: number
+  offsetY: number,
+  effectiveDPI: number
 ): void {
   const r = parseInt(strokeColorHex.slice(1, 3), 16);
   const g = parseInt(strokeColorHex.slice(3, 5), 16);
@@ -663,7 +823,13 @@ function drawContourToData(
   const bgG = parseInt(backgroundColorHex.slice(3, 5), 16);
   const bgB = parseInt(backgroundColorHex.slice(5, 7), 16);
   
-  // Fill contour with user-selected background color first
+  // Expand path outward by 0.04" for background bleed
+  const bleedInches = 0.04;
+  const bleedPixels = Math.round(bleedInches * effectiveDPI);
+  const expandedPath = expandPathOutward(path, bleedPixels);
+  
+  // Fill with expanded path first (background with bleed), then fill original path to ensure coverage
+  fillContour(output, width, height, expandedPath, offsetX, offsetY, bgR, bgG, bgB);
   fillContour(output, width, height, path, offsetX, offsetY, bgR, bgG, bgB);
   
   // Draw stroke outline in the specified color (magenta for CutContour)
