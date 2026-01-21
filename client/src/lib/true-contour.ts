@@ -711,8 +711,8 @@ function mergeClosePoints(points: ContourPoint[]): ContourPoint[] {
       const pj = points[j];
       const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
       
-      // Very tight threshold - 4 pixels for tiny offsets
-      if (dist < 4) {
+      // Increased threshold to catch all near-crossings
+      if (dist < 10) {
         // Skip all points between i and j
         for (let k = i + 1; k < j; k++) {
           skipIndices.add(k);
