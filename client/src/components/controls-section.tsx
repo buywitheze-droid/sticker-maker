@@ -251,21 +251,21 @@ export default function ControlsSection({
                     <SelectContent>
                       {(shapeSettings.type === 'circle' || shapeSettings.type === 'oval') ? (
                         <>
-                          <SelectItem value="0.40">Tiny (0.40")</SelectItem>
-                          <SelectItem value="0.48">Small (0.48")</SelectItem>
-                          <SelectItem value="0.56">Medium (0.56")</SelectItem>
-                          <SelectItem value="0.64">Big (0.64")</SelectItem>
-                          <SelectItem value="0.72">Huge (0.72")</SelectItem>
-                          <SelectItem value="1.44">More bigger (1.44")</SelectItem>
+                          <SelectItem value="0.40">Tiny</SelectItem>
+                          <SelectItem value="0.48">Small</SelectItem>
+                          <SelectItem value="0.56">Medium</SelectItem>
+                          <SelectItem value="0.64">Big</SelectItem>
+                          <SelectItem value="0.72">Huge</SelectItem>
+                          <SelectItem value="1.44">More bigger</SelectItem>
                         </>
                       ) : (
                         <>
-                          <SelectItem value="0.0625">Tiny (0.0625")</SelectItem>
-                          <SelectItem value="0.125">Small (0.125")</SelectItem>
-                          <SelectItem value="0.1875">Medium (0.1875")</SelectItem>
-                          <SelectItem value="0.25">Big (0.25")</SelectItem>
-                          <SelectItem value="0.375">Huge (0.375")</SelectItem>
-                          <SelectItem value="0.75">More bigger (0.75")</SelectItem>
+                          <SelectItem value="0.0625">Tiny</SelectItem>
+                          <SelectItem value="0.125">Small</SelectItem>
+                          <SelectItem value="0.1875">Medium</SelectItem>
+                          <SelectItem value="0.25">Big</SelectItem>
+                          <SelectItem value="0.375">Huge</SelectItem>
+                          <SelectItem value="0.75">More bigger</SelectItem>
                         </>
                       )}
                     </SelectContent>
@@ -276,7 +276,7 @@ export default function ControlsSection({
                 </div>
 
                 <div>
-                  <Label>Sticker Background Color</Label>
+                  <Label>Select your sticker background color</Label>
                   <div className="flex items-center space-x-2 mt-2">
                     <input
                       type="color"
