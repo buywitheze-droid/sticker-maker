@@ -642,8 +642,8 @@ function detectAndFixCrossings(points: ContourPoint[]): ContourPoint[] {
     const p1 = points[i];
     const p2 = points[(i + 1) % n];
     
-    // Check for intersection with non-adjacent segments
-    for (let j = i + 3; j < Math.min(i + 50, n - 1); j++) {
+    // Check for intersection with ALL non-adjacent segments (full path scan)
+    for (let j = i + 3; j < n - 1; j++) {
       const p3 = points[j];
       const p4 = points[(j + 1) % n];
       
@@ -704,15 +704,15 @@ function mergeClosePoints(points: ContourPoint[]): ContourPoint[] {
     
     const pi = points[i];
     
-    // Look for points that are close in space but far in path order
-    for (let j = i + 4; j < Math.min(i + 80, n); j++) {
+    // Search the ENTIRE path, not just 80 points ahead
+    for (let j = i + 3; j < n; j++) {
       if (skipIndices.has(j)) continue;
       
       const pj = points[j];
       const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
       
-      // Very tight threshold - 15 pixels
-      if (dist < 15) {
+      // Very tight threshold - 4 pixels for tiny offsets
+      if (dist < 4) {
         // Skip all points between i and j
         for (let k = i + 1; k < j; k++) {
           skipIndices.add(k);

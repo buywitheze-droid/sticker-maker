@@ -924,8 +924,8 @@ function detectAndFixLineCrossings(points: Point[]): Point[] {
     const p1 = points[i];
     const p2 = points[(i + 1) % n];
     
-    // Check for intersection with non-adjacent segments
-    for (let j = i + 3; j < Math.min(i + 50, n - 1); j++) {
+    // Check for intersection with ALL non-adjacent segments (full path scan)
+    for (let j = i + 3; j < n - 1; j++) {
       const p3 = points[j];
       const p4 = points[(j + 1) % n];
       
@@ -986,15 +986,15 @@ function mergeClosePathPoints(points: Point[]): Point[] {
     
     const pi = points[i];
     
-    // Look for points that are close in space but far in path order
-    for (let j = i + 4; j < Math.min(i + 80, n); j++) {
+    // Search the ENTIRE path, not just 80 points ahead
+    for (let j = i + 3; j < n; j++) {
       if (skipIndices.has(j)) continue;
       
       const pj = points[j];
       const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
       
-      // Very tight threshold - 15 pixels
-      if (dist < 15) {
+      // Very tight threshold - 4 pixels for tiny offsets
+      if (dist < 4) {
         // Skip all points between i and j
         for (let k = i + 1; k < j; k++) {
           skipIndices.add(k);
@@ -1143,23 +1143,10 @@ function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], colo
   const start = contour[0];
   ctx.moveTo(start.x + offsetX, start.y + offsetY);
   
-  for (let i = 0; i < contour.length; i++) {
-    const p0 = contour[(i - 1 + contour.length) % contour.length];
-    const p1 = contour[i];
-    const p2 = contour[(i + 1) % contour.length];
-    const p3 = contour[(i + 2) % contour.length];
-    
-    const tension = 0.5;
-    const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
-    const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
-    const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
-    const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
-    
-    ctx.bezierCurveTo(
-      cp1x + offsetX, cp1y + offsetY,
-      cp2x + offsetX, cp2y + offsetY,
-      p2.x + offsetX, p2.y + offsetY
-    );
+  // Use simple lineTo to prevent bezier curves from reintroducing crossings
+  for (let i = 1; i < contour.length; i++) {
+    const p = contour[i];
+    ctx.lineTo(p.x + offsetX, p.y + offsetY);
   }
   
   ctx.closePath();
