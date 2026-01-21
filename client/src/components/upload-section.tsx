@@ -2,13 +2,15 @@ import { useCallback } from "react";
 import { Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ImageInfo } from "./image-editor";
+import type { ResizeSettings } from "@/lib/types";
 
 interface UploadSectionProps {
   onImageUpload: (file: File, image: HTMLImageElement) => void;
   imageInfo: ImageInfo | null;
+  resizeSettings: ResizeSettings;
 }
 
-export default function UploadSection({ onImageUpload, imageInfo }: UploadSectionProps) {
+export default function UploadSection({ onImageUpload, imageInfo, resizeSettings }: UploadSectionProps) {
   const handleFileUpload = useCallback((file: File) => {
     if (!file.type.startsWith('image/png')) {
       alert('Please upload a PNG image file.');
@@ -89,7 +91,7 @@ export default function UploadSection({ onImageUpload, imageInfo }: UploadSectio
               <div className="flex justify-between">
                 <span>Size in inches:</span>
                 <span>
-                  {(imageInfo.originalWidth / imageInfo.dpi).toFixed(1)} × {(imageInfo.originalHeight / imageInfo.dpi).toFixed(1)} in
+                  {resizeSettings.widthInches.toFixed(1)} × {resizeSettings.heightInches.toFixed(1)} in
                 </span>
               </div>
               <div className="flex justify-between">

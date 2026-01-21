@@ -475,6 +475,7 @@ export default function ImageEditor() {
       <UploadSection 
         onImageUpload={handleImageUpload}
         imageInfo={imageInfo}
+        resizeSettings={resizeSettings}
       />
       
       <div className="relative preview-container">
