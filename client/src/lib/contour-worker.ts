@@ -823,8 +823,8 @@ function drawContourToData(
   const bgG = parseInt(backgroundColorHex.slice(3, 5), 16);
   const bgB = parseInt(backgroundColorHex.slice(5, 7), 16);
   
-  // Expand path outward by 0.04" for background bleed
-  const bleedInches = 0.04;
+  // Expand path outward by 0.10" for background bleed
+  const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   const expandedPath = expandPathOutward(path, bleedPixels);
   

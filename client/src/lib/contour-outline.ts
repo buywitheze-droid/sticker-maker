@@ -1439,8 +1439,8 @@ export async function downloadContourPDF(
     bgCanvas.width = Math.round(widthInches * bgDPI);
     bgCanvas.height = Math.round(heightInches * bgDPI);
     
-    // Expand path outward by 0.04" for background bleed
-    const bleedInches = 0.04;
+    // Expand path outward by 0.10" for background bleed
+    const bleedInches = 0.10;
     const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
     
     bgCtx.fillStyle = backgroundColor || '#ffffff';
@@ -1635,8 +1635,8 @@ export async function generateContourPDFBase64(
   bgCanvas.width = Math.round(widthInches * bgDPI);
   bgCanvas.height = Math.round(heightInches * bgDPI);
   
-  // Expand path outward by 0.04" for background bleed (matches worker)
-  const bleedInches = 0.04;
+  // Expand path outward by 0.10" for background bleed (matches worker)
+  const bleedInches = 0.10;
   const expandedPathPoints = expandPathOutwardInches(pathPoints, bleedInches);
   
   bgCtx.fillStyle = backgroundColor;
