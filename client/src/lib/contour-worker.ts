@@ -169,7 +169,10 @@ function processContour(
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
-  const padding = totalOffsetPixels + 10;
+  // Add bleed to padding so expanded background isn't clipped
+  const bleedInches = 0.10;
+  const bleedPixels = Math.round(bleedInches * effectiveDPI);
+  const padding = totalOffsetPixels + bleedPixels + 10;
   const canvasWidth = width + (padding * 2);
   const canvasHeight = height + (padding * 2);
   
@@ -814,23 +817,39 @@ function drawContourToData(
   offsetY: number,
   effectiveDPI: number
 ): void {
+  console.log('[WORKER] drawContourToData called with backgroundColorHex:', backgroundColorHex);
+  
   const r = parseInt(strokeColorHex.slice(1, 3), 16);
   const g = parseInt(strokeColorHex.slice(3, 5), 16);
   const b = parseInt(strokeColorHex.slice(5, 7), 16);
   
-  // Parse background color
-  const bgR = parseInt(backgroundColorHex.slice(1, 3), 16);
-  const bgG = parseInt(backgroundColorHex.slice(3, 5), 16);
-  const bgB = parseInt(backgroundColorHex.slice(5, 7), 16);
+  // Parse background color - default to white if undefined
+  const bgColorHex = backgroundColorHex || '#ffffff';
+  const bgR = parseInt(bgColorHex.slice(1, 3), 16);
+  const bgG = parseInt(bgColorHex.slice(3, 5), 16);
+  const bgB = parseInt(bgColorHex.slice(5, 7), 16);
+  
+  console.log('[WORKER] Parsed background RGB:', bgR, bgG, bgB);
   
   // Expand path outward by 0.10" for background bleed
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   const expandedPath = expandPathOutward(path, bleedPixels);
   
+  console.log('[WORKER] bleedPixels:', bleedPixels, 'path length:', path.length, 'expandedPath length:', expandedPath.length);
+  console.log('[WORKER] bgColor RGB:', bgR, bgG, bgB, 'offsetX:', offsetX, 'offsetY:', offsetY);
+  
+  // Log sample points to verify expansion
+  if (path.length > 0) {
+    console.log('[WORKER] Original path[0]:', path[0].x.toFixed(1), path[0].y.toFixed(1));
+    console.log('[WORKER] Expanded path[0]:', expandedPath[0].x.toFixed(1), expandedPath[0].y.toFixed(1));
+  }
+  
   // Fill with expanded path first (background with bleed), then fill original path to ensure coverage
   fillContour(output, width, height, expandedPath, offsetX, offsetY, bgR, bgG, bgB);
   fillContour(output, width, height, path, offsetX, offsetY, bgR, bgG, bgB);
+  
+  console.log('[WORKER] fillContour calls completed');
   
   // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {

@@ -226,7 +226,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         shapeSettings.offset
       );
 
-      const bleedInches = 0.04; // 0.04" bleed around the shape
+      const bleedInches = 0.10; // 0.10" bleed around the shape
       const padding = 40;
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);

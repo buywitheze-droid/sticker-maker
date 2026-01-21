@@ -1381,16 +1381,20 @@ export function getContourPath(
       smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
     }
     
-    const widthInches = dilatedWidth / effectiveDPI;
-    const heightInches = dilatedHeight / effectiveDPI;
+    // Add bleed to dimensions so expanded background fits within page
+    const bleedInches = 0.10;
+    const widthInches = dilatedWidth / effectiveDPI + (bleedInches * 2);
+    const heightInches = dilatedHeight / effectiveDPI + (bleedInches * 2);
     
+    // Path coordinates need to be offset by bleed amount
     const pathInInches = smoothedPath.map(p => ({
-      x: p.x / effectiveDPI,
-      y: heightInches - (p.y / effectiveDPI)
+      x: (p.x / effectiveDPI) + bleedInches,
+      y: heightInches - ((p.y / effectiveDPI) + bleedInches)
     }));
     
-    const imageOffsetX = totalOffsetPixels / effectiveDPI;
-    const imageOffsetY = totalOffsetPixels / effectiveDPI;
+    // Image offset includes bleed
+    const imageOffsetX = (totalOffsetPixels / effectiveDPI) + bleedInches;
+    const imageOffsetY = (totalOffsetPixels / effectiveDPI) + bleedInches;
     
     return {
       pathPoints: pathInInches,
