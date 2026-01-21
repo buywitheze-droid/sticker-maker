@@ -1469,24 +1469,17 @@ export async function downloadContourPDF(
     // Close all gaps for solid bleed fill
     const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
     
-    // Expand path outward by 0.10" for background bleed
+    // Use stroke + fill approach for guaranteed solid coverage with bleed
     const bleedInches = 0.10;
-    const expandedPathPoints = expandPathOutwardInches(fullyClosedPath, bleedInches);
+    const bleedPixels = bleedInches * bgDPI;
     
     bgCtx.fillStyle = backgroundColor || '#ffffff';
+    bgCtx.strokeStyle = backgroundColor || '#ffffff';
+    bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
+    bgCtx.lineJoin = 'round';
+    bgCtx.lineCap = 'round';
     
-    // Fill the expanded path first (with bleed)
-    bgCtx.beginPath();
-    if (expandedPathPoints.length > 0) {
-      bgCtx.moveTo(expandedPathPoints[0].x * bgDPI, (heightInches - expandedPathPoints[0].y) * bgDPI);
-      for (let i = 1; i < expandedPathPoints.length; i++) {
-        bgCtx.lineTo(expandedPathPoints[i].x * bgDPI, (heightInches - expandedPathPoints[i].y) * bgDPI);
-      }
-      bgCtx.closePath();
-      bgCtx.fill();
-    }
-    
-    // Fill the fully closed path to ensure full coverage
+    // Draw path with thick stroke first (creates the bleed), then fill (creates inner area)
     bgCtx.beginPath();
     if (fullyClosedPath.length > 0) {
       bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
@@ -1494,7 +1487,8 @@ export async function downloadContourPDF(
         bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
       }
       bgCtx.closePath();
-      bgCtx.fill();
+      bgCtx.stroke(); // Bleed area
+      bgCtx.fill();   // Inner area
     }
     
     const bgBlob = await new Promise<Blob>((resolve, reject) => {
@@ -1668,24 +1662,17 @@ export async function generateContourPDFBase64(
   // Close all gaps for solid bleed fill (matches worker)
   const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
   
-  // Expand path outward by 0.10" for background bleed (matches worker)
+  // Use stroke + fill approach for guaranteed solid coverage with bleed (matches worker)
   const bleedInches = 0.10;
-  const expandedPathPoints = expandPathOutwardInches(fullyClosedPath, bleedInches);
+  const bleedPixels = bleedInches * bgDPI;
   
   bgCtx.fillStyle = backgroundColor;
+  bgCtx.strokeStyle = backgroundColor;
+  bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
+  bgCtx.lineJoin = 'round';
+  bgCtx.lineCap = 'round';
   
-  // Fill the expanded path first (with bleed)
-  bgCtx.beginPath();
-  if (expandedPathPoints.length > 0) {
-    bgCtx.moveTo(expandedPathPoints[0].x * bgDPI, (heightInches - expandedPathPoints[0].y) * bgDPI);
-    for (let i = 1; i < expandedPathPoints.length; i++) {
-      bgCtx.lineTo(expandedPathPoints[i].x * bgDPI, (heightInches - expandedPathPoints[i].y) * bgDPI);
-    }
-    bgCtx.closePath();
-    bgCtx.fill();
-  }
-  
-  // Fill the fully closed path to ensure full coverage
+  // Draw path with thick stroke first (creates the bleed), then fill (creates inner area)
   bgCtx.beginPath();
   if (fullyClosedPath.length > 0) {
     bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
@@ -1693,7 +1680,8 @@ export async function generateContourPDFBase64(
       bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
     }
     bgCtx.closePath();
-    bgCtx.fill();
+    bgCtx.stroke(); // Bleed area
+    bgCtx.fill();   // Inner area
   }
   
   const bgBlob = await new Promise<Blob>((resolve) => {

@@ -840,18 +840,34 @@ function drawContourToData(
   const bgB = parseInt(bgColorHex.slice(5, 7), 16);
   
   // For the bleed fill, close ALL gaps aggressively to ensure solid coverage
-  // Use a large threshold (0.5" = ~150px at 300 DPI) to close any gaps
   const maxGapThreshold = Math.round(0.5 * effectiveDPI);
   const fullyClosedPath = closeGapsForBleed(path, maxGapThreshold);
   
-  // Expand the fully-closed path outward by 0.10" for background bleed
+  // Use morphological approach: fill to mask, dilate mask, then fill from mask
+  // This guarantees no gaps between inner fill and bleed
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
-  const expandedPath = expandPathOutward(fullyClosedPath, bleedPixels);
   
-  // Fill with expanded path first (background with bleed), then fill original closed path to ensure coverage
-  fillContour(output, width, height, expandedPath, offsetX, offsetY, bgR, bgG, bgB);
-  fillContour(output, width, height, fullyClosedPath, offsetX, offsetY, bgR, bgG, bgB);
+  // Create a mask for the filled contour area
+  const fillMask = new Uint8Array(width * height);
+  fillContourToMask(fillMask, width, height, fullyClosedPath, offsetX, offsetY);
+  
+  // Dilate the mask by bleed amount to create the bleed area
+  const dilatedMask = dilateMask(fillMask, width, height, bleedPixels);
+  
+  // Fill all pixels where the dilated mask is set (this covers both inner and bleed areas)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const maskIdx = y * width + x;
+      if (dilatedMask[maskIdx] === 1) {
+        const idx = (y * width + x) * 4;
+        output[idx] = bgR;
+        output[idx + 1] = bgG;
+        output[idx + 2] = bgB;
+        output[idx + 3] = 255;
+      }
+    }
+  }
   
   // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {
