@@ -167,12 +167,12 @@ export default function ControlsSection({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="0.02">Tiny (0.02")</SelectItem>
-                      <SelectItem value="0.04">Small (0.04")</SelectItem>
-                      <SelectItem value="0.07">Medium (0.07")</SelectItem>
-                      <SelectItem value="0.14">Large (0.14")</SelectItem>
-                      <SelectItem value="0.25">Huge (0.25")</SelectItem>
-                      <SelectItem value="0.5">More bigger (0.50")</SelectItem>
+                      <SelectItem value="0.02">Tiny</SelectItem>
+                      <SelectItem value="0.04">Small</SelectItem>
+                      <SelectItem value="0.07">Medium</SelectItem>
+                      <SelectItem value="0.14">Large</SelectItem>
+                      <SelectItem value="0.25">Huge</SelectItem>
+                      <SelectItem value="0.5">More bigger</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
