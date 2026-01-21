@@ -14,7 +14,6 @@ export interface StrokeSettings {
   closeSmallGaps: boolean;
   closeBigGaps: boolean;
   backgroundColor: string;
-  bleedEnabled: boolean;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

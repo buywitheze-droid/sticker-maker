@@ -14,7 +14,6 @@ interface WorkerMessage {
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
-    bleedEnabled: boolean;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -154,7 +153,6 @@ function processContour(
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
-    bleedEnabled: boolean;
   },
   effectiveDPI: number
 ): ImageData {
@@ -171,8 +169,8 @@ function processContour(
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
-  // Add bleed to padding so expanded background isn't clipped (only if bleed is enabled)
-  const bleedInches = strokeSettings.bleedEnabled ? 0.10 : 0;
+  // Add bleed to padding so expanded background isn't clipped
+  const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   const padding = totalOffsetPixels + bleedPixels + 10;
   const canvasWidth = width + (padding * 2);
@@ -250,7 +248,7 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI, strokeSettings.bleedEnabled);
+  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
   
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
@@ -829,8 +827,7 @@ function drawContourToData(
   backgroundColorHex: string, 
   offsetX: number, 
   offsetY: number,
-  effectiveDPI: number,
-  bleedEnabled: boolean
+  effectiveDPI: number
 ): void {
   const r = parseInt(strokeColorHex.slice(1, 3), 16);
   const g = parseInt(strokeColorHex.slice(3, 5), 16);
@@ -848,21 +845,21 @@ function drawContourToData(
   
   // Use morphological approach: fill to mask, dilate mask, then fill from mask
   // This guarantees no gaps between inner fill and bleed
-  const bleedInches = bleedEnabled ? 0.10 : 0;
+  const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   
   // Create a mask for the filled contour area
   const fillMask = new Uint8Array(width * height);
   fillContourToMask(fillMask, width, height, fullyClosedPath, offsetX, offsetY);
   
-  // Use the fill mask directly if bleed is disabled, otherwise dilate it
-  const finalMask = bleedPixels > 0 ? dilateMask(fillMask, width, height, bleedPixels) : fillMask;
+  // Dilate the mask by bleed amount to create the bleed area
+  const dilatedMask = dilateMask(fillMask, width, height, bleedPixels);
   
-  // Fill all pixels where the mask is set (this covers inner and optional bleed areas)
+  // Fill all pixels where the dilated mask is set (this covers both inner and bleed areas)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const maskIdx = y * width + x;
-      if (finalMask[maskIdx] === 1) {
+      if (dilatedMask[maskIdx] === 1) {
         const idx = (y * width + x) * 4;
         output[idx] = bgR;
         output[idx + 1] = bgG;
