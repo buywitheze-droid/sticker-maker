@@ -1,6 +1,6 @@
 import { useState } from "react";
 import ImageEditor from "@/components/image-editor";
-import elephantLogo from "@assets/generated_images/cute_elephant_silhouette_icon.png";
+import elephantLogo from "@assets/generated_images/black_elephant_silhouette_transparent.png";
 
 export default function StickerMaker() {
   const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
