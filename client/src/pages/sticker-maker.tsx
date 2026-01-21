@@ -10,7 +10,7 @@ export default function StickerMaker() {
     <div className="bg-black min-h-screen">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-7xl mx-auto flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center space-x-3">
             <img src={elephantLogo} alt="Sticker Outline logo" className="w-10 h-10 object-contain" />
             <h1 className="text-2xl text-black" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>Sticker Outline</h1>
