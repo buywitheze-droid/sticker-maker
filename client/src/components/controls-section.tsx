@@ -172,7 +172,7 @@ export default function ControlsSection({
                       <SelectItem value="0.07">Medium (0.07")</SelectItem>
                       <SelectItem value="0.14">Large (0.14")</SelectItem>
                       <SelectItem value="0.25">Huge (0.25")</SelectItem>
-                      <SelectItem value="0.50">More bigger (0.50")</SelectItem>
+                      <SelectItem value="0.5">More bigger (0.50")</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
