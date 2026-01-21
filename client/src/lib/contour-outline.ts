@@ -1412,13 +1412,17 @@ export async function downloadContourPDF(
   resizeSettings: ResizeSettings,
   filename: string
 ): Promise<void> {
-  const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-  if (!contourResult) {
-    console.error('Failed to generate contour path');
-    return;
-  }
+  try {
+    console.log('[downloadContourPDF] Starting PDF generation');
+    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+    if (!contourResult) {
+      console.error('Failed to generate contour path');
+      return;
+    }
+    console.log('[downloadContourPDF] Got contour result, pathPoints:', contourResult.pathPoints.length);
   
-  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
+    const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
+    console.log('[downloadContourPDF] backgroundColor:', backgroundColor);
   
   const widthPts = widthInches * 72;
   const heightPts = heightInches * 72;
@@ -1591,6 +1595,10 @@ export async function downloadContourPDF(
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('[downloadContourPDF] Error:', error);
+    throw error;
+  }
 }
 
 export async function generateContourPDFBase64(
