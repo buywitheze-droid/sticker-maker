@@ -655,6 +655,10 @@ function drawContourToData(
   const g = parseInt(colorHex.slice(3, 5), 16);
   const b = parseInt(colorHex.slice(5, 7), 16);
   
+  // Fill contour with white background first
+  fillContour(output, width, height, path, offsetX, offsetY, 255, 255, 255);
+  
+  // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {
     const p1 = path[i];
     const p2 = path[(i + 1) % path.length];
@@ -664,10 +668,13 @@ function drawContourToData(
     const x2 = Math.round(p2.x + offsetX);
     const y2 = Math.round(p2.y + offsetY);
     
+    // Draw thicker stroke for visibility (3 pixels wide)
     drawLine(output, width, height, x1, y1, x2, y2, r, g, b);
+    drawLine(output, width, height, x1 + 1, y1, x2 + 1, y2, r, g, b);
+    drawLine(output, width, height, x1 - 1, y1, x2 - 1, y2, r, g, b);
+    drawLine(output, width, height, x1, y1 + 1, x2, y2 + 1, r, g, b);
+    drawLine(output, width, height, x1, y1 - 1, x2, y2 - 1, r, g, b);
   }
-  
-  fillContour(output, width, height, path, offsetX, offsetY, r, g, b);
 }
 
 function drawLine(
