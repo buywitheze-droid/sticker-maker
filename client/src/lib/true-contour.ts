@@ -379,33 +379,109 @@ function removeOvershootingPoints(points: ContourPoint[]): ContourPoint[] {
 function uniteJunctions(points: ContourPoint[]): ContourPoint[] {
   if (points.length < 8) return points;
   
+  // First pass: detect sharp turns that need U/N merge shapes
+  let result = detectAndMergeSharpTurns(points);
+  
+  // Second pass: detect close proximity junctions
+  result = detectProximityJunctions(result);
+  
+  return result;
+}
+
+// Detect sharp turns (>45 degrees) and apply U/N merge shapes
+function detectAndMergeSharpTurns(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 6) return points;
+  
+  const result: ContourPoint[] = [];
+  const n = points.length;
+  
+  let i = 0;
+  while (i < n) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    const next2 = points[(i + 2) % n];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0.1 && len2 > 0.1) {
+      const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+      const cross = v1x * v2y - v1y * v2x;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      // Sharp turn detected (more than 45 degrees) - ALWAYS apply merge
+      if (angle > Math.PI / 4) {
+        const sharpness = angle / Math.PI;
+        // Use larger depth for sharper turns to ensure proper merge
+        const depth = Math.max(3, Math.min(len1, len2) * sharpness * 0.6);
+        
+        if (cross < 0) {
+          // Concave (inward) - N shape merge
+          const midX = (curr.x + next.x) / 2;
+          const midY = (curr.y + next.y) / 2;
+          const perpX = (next.y - curr.y) / len2;
+          const perpY = -(next.x - curr.x) / len2;
+          
+          result.push({ x: midX + perpX * depth * 0.4, y: midY + perpY * depth * 0.4 });
+          i++;
+          continue;
+        } else {
+          // Convex (outward) - U shape merge
+          const midX = (curr.x + next.x) / 2;
+          const midY = (curr.y + next.y) / 2;
+          const perpX = -(next.y - curr.y) / len2;
+          const perpY = (next.x - curr.x) / len2;
+          
+          result.push({ x: midX + perpX * depth * 0.4, y: midY + perpY * depth * 0.4 });
+          i++;
+          continue;
+        }
+      }
+    }
+    
+    result.push(curr);
+    i++;
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Detect points that are close in space but far in path order
+function detectProximityJunctions(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 8) return points;
+  
   const n = points.length;
   const result: ContourPoint[] = [];
   const skipIndices = new Set<number>();
   
-  // Find all junction points where the path comes close to itself
   for (let i = 0; i < n; i++) {
     if (skipIndices.has(i)) continue;
     
     const pi = points[i];
     let foundJunction = false;
     
-    // Look for another point that's close but far in path order (indicating a loop/crossing)
-    for (let j = i + 5; j < Math.min(i + 40, n); j++) {
+    // Increased search range and decreased distance threshold for tighter detection
+    for (let j = i + 4; j < Math.min(i + 60, n); j++) {
       const pathDist = j - i;
-      if (pathDist < 6) continue;
+      if (pathDist < 4) continue;
       
       const pj = points[j];
       const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
       
-      // If points are close together (within 8 pixels) but far apart in path order
-      if (dist < 8) {
-        // Found a junction - skip all points between i and j (the loop going out of bounds)
+      // Much tighter detection - within 12 pixels now (was 8)
+      if (dist < 12) {
+        // Skip all points in the loop
         for (let k = i + 1; k < j; k++) {
           skipIndices.add(k);
         }
         
-        // Add a smooth merge point at the junction
+        // Create smooth merge at junction center
         const mergePoint = { x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 };
         result.push(mergePoint);
         foundJunction = true;
