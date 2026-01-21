@@ -1,11 +1,11 @@
-import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette } from "lucide-react";
+import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
-import { createSilhouetteContour } from "@/lib/contour-outline";
+import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent } from "@/lib/image-crop";
 
@@ -24,6 +24,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [zoom, setZoom] = useState(1);
     const [backgroundColor, setBackgroundColor] = useState("#1f2937");
     const lastImageRef = useRef<string | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [processingProgress, setProcessingProgress] = useState(0);
+    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
+    const processingIdRef = useRef(0);
     
     // Auto-set zoom to 75% for images with no empty space around them
     useEffect(() => {
@@ -139,6 +143,54 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
+    const generateContourCacheKey = useCallback(() => {
+      if (!imageInfo) return '';
+      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.color}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${resizeSettings.outputDPI}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, strokeSettings, resizeSettings]);
+
+    useEffect(() => {
+      if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
+        contourCacheRef.current = null;
+        return;
+      }
+
+      const cacheKey = generateContourCacheKey();
+      if (contourCacheRef.current?.key === cacheKey) return;
+
+      const currentId = ++processingIdRef.current;
+      setIsProcessing(true);
+      setProcessingProgress(0);
+
+      const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
+      const workerResizeSettings = {
+        widthInches: resizeSettings.widthInches,
+        heightInches: resizeSettings.heightInches,
+        maintainAspectRatio: resizeSettings.maintainAspectRatio,
+        outputDPI: resizeSettings.outputDPI || 300
+      };
+
+      processContourInWorker(
+        imageInfo.image,
+        previewStrokeSettings,
+        workerResizeSettings,
+        (progress) => {
+          if (processingIdRef.current === currentId) {
+            setProcessingProgress(progress);
+          }
+        }
+      ).then((contourCanvas) => {
+        if (processingIdRef.current === currentId) {
+          contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
+          setIsProcessing(false);
+        }
+      }).catch((error) => {
+        console.error('Contour processing error:', error);
+        if (processingIdRef.current === currentId) {
+          setIsProcessing(false);
+        }
+      });
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey]);
+
     useEffect(() => {
       if (!canvasRef.current || !imageInfo) return;
 
@@ -162,7 +214,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor, isProcessing]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -294,42 +346,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const availableWidth = canvasWidth - (viewPadding * 2);
       const availableHeight = canvasHeight - (viewPadding * 2);
       
-      if (strokeSettings.enabled) {
-        try {
-          const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
-          const contourCanvas = createSilhouetteContour(imageInfo.image, previewStrokeSettings, resizeSettings);
-          
-          const contourAspectRatio = contourCanvas.width / contourCanvas.height;
-          
-          let displayWidth, displayHeight;
-          if (contourAspectRatio > (availableWidth / availableHeight)) {
-            displayWidth = availableWidth;
-            displayHeight = availableWidth / contourAspectRatio;
-          } else {
-            displayHeight = availableHeight;
-            displayWidth = availableHeight * contourAspectRatio;
-          }
-          
-          const displayX = (canvasWidth - displayWidth) / 2;
-          const displayY = (canvasHeight - displayHeight) / 2;
-          
-          ctx.drawImage(contourCanvas, displayX, displayY, displayWidth, displayHeight);
-          
-        } catch (error) {
-          console.error('Contour rendering error:', error);
-          const aspectRatio = imageInfo.image.width / imageInfo.image.height;
-          let w, h;
-          if (aspectRatio > (availableWidth / availableHeight)) {
-            w = availableWidth;
-            h = availableWidth / aspectRatio;
-          } else {
-            h = availableHeight;
-            w = availableHeight * aspectRatio;
-          }
-          const x = (canvasWidth - w) / 2;
-          const y = (canvasHeight - h) / 2;
-          ctx.drawImage(imageInfo.image, x, y, w, h);
+      if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
+        const contourCanvas = contourCacheRef.current.canvas;
+        
+        const contourAspectRatio = contourCanvas.width / contourCanvas.height;
+        
+        let contourWidth, contourHeight;
+        if (contourAspectRatio > (availableWidth / availableHeight)) {
+          contourWidth = availableWidth;
+          contourHeight = availableWidth / contourAspectRatio;
+        } else {
+          contourHeight = availableHeight;
+          contourWidth = availableHeight * contourAspectRatio;
         }
+        
+        const contourX = (canvasWidth - contourWidth) / 2;
+        const contourY = (canvasHeight - contourHeight) / 2;
+        
+        ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
         let displayWidth, displayHeight;
@@ -413,6 +447,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <div className="text-center">
                     <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">Upload an image to see preview</p>
+                  </div>
+                </div>
+              )}
+              
+              {isProcessing && imageInfo && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
+                    <p className="text-white text-sm">Processing... {processingProgress}%</p>
                   </div>
                 </div>
               )}
