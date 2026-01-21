@@ -205,7 +205,10 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    const smoothedPath = smoothPath(boundaryPath, 2);
+    let smoothedPath = smoothPath(boundaryPath, 2);
+    
+    // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
+    smoothedPath = fixOffsetCrossings(smoothedPath);
     
     const offsetX = padding - totalOffsetPixels;
     const offsetY = padding - totalOffsetPixels;
@@ -882,6 +885,133 @@ function removeSpikesFromPath(points: Point[]): Point[] {
   }
   
   return result;
+}
+
+// Fix crossings that occur in offset contours at sharp corners
+function fixOffsetCrossings(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  let result = [...points];
+  
+  // Multiple passes to catch all crossings
+  for (let pass = 0; pass < 3; pass++) {
+    result = detectAndFixLineCrossings(result);
+    result = mergeClosePathPoints(result);
+  }
+  
+  return result;
+}
+
+// Detect where lines actually cross and fix them
+function detectAndFixLineCrossings(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const skipUntil = new Map<number, number>();
+  
+  for (let i = 0; i < n; i++) {
+    // Check if we should skip this point
+    let shouldSkip = false;
+    for (const [start, end] of skipUntil.entries()) {
+      if (i > start && i < end) {
+        shouldSkip = true;
+        break;
+      }
+    }
+    if (shouldSkip) continue;
+    
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    
+    // Check for intersection with non-adjacent segments
+    for (let j = i + 3; j < Math.min(i + 50, n - 1); j++) {
+      const p3 = points[j];
+      const p4 = points[(j + 1) % n];
+      
+      const intersection = lineSegmentIntersect(p1, p2, p3, p4);
+      if (intersection) {
+        // Found a crossing - skip the loop between them and add merge point
+        skipUntil.set(i, j);
+        result.push(intersection);
+        break;
+      }
+    }
+    
+    if (!skipUntil.has(i)) {
+      result.push(p1);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Check if two line segments intersect
+function lineSegmentIntersect(p1: Point, p2: Point, p3: Point, p4: Point): Point | null {
+  const d1x = p2.x - p1.x;
+  const d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x;
+  const d2y = p4.y - p3.y;
+  
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 0.0001) return null; // Parallel
+  
+  const dx = p3.x - p1.x;
+  const dy = p3.y - p1.y;
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  // Check if intersection is within both segments
+  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+    return {
+      x: p1.x + t * d1x,
+      y: p1.y + t * d1y
+    };
+  }
+  
+  return null;
+}
+
+// Merge points that are very close together (indicating a near-crossing)
+function mergeClosePathPoints(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const skipIndices = new Set<number>();
+  
+  for (let i = 0; i < n; i++) {
+    if (skipIndices.has(i)) continue;
+    
+    const pi = points[i];
+    
+    // Look for points that are close in space but far in path order
+    for (let j = i + 4; j < Math.min(i + 80, n); j++) {
+      if (skipIndices.has(j)) continue;
+      
+      const pj = points[j];
+      const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+      
+      // Very tight threshold - 15 pixels
+      if (dist < 15) {
+        // Skip all points between i and j
+        for (let k = i + 1; k < j; k++) {
+          skipIndices.add(k);
+        }
+        // Add merge point
+        result.push({ x: (pi.x + pj.x) / 2, y: (pi.y + pj.y) / 2 });
+        skipIndices.add(j);
+        break;
+      }
+    }
+    
+    if (!skipIndices.has(i)) {
+      result.push(pi);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 function removeSpikes(points: Point[], neighborDistance: number, threshold: number): Point[] {
