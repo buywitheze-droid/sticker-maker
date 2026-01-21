@@ -1473,18 +1473,26 @@ export async function downloadContourPDF(
     const bleedInches = 0.10;
     const bleedPixels = bleedInches * bgDPI;
     
-    bgCtx.fillStyle = backgroundColor || '#ffffff';
-    bgCtx.strokeStyle = backgroundColor || '#ffffff';
+    const fillColor = backgroundColor || '#ffffff';
+    
+    // Use the original pathPoints - closeGapsForBleedInches may cause issues
+    const drawPath = pathPoints;
+    
+    bgCtx.fillStyle = fillColor;
+    bgCtx.strokeStyle = fillColor;
     bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
     bgCtx.lineJoin = 'round';
     bgCtx.lineCap = 'round';
     
-    // Draw path with thick stroke first (creates the bleed), then fill (creates inner area)
-    bgCtx.beginPath();
-    if (fullyClosedPath.length > 0) {
-      bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
-      for (let i = 1; i < fullyClosedPath.length; i++) {
-        bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
+    // pathPoints Y is already flipped in getContourPath (heightInches - y), so:
+    // - For canvas: use Y directly (canvas origin is top-left)
+    // - For PDF: flip Y back (PDF origin is bottom-left)
+    if (drawPath.length > 0) {
+      bgCtx.beginPath();
+      // Canvas uses top-left origin, pathPoints Y is already flipped for this
+      bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
+      for (let i = 1; i < drawPath.length; i++) {
+        bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
       }
       bgCtx.closePath();
       bgCtx.stroke(); // Bleed area
@@ -1666,18 +1674,23 @@ export async function generateContourPDFBase64(
   const bleedInches = 0.10;
   const bleedPixels = bleedInches * bgDPI;
   
-  bgCtx.fillStyle = backgroundColor;
-  bgCtx.strokeStyle = backgroundColor;
+  const fillColor = backgroundColor || '#ffffff';
+  bgCtx.fillStyle = fillColor;
+  bgCtx.strokeStyle = fillColor;
   bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
   bgCtx.lineJoin = 'round';
   bgCtx.lineCap = 'round';
   
-  // Draw path with thick stroke first (creates the bleed), then fill (creates inner area)
-  bgCtx.beginPath();
-  if (fullyClosedPath.length > 0) {
-    bgCtx.moveTo(fullyClosedPath[0].x * bgDPI, (heightInches - fullyClosedPath[0].y) * bgDPI);
-    for (let i = 1; i < fullyClosedPath.length; i++) {
-      bgCtx.lineTo(fullyClosedPath[i].x * bgDPI, (heightInches - fullyClosedPath[i].y) * bgDPI);
+  // Use the original pathPoints
+  const drawPath = pathPoints;
+  
+  // pathPoints Y is already flipped in getContourPath (heightInches - y), so:
+  // - For canvas: use Y directly (canvas origin is top-left)
+  if (drawPath.length > 0) {
+    bgCtx.beginPath();
+    bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
+    for (let i = 1; i < drawPath.length; i++) {
+      bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
     }
     bgCtx.closePath();
     bgCtx.stroke(); // Bleed area
