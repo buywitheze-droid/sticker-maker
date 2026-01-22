@@ -1782,11 +1782,11 @@ export async function downloadContourPDF(
           flippedBgCtx.drawImage(bgCanvas, 0, 0);
         }
         
-        // Use JPEG for solid color backgrounds - much faster than PNG
+        // Use PNG for better quality backgrounds
         flippedBgCanvas.toBlob((b) => {
           if (b) resolve(b);
           else reject(new Error('Failed to create blob from canvas'));
-        }, 'image/jpeg', 0.9);
+        }, 'image/png');
       });
     };
     
@@ -1818,16 +1818,16 @@ export async function downloadContourPDF(
     ]);
     
     // Convert blobs to bytes in parallel
-    const [bgJpgBytes, pngBytes] = await Promise.all([
+    const [bgPngBytes, pngBytes] = await Promise.all([
       bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
       designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
     ]);
     
-    // Embed images in PDF - use embedJpg for background (faster than PNG)
-    const bgJpgImage = await pdfDoc.embedJpg(bgJpgBytes);
+    // Embed images in PDF as PNG for better quality
+    const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
     
     // Draw the background raster image first
-    page.drawImage(bgJpgImage, {
+    page.drawImage(bgPngImage, {
       x: 0,
       y: 0,
       width: widthPts,
@@ -2013,11 +2013,11 @@ export async function generateContourPDFBase64(
         flippedBgCtx.drawImage(bgCanvas, 0, 0);
       }
       
-      // Use JPEG for solid color backgrounds - much faster than PNG
+      // Use PNG for better quality backgrounds
       flippedBgCanvas.toBlob((b) => {
         if (b) resolve(b);
         else reject(new Error('Failed to create blob from canvas'));
-      }, 'image/jpeg', 0.9);
+      }, 'image/png');
     });
   };
   
@@ -2049,16 +2049,16 @@ export async function generateContourPDFBase64(
   ]);
   
   // Convert blobs to bytes in parallel
-  const [bgJpgBytes, pngBytes] = await Promise.all([
+  const [bgPngBytes, pngBytes] = await Promise.all([
     bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
     designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
   ]);
   
-  // Embed images in PDF - use embedJpg for background (faster than PNG)
-  const bgJpgImage = await pdfDoc.embedJpg(bgJpgBytes);
+  // Embed images in PDF as PNG for better quality
+  const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
   
   // Draw the background raster image first
-  page.drawImage(bgJpgImage, {
+  page.drawImage(bgPngImage, {
     x: 0,
     y: 0,
     width: widthPts,
