@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -558,7 +558,79 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 )}
               </div>
               
+              {zoom !== 1 && (
+                <div className="w-3 h-[400px] flex flex-col">
+                  <div 
+                    className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const y = (e.clientY - rect.top) / rect.height;
+                      setPanY(100 - (y * 200));
+                    }}
+                  >
+                    <div 
+                      className="absolute left-0 right-0 h-8 bg-gray-400 hover:bg-gray-300 rounded-full transition-colors"
+                      style={{ top: `${((100 - panY) / 200) * 100}%`, transform: 'translateY(-50%)' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        const startY = e.clientY;
+                        const startPan = panY;
+                        const parent = e.currentTarget.parentElement!;
+                        const height = parent.getBoundingClientRect().height;
+                        
+                        const onMove = (ev: MouseEvent) => {
+                          const delta = (ev.clientY - startY) / height * 200;
+                          setPanY(Math.max(-100, Math.min(100, startPan - delta)));
+                        };
+                        const onUp = () => {
+                          document.removeEventListener('mousemove', onMove);
+                          document.removeEventListener('mouseup', onUp);
+                        };
+                        document.addEventListener('mousemove', onMove);
+                        document.addEventListener('mouseup', onUp);
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
+            
+            {zoom !== 1 && (
+              <div className="h-3 mt-1 flex">
+                <div 
+                  className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = (e.clientX - rect.left) / rect.width;
+                    setPanX((x * 200) - 100);
+                  }}
+                >
+                  <div 
+                    className="absolute top-0 bottom-0 w-12 bg-gray-400 hover:bg-gray-300 rounded-full transition-colors"
+                    style={{ left: `${((panX + 100) / 200) * 100}%`, transform: 'translateX(-50%)' }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      const startX = e.clientX;
+                      const startPan = panX;
+                      const parent = e.currentTarget.parentElement!;
+                      const width = parent.getBoundingClientRect().width;
+                      
+                      const onMove = (ev: MouseEvent) => {
+                        const delta = (ev.clientX - startX) / width * 200;
+                        setPanX(Math.max(-100, Math.min(100, startPan + delta)));
+                      };
+                      const onUp = () => {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                      };
+                      document.addEventListener('mousemove', onMove);
+                      document.addEventListener('mouseup', onUp);
+                    }}
+                  />
+                </div>
+                <div className="w-3" />
+              </div>
+            )}
 
             <div className="mt-3 space-y-3">
               <div className="flex items-center justify-center gap-1">
@@ -609,52 +681,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <RotateCcw className="h-3 w-3 mr-1" />
                   Reset
                 </Button>
-                
-                {zoom !== 1 && (
-                  <>
-                    <div className="w-px h-6 bg-gray-600 mx-2" />
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setPanX(prev => Math.max(prev - 15, -100))}
-                        className="h-7 w-7 p-0"
-                        title="Pan Left"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <div className="flex flex-col gap-0">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setPanY(prev => Math.min(prev + 15, 100))}
-                          className="h-4 w-6 p-0"
-                          title="Pan Up"
-                        >
-                          <ChevronUp className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setPanY(prev => Math.max(prev - 15, -100))}
-                          className="h-4 w-6 p-0"
-                          title="Pan Down"
-                        >
-                          <ChevronDown className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setPanX(prev => Math.min(prev + 15, 100))}
-                        className="h-7 w-7 p-0"
-                        title="Pan Right"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
           </CardContent>
