@@ -1142,10 +1142,24 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     }
   }
   
-  // Combine both, with inward gaps first (they get processed and respected first)
-  const exteriorGaps = [...inwardGaps, ...geometryGaps];
+  // Filter geometry gaps to exclude any that overlap with inward gaps
+  // This ensures inward detection behavior stays exactly as before
+  const nonOverlappingGeometryGaps = geometryGaps.filter(geoGap => {
+    for (const inwardGap of inwardGaps) {
+      // Check if ranges overlap: geoGap[i,j] overlaps with inwardGap[i,j]
+      const overlapStart = Math.max(geoGap.i, inwardGap.i);
+      const overlapEnd = Math.min(geoGap.j, inwardGap.j);
+      if (overlapStart < overlapEnd) {
+        return false; // Overlaps with an inward gap, exclude it
+      }
+    }
+    return true; // No overlap, keep it
+  });
   
-  console.log('[closeGapsWithShapes] Inward gaps:', inwardGaps.length, 'Geometry gaps:', geometryGaps.length);
+  // Combine: inward gaps (original behavior) + non-overlapping geometry gaps
+  const exteriorGaps = [...inwardGaps, ...nonOverlappingGeometryGaps];
+  
+  console.log('[closeGapsWithShapes] Inward gaps:', inwardGaps.length, 'Non-overlapping geometry gaps:', nonOverlappingGeometryGaps.length);
   
   if (exteriorGaps.length === 0) {
     console.log('[closeGapsWithShapes] No gaps to close');

@@ -767,10 +767,24 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     }
   }
   
-  // Combine both, with inward gaps first (they get processed and respected first)
-  const exteriorGaps = [...inwardGaps, ...geometryGaps];
+  // Filter geometry gaps to exclude any that overlap with inward gaps
+  // This ensures inward detection behavior stays exactly as before
+  const nonOverlappingGeometryGaps = geometryGaps.filter(geoGap => {
+    for (const inwardGap of inwardGaps) {
+      // Check if ranges overlap: geoGap[i,j] overlaps with inwardGap[i,j]
+      const overlapStart = Math.max(geoGap.i, inwardGap.i);
+      const overlapEnd = Math.min(geoGap.j, inwardGap.j);
+      if (overlapStart < overlapEnd) {
+        return false; // Overlaps with an inward gap, exclude it
+      }
+    }
+    return true; // No overlap, keep it
+  });
   
-  // Sort and refine gaps to find the narrowest crossing point
+  // Combine: inward gaps (original behavior) + non-overlapping geometry gaps
+  const exteriorGaps = [...inwardGaps, ...nonOverlappingGeometryGaps];
+  
+  // Sort by path position for processing
   const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
   
   const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
