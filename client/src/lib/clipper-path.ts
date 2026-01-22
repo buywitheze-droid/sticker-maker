@@ -144,74 +144,88 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   // Fifth pass: Final cleanup
   result = removeBacktracking(result);
   
-  // Sixth pass: Round sharp corners using offset in/out technique
-  result = roundSharpCorners(result, 1.0); // 1 pixel rounding radius
+  // Sixth pass: Round sharp corners surgically (only acute angles)
+  result = roundSharpCorners(result, 2.0); // 2 pixel rounding radius for smoother arcs
+  
+  // Seventh pass: Final Clipper cleanup to fix any issues from corner rounding
+  result = cleanPathWithClipper(result);
   
   console.log('[removeLoopsWithClipper] Final path points:', result.length);
   
   return result;
 }
 
-// Round sharp corners by offsetting inward then outward with round joins
-// This naturally creates smooth arcs at sharp V-shaped merges
+// Surgical angle-based corner rounding - only modifies acute angles
+// Replaces sharp V-shaped vertices with small arc segments
 export function roundSharpCorners(points: Point[], radiusPixels: number): Point[] {
   if (points.length < 3 || radiusPixels <= 0) return points;
   
-  const clipperPath = pointsToClipperPath(points);
+  const result: Point[] = [];
+  const n = points.length;
+  const minAngleDegrees = 30; // Angles sharper than this get rounded
+  const minAngleCos = Math.cos((180 - minAngleDegrees) * Math.PI / 180); // cos(150°) ≈ -0.866
   
-  // Create offset operation with round joins
-  const co = new ClipperLib.ClipperOffset();
-  co.ArcTolerance = 0.1 * CLIPPER_SCALE; // Fine arc tolerance for smooth curves
-  co.MiterLimit = 1; // Force round joins for sharp angles
+  let sharpCornersFound = 0;
   
-  // Offset inward first
-  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  const inwardSolution: ClipperLib.Path[] = [];
-  co.Execute(inwardSolution, -radiusPixels * CLIPPER_SCALE);
-  
-  if (inwardSolution.length === 0) {
-    console.log('[roundSharpCorners] Inward offset produced no result, returning original');
-    return points;
-  }
-  
-  // Find the largest inward polygon
-  let largestInward = inwardSolution[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(largestInward));
-  for (let i = 1; i < inwardSolution.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(inwardSolution[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      largestInward = inwardSolution[i];
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate vectors
+    const v1x = prev.x - curr.x;
+    const v1y = prev.y - curr.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.0001 || len2 < 0.0001) {
+      result.push(curr);
+      continue;
+    }
+    
+    // Normalize
+    const n1x = v1x / len1;
+    const n1y = v1y / len1;
+    const n2x = v2x / len2;
+    const n2y = v2y / len2;
+    
+    // Calculate dot product (cos of angle)
+    const dot = n1x * n2x + n1y * n2y;
+    
+    // Check if this is a sharp angle (V-shape)
+    // dot > minAngleCos means angle is less than minAngleDegrees
+    if (dot > minAngleCos) {
+      sharpCornersFound++;
+      
+      // Insert arc points to smooth this corner
+      const arcRadius = Math.min(radiusPixels, len1 * 0.4, len2 * 0.4);
+      const numArcPoints = 3; // Number of arc interpolation points
+      
+      // Calculate points along the arc
+      for (let j = 0; j <= numArcPoints; j++) {
+        const t = j / numArcPoints;
+        // Interpolate between the two directions
+        const dx = n1x * (1 - t) + n2x * t;
+        const dy = n1y * (1 - t) + n2y * t;
+        const dlen = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dlen > 0.0001) {
+          result.push({
+            x: curr.x + (dx / dlen) * arcRadius,
+            y: curr.y + (dy / dlen) * arcRadius
+          });
+        }
+      }
+    } else {
+      // Normal angle, keep the point
+      result.push(curr);
     }
   }
   
-  // Offset back outward
-  const co2 = new ClipperLib.ClipperOffset();
-  co2.ArcTolerance = 0.1 * CLIPPER_SCALE;
-  co2.MiterLimit = 1;
-  
-  co2.AddPath(largestInward, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  const outwardSolution: ClipperLib.Path[] = [];
-  co2.Execute(outwardSolution, radiusPixels * CLIPPER_SCALE);
-  
-  if (outwardSolution.length === 0) {
-    console.log('[roundSharpCorners] Outward offset produced no result, returning original');
-    return points;
-  }
-  
-  // Find the largest outward polygon
-  let largestOutward = outwardSolution[0];
-  largestArea = Math.abs(ClipperLib.Clipper.Area(largestOutward));
-  for (let i = 1; i < outwardSolution.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(outwardSolution[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      largestOutward = outwardSolution[i];
-    }
-  }
-  
-  const result = clipperPathToPoints(largestOutward);
-  console.log('[roundSharpCorners] Rounded path from', points.length, 'to', result.length, 'points');
+  console.log('[roundSharpCorners] Found', sharpCornersFound, 'sharp corners, path:', points.length, '→', result.length, 'points');
   
   return result.length >= 3 ? result : points;
 }
