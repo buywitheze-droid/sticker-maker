@@ -144,9 +144,76 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   // Fifth pass: Final cleanup
   result = removeBacktracking(result);
   
+  // Sixth pass: Round sharp corners using offset in/out technique
+  result = roundSharpCorners(result, 1.0); // 1 pixel rounding radius
+  
   console.log('[removeLoopsWithClipper] Final path points:', result.length);
   
   return result;
+}
+
+// Round sharp corners by offsetting inward then outward with round joins
+// This naturally creates smooth arcs at sharp V-shaped merges
+export function roundSharpCorners(points: Point[], radiusPixels: number): Point[] {
+  if (points.length < 3 || radiusPixels <= 0) return points;
+  
+  const clipperPath = pointsToClipperPath(points);
+  
+  // Create offset operation with round joins
+  const co = new ClipperLib.ClipperOffset();
+  co.ArcTolerance = 0.1 * CLIPPER_SCALE; // Fine arc tolerance for smooth curves
+  co.MiterLimit = 1; // Force round joins for sharp angles
+  
+  // Offset inward first
+  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const inwardSolution: ClipperLib.Path[] = [];
+  co.Execute(inwardSolution, -radiusPixels * CLIPPER_SCALE);
+  
+  if (inwardSolution.length === 0) {
+    console.log('[roundSharpCorners] Inward offset produced no result, returning original');
+    return points;
+  }
+  
+  // Find the largest inward polygon
+  let largestInward = inwardSolution[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(largestInward));
+  for (let i = 1; i < inwardSolution.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(inwardSolution[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestInward = inwardSolution[i];
+    }
+  }
+  
+  // Offset back outward
+  const co2 = new ClipperLib.ClipperOffset();
+  co2.ArcTolerance = 0.1 * CLIPPER_SCALE;
+  co2.MiterLimit = 1;
+  
+  co2.AddPath(largestInward, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const outwardSolution: ClipperLib.Path[] = [];
+  co2.Execute(outwardSolution, radiusPixels * CLIPPER_SCALE);
+  
+  if (outwardSolution.length === 0) {
+    console.log('[roundSharpCorners] Outward offset produced no result, returning original');
+    return points;
+  }
+  
+  // Find the largest outward polygon
+  let largestOutward = outwardSolution[0];
+  largestArea = Math.abs(ClipperLib.Clipper.Area(largestOutward));
+  for (let i = 1; i < outwardSolution.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(outwardSolution[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestOutward = outwardSolution[i];
+    }
+  }
+  
+  const result = clipperPathToPoints(largestOutward);
+  console.log('[roundSharpCorners] Rounded path from', points.length, 'to', result.length, 'points');
+  
+  return result.length >= 3 ? result : points;
 }
 
 function removeBacktracking(points: Point[]): Point[] {
