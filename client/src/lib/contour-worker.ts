@@ -1103,35 +1103,23 @@ function drawContourToData(
   const bgG = parseInt(bgColorHex.slice(3, 5), 16);
   const bgB = parseInt(bgColorHex.slice(5, 7), 16);
   
-  // For the bleed fill, close ALL gaps aggressively to ensure solid coverage
-  const maxGapThreshold = Math.round(0.5 * effectiveDPI);
-  const fullyClosedPath = closeGapsForBleed(path, maxGapThreshold);
+  // IMPROVED APPROACH: Stroke the cut path with a thick line width to create bleed
+  // This exactly mirrors what the PDF export does for consistent results
+  // The bleed follows the cut path shape with uniform width
   
-  // Use morphological approach: fill to mask, dilate mask, then fill from mask
-  // This guarantees no gaps between inner fill and bleed
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   
-  // Create a mask for the filled contour area
-  const fillMask = new Uint8Array(width * height);
-  fillContourToMask(fillMask, width, height, fullyClosedPath, offsetX, offsetY);
+  // Close gaps for solid bleed coverage
+  const maxGapThreshold = Math.round(0.5 * effectiveDPI);
+  const closedPath = closeGapsForBleed(path, maxGapThreshold);
   
-  // Dilate the mask by bleed amount to create the bleed area
-  const dilatedMask = dilateMask(fillMask, width, height, bleedPixels);
+  // Draw thick stroke around the path (creates the bleed ring)
+  // This naturally handles all the complex corner cases correctly
+  strokePathThick(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB, bleedPixels);
   
-  // Fill all pixels where the dilated mask is set (this covers both inner and bleed areas)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const maskIdx = y * width + x;
-      if (dilatedMask[maskIdx] === 1) {
-        const idx = (y * width + x) * 4;
-        output[idx] = bgR;
-        output[idx + 1] = bgG;
-        output[idx + 2] = bgB;
-        output[idx + 3] = 255;
-      }
-    }
-  }
+  // Fill the interior of the path
+  fillContourDirect(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB);
   
   // Draw stroke outline in the specified color (magenta for CutContour)
   for (let i = 0; i < path.length; i++) {
@@ -1149,6 +1137,222 @@ function drawContourToData(
     drawLine(output, width, height, x1 - 1, y1, x2 - 1, y2, r, g, b);
     drawLine(output, width, height, x1, y1 + 1, x2, y2 + 1, r, g, b);
     drawLine(output, width, height, x1, y1 - 1, x2, y2 - 1, r, g, b);
+  }
+}
+
+// Stroke path with a thick line to create bleed effect
+// Draws circles at each vertex and thick lines between them (like round-join stroke)
+function strokePathThick(
+  output: Uint8ClampedArray,
+  width: number,
+  height: number,
+  path: Point[],
+  offsetX: number,
+  offsetY: number,
+  r: number,
+  g: number,
+  b: number,
+  lineWidth: number
+): void {
+  if (path.length < 2) return;
+  
+  // Canvas stroke uses lineWidth/2 as the radius from the path center
+  // But we want full bleed width to extend outward, so use the full lineWidth
+  // This matches PDF export which uses lineWidth * 2 for stroke
+  const radius = lineWidth;
+  const radiusSq = radius * radius;
+  
+  // Draw circles at each vertex (round caps/joins)
+  for (const p of path) {
+    const cx = Math.round(p.x + offsetX);
+    const cy = Math.round(p.y + offsetY);
+    
+    const minX = Math.max(0, cx - radius);
+    const maxX = Math.min(width - 1, cx + radius);
+    const minY = Math.max(0, cy - radius);
+    const maxY = Math.min(height - 1, cy + radius);
+    
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        if (dx * dx + dy * dy <= radiusSq) {
+          const idx = (y * width + x) * 4;
+          output[idx] = r;
+          output[idx + 1] = g;
+          output[idx + 2] = b;
+          output[idx + 3] = 255;
+        }
+      }
+    }
+  }
+  
+  // Draw thick lines between vertices
+  for (let i = 0; i < path.length; i++) {
+    const p1 = path[i];
+    const p2 = path[(i + 1) % path.length];
+    
+    const x1 = p1.x + offsetX;
+    const y1 = p1.y + offsetY;
+    const x2 = p2.x + offsetX;
+    const y2 = p2.y + offsetY;
+    
+    // Draw thick line by filling rectangle along the line
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1) continue;
+    
+    // Normal perpendicular to line
+    const nx = -dy / len;
+    const ny = dx / len;
+    
+    // Sample along the line length
+    const steps = Math.ceil(len);
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const cx = x1 + dx * t;
+      const cy = y1 + dy * t;
+      
+      // Fill a circle at this point
+      const minX = Math.max(0, Math.floor(cx - radius));
+      const maxX = Math.min(width - 1, Math.ceil(cx + radius));
+      const minY = Math.max(0, Math.floor(cy - radius));
+      const maxY = Math.min(height - 1, Math.ceil(cy + radius));
+      
+      for (let py = minY; py <= maxY; py++) {
+        for (let px = minX; px <= maxX; px++) {
+          const ddx = px - cx;
+          const ddy = py - cy;
+          if (ddx * ddx + ddy * ddy <= radiusSq) {
+            const idx = (py * width + px) * 4;
+            output[idx] = r;
+            output[idx + 1] = g;
+            output[idx + 2] = b;
+            output[idx + 3] = 255;
+          }
+        }
+      }
+    }
+  }
+}
+
+// Offset path outward by a given amount (expands the path)
+// Uses miter-join approach for consistent offset at corners
+function offsetPathOutward(path: Point[], offsetPixels: number): Point[] {
+  if (path.length < 3 || offsetPixels <= 0) return path;
+  
+  const result: Point[] = [];
+  const n = path.length;
+  
+  // Determine winding direction (positive area = CCW, negative = CW)
+  let signedArea = 0;
+  for (let i = 0; i < n; i++) {
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    signedArea += (curr.x * next.y) - (next.x * curr.y);
+  }
+  signedArea /= 2;
+  
+  // For outward offset: CCW paths need positive direction, CW paths need negative
+  const direction = signedArea >= 0 ? -1 : 1;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    // Edge vectors
+    const e1x = curr.x - prev.x;
+    const e1y = curr.y - prev.y;
+    const e2x = next.x - curr.x;
+    const e2y = next.y - curr.y;
+    
+    // Normalize
+    const len1 = Math.sqrt(e1x * e1x + e1y * e1y) || 1;
+    const len2 = Math.sqrt(e2x * e2x + e2y * e2y) || 1;
+    
+    // Perpendicular normals (pointing outward based on winding)
+    const n1x = -e1y / len1 * direction;
+    const n1y = e1x / len1 * direction;
+    const n2x = -e2y / len2 * direction;
+    const n2y = e2x / len2 * direction;
+    
+    // Average normal at corner
+    let nx = (n1x + n2x) / 2;
+    let ny = (n1y + n2y) / 2;
+    const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+    nx /= nlen;
+    ny /= nlen;
+    
+    // Limit offset at sharp corners to avoid extreme spikes
+    const dot = n1x * n2x + n1y * n2y;
+    const miterLimit = Math.max(1, 1 / Math.sqrt((1 + dot) / 2 + 0.001));
+    const limitedOffset = Math.min(offsetPixels * miterLimit, offsetPixels * 3);
+    
+    result.push({
+      x: curr.x + nx * limitedOffset,
+      y: curr.y + ny * limitedOffset
+    });
+  }
+  
+  return result;
+}
+
+// Fill contour directly using scanline algorithm - fills exactly to the path edge
+function fillContourDirect(
+  output: Uint8ClampedArray,
+  width: number,
+  height: number,
+  path: Point[],
+  offsetX: number,
+  offsetY: number,
+  r: number,
+  g: number,
+  b: number
+): void {
+  if (path.length < 3) return;
+  
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of path) {
+    const py = Math.round(p.y + offsetY);
+    if (py < minY) minY = py;
+    if (py > maxY) maxY = py;
+  }
+  
+  minY = Math.max(0, minY);
+  maxY = Math.min(height - 1, maxY);
+  
+  for (let y = minY; y <= maxY; y++) {
+    const intersections: number[] = [];
+    
+    for (let i = 0; i < path.length; i++) {
+      const p1 = path[i];
+      const p2 = path[(i + 1) % path.length];
+      
+      const y1 = p1.y + offsetY;
+      const y2 = p2.y + offsetY;
+      
+      if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
+        const x = p1.x + offsetX + (y - y1) / (y2 - y1) * (p2.x - p1.x);
+        intersections.push(x);
+      }
+    }
+    
+    intersections.sort((a, b) => a - b);
+    
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      const xStart = Math.max(0, Math.round(intersections[i]));
+      const xEnd = Math.min(width - 1, Math.round(intersections[i + 1]));
+      
+      for (let x = xStart; x <= xEnd; x++) {
+        const idx = (y * width + x) * 4;
+        output[idx] = r;
+        output[idx + 1] = g;
+        output[idx + 2] = b;
+        output[idx + 3] = 255;
+      }
+    }
   }
 }
 
