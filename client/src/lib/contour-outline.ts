@@ -1027,6 +1027,15 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   const result: Point[] = [];
   const processed = new Set<number>();
   
+  // Calculate centroid of the shape to determine gap direction (inside vs outside)
+  let centroidX = 0, centroidY = 0;
+  for (const p of points) {
+    centroidX += p.x;
+    centroidY += p.y;
+  }
+  centroidX /= n;
+  centroidY /= n;
+  
   // Find all gap locations where path points are within threshold but far apart in path order
   const gaps: Array<{i: number, j: number, dist: number}> = [];
   
@@ -1082,17 +1091,49 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     return points;
   }
   
-  console.log('[closeGapsWithShapes] Found', gaps.length, 'gaps to close');
+  console.log('[closeGapsWithShapes] Found', gaps.length, 'potential gaps');
+  
+  // Filter to only keep gaps that open to the EXTERIOR (entrance from outside)
+  // Gaps with entrances from inside the shape should be preserved as internal features
+  const exteriorGaps = gaps.filter(gap => {
+    // Find the midpoint of the gap section (the part between i and j)
+    const midIdx = Math.floor((gap.i + gap.j) / 2);
+    const midPt = points[midIdx];
+    
+    // Check distances from centroid
+    const gapEndpointDist = Math.min(
+      Math.sqrt((points[gap.i].x - centroidX) ** 2 + (points[gap.i].y - centroidY) ** 2),
+      Math.sqrt((points[gap.j].x - centroidX) ** 2 + (points[gap.j].y - centroidY) ** 2)
+    );
+    const midpointDist = Math.sqrt((midPt.x - centroidX) ** 2 + (midPt.y - centroidY) ** 2);
+    
+    // If midpoint is farther from centroid than endpoints, gap opens OUTWARD (exterior)
+    // If midpoint is closer to centroid than endpoints, gap opens INWARD (interior feature)
+    const isExteriorGap = midpointDist >= gapEndpointDist * 0.9; // 0.9 for some tolerance
+    
+    if (!isExteriorGap) {
+      console.log('[closeGapsWithShapes] Skipping interior gap at', gap.i, '-', gap.j);
+    }
+    
+    return isExteriorGap;
+  });
+  
+  console.log('[closeGapsWithShapes] Exterior gaps to close:', exteriorGaps.length);
+  
+  if (exteriorGaps.length === 0) {
+    console.log('[closeGapsWithShapes] No exterior gaps to close');
+    return points;
+  }
   
   // For each gap, find the NARROWEST point (peak-to-peak) and bridge there
   // This preserves both sides of the gap instead of cutting one off
   
   // Sort gaps by path position
-  gaps.sort((a, b) => a.i - b.i);
+  const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
   
   // Find the actual narrowest point for each gap
   const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
-  for (const gap of gaps) {
+  for (const gap of sortedGaps) {
     let minDist = gap.dist;
     let bestI = gap.i;
     let bestJ = gap.j;

@@ -631,6 +631,15 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   const result: Point[] = [];
   const processed = new Set<number>();
   
+  // Calculate centroid to determine gap direction (inside vs outside)
+  let centroidX = 0, centroidY = 0;
+  for (const p of points) {
+    centroidX += p.x;
+    centroidY += p.y;
+  }
+  centroidX /= n;
+  centroidY /= n;
+  
   const gaps: Array<{i: number, j: number, dist: number}> = [];
   
   // Limit how much of path we can skip to avoid deleting entire outline
@@ -678,11 +687,28 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   if (gaps.length === 0) return points;
   
+  // Filter to only keep gaps that open to the EXTERIOR (entrance from outside)
+  const exteriorGaps = gaps.filter(gap => {
+    const midIdx = Math.floor((gap.i + gap.j) / 2);
+    const midPt = points[midIdx];
+    
+    const gapEndpointDist = Math.min(
+      Math.sqrt((points[gap.i].x - centroidX) ** 2 + (points[gap.i].y - centroidY) ** 2),
+      Math.sqrt((points[gap.j].x - centroidX) ** 2 + (points[gap.j].y - centroidY) ** 2)
+    );
+    const midpointDist = Math.sqrt((midPt.x - centroidX) ** 2 + (midPt.y - centroidY) ** 2);
+    
+    // If midpoint is farther from centroid, gap opens OUTWARD (exterior)
+    return midpointDist >= gapEndpointDist * 0.9;
+  });
+  
+  if (exteriorGaps.length === 0) return points;
+  
   // Sort and refine gaps to find the narrowest crossing point
-  gaps.sort((a, b) => a.i - b.i);
+  const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
   
   const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
-  for (const gap of gaps) {
+  for (const gap of sortedGaps) {
     let minDist = gap.dist;
     let bestI = gap.i;
     let bestJ = gap.j;
