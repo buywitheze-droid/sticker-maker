@@ -1847,12 +1847,7 @@ export async function downloadContourPDF(
   
   // Create PDF document
   const pdfDoc = await PDFDocument.create();
-  
-  // PAGE 1: Raster design (no cut path)
-  const page1 = pdfDoc.addPage([widthPts, heightPts]);
-  
-  // PAGE 2: Vector cut path only
-  const page2 = pdfDoc.addPage([widthPts, heightPts]);
+  const page = pdfDoc.addPage([widthPts, heightPts]);
   
   // Create a canvas to get the image as PNG bytes
   const tempCanvas = document.createElement('canvas');
@@ -1880,16 +1875,17 @@ export async function downloadContourPDF(
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72; // Y from bottom
   
-  // Draw image on Page 1 (raster layer)
-  page1.drawImage(pngImage, {
+  page.drawImage(pngImage, {
     x: imageXPts,
     y: imageYPts,
     width: imageWidthPts,
     height: imageHeightPts,
   });
   
-  // PAGE 2: Build the contour path as PDF operators with spot color
+  // Build the contour path as PDF operators with spot color
   if (pathPoints.length > 2) {
+    // Create spot color "CutContour" using Separation color space
+    // The path will be drawn using raw PDF content stream operators
     const context = pdfDoc.context;
     
     // Create the tint transform function (maps 1.0 tint to magenta in CMYK)
@@ -1911,8 +1907,8 @@ export async function downloadContourPDF(
     ]);
     const separationRef = context.register(separationColorSpace);
     
-    // Add color space to Page 2 resources
-    const resources = page2.node.Resources();
+    // Add color space to page resources
+    const resources = page.node.Resources();
     if (resources) {
       let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
       if (!colorSpaceDict) {
@@ -1957,10 +1953,21 @@ export async function downloadContourPDF(
     // Close and stroke
     pathOps += 'h S\n';
     
-    // Add cut path content to Page 2
-    const contentStream = context.stream(pathOps);
-    const contentStreamRef = context.register(contentStream);
-    page2.node.set(PDFName.of('Contents'), contentStreamRef);
+    // Append to page content stream
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      // Get existing content and append our path
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      // Create array with existing content + new content
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
   }
   
   // Set PDF metadata

@@ -1746,12 +1746,7 @@ export async function downloadContourPDF(
     const heightPts = heightInches * 72;
     
     const pdfDoc = await PDFDocument.create();
-    
-    // PAGE 1: Raster design with background fill (no cut path)
-    const page1 = pdfDoc.addPage([widthPts, heightPts]);
-    
-    // PAGE 2: Vector cut path only (will be added after page 1)
-    const page2 = pdfDoc.addPage([widthPts, heightPts]);
+    const page = pdfDoc.addPage([widthPts, heightPts]);
     
     // OPTIMIZATION: Create background and design canvases in parallel
     // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
@@ -1846,8 +1841,8 @@ export async function downloadContourPDF(
     // Embed images in PDF as PNG for better quality
     const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
     
-    // PAGE 1: Draw the background raster image and design
-    page1.drawImage(bgPngImage, {
+    // Draw the background raster image first
+    page.drawImage(bgPngImage, {
       x: 0,
       y: 0,
       width: widthPts,
@@ -1861,15 +1856,13 @@ export async function downloadContourPDF(
   const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
   
-  // Draw design image on Page 1 (raster layer)
-  page1.drawImage(pngImage, {
+  page.drawImage(pngImage, {
     x: imageXPts,
     y: imageYPts,
     width: imageWidthPts,
     height: imageHeightPts,
   });
   
-  // PAGE 2: Vector cut path only
   if (pathPoints.length > 2) {
     const context = pdfDoc.context;
     
@@ -1890,8 +1883,7 @@ export async function downloadContourPDF(
     ]);
     const separationRef = context.register(separationColorSpace);
     
-    // Add CutContour color space to Page 2 (cut path page)
-    const resources = page2.node.Resources();
+    const resources = page.node.Resources();
     if (resources) {
       let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
       if (!colorSpaceDict) {
@@ -1933,10 +1925,18 @@ export async function downloadContourPDF(
     
     pathOps += 'h S\n';
     
-    // Add cut path content to Page 2
-    const contentStream = context.stream(pathOps);
-    const contentStreamRef = context.register(contentStream);
-    page2.node.set(PDFName.of('Contents'), contentStreamRef);
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
   }
   
   pdfDoc.setTitle('Sticker with CutContour');
