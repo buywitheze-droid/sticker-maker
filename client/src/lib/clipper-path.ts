@@ -145,7 +145,7 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   result = removeBacktracking(result);
   
   // Sixth pass: Remove zigzag patterns (closely spaced alternating points)
-  result = removeZigzags(result, 3.0); // Remove zigzags within 3 pixels
+  result = removeZigzags(result, 15.0); // Remove zigzags within 15 pixels (more aggressive)
   
   // Seventh pass: Round sharp corners surgically (only acute angles)
   result = roundSharpCorners(result, 8.0); // 8 pixel rounding radius for flatter, gentler curves
@@ -265,7 +265,7 @@ function removeBacktracking(points: Point[]): Point[] {
   return result.length >= 3 ? result : points;
 }
 
-// Remove zigzag patterns - sequences of closely spaced points that alternate direction
+// Remove zigzag patterns - sequences of points with alternating sharp turns
 function removeZigzags(points: Point[], maxZigzagSpacing: number): Point[] {
   if (points.length < 5) return points;
   
@@ -273,57 +273,58 @@ function removeZigzags(points: Point[], maxZigzagSpacing: number): Point[] {
   const n = points.length;
   let zigzagsRemoved = 0;
   
-  let i = 0;
-  while (i < n) {
+  // First, mark points that are part of a zigzag
+  const isZigzagPoint: boolean[] = new Array(n).fill(false);
+  
+  for (let i = 1; i < n - 1; i++) {
+    const prev = points[(i - 1 + n) % n];
     const curr = points[i];
+    const next = points[(i + 1) % n];
     
-    // Look ahead for zigzag pattern
-    let zigzagEnd = i;
-    let inZigzag = false;
+    // Check segment lengths
+    const len1 = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+    const len2 = Math.sqrt((next.x - curr.x) ** 2 + (next.y - curr.y) ** 2);
     
-    for (let j = i + 1; j < Math.min(i + 10, n); j++) {
-      const p1 = points[j - 1];
-      const p2 = points[j];
-      const dist = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+    // If both segments are short, check for sharp turn
+    if (len1 < maxZigzagSpacing && len2 < maxZigzagSpacing) {
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
       
-      if (dist > maxZigzagSpacing) break;
-      
-      // Check for direction reversal
-      if (j >= i + 2) {
-        const p0 = points[j - 2];
-        const v1x = p1.x - p0.x;
-        const v1y = p1.y - p0.y;
-        const v2x = p2.x - p1.x;
-        const v2y = p2.y - p1.y;
-        
-        const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-        const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-        
-        if (len1 > 0.0001 && len2 > 0.0001) {
-          const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-          // Detect sharp turn (angle > 90 degrees)
-          if (dot < 0) {
-            inZigzag = true;
-            zigzagEnd = j;
-          }
+      if (len1 > 0.0001 && len2 > 0.0001) {
+        const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+        // Sharp turn (angle > 60 degrees from straight = dot < 0.5)
+        if (dot < 0.5) {
+          isZigzagPoint[i] = true;
         }
       }
     }
-    
-    if (inZigzag && zigzagEnd > i + 1) {
-      // Skip the zigzag, just add start and end points
-      result.push(curr);
-      result.push(points[zigzagEnd]);
-      zigzagsRemoved++;
-      i = zigzagEnd + 1;
-    } else {
-      result.push(curr);
+  }
+  
+  // Now build result, skipping consecutive zigzag points
+  let i = 0;
+  while (i < n) {
+    if (!isZigzagPoint[i]) {
+      result.push(points[i]);
       i++;
+    } else {
+      // Found start of zigzag, find end
+      const zigzagStart = i;
+      while (i < n && isZigzagPoint[i]) {
+        i++;
+      }
+      // Add midpoint of zigzag segment
+      if (i < n) {
+        const midIdx = Math.floor((zigzagStart + i) / 2);
+        result.push(points[midIdx]);
+        zigzagsRemoved++;
+      }
     }
   }
   
   if (zigzagsRemoved > 0) {
-    console.log('[removeZigzags] Removed', zigzagsRemoved, 'zigzag patterns');
+    console.log('[removeZigzags] Collapsed', zigzagsRemoved, 'zigzag sequences, path:', n, '→', result.length, 'points');
   }
   
   return result.length >= 3 ? result : points;
