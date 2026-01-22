@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection from "./controls-section";
@@ -11,6 +11,7 @@ import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
 import { downloadContourPDF } from "@/lib/contour-outline";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
+import { useDebouncedValue } from "@/hooks/use-debounce";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
@@ -46,6 +47,11 @@ export default function ImageEditor() {
   const [isProcessing, setIsProcessing] = useState(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // Debounced settings for heavy processing - 100ms for near-instant feel
+  const debouncedStrokeSettings = useDebouncedValue(strokeSettings, 100);
+  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 100);
+  const debouncedShapeSettings = useDebouncedValue(shapeSettings, 100);
 
   // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
   const updateCadCutBounds = useCallback((
@@ -483,9 +489,9 @@ export default function ImageEditor() {
         <PreviewSection
           ref={canvasRef}
           imageInfo={imageInfo}
-          strokeSettings={strokeSettings}
-          resizeSettings={resizeSettings}
-          shapeSettings={shapeSettings}
+          strokeSettings={debouncedStrokeSettings}
+          resizeSettings={debouncedResizeSettings}
+          shapeSettings={debouncedShapeSettings}
           cadCutBounds={cadCutBounds}
         />
         

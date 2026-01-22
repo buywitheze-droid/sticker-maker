@@ -145,8 +145,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.color}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.outputDPI}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
-    }, [imageInfo, strokeSettings, resizeSettings]);
+      // Cache key excludes outputDPI (always 100 for preview) and color (always #FF00FF for preview)
+      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
       if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
@@ -162,11 +163,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       setProcessingProgress(0);
 
       const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
+      // Use lower DPI (100) for preview to improve responsiveness
       const workerResizeSettings = {
         widthInches: resizeSettings.widthInches,
         heightInches: resizeSettings.heightInches,
         maintainAspectRatio: resizeSettings.maintainAspectRatio,
-        outputDPI: resizeSettings.outputDPI || 300
+        outputDPI: 100 // Fixed low DPI for preview, full DPI only for export
       };
 
       processContourInWorker(
