@@ -678,11 +678,42 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   if (gaps.length === 0) return points;
   
+  // Sort and refine gaps to find the narrowest crossing point
   gaps.sort((a, b) => a.i - b.i);
+  
+  const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
+  for (const gap of gaps) {
+    let minDist = gap.dist;
+    let bestI = gap.i;
+    let bestJ = gap.j;
+    
+    const searchRange = Math.min(20, Math.floor((gap.j - gap.i) / 4));
+    for (let di = -searchRange; di <= searchRange; di++) {
+      const testI = gap.i + di;
+      if (testI < 0 || testI >= n) continue;
+      
+      for (let dj = -searchRange; dj <= searchRange; dj++) {
+        const testJ = gap.j + dj;
+        if (testJ < 0 || testJ >= n || testJ <= testI + 10) continue;
+        
+        const pi = points[testI];
+        const pj = points[testJ];
+        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+        
+        if (dist < minDist) {
+          minDist = dist;
+          bestI = testI;
+          bestJ = testJ;
+        }
+      }
+    }
+    
+    refinedGaps.push({i: bestI, j: bestJ, dist: minDist});
+  }
   
   let currentIdx = 0;
   
-  for (const gap of gaps) {
+  for (const gap of refinedGaps) {
     if (gap.i < currentIdx) continue;
     
     for (let k = currentIdx; k <= gap.i; k++) {
@@ -694,42 +725,45 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     
     const p1 = points[gap.i];
     const p2 = points[gap.j];
-    
-    const midX = (p1.x + p2.x) / 2;
-    const midY = (p1.y + p2.y) / 2;
-    
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const gapDist = Math.sqrt(dx * dx + dy * dy);
+    const gapDist = gap.dist;
     
     if (gapDist > 0.5) {
-      const perpX = -dy / gapDist;
-      const perpY = dx / gapDist;
-      
-      const checkIdx = Math.max(0, gap.i - 5);
-      const checkPt = points[checkIdx];
-      const crossProduct = (checkPt.x - p1.x) * perpY - (checkPt.y - p1.y) * perpX;
-      
-      // Bulge amount - very flat curve for die cutting
-      const bulgeAmount = Math.min(gapDist * 0.15, gapThreshold * 0.2);
-      const bulgeDir = crossProduct > 0 ? 1 : -1;
-      
-      // Create smooth flat curve with more points (sinusoidal interpolation)
-      const numBridgePoints = 8;
-      for (let t = 0; t <= numBridgePoints; t++) {
-        const ratio = t / numBridgePoints;
-        const baseX = p1.x + (p2.x - p1.x) * ratio;
-        const baseY = p1.y + (p2.y - p1.y) * ratio;
-        const bulgeFactor = Math.sin(ratio * Math.PI) * bulgeAmount * bulgeDir;
-        result.push({
-          x: baseX + perpX * bulgeFactor,
-          y: baseY + perpY * bulgeFactor
-        });
-      }
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      result.push({ x: midX, y: midY });
     }
     
-    for (let k = gap.i + 1; k < gap.j; k++) {
-      processed.add(k);
+    // Check if section is narrow passage or feature to preserve
+    const sectionLength = gap.j - gap.i;
+    let isNarrowPassage = true;
+    
+    if (sectionLength > 30) {
+      let wideCount = 0;
+      const checkStride = Math.max(1, Math.floor(sectionLength / 10));
+      for (let k = gap.i + checkStride; k < gap.j - checkStride; k += checkStride) {
+        const pk = points[k];
+        const distToI = Math.sqrt((pk.x - p1.x) ** 2 + (pk.y - p1.y) ** 2);
+        const distToJ = Math.sqrt((pk.x - p2.x) ** 2 + (pk.y - p2.y) ** 2);
+        const minDistToEnds = Math.min(distToI, distToJ);
+        
+        if (minDistToEnds > gapDist * 2) {
+          wideCount++;
+        }
+      }
+      isNarrowPassage = wideCount < 5;
+    }
+    
+    if (isNarrowPassage) {
+      for (let k = gap.i + 1; k < gap.j; k++) {
+        processed.add(k);
+      }
+    } else {
+      for (let k = gap.i + 1; k < gap.j; k++) {
+        if (!processed.has(k)) {
+          result.push(points[k]);
+          processed.add(k);
+        }
+      }
     }
     
     currentIdx = gap.j;
