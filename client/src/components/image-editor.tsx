@@ -51,9 +51,9 @@ export default function ImageEditor() {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Debounced settings for heavy processing - 100ms for near-instant feel
+  // Debounced settings for heavy processing
   const debouncedStrokeSettings = useDebouncedValue(strokeSettings, 100);
-  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 100);
+  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 250); // Higher debounce for size changes
   const debouncedShapeSettings = useDebouncedValue(shapeSettings, 100);
 
   // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
