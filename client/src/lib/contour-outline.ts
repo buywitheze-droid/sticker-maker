@@ -1691,39 +1691,19 @@ export async function downloadContourPDF(
     if (cachedContourData && cachedContourData.pathPoints.length > 0) {
       console.log('[downloadContourPDF] Using cached contour data');
       
-      // The cached data is from preview worker which uses original image dimensions
-      // We need to scale it to match the actual resize settings
-      const bleedInches = 0.10;
-      
-      // Target dimensions from resize settings (what the user set)
-      const targetWidthInches = resizeSettings.widthInches + (bleedInches * 2);
-      const targetHeightInches = resizeSettings.heightInches + (bleedInches * 2);
-      
-      // Cached dimensions (from preview at original size)
-      const cachedWidth = cachedContourData.widthInches;
-      const cachedHeight = cachedContourData.heightInches;
-      
-      // Calculate scale factor to resize cached path to target dimensions
-      const scaleX = targetWidthInches / cachedWidth;
-      const scaleY = targetHeightInches / cachedHeight;
-      
-      console.log('[downloadContourPDF] Scaling cached path:', {
-        cachedSize: `${cachedWidth.toFixed(2)}x${cachedHeight.toFixed(2)}`,
-        targetSize: `${targetWidthInches.toFixed(2)}x${targetHeightInches.toFixed(2)}`,
-        scale: `${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`
-      });
-      
-      // Scale path points to target dimensions
-      pathPoints = cachedContourData.pathPoints.map(p => ({
-        x: p.x * scaleX,
-        y: p.y * scaleY
-      }));
-      
-      widthInches = targetWidthInches;
-      heightInches = targetHeightInches;
-      imageOffsetX = cachedContourData.imageOffsetX * scaleX;
-      imageOffsetY = cachedContourData.imageOffsetY * scaleY;
+      // The cached data is already generated with the correct DPI based on resize settings
+      // Use it directly without rescaling
+      pathPoints = cachedContourData.pathPoints;
+      widthInches = cachedContourData.widthInches;
+      heightInches = cachedContourData.heightInches;
+      imageOffsetX = cachedContourData.imageOffsetX;
+      imageOffsetY = cachedContourData.imageOffsetY;
       backgroundColor = cachedContourData.backgroundColor;
+      
+      console.log('[downloadContourPDF] Using cached dimensions:', {
+        size: `${widthInches.toFixed(2)}x${heightInches.toFixed(2)}`,
+        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`
+      });
     } else {
       // Fallback: compute contour path (slower)
       console.log('[downloadContourPDF] Computing contour path (no cache)');
