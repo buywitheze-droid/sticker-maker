@@ -1099,13 +1099,6 @@ function drawContourToData(
   
   // Parse background color - default to white if undefined
   const bgColorHex = backgroundColorHex || '#ffffff';
-  const bgR = parseInt(bgColorHex.slice(1, 3), 16);
-  const bgG = parseInt(bgColorHex.slice(3, 5), 16);
-  const bgB = parseInt(bgColorHex.slice(5, 7), 16);
-  
-  // IMPROVED APPROACH: Stroke the cut path with a thick line width to create bleed
-  // This exactly mirrors what the PDF export does for consistent results
-  // The bleed follows the cut path shape with uniform width
   
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
@@ -1114,29 +1107,73 @@ function drawContourToData(
   const maxGapThreshold = Math.round(0.5 * effectiveDPI);
   const closedPath = closeGapsForBleed(path, maxGapThreshold);
   
-  // Draw thick stroke around the path (creates the bleed ring)
-  // This naturally handles all the complex corner cases correctly
-  strokePathThick(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB, bleedPixels);
+  // Use OffscreenCanvas for proper canvas stroke rendering (matches PDF exactly)
+  // This ensures the bleed looks identical in preview and PDF export
+  const offscreen = new OffscreenCanvas(width, height);
+  const ctx = offscreen.getContext('2d');
   
-  // Fill the interior of the path
-  fillContourDirect(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB);
-  
-  // Draw stroke outline in the specified color (magenta for CutContour)
-  for (let i = 0; i < path.length; i++) {
-    const p1 = path[i];
-    const p2 = path[(i + 1) % path.length];
+  if (ctx) {
+    // Draw bleed using exact same approach as PDF export
+    ctx.fillStyle = backgroundColorHex;
+    ctx.strokeStyle = backgroundColorHex;
+    ctx.lineWidth = bleedPixels * 2; // Same as PDF: extends bleedPixels on each side
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     
-    const x1 = Math.round(p1.x + offsetX);
-    const y1 = Math.round(p1.y + offsetY);
-    const x2 = Math.round(p2.x + offsetX);
-    const y2 = Math.round(p2.y + offsetY);
+    if (closedPath.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(closedPath[0].x + offsetX, closedPath[0].y + offsetY);
+      for (let i = 1; i < closedPath.length; i++) {
+        ctx.lineTo(closedPath[i].x + offsetX, closedPath[i].y + offsetY);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+    }
     
-    // Draw thicker stroke for visibility (3 pixels wide)
-    drawLine(output, width, height, x1, y1, x2, y2, r, g, b);
-    drawLine(output, width, height, x1 + 1, y1, x2 + 1, y2, r, g, b);
-    drawLine(output, width, height, x1 - 1, y1, x2 - 1, y2, r, g, b);
-    drawLine(output, width, height, x1, y1 + 1, x2, y2 + 1, r, g, b);
-    drawLine(output, width, height, x1, y1 - 1, x2, y2 - 1, r, g, b);
+    // Draw cut line (magenta)
+    ctx.strokeStyle = strokeColorHex;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    
+    if (path.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(path[0].x + offsetX, path[0].y + offsetY);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x + offsetX, path[i].y + offsetY);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    
+    // Copy canvas data to output
+    const imageData = ctx.getImageData(0, 0, width, height);
+    for (let i = 0; i < imageData.data.length; i++) {
+      output[i] = imageData.data[i];
+    }
+  } else {
+    // Fallback to manual rendering if OffscreenCanvas not available
+    const bgR = parseInt(bgColorHex.slice(1, 3), 16);
+    const bgG = parseInt(bgColorHex.slice(3, 5), 16);
+    const bgB = parseInt(bgColorHex.slice(5, 7), 16);
+    
+    strokePathThick(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB, bleedPixels);
+    fillContourDirect(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB);
+    
+    for (let i = 0; i < path.length; i++) {
+      const p1 = path[i];
+      const p2 = path[(i + 1) % path.length];
+      const x1 = Math.round(p1.x + offsetX);
+      const y1 = Math.round(p1.y + offsetY);
+      const x2 = Math.round(p2.x + offsetX);
+      const y2 = Math.round(p2.y + offsetY);
+      drawLine(output, width, height, x1, y1, x2, y2, r, g, b);
+      drawLine(output, width, height, x1 + 1, y1, x2 + 1, y2, r, g, b);
+      drawLine(output, width, height, x1 - 1, y1, x2 - 1, y2, r, g, b);
+      drawLine(output, width, height, x1, y1 + 1, x2, y2 + 1, r, g, b);
+      drawLine(output, width, height, x1, y1 - 1, x2, y2 - 1, r, g, b);
+    }
   }
 }
 
