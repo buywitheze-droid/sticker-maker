@@ -1457,66 +1457,96 @@ export async function downloadContourPDF(
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([widthPts, heightPts]);
     
-    // Create background raster image with the contour shape filled (with bleed)
-    const bgCanvas = document.createElement('canvas');
-    const bgCtx = bgCanvas.getContext('2d');
-    if (!bgCtx) return;
-    
-    const bgDPI = 300;
-    bgCanvas.width = Math.round(widthInches * bgDPI);
-    bgCanvas.height = Math.round(heightInches * bgDPI);
-    
-    // Close all gaps for solid bleed fill
-    const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
-    
-    // Use stroke + fill approach for guaranteed solid coverage with bleed
+    // OPTIMIZATION: Create background and design canvases in parallel
+    // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
+    const bgDPI = 150; // Solid color fill doesn't need high resolution
     const bleedInches = 0.10;
     const bleedPixels = bleedInches * bgDPI;
-    
     const fillColor = backgroundColor || '#ffffff';
-    
-    // Use the original pathPoints - closeGapsForBleedInches may cause issues
     const drawPath = pathPoints;
     
-    bgCtx.fillStyle = fillColor;
-    bgCtx.strokeStyle = fillColor;
-    bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
-    bgCtx.lineJoin = 'round';
-    bgCtx.lineCap = 'round';
+    // Create background canvas (lower DPI for speed)
+    const createBackgroundBlob = (): Promise<Blob> => {
+      return new Promise((resolve, reject) => {
+        const bgCanvas = document.createElement('canvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        if (!bgCtx) {
+          reject(new Error('Failed to get background canvas context'));
+          return;
+        }
+        
+        bgCanvas.width = Math.round(widthInches * bgDPI);
+        bgCanvas.height = Math.round(heightInches * bgDPI);
+        
+        bgCtx.fillStyle = fillColor;
+        bgCtx.strokeStyle = fillColor;
+        bgCtx.lineWidth = bleedPixels * 2;
+        bgCtx.lineJoin = 'round';
+        bgCtx.lineCap = 'round';
+        
+        if (drawPath.length > 0) {
+          bgCtx.beginPath();
+          bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
+          for (let i = 1; i < drawPath.length; i++) {
+            bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
+          }
+          bgCtx.closePath();
+          bgCtx.stroke();
+          bgCtx.fill();
+        }
+        
+        // Flip for PDF coordinate system
+        const flippedBgCanvas = document.createElement('canvas');
+        flippedBgCanvas.width = bgCanvas.width;
+        flippedBgCanvas.height = bgCanvas.height;
+        const flippedBgCtx = flippedBgCanvas.getContext('2d');
+        if (flippedBgCtx) {
+          flippedBgCtx.translate(0, bgCanvas.height);
+          flippedBgCtx.scale(1, -1);
+          flippedBgCtx.drawImage(bgCanvas, 0, 0);
+        }
+        
+        flippedBgCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else reject(new Error('Failed to create blob from canvas'));
+        }, 'image/png');
+      });
+    };
     
-    // pathPoints Y is already flipped in getContourPath (heightInches - y), so:
-    // - For canvas: use Y directly (canvas origin is top-left)
-    // - For PDF: flip Y back (PDF origin is bottom-left)
-    if (drawPath.length > 0) {
-      bgCtx.beginPath();
-      // Canvas uses top-left origin, pathPoints Y is already flipped for this
-      bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
-      for (let i = 1; i < drawPath.length; i++) {
-        bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
-      }
-      bgCtx.closePath();
-      bgCtx.stroke(); // Bleed area
-      bgCtx.fill();   // Inner area
-    }
+    // Create design canvas
+    const createDesignBlob = (): Promise<Blob> => {
+      return new Promise((resolve, reject) => {
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        if (!tempCtx) {
+          reject(new Error('Failed to get design canvas context'));
+          return;
+        }
+        
+        tempCanvas.width = image.width;
+        tempCanvas.height = image.height;
+        tempCtx.drawImage(image, 0, 0);
+        
+        tempCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else reject(new Error('Failed to create blob from design canvas'));
+        }, 'image/png');
+      });
+    };
     
-    // Flip the canvas vertically for PDF coordinate system (bottom-left origin)
-    const flippedBgCanvas = document.createElement('canvas');
-    flippedBgCanvas.width = bgCanvas.width;
-    flippedBgCanvas.height = bgCanvas.height;
-    const flippedBgCtx = flippedBgCanvas.getContext('2d');
-    if (flippedBgCtx) {
-      flippedBgCtx.translate(0, bgCanvas.height);
-      flippedBgCtx.scale(1, -1);
-      flippedBgCtx.drawImage(bgCanvas, 0, 0);
-    }
+    // Run both canvas operations in parallel
+    const [bgBlob, designBlob] = await Promise.all([
+      createBackgroundBlob(),
+      createDesignBlob()
+    ]);
     
-    const bgBlob = await new Promise<Blob>((resolve, reject) => {
-      flippedBgCanvas.toBlob((b) => {
-        if (b) resolve(b);
-        else reject(new Error('Failed to create blob from canvas'));
-      }, 'image/png');
-    });
-    const bgPngBytes = new Uint8Array(await bgBlob.arrayBuffer());
+    // Convert blobs to bytes in parallel
+    const [bgPngBytes, pngBytes] = await Promise.all([
+      bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
+      designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
+    ]);
+    
+    // Embed images in PDF
     const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
     
     // Draw the background raster image first
@@ -1526,23 +1556,6 @@ export async function downloadContourPDF(
       width: widthPts,
       height: heightPts,
     });
-    
-    // Now draw the design image on top
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d');
-    if (!tempCtx) return;
-    
-    tempCanvas.width = image.width;
-    tempCanvas.height = image.height;
-    tempCtx.drawImage(image, 0, 0);
-    
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      tempCanvas.toBlob((b) => {
-        if (b) resolve(b);
-        else reject(new Error('Failed to create blob from design canvas'));
-      }, 'image/png');
-    });
-    const pngBytes = new Uint8Array(await blob.arrayBuffer());
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
@@ -1669,60 +1682,96 @@ export async function generateContourPDFBase64(
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
   
-  // Create background raster image with the contour shape filled
-  const bgCanvas = document.createElement('canvas');
-  const bgCtx = bgCanvas.getContext('2d');
-  if (!bgCtx) return null;
-  
-  const bgDPI = 300;
-  bgCanvas.width = Math.round(widthInches * bgDPI);
-  bgCanvas.height = Math.round(heightInches * bgDPI);
-  
-  // Close all gaps for solid bleed fill (matches worker)
-  const fullyClosedPath = closeGapsForBleedInches(pathPoints, 0.5);
-  
-  // Use stroke + fill approach for guaranteed solid coverage with bleed (matches worker)
+  // OPTIMIZATION: Create background and design canvases in parallel
+  // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
+  const bgDPI = 150; // Solid color fill doesn't need high resolution
   const bleedInches = 0.10;
   const bleedPixels = bleedInches * bgDPI;
-  
   const fillColor = backgroundColor || '#ffffff';
-  bgCtx.fillStyle = fillColor;
-  bgCtx.strokeStyle = fillColor;
-  bgCtx.lineWidth = bleedPixels * 2; // Stroke extends half on each side, so double for full bleed
-  bgCtx.lineJoin = 'round';
-  bgCtx.lineCap = 'round';
-  
-  // Use the original pathPoints
   const drawPath = pathPoints;
   
-  // pathPoints Y is already flipped in getContourPath (heightInches - y), so:
-  // - For canvas: use Y directly (canvas origin is top-left)
-  if (drawPath.length > 0) {
-    bgCtx.beginPath();
-    bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
-    for (let i = 1; i < drawPath.length; i++) {
-      bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
-    }
-    bgCtx.closePath();
-    bgCtx.stroke(); // Bleed area
-    bgCtx.fill();   // Inner area
-  }
+  // Create background canvas (lower DPI for speed)
+  const createBackgroundBlob = (): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const bgCanvas = document.createElement('canvas');
+      const bgCtx = bgCanvas.getContext('2d');
+      if (!bgCtx) {
+        reject(new Error('Failed to get background canvas context'));
+        return;
+      }
+      
+      bgCanvas.width = Math.round(widthInches * bgDPI);
+      bgCanvas.height = Math.round(heightInches * bgDPI);
+      
+      bgCtx.fillStyle = fillColor;
+      bgCtx.strokeStyle = fillColor;
+      bgCtx.lineWidth = bleedPixels * 2;
+      bgCtx.lineJoin = 'round';
+      bgCtx.lineCap = 'round';
+      
+      if (drawPath.length > 0) {
+        bgCtx.beginPath();
+        bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
+        for (let i = 1; i < drawPath.length; i++) {
+          bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
+        }
+        bgCtx.closePath();
+        bgCtx.stroke();
+        bgCtx.fill();
+      }
+      
+      // Flip for PDF coordinate system
+      const flippedBgCanvas = document.createElement('canvas');
+      flippedBgCanvas.width = bgCanvas.width;
+      flippedBgCanvas.height = bgCanvas.height;
+      const flippedBgCtx = flippedBgCanvas.getContext('2d');
+      if (flippedBgCtx) {
+        flippedBgCtx.translate(0, bgCanvas.height);
+        flippedBgCtx.scale(1, -1);
+        flippedBgCtx.drawImage(bgCanvas, 0, 0);
+      }
+      
+      flippedBgCanvas.toBlob((b) => {
+        if (b) resolve(b);
+        else reject(new Error('Failed to create blob from canvas'));
+      }, 'image/png');
+    });
+  };
   
-  // Flip the canvas vertically for PDF coordinate system (bottom-left origin)
-  const flippedBgCanvas = document.createElement('canvas');
-  flippedBgCanvas.width = bgCanvas.width;
-  flippedBgCanvas.height = bgCanvas.height;
-  const flippedBgCtx = flippedBgCanvas.getContext('2d');
-  if (flippedBgCtx) {
-    flippedBgCtx.translate(0, bgCanvas.height);
-    flippedBgCtx.scale(1, -1);
-    flippedBgCtx.drawImage(bgCanvas, 0, 0);
-  }
+  // Create design canvas
+  const createDesignBlob = (): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      if (!tempCtx) {
+        reject(new Error('Failed to get design canvas context'));
+        return;
+      }
+      
+      tempCanvas.width = image.width;
+      tempCanvas.height = image.height;
+      tempCtx.drawImage(image, 0, 0);
+      
+      tempCanvas.toBlob((b) => {
+        if (b) resolve(b);
+        else reject(new Error('Failed to create blob from design canvas'));
+      }, 'image/png');
+    });
+  };
   
-  const bgBlob = await new Promise<Blob>((resolve) => {
-    flippedBgCanvas.toBlob((b) => resolve(b!), 'image/png');
-  });
-  const bgPngBytes = new Uint8Array(await bgBlob.arrayBuffer());
+  // Run both canvas operations in parallel
+  const [bgBlob, designBlob] = await Promise.all([
+    createBackgroundBlob(),
+    createDesignBlob()
+  ]);
+  
+  // Convert blobs to bytes in parallel
+  const [bgPngBytes, pngBytes] = await Promise.all([
+    bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
+    designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
+  ]);
+  
+  // Embed images in PDF
   const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
   
   // Draw the background raster image first
@@ -1732,20 +1781,6 @@ export async function generateContourPDFBase64(
     width: widthPts,
     height: heightPts,
   });
-  
-  // Now draw the design image on top
-  const tempCanvas = document.createElement('canvas');
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return null;
-  
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
-  tempCtx.drawImage(image, 0, 0);
-  
-  const blob = await new Promise<Blob>((resolve) => {
-    tempCanvas.toBlob((b) => resolve(b!), 'image/png');
-  });
-  const pngBytes = new Uint8Array(await blob.arrayBuffer());
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
