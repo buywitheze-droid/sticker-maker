@@ -145,7 +145,7 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   result = removeBacktracking(result);
   
   // Sixth pass: Round sharp corners surgically (only acute angles)
-  result = roundSharpCorners(result, 2.0); // 2 pixel rounding radius for smoother arcs
+  result = roundSharpCorners(result, 8.0); // 8 pixel rounding radius for flatter, gentler curves
   
   // Seventh pass: Final Clipper cleanup to fix any issues from corner rounding
   result = cleanPathWithClipper(result);
@@ -200,22 +200,28 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
     if (dot > minAngleCos) {
       sharpCornersFound++;
       
-      // Insert arc points to smooth this corner
-      const arcRadius = Math.min(radiusPixels, len1 * 0.4, len2 * 0.4);
-      const numArcPoints = 3; // Number of arc interpolation points
+      // Insert arc points to smooth this corner - use larger radius for flatter curves
+      // Allow arc to extend further along the edges for gentler transitions
+      const arcRadius = Math.min(radiusPixels, len1 * 0.5, len2 * 0.5);
+      const numArcPoints = 5; // More points for smoother curve
       
-      // Calculate points along the arc
+      // Calculate points along a flatter arc by pushing the midpoint outward
       for (let j = 0; j <= numArcPoints; j++) {
         const t = j / numArcPoints;
-        // Interpolate between the two directions
+        
+        // Linear interpolation between the two edge directions
         const dx = n1x * (1 - t) + n2x * t;
         const dy = n1y * (1 - t) + n2y * t;
         const dlen = Math.sqrt(dx * dx + dy * dy);
         
         if (dlen > 0.0001) {
+          // Add slight outward bulge at midpoint for flatter curve
+          const midBulge = 1.0 + 0.3 * Math.sin(t * Math.PI); // Peaks at t=0.5
+          const effectiveRadius = arcRadius * midBulge;
+          
           result.push({
-            x: curr.x + (dx / dlen) * arcRadius,
-            y: curr.y + (dy / dlen) * arcRadius
+            x: curr.x + (dx / dlen) * effectiveRadius,
+            y: curr.y + (dy / dlen) * effectiveRadius
           });
         }
       }
