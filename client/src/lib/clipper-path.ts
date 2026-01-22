@@ -144,13 +144,13 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   // Fifth pass: Final cleanup
   result = removeBacktracking(result);
   
-  // Sixth pass: Remove zigzag patterns (closely spaced alternating points)
-  result = removeZigzags(result, 15.0); // Remove zigzags within 15 pixels (more aggressive)
+  // Sixth pass: Aggressive simplification to flatten zigzags for die cutting
+  result = simplifyForDieCutting(result, 2.0); // 2 pixel tolerance for smooth curves
   
   // Seventh pass: Round sharp corners surgically (only acute angles)
-  result = roundSharpCorners(result, 8.0); // 8 pixel rounding radius for flatter, gentler curves
+  result = roundSharpCorners(result, 8.0); // 8 pixel rounding radius for flatter curves
   
-  // Seventh pass: Final Clipper cleanup to fix any issues from corner rounding
+  // Eighth pass: Final Clipper cleanup
   result = cleanPathWithClipper(result);
   
   console.log('[removeLoopsWithClipper] Final path points:', result.length);
@@ -263,6 +263,96 @@ function removeBacktracking(points: Point[]): Point[] {
   }
   
   return result.length >= 3 ? result : points;
+}
+
+// Aggressive path simplification for die cutting - flattens zigzags into smooth curves
+function simplifyForDieCutting(points: Point[], tolerance: number): Point[] {
+  if (points.length < 5) return points;
+  
+  // Use Douglas-Peucker algorithm to simplify the path
+  const simplified = douglasPeucker(points, tolerance);
+  
+  // Then apply Chaikin's corner cutting for smoother curves
+  let smoothed = simplified;
+  for (let pass = 0; pass < 2; pass++) {
+    smoothed = chaikinSmooth(smoothed);
+  }
+  
+  console.log('[simplifyForDieCutting] Path:', points.length, '→', smoothed.length, 'points');
+  
+  return smoothed.length >= 3 ? smoothed : points;
+}
+
+// Douglas-Peucker line simplification algorithm
+function douglasPeucker(points: Point[], epsilon: number): Point[] {
+  if (points.length < 3) return points;
+  
+  // Find the point with the maximum distance from the line between first and last
+  let maxDist = 0;
+  let maxIdx = 0;
+  
+  const first = points[0];
+  const last = points[points.length - 1];
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const dist = perpendicularDistance(points[i], first, last);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
+    }
+  }
+  
+  // If max distance is greater than epsilon, recursively simplify
+  if (maxDist > epsilon) {
+    const left = douglasPeucker(points.slice(0, maxIdx + 1), epsilon);
+    const right = douglasPeucker(points.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  } else {
+    return [first, last];
+  }
+}
+
+function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  
+  if (len < 0.0001) {
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  const t = Math.max(0, Math.min(1, ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / (len * len)));
+  const projX = lineStart.x + t * dx;
+  const projY = lineStart.y + t * dy;
+  
+  return Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
+}
+
+// Chaikin's corner cutting algorithm for smooth curves
+function chaikinSmooth(points: Point[]): Point[] {
+  if (points.length < 3) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Add point at 1/4 along segment
+    result.push({
+      x: curr.x * 0.75 + next.x * 0.25,
+      y: curr.y * 0.75 + next.y * 0.25
+    });
+    
+    // Add point at 3/4 along segment
+    result.push({
+      x: curr.x * 0.25 + next.x * 0.75,
+      y: curr.y * 0.25 + next.y * 0.75
+    });
+  }
+  
+  return result;
 }
 
 // Remove zigzag patterns - sequences of points with alternating sharp turns
