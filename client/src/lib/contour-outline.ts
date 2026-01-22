@@ -1052,7 +1052,12 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     }
   }
   
-  if (gaps.length === 0) return points;
+  if (gaps.length === 0) {
+    console.log('[closeGapsWithShapes] No gaps found');
+    return points;
+  }
+  
+  console.log('[closeGapsWithShapes] Found', gaps.length, 'gaps to close');
   
   // Sort gaps by path position
   gaps.sort((a, b) => a.i - b.i);
@@ -1091,27 +1096,28 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const perpY = dx / gapDist;
       
       // Determine which direction to bulge based on path direction
-      // Check if points before gap.i are to left or right of the gap line
       const checkIdx = Math.max(0, gap.i - 5);
       const checkPt = points[checkIdx];
       const crossProduct = (checkPt.x - p1.x) * perpY - (checkPt.y - p1.y) * perpX;
       
-      // Bulge amount - proportional to gap size
-      const bulgeAmount = Math.min(gapDist * 0.3, gapThreshold * 0.4);
+      // Bulge amount - very flat curve for die cutting
+      const bulgeAmount = Math.min(gapDist * 0.15, gapThreshold * 0.2); // Reduced bulge for flatter curve
       const bulgeDir = crossProduct > 0 ? 1 : -1;
       
-      // Create U-shape points
-      const ctrl1X = p1.x + perpX * bulgeAmount * bulgeDir;
-      const ctrl1Y = p1.y + perpY * bulgeAmount * bulgeDir;
-      const ctrlMidX = midX + perpX * bulgeAmount * 1.5 * bulgeDir;
-      const ctrlMidY = midY + perpY * bulgeAmount * 1.5 * bulgeDir;
-      const ctrl2X = p2.x + perpX * bulgeAmount * bulgeDir;
-      const ctrl2Y = p2.y + perpY * bulgeAmount * bulgeDir;
-      
-      // Add the U-shape points
-      result.push({x: ctrl1X, y: ctrl1Y});
-      result.push({x: ctrlMidX, y: ctrlMidY});
-      result.push({x: ctrl2X, y: ctrl2Y});
+      // Create smooth flat curve with more points (Chaikin-style interpolation)
+      const numBridgePoints = 8; // More points for smoother curve
+      for (let t = 0; t <= numBridgePoints; t++) {
+        const ratio = t / numBridgePoints;
+        // Linear interpolation along gap
+        const baseX = p1.x + (p2.x - p1.x) * ratio;
+        const baseY = p1.y + (p2.y - p1.y) * ratio;
+        // Sinusoidal bulge - peaks at middle, smooth at ends
+        const bulgeFactor = Math.sin(ratio * Math.PI) * bulgeAmount * bulgeDir;
+        result.push({
+          x: baseX + perpX * bulgeFactor,
+          y: baseY + perpY * bulgeFactor
+        });
+      }
     }
     
     // Skip all points between i and j (the gap portion of the path)

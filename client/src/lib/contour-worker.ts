@@ -685,19 +685,22 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const checkPt = points[checkIdx];
       const crossProduct = (checkPt.x - p1.x) * perpY - (checkPt.y - p1.y) * perpX;
       
-      const bulgeAmount = Math.min(gapDist * 0.3, gapThreshold * 0.4);
+      // Bulge amount - very flat curve for die cutting
+      const bulgeAmount = Math.min(gapDist * 0.15, gapThreshold * 0.2);
       const bulgeDir = crossProduct > 0 ? 1 : -1;
       
-      const ctrl1X = p1.x + perpX * bulgeAmount * bulgeDir;
-      const ctrl1Y = p1.y + perpY * bulgeAmount * bulgeDir;
-      const ctrlMidX = midX + perpX * bulgeAmount * 1.5 * bulgeDir;
-      const ctrlMidY = midY + perpY * bulgeAmount * 1.5 * bulgeDir;
-      const ctrl2X = p2.x + perpX * bulgeAmount * bulgeDir;
-      const ctrl2Y = p2.y + perpY * bulgeAmount * bulgeDir;
-      
-      result.push({x: ctrl1X, y: ctrl1Y});
-      result.push({x: ctrlMidX, y: ctrlMidY});
-      result.push({x: ctrl2X, y: ctrl2Y});
+      // Create smooth flat curve with more points (sinusoidal interpolation)
+      const numBridgePoints = 8;
+      for (let t = 0; t <= numBridgePoints; t++) {
+        const ratio = t / numBridgePoints;
+        const baseX = p1.x + (p2.x - p1.x) * ratio;
+        const baseY = p1.y + (p2.y - p1.y) * ratio;
+        const bulgeFactor = Math.sin(ratio * Math.PI) * bulgeAmount * bulgeDir;
+        result.push({
+          x: baseX + perpX * bulgeFactor,
+          y: baseY + perpY * bulgeFactor
+        });
+      }
     }
     
     for (let k = gap.i + 1; k < gap.j; k++) {
