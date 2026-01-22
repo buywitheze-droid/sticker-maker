@@ -1,10 +1,25 @@
 import ContourWorker from './contour-worker?worker';
 
+export interface ContourData {
+  pathPoints: Array<{x: number; y: number}>;
+  widthInches: number;
+  heightInches: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  backgroundColor: string;
+}
+
 interface WorkerResponse {
   type: 'result' | 'error' | 'progress';
   imageData?: ImageData;
   error?: string;
   progress?: number;
+  contourData?: ContourData;
+}
+
+interface WorkerResult {
+  imageData: ImageData;
+  contourData?: ContourData;
 }
 
 interface ResizeSettings {
@@ -37,18 +52,31 @@ class ContourWorkerManager {
   private isProcessing = false;
   private pendingRequest: {
     request: ProcessRequest;
-    resolve: (result: ImageData) => void;
+    resolve: (result: WorkerResult) => void;
     reject: (error: Error) => void;
     onProgress?: ProgressCallback;
   } | null = null;
   private currentRequest: {
-    resolve: (result: ImageData) => void;
+    resolve: (result: WorkerResult) => void;
     reject: (error: Error) => void;
     onProgress?: ProgressCallback;
   } | null = null;
+  
+  // Cache the contour data from the last successful process for fast PDF export
+  private cachedContourData: ContourData | null = null;
 
   constructor() {
     this.initWorker();
+  }
+  
+  // Get cached contour data for PDF export
+  getCachedContourData(): ContourData | null {
+    return this.cachedContourData;
+  }
+  
+  // Clear cached data when settings change
+  clearCache() {
+    this.cachedContourData = null;
   }
 
   private initWorker() {
@@ -63,7 +91,7 @@ class ContourWorkerManager {
   }
 
   private handleMessage(e: MessageEvent<WorkerResponse>) {
-    const { type, imageData, error, progress } = e.data;
+    const { type, imageData, error, progress, contourData } = e.data;
 
     if (type === 'progress' && this.currentRequest?.onProgress && progress !== undefined) {
       this.currentRequest.onProgress(progress);
@@ -71,7 +99,11 @@ class ContourWorkerManager {
     }
 
     if (type === 'result' && imageData && this.currentRequest) {
-      this.currentRequest.resolve(imageData);
+      // Cache the contour data for fast PDF export
+      if (contourData) {
+        this.cachedContourData = contourData;
+      }
+      this.currentRequest.resolve({ imageData, contourData });
       this.finishProcessing();
     } else if (type === 'error' && this.currentRequest) {
       this.currentRequest.reject(new Error(error || 'Unknown worker error'));
@@ -143,19 +175,19 @@ class ContourWorkerManager {
       previewMode: true
     };
 
-    const resultData = await this.processInWorker(request, onProgress);
+    const result = await this.processInWorker(request, onProgress);
 
     const resultCanvas = document.createElement('canvas');
-    resultCanvas.width = resultData.width;
-    resultCanvas.height = resultData.height;
+    resultCanvas.width = result.imageData.width;
+    resultCanvas.height = result.imageData.height;
     const resultCtx = resultCanvas.getContext('2d');
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
-    resultCtx.putImageData(resultData, 0, 0);
+    resultCtx.putImageData(result.imageData, 0, 0);
     return resultCanvas;
   }
 
-  private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<ImageData> {
+  private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {
     return new Promise((resolve, reject) => {
       if (this.isProcessing) {
         this.pendingRequest = { request, resolve, reject, onProgress };

@@ -9,7 +9,8 @@ import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
-import { downloadContourPDF } from "@/lib/contour-outline";
+import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outline";
+import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 
@@ -432,11 +433,17 @@ export default function ImageEditor() {
         if (strokeSettings.enabled) {
           // Contour mode: Download PDF with raster image + vector contour
           const filename = `${nameWithoutExt}_with_contour.pdf`;
+          
+          // Get cached contour data from worker manager for fast PDF export
+          const workerManager = getContourWorkerManager();
+          const cachedData = workerManager.getCachedContourData() as CachedContourData | undefined;
+          
           await downloadContourPDF(
             imageInfo.image,
             strokeSettings,
             resizeSettings,
-            filename
+            filename,
+            cachedData
           );
         } else if (shapeSettings.enabled) {
           // Shape background mode: Download PDF with shape + CutContour spot color

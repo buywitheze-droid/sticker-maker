@@ -24,6 +24,15 @@ interface WorkerResponse {
   imageData?: ImageData;
   error?: string;
   progress?: number;
+  // Cached contour data for fast PDF export
+  contourData?: {
+    pathPoints: Array<{x: number; y: number}>;
+    widthInches: number;
+    heightInches: number;
+    imageOffsetX: number;
+    imageOffsetY: number;
+    backgroundColor: string;
+  };
 }
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
@@ -40,6 +49,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         (imageData.width > maxPreviewDimension || imageData.height > maxPreviewDimension);
       
       let processedData: ImageData;
+      let contourData: WorkerResponse['contourData'];
       let scale = 1;
       
       if (shouldDownscale) {
@@ -54,18 +64,22 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         postProgress(90);
         
         // Upscale result back to original size
-        processedData = upscaleImageData(result, 
-          Math.round(result.width / scale), 
-          Math.round(result.height / scale));
+        processedData = upscaleImageData(result.imageData, 
+          Math.round(result.imageData.width / scale), 
+          Math.round(result.imageData.height / scale));
+        contourData = result.contourData;
       } else {
-        processedData = processContour(imageData, strokeSettings, effectiveDPI);
+        const result = processContour(imageData, strokeSettings, effectiveDPI);
+        processedData = result.imageData;
+        contourData = result.contourData;
       }
       
       postProgress(100);
       
       const response: WorkerResponse = {
         type: 'result',
-        imageData: processedData
+        imageData: processedData,
+        contourData: contourData
       };
       (self as unknown as Worker).postMessage(response, [processedData.data.buffer]);
     } catch (error) {
@@ -144,6 +158,18 @@ function postProgress(percent: number) {
   self.postMessage(response);
 }
 
+interface ContourResult {
+  imageData: ImageData;
+  contourData: {
+    pathPoints: Array<{x: number; y: number}>;
+    widthInches: number;
+    heightInches: number;
+    imageOffsetX: number;
+    imageOffsetY: number;
+    backgroundColor: string;
+  };
+}
+
 function processContour(
   imageData: ImageData,
   strokeSettings: {
@@ -156,7 +182,7 @@ function processContour(
     backgroundColor: string;
   },
   effectiveDPI: number
-): ImageData {
+): ContourResult {
   const width = imageData.width;
   const height = imageData.height;
   const data = imageData.data;
@@ -182,7 +208,7 @@ function processContour(
   const silhouetteMask = createSilhouetteMaskFromData(data, width, height, strokeSettings.alphaThreshold);
   
   if (silhouetteMask.length === 0) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding);
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, strokeSettings.backgroundColor);
   }
   
   postProgress(30);
@@ -224,7 +250,7 @@ function processContour(
   const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
   if (boundaryPath.length < 3) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding);
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, strokeSettings.backgroundColor);
   }
   
   postProgress(80);
@@ -253,7 +279,28 @@ function processContour(
   
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
-  return new ImageData(output, canvasWidth, canvasHeight);
+  // Calculate contour data for PDF export (path in inches)
+  // bleedInches already declared at top of function
+  const widthInches = dilatedWidth / effectiveDPI + (bleedInches * 2);
+  const heightInches = dilatedHeight / effectiveDPI + (bleedInches * 2);
+  
+  // Convert path to inches with proper coordinate transform for PDF
+  const pathInInches = smoothedPath.map(p => ({
+    x: (p.x / effectiveDPI) + bleedInches,
+    y: heightInches - ((p.y / effectiveDPI) + bleedInches)
+  }));
+  
+  return {
+    imageData: new ImageData(output, canvasWidth, canvasHeight),
+    contourData: {
+      pathPoints: pathInInches,
+      widthInches,
+      heightInches,
+      imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
+      imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
+      backgroundColor: strokeSettings.backgroundColor
+    }
+  };
 }
 
 function createSilhouetteMaskFromData(data: Uint8ClampedArray, width: number, height: number, threshold: number): Uint8Array {
@@ -1223,11 +1270,28 @@ function createOutputWithImage(
   imageData: ImageData,
   canvasWidth: number,
   canvasHeight: number,
-  padding: number
-): ImageData {
+  padding: number,
+  effectiveDPI: number,
+  backgroundColor: string
+): ContourResult {
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
-  return new ImageData(output, canvasWidth, canvasHeight);
+  
+  // Return empty contour data for images with no contour
+  const widthInches = canvasWidth / effectiveDPI;
+  const heightInches = canvasHeight / effectiveDPI;
+  
+  return {
+    imageData: new ImageData(output, canvasWidth, canvasHeight),
+    contourData: {
+      pathPoints: [],
+      widthInches,
+      heightInches,
+      imageOffsetX: padding / effectiveDPI,
+      imageOffsetY: padding / effectiveDPI,
+      backgroundColor
+    }
+  };
 }
 
 export {};

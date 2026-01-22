@@ -1641,23 +1641,63 @@ export function getContourPath(
   }
 }
 
+// Cached contour data type for fast PDF export
+export interface CachedContourData {
+  pathPoints: Array<{x: number; y: number}>;
+  widthInches: number;
+  heightInches: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  backgroundColor: string;
+}
+
 export async function downloadContourPDF(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
-  filename: string
+  filename: string,
+  cachedContourData?: CachedContourData
 ): Promise<void> {
   try {
+    console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
+    const startTime = performance.now();
+    
     // Small delay to allow loading indicator to render
     await new Promise(resolve => setTimeout(resolve, 50));
     
-    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-    if (!contourResult) {
-      console.error('Failed to generate contour path');
-      return;
+    let pathPoints: Array<{x: number; y: number}>;
+    let widthInches: number;
+    let heightInches: number;
+    let imageOffsetX: number;
+    let imageOffsetY: number;
+    let backgroundColor: string;
+    
+    // Use cached contour data if available (from preview worker) for instant PDF export
+    if (cachedContourData && cachedContourData.pathPoints.length > 0) {
+      console.log('[downloadContourPDF] Using cached contour data');
+      pathPoints = cachedContourData.pathPoints;
+      widthInches = cachedContourData.widthInches;
+      heightInches = cachedContourData.heightInches;
+      imageOffsetX = cachedContourData.imageOffsetX;
+      imageOffsetY = cachedContourData.imageOffsetY;
+      backgroundColor = cachedContourData.backgroundColor;
+    } else {
+      // Fallback: compute contour path (slower)
+      console.log('[downloadContourPDF] Computing contour path (no cache)');
+      const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+      if (!contourResult) {
+        console.error('Failed to generate contour path');
+        return;
+      }
+      pathPoints = contourResult.pathPoints;
+      widthInches = contourResult.widthInches;
+      heightInches = contourResult.heightInches;
+      imageOffsetX = contourResult.imageOffsetX;
+      imageOffsetY = contourResult.imageOffsetY;
+      backgroundColor = contourResult.backgroundColor;
     }
-  
-    const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
+    
+    console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
   
     const widthPts = widthInches * 72;
     const heightPts = heightInches * 72;
