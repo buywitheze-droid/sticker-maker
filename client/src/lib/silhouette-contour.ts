@@ -1103,37 +1103,10 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       result.push({ x: midX, y: midY });
     }
     
-    // Check if section is narrow passage or feature to preserve
-    const sectionLength = gap.j - gap.i;
-    let isNarrowPassage = true;
-    
-    if (sectionLength > 30) {
-      let wideCount = 0;
-      const checkStride = Math.max(1, Math.floor(sectionLength / 10));
-      for (let k = gap.i + checkStride; k < gap.j - checkStride; k += checkStride) {
-        const pk = points[k];
-        const distToI = Math.sqrt((pk.x - p1.x) ** 2 + (pk.y - p1.y) ** 2);
-        const distToJ = Math.sqrt((pk.x - p2.x) ** 2 + (pk.y - p2.y) ** 2);
-        const minDistToEnds = Math.min(distToI, distToJ);
-        
-        if (minDistToEnds > gapDist * 2) {
-          wideCount++;
-        }
-      }
-      isNarrowPassage = wideCount < 5;
-    }
-    
-    if (isNarrowPassage) {
-      for (let k = gap.i + 1; k < gap.j; k++) {
-        processed.add(k);
-      }
-    } else {
-      for (let k = gap.i + 1; k < gap.j; k++) {
-        if (!processed.has(k)) {
-          result.push(points[k]);
-          processed.add(k);
-        }
-      }
+    // For exterior caves, ALWAYS delete the cave interior
+    // Skip all points between i and j (the "top of the P" / cave interior)
+    for (let k = gap.i + 1; k < gap.j; k++) {
+      processed.add(k);
     }
     
     currentIdx = gap.j;

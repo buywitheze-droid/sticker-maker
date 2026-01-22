@@ -1202,46 +1202,10 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       result.push({ x: midX, y: midY });
     }
     
-    // KEY CHANGE: Only skip points between i and j if the section is truly a narrow passage
-    // Check if the section is narrow throughout (both walls close together)
-    const sectionLength = gap.j - gap.i;
-    let isNarrowPassage = true;
-    
-    if (sectionLength > 30) {
-      // For larger sections, check if it's consistently narrow or if it opens up
-      let wideCount = 0;
-      const checkStride = Math.max(1, Math.floor(sectionLength / 10));
-      for (let k = gap.i + checkStride; k < gap.j - checkStride; k += checkStride) {
-        const pk = points[k];
-        // Check distance from this point to both ends
-        const distToI = Math.sqrt((pk.x - p1.x) ** 2 + (pk.y - p1.y) ** 2);
-        const distToJ = Math.sqrt((pk.x - p2.x) ** 2 + (pk.y - p2.y) ** 2);
-        const minDistToEnds = Math.min(distToI, distToJ);
-        
-        // If any point is far from both ends, it's not a narrow passage
-        if (minDistToEnds > gapDist * 2) {
-          wideCount++;
-        }
-      }
-      
-      // If more than half the checked points are "wide", keep the section
-      isNarrowPassage = wideCount < 5;
-    }
-    
-    if (isNarrowPassage) {
-      // Skip the narrow passage section
-      for (let k = gap.i + 1; k < gap.j; k++) {
-        processed.add(k);
-      }
-    } else {
-      // Keep the section - it's a feature, not just a narrow passage
-      // Add points from i+1 to j-1 to preserve the shape
-      for (let k = gap.i + 1; k < gap.j; k++) {
-        if (!processed.has(k)) {
-          result.push(points[k]);
-          processed.add(k);
-        }
-      }
+    // For exterior caves (already filtered above), ALWAYS delete the cave interior
+    // Skip all points between i and j (the "top of the P" / cave interior)
+    for (let k = gap.i + 1; k < gap.j; k++) {
+      processed.add(k);
     }
     
     currentIdx = gap.j;
