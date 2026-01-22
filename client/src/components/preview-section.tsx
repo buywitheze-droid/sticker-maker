@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, MoveHorizontal, MoveVertical } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Move } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -559,17 +559,48 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
               
               {zoom !== 1 && (
-                <div className="flex flex-col items-center gap-1 h-[400px]">
-                  <MoveVertical className="h-4 w-4 text-gray-400" />
-                  <Slider
-                    value={[panY]}
-                    onValueChange={([value]) => setPanY(value)}
-                    min={-100}
-                    max={100}
-                    step={5}
-                    orientation="vertical"
-                    className="h-full"
-                  />
+                <div className="flex flex-col items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPanY(prev => Math.min(prev + 20, 100))}
+                    className="h-8 w-8 p-0 hover:bg-gray-700"
+                    title="Pan Up"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPanX(prev => Math.max(prev - 20, -100))}
+                      className="h-8 w-8 p-0 hover:bg-gray-700"
+                      title="Pan Left"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="h-8 w-8 flex items-center justify-center rounded bg-gray-700/50">
+                      <Move className="h-4 w-4 text-gray-400" />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPanX(prev => Math.min(prev + 20, 100))}
+                      className="h-8 w-8 p-0 hover:bg-gray-700"
+                      title="Pan Right"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPanY(prev => Math.max(prev - 20, -100))}
+                    className="h-8 w-8 p-0 hover:bg-gray-700"
+                    title="Pan Down"
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
                 </div>
               )}
             </div>
@@ -625,19 +656,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </Button>
               </div>
               
-              {zoom !== 1 && (
-                <div className="flex items-center gap-2 px-4">
-                  <MoveHorizontal className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                  <Slider
-                    value={[panX]}
-                    onValueChange={([value]) => setPanX(value)}
-                    min={-100}
-                    max={100}
-                    step={5}
-                    className="flex-1"
-                  />
-                </div>
-              )}
             </div>
           </CardContent>
         </Card>
