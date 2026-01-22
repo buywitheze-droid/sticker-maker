@@ -241,9 +241,9 @@ export function createSilhouetteContour(
     
     // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.39 * effectiveDPI) 
+      ? Math.round(0.64 * effectiveDPI) 
       : strokeSettings.closeSmallGaps 
-        ? Math.round(0.07 * effectiveDPI) 
+        ? Math.round(0.27 * effectiveDPI) 
         : 0;
     
     if (gapThresholdPixels > 0) {
