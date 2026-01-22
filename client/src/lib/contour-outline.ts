@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections } from "@/lib/clipper-path";
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>;
@@ -918,6 +918,9 @@ function removeSpikesFromPath(points: Point[]): Point[] {
 function fixOffsetCrossings(points: Point[]): Point[] {
   if (points.length < 6) return points;
   
+  console.log('[fixOffsetCrossings] BEFORE cleanup - checking for intersections');
+  const beforeCheck = detectSelfIntersections(points);
+  
   // Use Clipper.js to remove all self-intersections and loops
   let result = removeLoopsWithClipper(points);
   
@@ -926,6 +929,15 @@ function fixOffsetCrossings(points: Point[]): Point[] {
   
   // Additional cleanup pass with legacy method for any remaining issues
   result = mergeClosePathPoints(result);
+  
+  console.log('[fixOffsetCrossings] AFTER cleanup - checking for intersections');
+  const afterCheck = detectSelfIntersections(result);
+  
+  if (afterCheck.hasLoops) {
+    console.warn('[fixOffsetCrossings] WARNING: Still has', afterCheck.intersections.length, 'self-intersections after cleanup!');
+  } else {
+    console.log('[fixOffsetCrossings] SUCCESS: No self-intersections remaining');
+  }
   
   return result;
 }

@@ -203,3 +203,62 @@ export function ensureClockwise(points: Point[]): Point[] {
   
   return points;
 }
+
+// Debug function to detect self-intersections in a path
+export function detectSelfIntersections(points: Point[]): { hasLoops: boolean; intersections: Array<{i: number; j: number; point: Point}> } {
+  const intersections: Array<{i: number; j: number; point: Point}> = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    
+    // Check against all non-adjacent segments
+    for (let j = i + 2; j < n; j++) {
+      // Skip adjacent segments
+      if (j === (i + n - 1) % n) continue;
+      if (i === 0 && j === n - 1) continue;
+      
+      const p3 = points[j];
+      const p4 = points[(j + 1) % n];
+      
+      const intersection = lineIntersection(p1, p2, p3, p4);
+      if (intersection) {
+        intersections.push({ i, j, point: intersection });
+      }
+    }
+  }
+  
+  console.log(`[detectSelfIntersections] Found ${intersections.length} self-intersections in path with ${n} points`);
+  if (intersections.length > 0) {
+    console.log('[detectSelfIntersections] First 5 intersections:', intersections.slice(0, 5));
+  }
+  
+  return { hasLoops: intersections.length > 0, intersections };
+}
+
+function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | null {
+  const d1x = p2.x - p1.x;
+  const d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x;
+  const d2y = p4.y - p3.y;
+  
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 0.0000001) return null;
+  
+  const dx = p3.x - p1.x;
+  const dy = p3.y - p1.y;
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  // Check if intersection is strictly within both segments (not at endpoints)
+  if (t > 0.001 && t < 0.999 && u > 0.001 && u < 0.999) {
+    return {
+      x: p1.x + t * d1x,
+      y: p1.y + t * d1y
+    };
+  }
+  
+  return null;
+}
