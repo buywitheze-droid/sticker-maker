@@ -14,8 +14,8 @@ import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings } from "@/lib/types";
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 
 export default function ImageEditor() {
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
@@ -45,6 +45,7 @@ export default function ImageEditor() {
     strokeColor: '#000000',
   });
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
+  const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -120,12 +121,12 @@ export default function ImageEditor() {
         // Update resize settings based on cropped image
         let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
         
-        // Auto-resize to 4" if larger dimension is bigger than 6"
+        // Always resize to fit within the selected sticker size
         const maxDimension = Math.max(widthInches, heightInches);
-        if (maxDimension > 6) {
-          const scale = 4 / maxDimension;
-          widthInches = widthInches * scale;
-          heightInches = heightInches * scale;
+        if (maxDimension > stickerSize) {
+          const scale = stickerSize / maxDimension;
+          widthInches = parseFloat((widthInches * scale).toFixed(2));
+          heightInches = parseFloat((heightInches * scale).toFixed(2));
         }
         
         setResizeSettings(prev => ({
@@ -154,7 +155,7 @@ export default function ImageEditor() {
       console.error('Error processing uploaded image:', error);
       handleFallbackImage(file, image);
     }
-  }, [shapeSettings, updateCadCutBounds]);
+  }, [shapeSettings, stickerSize, updateCadCutBounds]);
 
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
@@ -170,12 +171,12 @@ export default function ImageEditor() {
     const processImage = () => {
       let { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
       
-      // Auto-resize to 4" if larger dimension is bigger than 6"
+      // Always resize to fit within the selected sticker size
       const maxDimension = Math.max(widthInches, heightInches);
-      if (maxDimension > 6) {
-        const scale = 4 / maxDimension;
-        widthInches = widthInches * scale;
-        heightInches = heightInches * scale;
+      if (maxDimension > stickerSize) {
+        const scale = stickerSize / maxDimension;
+        widthInches = parseFloat((widthInches * scale).toFixed(2));
+        heightInches = parseFloat((heightInches * scale).toFixed(2));
       }
 
       const newImageInfo: ImageInfo = {
@@ -209,7 +210,7 @@ export default function ImageEditor() {
     } else {
       processImage();
     }
-  }, [shapeSettings, updateCadCutBounds]);
+  }, [shapeSettings, stickerSize, updateCadCutBounds]);
 
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {
@@ -237,6 +238,44 @@ export default function ImageEditor() {
       
       return updated;
     });
+  }, [imageInfo, shapeSettings, updateCadCutBounds]);
+
+  const handleStickerSizeChange = useCallback((newSize: StickerSize) => {
+    setStickerSize(newSize);
+    
+    // Resize the design to fit within the new sticker size
+    if (imageInfo) {
+      const aspectRatio = imageInfo.originalWidth / imageInfo.originalHeight;
+      let newWidth: number;
+      let newHeight: number;
+      
+      if (aspectRatio >= 1) {
+        // Wider than tall - width is the constraining dimension
+        newWidth = newSize;
+        newHeight = parseFloat((newSize / aspectRatio).toFixed(2));
+      } else {
+        // Taller than wide - height is the constraining dimension
+        newHeight = newSize;
+        newWidth = parseFloat((newSize * aspectRatio).toFixed(2));
+      }
+      
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches: newWidth,
+        heightInches: newHeight,
+      }));
+      
+      // Recalculate bounds with auto-sized shape dimensions
+      if (shapeSettings.enabled) {
+        const shapeDims = calculateShapeDimensions(
+          newWidth,
+          newHeight,
+          shapeSettings.type,
+          shapeSettings.offset
+        );
+        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
+      }
+    }
   }, [imageInfo, shapeSettings, updateCadCutBounds]);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
@@ -508,9 +547,11 @@ export default function ImageEditor() {
         strokeSettings={strokeSettings}
         resizeSettings={resizeSettings}
         shapeSettings={shapeSettings}
+        stickerSize={stickerSize}
         onStrokeChange={handleStrokeChange}
         onResizeChange={handleResizeChange}
         onShapeChange={handleShapeChange}
+        onStickerSizeChange={handleStickerSizeChange}
         onDownload={handleDownload}
         isProcessing={isProcessing}
         imageInfo={imageInfo}

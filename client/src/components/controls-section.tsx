@@ -7,7 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings } from "./image-editor";
+import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings, StickerSize } from "./image-editor";
+import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
@@ -16,9 +17,11 @@ interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
+  stickerSize: StickerSize;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
+  onStickerSizeChange: (size: StickerSize) => void;
   onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
@@ -29,9 +32,11 @@ export default function ControlsSection({
   strokeSettings,
   resizeSettings,
   shapeSettings,
+  stickerSize,
   onStrokeChange,
   onResizeChange,
   onShapeChange,
+  onStickerSizeChange,
   onDownload,
   isProcessing,
   imageInfo,
@@ -140,6 +145,31 @@ export default function ControlsSection({
     <div className="lg:col-span-1">
       <h2 className="text-lg font-semibold text-white mb-4">Adjustments</h2>
       <div className="space-y-6">
+
+        {/* Sticker Size Card */}
+        <Card className="border-2 border-cyan-500 bg-cyan-50">
+          <CardContent className="space-y-4 pt-6">
+            <Label className="text-base font-medium">Sticker Size</Label>
+            <Select
+              value={stickerSize.toString()}
+              onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
+            >
+              <SelectTrigger className="mt-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STICKER_SIZES.map((size) => (
+                  <SelectItem key={size.value} value={size.value.toString()}>
+                    {size.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-gray-500">
+              Maximum width or height for your sticker
+            </p>
+          </CardContent>
+        </Card>
 
         {/* Contour Outline Card */}
         <Card className={`border-2 transition-colors ${strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50' : 'border-gray-200'}`}>
