@@ -1029,24 +1029,10 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   if (gaps.length === 0) return points;
   
-  // Filter to only keep gaps that open to the EXTERIOR (P-shaped caves opening from outside)
-  const exteriorGaps = gaps.filter(gap => {
-    // Calculate average distance of the gap section from centroid
-    let gapSectionDist = 0;
-    let gapSectionCount = 0;
-    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
-    for (let k = gap.i; k <= gap.j; k += sampleStride) {
-      const pk = points[k];
-      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
-      gapSectionCount++;
-    }
-    const avgGapDist = gapSectionDist / gapSectionCount;
-    
-    // Exterior cave: gap section average is LESS than shape average (dips inward)
-    return avgGapDist < avgDistFromCentroid * 0.95;
-  });
-  
-  if (exteriorGaps.length === 0) return points;
+  // Accept all gaps that passed the protrusion check - don't filter by centroid direction
+  // This allows J-shaped, hook-shaped, and other complex gap geometries to be closed
+  // The protrusion check (maxPerpDist > dist * 3) already prevents closing actual features
+  const exteriorGaps = gaps;
   
   // Sort and refine gaps to find the narrowest crossing point
   const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);

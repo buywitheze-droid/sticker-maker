@@ -1114,40 +1114,15 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   console.log('[closeGapsWithShapes] Found', gaps.length, 'potential gaps');
   
-  // Filter to only keep gaps that open to the EXTERIOR (P-shaped caves opening from outside)
-  // A cave opening from outside has its interior (the section between i and j) CLOSER to centroid
-  // than the shape's average distance - meaning it dips INTO the shape
-  const exteriorGaps = gaps.filter(gap => {
-    // Calculate average distance of the gap section from centroid
-    let gapSectionDist = 0;
-    let gapSectionCount = 0;
-    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
-    for (let k = gap.i; k <= gap.j; k += sampleStride) {
-      const pk = points[k];
-      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
-      gapSectionCount++;
-    }
-    const avgGapDist = gapSectionDist / gapSectionCount;
-    
-    // Exterior cave: gap section average is LESS than shape average (dips inward)
-    // Interior feature: gap section average is GREATER than shape average (extends outward)
-    const isExteriorCave = avgGapDist < avgDistFromCentroid * 0.95;
-    
-    if (!isExteriorCave) {
-      console.log('[closeGapsWithShapes] Preserving interior feature at', gap.i, '-', gap.j, 
-        'avgGapDist:', avgGapDist.toFixed(1), 'shapeAvg:', avgDistFromCentroid.toFixed(1));
-    } else {
-      console.log('[closeGapsWithShapes] Will close exterior cave at', gap.i, '-', gap.j,
-        'avgGapDist:', avgGapDist.toFixed(1), 'shapeAvg:', avgDistFromCentroid.toFixed(1));
-    }
-    
-    return isExteriorCave;
-  });
+  // Accept all gaps that passed the protrusion check - don't filter by centroid direction
+  // This allows J-shaped, hook-shaped, and other complex gap geometries to be closed
+  // The protrusion check (maxPerpDist > dist * 3) already prevents closing actual features
+  const exteriorGaps = gaps;
   
-  console.log('[closeGapsWithShapes] Exterior gaps to close:', exteriorGaps.length);
+  console.log('[closeGapsWithShapes] Gaps to close:', exteriorGaps.length);
   
   if (exteriorGaps.length === 0) {
-    console.log('[closeGapsWithShapes] No exterior gaps to close');
+    console.log('[closeGapsWithShapes] No gaps to close');
     return points;
   }
   
