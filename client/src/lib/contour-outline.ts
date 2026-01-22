@@ -1047,8 +1047,29 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
       
       if (distSq < thresholdSq) {
-        // Found a gap - points are close but path travels far between them
-        gaps.push({i, j, dist: Math.sqrt(distSq)});
+        // Check if this is a narrow passage (close) vs a protrusion (keep)
+        // For a protrusion, points between i and j extend far from the i-j line
+        const dist = Math.sqrt(distSq);
+        const dx = pj.x - pi.x;
+        const dy = pj.y - pi.y;
+        const lineLen = dist;
+        
+        // Check max perpendicular distance of points between i and j
+        let maxPerpDist = 0;
+        const sampleStride = Math.max(1, Math.floor((j - i) / 20)); // Sample ~20 points
+        for (let k = i + sampleStride; k < j; k += sampleStride) {
+          const pk = points[k];
+          // Perpendicular distance from point to line i-j
+          const perpDist = Math.abs((pk.x - pi.x) * dy - (pk.y - pi.y) * dx) / (lineLen || 1);
+          maxPerpDist = Math.max(maxPerpDist, perpDist);
+        }
+        
+        // If path extends more than 2x the gap distance, it's a protrusion - don't close
+        if (maxPerpDist > dist * 2) {
+          continue; // Skip this, it's a protrusion not a gap
+        }
+        
+        gaps.push({i, j, dist});
         break; // Only record first gap from this point
       }
     }
