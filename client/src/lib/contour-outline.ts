@@ -1034,71 +1034,78 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   const result: Point[] = [];
   const processed = new Set<number>();
   
-  // Calculate centroid and average distance from centroid for the entire shape
-  let centroidX = 0, centroidY = 0;
-  for (const p of points) {
-    centroidX += p.x;
-    centroidY += p.y;
-  }
-  centroidX /= n;
-  centroidY /= n;
+  // OPTIMIZATION: Use larger stride for faster processing
+  const stride = n > 2000 ? 8 : n > 1000 ? 5 : n > 500 ? 3 : 2;
   
-  // Calculate average distance from centroid (the "normal" radius of the shape)
-  let totalDist = 0;
-  for (const p of points) {
-    totalDist += Math.sqrt((p.x - centroidX) ** 2 + (p.y - centroidY) ** 2);
+  // Calculate centroid using sampled points for speed
+  let centroidX = 0, centroidY = 0;
+  let sampleCount = 0;
+  for (let i = 0; i < n; i += stride) {
+    centroidX += points[i].x;
+    centroidY += points[i].y;
+    sampleCount++;
   }
-  const avgDistFromCentroid = totalDist / n;
+  centroidX /= sampleCount;
+  centroidY /= sampleCount;
+  
+  // Calculate average distance from centroid using sampled points
+  let totalDist = 0;
+  for (let i = 0; i < n; i += stride) {
+    totalDist += Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
+  }
+  const avgDistFromCentroid = totalDist / sampleCount;
   
   // Find all gap locations where path points are within threshold but far apart in path order
   const gaps: Array<{i: number, j: number, dist: number}> = [];
   
   // Limit how much of path we can skip to avoid deleting entire outline
-  const maxSkipPoints = Math.floor(n * 0.25); // Max 25% of path per gap
-  const minSkipPoints = 15; // Must skip at least 15 points to be a real gap
+  const maxSkipPoints = Math.floor(n * 0.20); // Max 20% of path per gap (reduced from 25%)
+  const minSkipPoints = Math.max(15, Math.floor(n / 50)); // Scale minimum with path size
   
-  const stride = n > 1000 ? 3 : n > 500 ? 2 : 1;
   const thresholdSq = gapThreshold * gapThreshold;
   
-  for (let i = 0; i < n; i += stride) {
+  // OPTIMIZATION: Limit max gaps to prevent excessive processing
+  const maxGaps = 20;
+  
+  for (let i = 0; i < n && gaps.length < maxGaps; i += stride) {
     const pi = points[i];
     
     // Search ahead but limit to maxSkipPoints to avoid false gaps
     const maxSearch = Math.min(n - 5, i + maxSkipPoints);
-    for (let j = i + minSkipPoints; j < maxSearch; j += stride) {
+    // Use larger inner stride for faster search
+    const innerStride = stride * 2;
+    for (let j = i + minSkipPoints; j < maxSearch; j += innerStride) {
       const pj = points[j];
       const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
       
       if (distSq < thresholdSq) {
-        // Check if this is a narrow passage (close) vs a protrusion (keep)
-        // For a protrusion, points between i and j extend far from the i-j line
+        // Quick check if this is a narrow passage (close) vs a protrusion (keep)
         const dist = Math.sqrt(distSq);
         const dx = pj.x - pi.x;
         const dy = pj.y - pi.y;
         const lineLen = dist;
         
-        // Check max perpendicular distance of points between i and j
+        // Sample only ~10 points for speed
         let maxPerpDist = 0;
-        const sampleStride = Math.max(1, Math.floor((j - i) / 20)); // Sample ~20 points
+        const sampleStride = Math.max(1, Math.floor((j - i) / 10));
         for (let k = i + sampleStride; k < j; k += sampleStride) {
           const pk = points[k];
-          // Perpendicular distance from point to line i-j
           const perpDist = Math.abs((pk.x - pi.x) * dy - (pk.y - pi.y) * dx) / (lineLen || 1);
           maxPerpDist = Math.max(maxPerpDist, perpDist);
         }
         
         // If path extends more than 3x the gap distance, it's a protrusion - don't close
         if (maxPerpDist > dist * 3) {
-          continue; // Skip this, it's a protrusion not a gap
+          continue;
         }
         
         gaps.push({i, j, dist});
-        break; // Only record first gap from this point
+        break;
       }
     }
   }
   
-  console.log('[closeGapsWithShapes] Scanned', n, 'points, maxSkip:', maxSkipPoints, ', threshold:', gapThreshold, 'px');
+  console.log('[closeGapsWithShapes] Scanned', n, 'points, stride:', stride, ', threshold:', gapThreshold.toFixed(0), 'px, gaps:', gaps.length);
   
   if (gaps.length === 0) {
     console.log('[closeGapsWithShapes] No gaps found');
