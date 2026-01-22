@@ -162,6 +162,24 @@ export default function ControlsSection({
   const canProceedToStep3 = canProceedToStep2;
   const canProceedToStep4 = canProceedToStep3 && (strokeSettings.enabled || shapeSettings.enabled);
 
+  // Auto-advance to step 2 after image upload
+  useEffect(() => {
+    if (imageInfo && currentStep === 1) {
+      setCurrentStep(2);
+    }
+  }, [imageInfo]);
+
+  // Track if user has manually selected a size (to auto-advance only on user action)
+  const [hasSelectedSize, setHasSelectedSize] = useState(false);
+  
+  const handleSizeChange = (value: string) => {
+    onStickerSizeChange(parseFloat(value) as StickerSize);
+    // Auto-advance to step 3 when user picks a size
+    if (currentStep === 2) {
+      setTimeout(() => setCurrentStep(3), 150); // Small delay for visual feedback
+    }
+  };
+
   const goToStep = (step: WizardStep) => {
     if (step === 2 && !canProceedToStep2) return;
     if (step === 3 && !canProceedToStep3) return;
@@ -330,7 +348,7 @@ export default function ControlsSection({
         </p>
         <Select
           value={stickerSize.toString()}
-          onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
+          onValueChange={handleSizeChange}
         >
           <SelectTrigger className="w-full text-lg py-6">
             <SelectValue />
