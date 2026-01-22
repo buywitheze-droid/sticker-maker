@@ -530,7 +530,7 @@ export default function ImageEditor() {
         onImageUpload={handleImageUpload}
         imageInfo={imageInfo}
         resizeSettings={resizeSettings}
-        showCutLineInfo={wizardStep >= 2}
+        showCutLineInfo={wizardStep >= 3}
       />
       
       <div className="relative preview-container">
