@@ -26,29 +26,31 @@ export function cleanPathWithClipper(points: Point[]): Point[] {
   
   const clipperPath = pointsToClipperPath(points);
   
-  const solution: ClipperLib.Path[] = [];
+  // Use SimplifyPolygon which specifically removes self-intersections
+  const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
   
-  const clipper = new ClipperLib.Clipper();
-  clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
-  clipper.Execute(
-    ClipperLib.ClipType.ctUnion,
-    solution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero
-  );
+  if (!simplified || simplified.length === 0) return points;
   
-  if (solution.length === 0) return points;
+  // Find the largest polygon by area (main outline, not tiny loop fragments)
+  let largestArea = 0;
+  let largestPath = simplified[0];
   
-  let longestPath = solution[0];
-  for (let i = 1; i < solution.length; i++) {
-    if (solution[i].length > longestPath.length) {
-      longestPath = solution[i];
+  for (const path of simplified) {
+    const area = Math.abs(ClipperLib.Clipper.Area(path));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = path;
     }
   }
   
-  const cleanedPoints = clipperPathToPoints(longestPath);
+  // Also clean up any micro-vertices that are very close together
+  const cleaned = ClipperLib.Clipper.CleanPolygon(largestPath, 2 * CLIPPER_SCALE / 100000);
   
-  return cleanedPoints.length >= 3 ? cleanedPoints : points;
+  if (!cleaned || cleaned.length < 3) {
+    return clipperPathToPoints(largestPath);
+  }
+  
+  return clipperPathToPoints(cleaned);
 }
 
 export function offsetPathWithClipper(points: Point[], offsetAmount: number): Point[] {
@@ -86,21 +88,52 @@ export function simplifyPathWithClipper(points: Point[], tolerance: number): Poi
   
   const clipperPath = pointsToClipperPath(points);
   
+  // CleanPolygon removes vertices closer than tolerance distance
   const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, tolerance * CLIPPER_SCALE);
   
   if (!simplified || simplified.length < 3) return points;
   
-  return clipperPathToPoints(simplified);
+  // Also run SimplifyPolygon to ensure no self-intersections after cleaning
+  const noIntersections = ClipperLib.Clipper.SimplifyPolygon(simplified, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (!noIntersections || noIntersections.length === 0) {
+    return clipperPathToPoints(simplified);
+  }
+  
+  // Return the largest polygon
+  let largest = noIntersections[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(largest));
+  
+  for (let i = 1; i < noIntersections.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(noIntersections[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largest = noIntersections[i];
+    }
+  }
+  
+  return clipperPathToPoints(largest);
 }
 
 export function removeLoopsWithClipper(points: Point[]): Point[] {
   if (points.length < 3) return points;
   
+  // First pass: Use Clipper to remove self-intersections
   let result = cleanPathWithClipper(points);
   
-  result = simplifyPathWithClipper(result, 0.001);
+  // Second pass: Clean up closely spaced vertices
+  result = simplifyPathWithClipper(result, 0.5);
   
+  // Third pass: Remove any remaining backtracking
   result = removeBacktracking(result);
+  
+  // Fourth pass: Run SimplifyPolygon again to catch any loops created by backtracking removal
+  result = cleanPathWithClipper(result);
+  
+  // Fifth pass: Final cleanup
+  result = removeBacktracking(result);
+  
+  console.log('[removeLoopsWithClipper] Final path points:', result.length);
   
   return result;
 }
@@ -130,7 +163,9 @@ function removeBacktracking(points: Point[]): Point[] {
     
     const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
     
-    if (dot < -0.95) {
+    // More aggressive: remove points with turns > 140 degrees (dot < -0.766)
+    // This catches smaller loops that might slip through
+    if (dot < -0.766) {
       continue;
     }
     
