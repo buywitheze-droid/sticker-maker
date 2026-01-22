@@ -32,6 +32,50 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
     
+    // Drag-to-pan state
+    const [isDragging, setIsDragging] = useState(false);
+    const dragStartRef = useRef<{x: number; y: number; panX: number; panY: number} | null>(null);
+    
+    // Drag-to-pan handlers
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+      if (zoom === 1) return; // Only allow panning when zoomed
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX,
+        panY
+      };
+    }, [zoom, panX, panY]);
+    
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+      if (!isDragging || !dragStartRef.current) return;
+      
+      const deltaX = e.clientX - dragStartRef.current.x;
+      const deltaY = e.clientY - dragStartRef.current.y;
+      
+      // Convert pixel movement to pan percentage (400px canvas = 100%)
+      const sensitivity = 0.5; // Adjust for smoother panning
+      const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
+      const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
+      
+      setPanX(newPanX);
+      setPanY(newPanY);
+    }, [isDragging]);
+    
+    const handleMouseUp = useCallback(() => {
+      setIsDragging(false);
+      dragStartRef.current = null;
+    }, []);
+    
+    const handleMouseLeave = useCallback(() => {
+      if (isDragging) {
+        setIsDragging(false);
+        dragStartRef.current = null;
+      }
+    }, [isDragging]);
+    
     // Fit to View: calculate zoom to fit canvas within container and reset pan
     const fitToView = useCallback(() => {
       if (!containerRef.current) return;
@@ -459,11 +503,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               <div 
                 ref={containerRef}
                 onWheel={handleWheel}
-                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} cursor-zoom-in flex-1`}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1`}
                 style={{ 
                   height: '400px',
                   backgroundColor: getBackgroundColor(),
-                  overflow: 'hidden'
+                  overflow: 'hidden',
+                  userSelect: 'none'
                 }}
               >
                 <canvas 
