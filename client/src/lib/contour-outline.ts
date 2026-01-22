@@ -1474,16 +1474,23 @@ export function getContourPath(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings
 ): ContourPathResult | null {
-  // This function now matches the Web Worker algorithm exactly
-  console.log('[getContourPath] Starting with NEW algorithm matching worker');
-  console.log('[getContourPath] strokeSettings:', { 
-    width: strokeSettings.width, 
-    alphaThreshold: strokeSettings.alphaThreshold,
-    closeSmallGaps: strokeSettings.closeSmallGaps,
-    closeBigGaps: strokeSettings.closeBigGaps,
-    backgroundColor: strokeSettings.backgroundColor
-  });
-  const effectiveDPI = image.width / resizeSettings.widthInches;
+  console.log('[getContourPath] Starting - optimized with downscaling');
+  
+  // OPTIMIZATION: Downscale large images for faster path computation
+  // Use 1200px max to balance speed and accuracy for die-cutting
+  // At 1200px for a 4" sticker = 300 DPI effective resolution, sufficient for cut accuracy
+  const maxProcessingPixels = 1200;
+  const longestSide = Math.max(image.width, image.height);
+  const scale = longestSide > maxProcessingPixels ? maxProcessingPixels / longestSide : 1;
+  
+  const processWidth = Math.round(image.width * scale);
+  const processHeight = Math.round(image.height * scale);
+  
+  // Adjusted DPI for scaled image - maintains inch-based accuracy
+  const scaledWidthInches = resizeSettings.widthInches;
+  const effectiveDPI = processWidth / scaledWidthInches;
+  
+  console.log('[getContourPath] Scale:', scale.toFixed(2), 'processSize:', processWidth, 'x', processHeight, 'effectiveDPI:', effectiveDPI.toFixed(0));
   
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
@@ -1495,19 +1502,22 @@ export function getContourPath(
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   try {
-    // Get image data with alpha threshold (matches worker)
+    // Create scaled canvas for faster processing
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d');
     if (!tempCtx) return null;
     
-    tempCanvas.width = image.width;
-    tempCanvas.height = image.height;
-    tempCtx.drawImage(image, 0, 0);
-    const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+    tempCanvas.width = processWidth;
+    tempCanvas.height = processHeight;
+    // Use high-quality interpolation for downscaling to preserve edge detail
+    tempCtx.imageSmoothingEnabled = true;
+    tempCtx.imageSmoothingQuality = 'high';
+    tempCtx.drawImage(image, 0, 0, processWidth, processHeight);
+    const imageData = tempCtx.getImageData(0, 0, processWidth, processHeight);
     const data = imageData.data;
     
     // Create silhouette mask with alpha threshold (matches worker)
-    const silhouetteMask = new Uint8Array(image.width * image.height);
+    const silhouetteMask = new Uint8Array(processWidth * processHeight);
     const threshold = strokeSettings.alphaThreshold || 128;
     for (let i = 0; i < silhouetteMask.length; i++) {
       silhouetteMask[i] = data[i * 4 + 3] >= threshold ? 1 : 0;
@@ -1515,27 +1525,27 @@ export function getContourPath(
     
     if (silhouetteMask.length === 0) return null;
     
-    // Auto bridge step (matches worker)
+    // Auto bridge step (matches worker) - uses processWidth/Height for speed
     let autoBridgedMask = silhouetteMask;
     if (autoBridgePixels > 0) {
       const halfAutoBridge = Math.round(autoBridgePixels / 2);
-      const dilatedAuto = dilateSilhouette(silhouetteMask, image.width, image.height, halfAutoBridge);
-      const dilatedAutoWidth = image.width + halfAutoBridge * 2;
-      const dilatedAutoHeight = image.height + halfAutoBridge * 2;
+      const dilatedAuto = dilateSilhouette(silhouetteMask, processWidth, processHeight, halfAutoBridge);
+      const dilatedAutoWidth = processWidth + halfAutoBridge * 2;
+      const dilatedAutoHeight = processHeight + halfAutoBridge * 2;
       const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
       
-      autoBridgedMask = new Uint8Array(image.width * image.height);
-      for (let y = 0; y < image.height; y++) {
-        for (let x = 0; x < image.width; x++) {
-          autoBridgedMask[y * image.width + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+      autoBridgedMask = new Uint8Array(processWidth * processHeight);
+      for (let y = 0; y < processHeight; y++) {
+        for (let x = 0; x < processWidth; x++) {
+          autoBridgedMask[y * processWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
         }
       }
     }
     
     // Base dilation (matches worker - NO gap closing through mask dilation)
-    const baseDilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, baseOffsetPixels);
-    const baseWidth = image.width + baseOffsetPixels * 2;
-    const baseHeight = image.height + baseOffsetPixels * 2;
+    const baseDilatedMask = dilateSilhouette(autoBridgedMask, processWidth, processHeight, baseOffsetPixels);
+    const baseWidth = processWidth + baseOffsetPixels * 2;
+    const baseHeight = processHeight + baseOffsetPixels * 2;
     
     // Fill silhouette (matches worker)
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
