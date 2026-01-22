@@ -1,5 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
+import { removeLoopsWithClipper, ensureClockwise } from "@/lib/clipper-path";
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>;
@@ -913,16 +914,18 @@ function removeSpikesFromPath(points: Point[]): Point[] {
 }
 
 // Fix crossings that occur in offset contours at sharp corners
+// Uses Clipper.js for robust loop removal
 function fixOffsetCrossings(points: Point[]): Point[] {
   if (points.length < 6) return points;
   
-  let result = [...points];
+  // Use Clipper.js to remove all self-intersections and loops
+  let result = removeLoopsWithClipper(points);
   
-  // Multiple passes to catch all crossings
-  for (let pass = 0; pass < 3; pass++) {
-    result = detectAndFixLineCrossings(result);
-    result = mergeClosePathPoints(result);
-  }
+  // Ensure consistent winding direction (clockwise for cutting)
+  result = ensureClockwise(result);
+  
+  // Additional cleanup pass with legacy method for any remaining issues
+  result = mergeClosePathPoints(result);
   
   return result;
 }

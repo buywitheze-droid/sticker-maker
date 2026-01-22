@@ -439,12 +439,80 @@ function fixOffsetCrossings(points: Point[]): Point[] {
   
   let result = [...points];
   
+  // Multiple passes to catch all crossings and loops
   for (let pass = 0; pass < 3; pass++) {
     result = detectAndFixLineCrossings(result);
     result = mergeClosePathPoints(result);
   }
   
+  // Remove backtracking points (sharp reversals that create tiny loops)
+  result = removeBacktrackingPoints(result);
+  
+  // Ensure consistent winding direction
+  result = ensureClockwiseWinding(result);
+  
   return result;
+}
+
+// Remove points that cause the path to backtrack (sharp >160 degree turns)
+function removeBacktrackingPoints(points: Point[]): Point[] {
+  if (points.length < 5) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    // Skip degenerate cases
+    if (len1 < 0.0001 || len2 < 0.0001) {
+      continue;
+    }
+    
+    // Calculate dot product for angle between vectors
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    
+    // If angle is greater than ~160 degrees (dot < -0.94), this is a backtrack/loop
+    if (dot < -0.94) {
+      continue; // Skip this point
+    }
+    
+    result.push(curr);
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Ensure path goes clockwise (for proper cutting direction)
+function ensureClockwiseWinding(points: Point[]): Point[] {
+  if (points.length < 3) return points;
+  
+  // Calculate signed area (shoelace formula)
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    area += (curr.x * next.y) - (next.x * curr.y);
+  }
+  
+  // Positive area = counter-clockwise, reverse to make clockwise
+  if (area > 0) {
+    return [...points].reverse();
+  }
+  
+  return points;
 }
 
 function detectAndFixLineCrossings(points: Point[]): Point[] {
