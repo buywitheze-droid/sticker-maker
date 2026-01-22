@@ -144,7 +144,10 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   // Fifth pass: Final cleanup
   result = removeBacktracking(result);
   
-  // Sixth pass: Round sharp corners surgically (only acute angles)
+  // Sixth pass: Remove zigzag patterns (closely spaced alternating points)
+  result = removeZigzags(result, 3.0); // Remove zigzags within 3 pixels
+  
+  // Seventh pass: Round sharp corners surgically (only acute angles)
   result = roundSharpCorners(result, 8.0); // 8 pixel rounding radius for flatter, gentler curves
   
   // Seventh pass: Final Clipper cleanup to fix any issues from corner rounding
@@ -257,6 +260,70 @@ function removeBacktracking(points: Point[]): Point[] {
     }
     
     result.push(curr);
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Remove zigzag patterns - sequences of closely spaced points that alternate direction
+function removeZigzags(points: Point[], maxZigzagSpacing: number): Point[] {
+  if (points.length < 5) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  let zigzagsRemoved = 0;
+  
+  let i = 0;
+  while (i < n) {
+    const curr = points[i];
+    
+    // Look ahead for zigzag pattern
+    let zigzagEnd = i;
+    let inZigzag = false;
+    
+    for (let j = i + 1; j < Math.min(i + 10, n); j++) {
+      const p1 = points[j - 1];
+      const p2 = points[j];
+      const dist = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+      
+      if (dist > maxZigzagSpacing) break;
+      
+      // Check for direction reversal
+      if (j >= i + 2) {
+        const p0 = points[j - 2];
+        const v1x = p1.x - p0.x;
+        const v1y = p1.y - p0.y;
+        const v2x = p2.x - p1.x;
+        const v2y = p2.y - p1.y;
+        
+        const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+        const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+        
+        if (len1 > 0.0001 && len2 > 0.0001) {
+          const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+          // Detect sharp turn (angle > 90 degrees)
+          if (dot < 0) {
+            inZigzag = true;
+            zigzagEnd = j;
+          }
+        }
+      }
+    }
+    
+    if (inZigzag && zigzagEnd > i + 1) {
+      // Skip the zigzag, just add start and end points
+      result.push(curr);
+      result.push(points[zigzagEnd]);
+      zigzagsRemoved++;
+      i = zigzagEnd + 1;
+    } else {
+      result.push(curr);
+      i++;
+    }
+  }
+  
+  if (zigzagsRemoved > 0) {
+    console.log('[removeZigzags] Removed', zigzagsRemoved, 'zigzag patterns');
   }
   
   return result.length >= 3 ? result : points;
