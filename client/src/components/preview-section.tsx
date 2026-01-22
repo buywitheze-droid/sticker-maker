@@ -455,44 +455,59 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </Select>
             </div>
 
-            <div 
-              ref={containerRef}
-              onWheel={handleWheel}
-              className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} cursor-zoom-in`}
-              style={{ 
-                height: '400px',
-                backgroundColor: getBackgroundColor(),
-                overflow: 'hidden'
-              }}
-            >
-              <canvas 
-                ref={canvasRef}
-                className="relative z-10 block"
+            <div className="flex items-center gap-2">
+              <div 
+                ref={containerRef}
+                onWheel={handleWheel}
+                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} cursor-zoom-in flex-1`}
                 style={{ 
-                  width: '400px',
                   height: '400px',
-                  transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
-                  transformOrigin: 'center'
+                  backgroundColor: getBackgroundColor(),
+                  overflow: 'hidden'
                 }}
-              />
-              
-              {!imageInfo && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                    <p className="text-gray-500">Upload an image to see preview</p>
+              >
+                <canvas 
+                  ref={canvasRef}
+                  className="relative z-10 block"
+                  style={{ 
+                    width: '400px',
+                    height: '400px',
+                    transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
+                    transformOrigin: 'center'
+                  }}
+                />
+                
+                {!imageInfo && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                      <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500">Upload an image to see preview</p>
+                    </div>
                   </div>
-                </div>
-              )}
-              
-              {isProcessing && imageInfo && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
-                  <div className="text-center">
-                    <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
-                    <p className="text-white text-sm">Processing... {processingProgress}%</p>
+                )}
+                
+                {isProcessing && imageInfo && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
+                    <div className="text-center">
+                      <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
+                      <p className="text-white text-sm">Processing... {processingProgress}%</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+              
+              <div className="flex flex-col items-center gap-1 h-[400px]">
+                <MoveVertical className="h-4 w-4 text-gray-400" />
+                <Slider
+                  value={[panY]}
+                  onValueChange={([value]) => setPanY(value)}
+                  min={-100}
+                  max={100}
+                  step={5}
+                  orientation="vertical"
+                  className="h-full"
+                />
+              </div>
             </div>
 
             <div className="mt-3 space-y-3">
@@ -546,29 +561,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </Button>
               </div>
               
-              <div className="flex items-center gap-3 px-4">
-                <div className="flex items-center gap-2 flex-1">
-                  <MoveHorizontal className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                  <Slider
-                    value={[panX]}
-                    onValueChange={([value]) => setPanX(value)}
-                    min={-100}
-                    max={100}
-                    step={5}
-                    className="flex-1"
-                  />
-                </div>
-                <div className="flex items-center gap-2 flex-1">
-                  <MoveVertical className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                  <Slider
-                    value={[panY]}
-                    onValueChange={([value]) => setPanY(value)}
-                    min={-100}
-                    max={100}
-                    step={5}
-                    className="flex-1"
-                  />
-                </div>
+              <div className="flex items-center gap-2 px-4">
+                <MoveHorizontal className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                <Slider
+                  value={[panX]}
+                  onValueChange={([value]) => setPanX(value)}
+                  min={-100}
+                  max={100}
+                  step={5}
+                  className="flex-1"
+                />
               </div>
             </div>
           </CardContent>
