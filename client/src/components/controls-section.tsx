@@ -48,6 +48,7 @@ export default function ControlsSection({
   const [customerNotes, setCustomerNotes] = useState("");
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [sendDesignExpanded, setSendDesignExpanded] = useState(false);
 
   const handleSendDesign = async () => {
     if (!customerName.trim() || !customerEmail.trim()) {
@@ -339,62 +340,6 @@ export default function ControlsSection({
           </CardContent>
         </Card>
 
-        {/* Send Design Section */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-base font-medium text-gray-900 mb-4">Send Design</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="customer-name">Full Name</Label>
-                <Input
-                  id="customer-name"
-                  type="text"
-                  placeholder="Enter your full name"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="customer-email">Email Address</Label>
-                <Input
-                  id="customer-email"
-                  type="email"
-                  placeholder="Enter your email address"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="customer-notes">Notes to add (optional)</Label>
-                <textarea
-                  id="customer-notes"
-                  placeholder="Add any special instructions or notes..."
-                  value={customerNotes}
-                  onChange={(e) => setCustomerNotes(e.target.value)}
-                  className="mt-1 w-full min-h-[80px] px-3 py-2 text-sm border rounded-md border-input bg-background resize-y"
-                />
-              </div>
-
-              <Button 
-                onClick={handleSendDesign}
-                disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || (!strokeSettings.enabled && !shapeSettings.enabled)}
-                className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
-              >
-                {isSending ? "Sending..." : "Send Design"}
-              </Button>
-              
-              <p className="text-xs text-gray-500 text-center pt-2">
-                We'll save this file and match it to your order using the email provided here. You're all set to complete your order on our website! 😊
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Download Section */}
         <Card>
           <CardContent className="p-6">
@@ -407,6 +352,70 @@ export default function ControlsSection({
                 className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
               >Download PDF</Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Send Design Section - Collapsible */}
+        <Card className={`border-2 transition-colors ${sendDesignExpanded ? 'border-cyan-500 bg-cyan-50' : 'border-gray-200'}`}>
+          <CardContent className="space-y-4 pt-6">
+            <div 
+              className="flex items-center justify-between cursor-pointer"
+              onClick={() => setSendDesignExpanded(!sendDesignExpanded)}
+            >
+              <Label className="text-base font-medium cursor-pointer">Send Design</Label>
+              <span className="text-gray-500">{sendDesignExpanded ? '▲' : '▼'}</span>
+            </div>
+            
+            {sendDesignExpanded && (
+              <div className="space-y-4 mt-4">
+                <div>
+                  <Label htmlFor="customer-name">Full Name</Label>
+                  <Input
+                    id="customer-name"
+                    type="text"
+                    placeholder="Enter your full name"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="customer-email">Email Address</Label>
+                  <Input
+                    id="customer-email"
+                    type="email"
+                    placeholder="Enter your email address"
+                    value={customerEmail}
+                    onChange={(e) => setCustomerEmail(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="customer-notes">Notes to add (optional)</Label>
+                  <textarea
+                    id="customer-notes"
+                    placeholder="Add any special instructions or notes..."
+                    value={customerNotes}
+                    onChange={(e) => setCustomerNotes(e.target.value)}
+                    className="mt-1 w-full min-h-[80px] px-3 py-2 text-sm border rounded-md border-input bg-background resize-y"
+                  />
+                </div>
+
+                <Button 
+                  onClick={handleSendDesign}
+                  disabled={!imageInfo || isProcessing || isSending || !customerName.trim() || !customerEmail.trim() || (!strokeSettings.enabled && !shapeSettings.enabled)}
+                  className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
+                >
+                  {isSending ? "Sending..." : "Send Design"}
+                </Button>
+                
+                <p className="text-xs text-gray-500 text-center pt-2">
+                  We'll save this file and match it to your order using the email provided here. You're all set to complete your order on our website!
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
