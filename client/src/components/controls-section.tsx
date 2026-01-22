@@ -312,27 +312,52 @@ export default function ControlsSection({
 
   const renderStep1 = () => (
     <Card className="border-2 border-cyan-500">
-      <CardContent className="p-6 text-center">
-        <Upload className="w-12 h-12 mx-auto text-cyan-500 mb-4" />
-        <h3 className="text-lg font-semibold mb-2">Upload Your Image</h3>
-        <p className="text-gray-600 mb-4">
-          Drag and drop your PNG image into the preview area, or click to browse.
-        </p>
+      <CardContent className="p-6">
         {imageInfo ? (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-            <Check className="w-5 h-5 text-green-600 mx-auto mb-1" />
-            <p className="text-green-700 font-medium">Image uploaded!</p>
-            <p className="text-sm text-green-600">{imageInfo.file.name}</p>
+          <div className="text-center">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <Check className="w-8 h-8 text-green-600 mx-auto mb-2" />
+              <p className="text-green-700 font-semibold text-lg">Image uploaded!</p>
+              <p className="text-sm text-green-600 mt-1">{imageInfo.file.name}</p>
+            </div>
           </div>
         ) : (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
-            <p className="text-sm text-blue-700 font-medium mb-1">Tips for best results:</p>
-            <ul className="text-xs text-blue-600 space-y-1">
-              <li>• Use PNG format with transparent background</li>
-              <li>• Higher resolution = better print quality</li>
-              <li>• Simple shapes work best for contour cutting</li>
-            </ul>
-          </div>
+          <>
+            <div className="text-center mb-5">
+              <Sparkles className="w-10 h-10 mx-auto text-cyan-500 mb-3" />
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">Let's create your custom sticker!</h3>
+              <p className="text-gray-600">
+                Drop your image on the left to get started.
+              </p>
+            </div>
+            
+            <div className="border-t pt-4">
+              <p className="text-sm text-gray-500 text-center mb-3">Here's what you can create:</p>
+              <div className="flex justify-center gap-4">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-pink-100 to-pink-200 border-2 border-dashed border-pink-400 flex items-center justify-center relative">
+                    <div className="w-10 h-10 bg-pink-400 rounded-full"></div>
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-cyan-500 rounded-full flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-white" />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Contour</p>
+                </div>
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-blue-100 to-blue-200 border-2 border-blue-400 flex items-center justify-center">
+                    <div className="w-10 h-8 bg-blue-400 rounded"></div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Rectangle</p>
+                </div>
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-100 to-green-200 border-2 border-green-400 flex items-center justify-center">
+                    <div className="w-8 h-8 bg-green-400 rounded-sm rotate-12"></div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Circle</p>
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
