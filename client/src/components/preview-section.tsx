@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Move } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -558,51 +558,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 )}
               </div>
               
-              {zoom !== 1 && (
-                <div className="flex flex-col items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setPanY(prev => Math.min(prev + 20, 100))}
-                    className="h-8 w-8 p-0 hover:bg-gray-700"
-                    title="Pan Up"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setPanX(prev => Math.max(prev - 20, -100))}
-                      className="h-8 w-8 p-0 hover:bg-gray-700"
-                      title="Pan Left"
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                    </Button>
-                    <div className="h-8 w-8 flex items-center justify-center rounded bg-gray-700/50">
-                      <Move className="h-4 w-4 text-gray-400" />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setPanX(prev => Math.min(prev + 20, 100))}
-                      className="h-8 w-8 p-0 hover:bg-gray-700"
-                      title="Pan Right"
-                    >
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setPanY(prev => Math.max(prev - 20, -100))}
-                    className="h-8 w-8 p-0 hover:bg-gray-700"
-                    title="Pan Down"
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
             </div>
 
             <div className="mt-3 space-y-3">
@@ -654,8 +609,53 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <RotateCcw className="h-3 w-3 mr-1" />
                   Reset
                 </Button>
+                
+                {zoom !== 1 && (
+                  <>
+                    <div className="w-px h-6 bg-gray-600 mx-2" />
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPanX(prev => Math.max(prev - 15, -100))}
+                        className="h-7 w-7 p-0"
+                        title="Pan Left"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <div className="flex flex-col gap-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setPanY(prev => Math.min(prev + 15, 100))}
+                          className="h-4 w-6 p-0"
+                          title="Pan Up"
+                        >
+                          <ChevronUp className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setPanY(prev => Math.max(prev - 15, -100))}
+                          className="h-4 w-6 p-0"
+                          title="Pan Down"
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPanX(prev => Math.min(prev + 15, 100))}
+                        className="h-7 w-7 p-0"
+                        title="Pan Right"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
-              
             </div>
           </CardContent>
         </Card>
