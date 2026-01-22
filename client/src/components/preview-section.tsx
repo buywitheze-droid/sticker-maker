@@ -220,9 +220,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
+    // Version bump forces cache invalidation when worker code changes
+    const CONTOUR_CACHE_VERSION = 2;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
