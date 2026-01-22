@@ -200,31 +200,20 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
     if (dot > minAngleCos) {
       sharpCornersFound++;
       
-      // Insert arc points to smooth this corner - use larger radius for flatter curves
-      // Allow arc to extend further along the edges for gentler transitions
-      const arcRadius = Math.min(radiusPixels, len1 * 0.5, len2 * 0.5);
-      const numArcPoints = 5; // More points for smoother curve
+      // Simple chamfer: cut the corner by connecting points along each edge
+      const chamferDist = Math.min(radiusPixels, len1 * 0.3, len2 * 0.3);
       
-      // Calculate points along a flatter arc by pushing the midpoint outward
-      for (let j = 0; j <= numArcPoints; j++) {
-        const t = j / numArcPoints;
-        
-        // Linear interpolation between the two edge directions
-        const dx = n1x * (1 - t) + n2x * t;
-        const dy = n1y * (1 - t) + n2y * t;
-        const dlen = Math.sqrt(dx * dx + dy * dy);
-        
-        if (dlen > 0.0001) {
-          // Add slight outward bulge at midpoint for flatter curve
-          const midBulge = 1.0 + 0.3 * Math.sin(t * Math.PI); // Peaks at t=0.5
-          const effectiveRadius = arcRadius * midBulge;
-          
-          result.push({
-            x: curr.x + (dx / dlen) * effectiveRadius,
-            y: curr.y + (dy / dlen) * effectiveRadius
-          });
-        }
-      }
+      // Point along edge toward prev
+      const p1x = curr.x + n1x * chamferDist;
+      const p1y = curr.y + n1y * chamferDist;
+      
+      // Point along edge toward next
+      const p2x = curr.x + n2x * chamferDist;
+      const p2y = curr.y + n2y * chamferDist;
+      
+      // Add the two chamfer points (simple bevel cut)
+      result.push({ x: p1x, y: p1y });
+      result.push({ x: p2x, y: p2y });
     } else {
       // Normal angle, keep the point
       result.push(curr);
