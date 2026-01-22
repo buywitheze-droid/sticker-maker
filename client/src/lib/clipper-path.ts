@@ -24,12 +24,19 @@ function clipperPathToPoints(path: ClipperLib.Path): Point[] {
 export function cleanPathWithClipper(points: Point[]): Point[] {
   if (points.length < 3) return points;
   
+  console.log('[cleanPathWithClipper] Input points:', points.length);
+  
   const clipperPath = pointsToClipperPath(points);
   
   // Use SimplifyPolygon which specifically removes self-intersections
   const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
   
-  if (!simplified || simplified.length === 0) return points;
+  console.log('[cleanPathWithClipper] SimplifyPolygon returned', simplified?.length || 0, 'polygons');
+  
+  if (!simplified || simplified.length === 0) {
+    console.log('[cleanPathWithClipper] SimplifyPolygon failed, returning original');
+    return points;
+  }
   
   // Find the largest polygon by area (main outline, not tiny loop fragments)
   let largestArea = 0;
@@ -43,13 +50,17 @@ export function cleanPathWithClipper(points: Point[]): Point[] {
     }
   }
   
+  console.log('[cleanPathWithClipper] Largest polygon has', largestPath.length, 'points, area:', largestArea);
+  
   // Also clean up any micro-vertices that are very close together
   const cleaned = ClipperLib.Clipper.CleanPolygon(largestPath, 2 * CLIPPER_SCALE / 100000);
   
   if (!cleaned || cleaned.length < 3) {
+    console.log('[cleanPathWithClipper] CleanPolygon failed, returning largest');
     return clipperPathToPoints(largestPath);
   }
   
+  console.log('[cleanPathWithClipper] Final cleaned points:', cleaned.length);
   return clipperPathToPoints(cleaned);
 }
 
