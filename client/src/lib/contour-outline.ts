@@ -1218,7 +1218,61 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     }
   }
   
+  // Apply smoothing pass to eliminate wave artifacts from gap closing
+  // This is especially important for medium/small offsets
+  if (result.length >= 10 && refinedGaps.length > 0) {
+    return smoothBridgeAreas(result);
+  }
+  
   return result.length >= 3 ? result : points;
+}
+
+// Smooth the path to eliminate wave artifacts, especially around bridge areas
+function smoothBridgeAreas(points: Point[]): Point[] {
+  if (points.length < 10) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  
+  // Apply 3-point weighted average smoothing (preserves shape while reducing waves)
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || i === n - 1) {
+      result.push(points[i]);
+    } else {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const next = points[i + 1];
+      
+      // Check if this point creates a sharp angle (wave artifact)
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+      
+      if (len1 > 0.1 && len2 > 0.1) {
+        // Calculate angle between segments
+        const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+        
+        // If sharp angle (less than ~120 degrees), smooth it
+        if (dot < 0.5) {
+          // Weighted average toward neighbors (flatten the wave)
+          result.push({
+            x: prev.x * 0.25 + curr.x * 0.5 + next.x * 0.25,
+            y: prev.y * 0.25 + curr.y * 0.5 + next.y * 0.25
+          });
+        } else {
+          result.push(curr);
+        }
+      } else {
+        result.push(curr);
+      }
+    }
+  }
+  
+  return result;
 }
 
 // Merge points that are very close together (indicating a near-crossing)
