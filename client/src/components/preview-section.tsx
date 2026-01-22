@@ -496,18 +496,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 )}
               </div>
               
-              <div className="flex flex-col items-center gap-1 h-[400px]">
-                <MoveVertical className="h-4 w-4 text-gray-400" />
-                <Slider
-                  value={[panY]}
-                  onValueChange={([value]) => setPanY(value)}
-                  min={-100}
-                  max={100}
-                  step={5}
-                  orientation="vertical"
-                  className="h-full"
-                />
-              </div>
+              {zoom !== 1 && (
+                <div className="flex flex-col items-center gap-1 h-[400px]">
+                  <MoveVertical className="h-4 w-4 text-gray-400" />
+                  <Slider
+                    value={[panY]}
+                    onValueChange={([value]) => setPanY(value)}
+                    min={-100}
+                    max={100}
+                    step={5}
+                    orientation="vertical"
+                    className="h-full"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="mt-3 space-y-3">
@@ -561,17 +563,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </Button>
               </div>
               
-              <div className="flex items-center gap-2 px-4">
-                <MoveHorizontal className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                <Slider
-                  value={[panX]}
-                  onValueChange={([value]) => setPanX(value)}
-                  min={-100}
-                  max={100}
-                  step={5}
-                  className="flex-1"
-                />
-              </div>
+              {zoom !== 1 && (
+                <div className="flex items-center gap-2 px-4">
+                  <MoveHorizontal className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                  <Slider
+                    value={[panX]}
+                    onValueChange={([value]) => setPanX(value)}
+                    min={-100}
+                    max={100}
+                    step={5}
+                    className="flex-1"
+                  />
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
