@@ -1499,8 +1499,19 @@ export async function downloadContourPDF(
       bgCtx.fill();   // Inner area
     }
     
+    // Flip the canvas vertically for PDF coordinate system (bottom-left origin)
+    const flippedBgCanvas = document.createElement('canvas');
+    flippedBgCanvas.width = bgCanvas.width;
+    flippedBgCanvas.height = bgCanvas.height;
+    const flippedBgCtx = flippedBgCanvas.getContext('2d');
+    if (flippedBgCtx) {
+      flippedBgCtx.translate(0, bgCanvas.height);
+      flippedBgCtx.scale(1, -1);
+      flippedBgCtx.drawImage(bgCanvas, 0, 0);
+    }
+    
     const bgBlob = await new Promise<Blob>((resolve, reject) => {
-      bgCanvas.toBlob((b) => {
+      flippedBgCanvas.toBlob((b) => {
         if (b) resolve(b);
         else reject(new Error('Failed to create blob from canvas'));
       }, 'image/png');
@@ -1697,8 +1708,19 @@ export async function generateContourPDFBase64(
     bgCtx.fill();   // Inner area
   }
   
+  // Flip the canvas vertically for PDF coordinate system (bottom-left origin)
+  const flippedBgCanvas = document.createElement('canvas');
+  flippedBgCanvas.width = bgCanvas.width;
+  flippedBgCanvas.height = bgCanvas.height;
+  const flippedBgCtx = flippedBgCanvas.getContext('2d');
+  if (flippedBgCtx) {
+    flippedBgCtx.translate(0, bgCanvas.height);
+    flippedBgCtx.scale(1, -1);
+    flippedBgCtx.drawImage(bgCanvas, 0, 0);
+  }
+  
   const bgBlob = await new Promise<Blob>((resolve) => {
-    bgCanvas.toBlob((b) => resolve(b!), 'image/png');
+    flippedBgCanvas.toBlob((b) => resolve(b!), 'image/png');
   });
   const bgPngBytes = new Uint8Array(await bgBlob.arrayBuffer());
   const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
