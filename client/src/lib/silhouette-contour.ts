@@ -1033,8 +1033,8 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     );
     const midpointDist = Math.sqrt((midPt.x - centroidX) ** 2 + (midPt.y - centroidY) ** 2);
     
-    // If midpoint is farther from centroid, gap opens OUTWARD (exterior)
-    return midpointDist >= gapEndpointDist * 0.9;
+    // If midpoint is CLOSER to centroid, gap opens from OUTSIDE (exterior)
+    return midpointDist <= gapEndpointDist * 1.1;
   });
   
   if (exteriorGaps.length === 0) return points;

@@ -1107,9 +1107,9 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     );
     const midpointDist = Math.sqrt((midPt.x - centroidX) ** 2 + (midPt.y - centroidY) ** 2);
     
-    // If midpoint is farther from centroid than endpoints, gap opens OUTWARD (exterior)
-    // If midpoint is closer to centroid than endpoints, gap opens INWARD (interior feature)
-    const isExteriorGap = midpointDist >= gapEndpointDist * 0.9; // 0.9 for some tolerance
+    // If midpoint is CLOSER to centroid than endpoints, gap opens from OUTSIDE (exterior indentation)
+    // If midpoint is FARTHER from centroid than endpoints, gap opens from INSIDE (interior feature)
+    const isExteriorGap = midpointDist <= gapEndpointDist * 1.1; // Gap section dips inward = exterior entrance
     
     if (!isExteriorGap) {
       console.log('[closeGapsWithShapes] Skipping interior gap at', gap.i, '-', gap.j);
