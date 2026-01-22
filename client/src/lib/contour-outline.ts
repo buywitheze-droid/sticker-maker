@@ -1575,6 +1575,19 @@ export function getContourPath(
     smoothedPath = fixOffsetCrossings(smoothedPath);
     console.log('[getContourPath] After fixOffsetCrossings, path points:', smoothedPath.length);
     
+    // OPTIMIZATION: Simplify path BEFORE gap closing to reduce point count
+    // This dramatically speeds up gap detection
+    if (smoothedPath.length > 500) {
+      const targetPoints = 400;
+      const step = smoothedPath.length / targetPoints;
+      const simplified: Point[] = [];
+      for (let i = 0; i < targetPoints; i++) {
+        simplified.push(smoothedPath[Math.floor(i * step)]);
+      }
+      smoothedPath = simplified;
+      console.log('[getContourPath] Simplified path to', smoothedPath.length, 'points for gap closing');
+    }
+    
     // Apply gap closing using U/N shapes based on settings (matches worker)
     const gapThresholdPixels = strokeSettings.closeBigGaps 
       ? Math.round(0.35 * effectiveDPI) 
@@ -1583,14 +1596,17 @@ export function getContourPath(
         : 0;
     
     if (gapThresholdPixels > 0) {
+      console.log('[getContourPath] Starting gap closing with threshold:', gapThresholdPixels);
+      const startTime = performance.now();
       smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+      console.log('[getContourPath] Gap closing took:', (performance.now() - startTime).toFixed(0), 'ms');
+      
       // Ensure path is properly closed after gap processing
       if (smoothedPath.length > 2) {
         const first = smoothedPath[0];
         const last = smoothedPath[smoothedPath.length - 1];
         const closeDist = Math.sqrt((first.x - last.x) ** 2 + (first.y - last.y) ** 2);
         if (closeDist > 2) {
-          // Add closing point if path doesn't close properly
           smoothedPath.push({ x: first.x, y: first.y });
         }
       }
