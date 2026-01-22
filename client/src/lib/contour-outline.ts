@@ -291,7 +291,7 @@ export function createSilhouetteContour(
     
     // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.20 * effectiveDPI) 
+      ? Math.round(0.35 * effectiveDPI) 
       : strokeSettings.closeSmallGaps 
         ? Math.round(0.15 * effectiveDPI) 
         : 0;
@@ -1418,13 +1418,23 @@ export function getContourPath(
     
     // Apply gap closing using U/N shapes based on settings (matches worker)
     const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.20 * effectiveDPI) 
+      ? Math.round(0.35 * effectiveDPI) 
       : strokeSettings.closeSmallGaps 
         ? Math.round(0.15 * effectiveDPI) 
         : 0;
     
     if (gapThresholdPixels > 0) {
       smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+      // Ensure path is properly closed after gap processing
+      if (smoothedPath.length > 2) {
+        const first = smoothedPath[0];
+        const last = smoothedPath[smoothedPath.length - 1];
+        const closeDist = Math.sqrt((first.x - last.x) ** 2 + (first.y - last.y) ** 2);
+        if (closeDist > 2) {
+          // Add closing point if path doesn't close properly
+          smoothedPath.push({ x: first.x, y: first.y });
+        }
+      }
     }
     
     // Add bleed to dimensions so expanded background fits within page
