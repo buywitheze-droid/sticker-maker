@@ -233,7 +233,7 @@ function processContour(
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
-    ? Math.round(0.19 * effectiveDPI) 
+    ? Math.round(0.39 * effectiveDPI) 
     : strokeSettings.closeSmallGaps 
       ? Math.round(0.07 * effectiveDPI) 
       : 0;
