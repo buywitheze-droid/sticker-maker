@@ -42,9 +42,9 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
     try {
       postProgress(10);
       
-      // For preview mode with large images, process at moderate resolution
-      // Balance between quality and speed
-      const maxPreviewDimension = 650;
+      // For preview mode with large images, limit max size to prevent memory issues
+      // Worker runs off main thread so UI stays responsive
+      const maxPreviewDimension = 800;
       const shouldDownscale = previewMode && 
         (imageData.width > maxPreviewDimension || imageData.height > maxPreviewDimension);
       
