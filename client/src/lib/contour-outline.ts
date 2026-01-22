@@ -1027,7 +1027,7 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   const result: Point[] = [];
   const processed = new Set<number>();
   
-  // Calculate centroid of the shape to determine gap direction (inside vs outside)
+  // Calculate centroid and average distance from centroid for the entire shape
   let centroidX = 0, centroidY = 0;
   for (const p of points) {
     centroidX += p.x;
@@ -1035,6 +1035,13 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   }
   centroidX /= n;
   centroidY /= n;
+  
+  // Calculate average distance from centroid (the "normal" radius of the shape)
+  let totalDist = 0;
+  for (const p of points) {
+    totalDist += Math.sqrt((p.x - centroidX) ** 2 + (p.y - centroidY) ** 2);
+  }
+  const avgDistFromCentroid = totalDist / n;
   
   // Find all gap locations where path points are within threshold but far apart in path order
   const gaps: Array<{i: number, j: number, dist: number}> = [];
@@ -1093,29 +1100,34 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   console.log('[closeGapsWithShapes] Found', gaps.length, 'potential gaps');
   
-  // Filter to only keep gaps that open to the EXTERIOR (entrance from outside)
-  // Gaps with entrances from inside the shape should be preserved as internal features
+  // Filter to only keep gaps that open to the EXTERIOR (P-shaped caves opening from outside)
+  // A cave opening from outside has its interior (the section between i and j) CLOSER to centroid
+  // than the shape's average distance - meaning it dips INTO the shape
   const exteriorGaps = gaps.filter(gap => {
-    // Find the midpoint of the gap section (the part between i and j)
-    const midIdx = Math.floor((gap.i + gap.j) / 2);
-    const midPt = points[midIdx];
+    // Calculate average distance of the gap section from centroid
+    let gapSectionDist = 0;
+    let gapSectionCount = 0;
+    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
+    for (let k = gap.i; k <= gap.j; k += sampleStride) {
+      const pk = points[k];
+      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
+      gapSectionCount++;
+    }
+    const avgGapDist = gapSectionDist / gapSectionCount;
     
-    // Check distances from centroid
-    const gapEndpointDist = Math.min(
-      Math.sqrt((points[gap.i].x - centroidX) ** 2 + (points[gap.i].y - centroidY) ** 2),
-      Math.sqrt((points[gap.j].x - centroidX) ** 2 + (points[gap.j].y - centroidY) ** 2)
-    );
-    const midpointDist = Math.sqrt((midPt.x - centroidX) ** 2 + (midPt.y - centroidY) ** 2);
+    // Exterior cave: gap section average is LESS than shape average (dips inward)
+    // Interior feature: gap section average is GREATER than shape average (extends outward)
+    const isExteriorCave = avgGapDist < avgDistFromCentroid * 0.95;
     
-    // If midpoint is CLOSER to centroid than endpoints, gap opens from OUTSIDE (exterior indentation)
-    // If midpoint is FARTHER from centroid than endpoints, gap opens from INSIDE (interior feature)
-    const isExteriorGap = midpointDist <= gapEndpointDist * 1.1; // Gap section dips inward = exterior entrance
-    
-    if (!isExteriorGap) {
-      console.log('[closeGapsWithShapes] Skipping interior gap at', gap.i, '-', gap.j);
+    if (!isExteriorCave) {
+      console.log('[closeGapsWithShapes] Preserving interior feature at', gap.i, '-', gap.j, 
+        'avgGapDist:', avgGapDist.toFixed(1), 'shapeAvg:', avgDistFromCentroid.toFixed(1));
+    } else {
+      console.log('[closeGapsWithShapes] Will close exterior cave at', gap.i, '-', gap.j,
+        'avgGapDist:', avgGapDist.toFixed(1), 'shapeAvg:', avgDistFromCentroid.toFixed(1));
     }
     
-    return isExteriorGap;
+    return isExteriorCave;
   });
   
   console.log('[closeGapsWithShapes] Exterior gaps to close:', exteriorGaps.length);
