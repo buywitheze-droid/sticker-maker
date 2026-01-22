@@ -164,14 +164,15 @@ class ContourWorkerManager {
       imageData.height
     );
 
-    // Use full DPI for preview - worker runs off main thread so UI stays responsive
-    const previewDPI = Math.min(300, resizeSettings.outputDPI);
+    // Calculate effective DPI based on image pixels and target size in inches
+    // This ensures stroke width is calculated correctly relative to the design size
+    const effectiveDPI = image.width / resizeSettings.widthInches;
     
     const request: ProcessRequest = {
       imageData: clonedData,
       strokeSettings,
-      effectiveDPI: previewDPI,
-      resizeSettings: { ...resizeSettings, outputDPI: previewDPI },
+      effectiveDPI: effectiveDPI,
+      resizeSettings: { ...resizeSettings, outputDPI: effectiveDPI },
       previewMode: true
     };
 
