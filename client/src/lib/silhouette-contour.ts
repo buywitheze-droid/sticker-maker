@@ -970,7 +970,7 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   // Limit how much of path we can skip to avoid deleting entire outline
   const maxSkipPoints = Math.floor(n * 0.25); // Max 25% of path per gap
-  const minSkipPoints = 30; // Must skip at least 30 points to be a real gap
+  const minSkipPoints = 15; // Must skip at least 15 points to be a real gap
   
   const stride = n > 1000 ? 3 : n > 500 ? 2 : 1;
   const thresholdSq = gapThreshold * gapThreshold;
@@ -1000,8 +1000,8 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
           maxPerpDist = Math.max(maxPerpDist, perpDist);
         }
         
-        // If path extends more than 2x the gap distance, it's a protrusion - don't close
-        if (maxPerpDist > dist * 2) {
+        // If path extends more than 3x the gap distance, it's a protrusion - don't close
+        if (maxPerpDist > dist * 3) {
           continue;
         }
         
