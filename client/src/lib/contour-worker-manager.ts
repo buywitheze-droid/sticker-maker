@@ -164,8 +164,8 @@ class ContourWorkerManager {
       imageData.height
     );
 
-    // Use lower DPI for preview to improve responsiveness (100 DPI vs 300 DPI)
-    const previewDPI = Math.min(100, resizeSettings.outputDPI);
+    // Use moderate DPI for preview - balance between quality and speed
+    const previewDPI = Math.min(150, resizeSettings.outputDPI);
     
     const request: ProcessRequest = {
       imageData: clonedData,
