@@ -56,7 +56,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const deltaY = e.clientY - dragStartRef.current.y;
       
       // Convert pixel movement to pan percentage (400px canvas = 100%)
-      const sensitivity = 0.5; // Adjust for smoother panning
+      const sensitivity = 0.6; // Increased 20% for faster panning
       const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
       const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
       
