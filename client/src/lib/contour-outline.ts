@@ -520,22 +520,26 @@ function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
 function dilateSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
   const newWidth = width + radius * 2;
   const newHeight = height + radius * 2;
-  const dilated = new Uint8Array(newWidth * newHeight);
+  const result = new Uint8Array(newWidth * newHeight);
   
   if (radius <= 0) {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        dilated[y * newWidth + x] = mask[y * width + x];
+        result[y * newWidth + x] = mask[y * width + x];
       }
     }
-    return dilated;
+    return result;
   }
   
-  const circleOffsets: { dx: number; dy: number }[] = [];
+  // Optimized circular dilation with precomputed offsets
+  const radiusSq = radius * radius;
+  
+  // Precompute circle offsets once
+  const offsets: number[] = [];
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
-      if (dx * dx + dy * dy <= radius * radius) {
-        circleOffsets.push({ dx, dy });
+      if (dx * dx + dy * dy <= radiusSq) {
+        offsets.push(dy * newWidth + dx);
       }
     }
   }
@@ -543,21 +547,15 @@ function dilateSilhouette(mask: Uint8Array, width: number, height: number, radiu
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        const centerX = x + radius;
-        const centerY = y + radius;
-        
-        for (const { dx, dy } of circleOffsets) {
-          const nx = centerX + dx;
-          const ny = centerY + dy;
-          if (nx >= 0 && nx < newWidth && ny >= 0 && ny < newHeight) {
-            dilated[ny * newWidth + nx] = 1;
-          }
+        const centerIdx = (y + radius) * newWidth + (x + radius);
+        for (let i = 0; i < offsets.length; i++) {
+          result[centerIdx + offsets[i]] = 1;
         }
       }
     }
   }
   
-  return dilated;
+  return result;
 }
 
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {

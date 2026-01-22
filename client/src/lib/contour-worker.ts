@@ -42,9 +42,9 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
     try {
       postProgress(10);
       
-      // For preview mode with large images, limit max size to prevent memory issues
-      // Worker runs off main thread so UI stays responsive
-      const maxPreviewDimension = 800;
+      // For preview mode with large images, aggressively downscale for instant rendering
+      // 400px matches the preview canvas size for optimal performance
+      const maxPreviewDimension = 400;
       const shouldDownscale = previewMode && 
         (imageData.width > maxPreviewDimension || imageData.height > maxPreviewDimension);
       
@@ -321,19 +321,25 @@ function dilateSilhouette(mask: Uint8Array, width: number, height: number, radiu
   const newHeight = height + radius * 2;
   const result = new Uint8Array(newWidth * newHeight);
   
+  // Optimized circular dilation with early-exit and precomputed offsets
   const radiusSq = radius * radius;
+  
+  // Precompute circle offsets once
+  const offsets: number[] = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy <= radiusSq) {
+        offsets.push(dy * newWidth + dx);
+      }
+    }
+  }
   
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            if (dx * dx + dy * dy <= radiusSq) {
-              const nx = x + radius + dx;
-              const ny = y + radius + dy;
-              result[ny * newWidth + nx] = 1;
-            }
-          }
+        const centerIdx = (y + radius) * newWidth + (x + radius);
+        for (let i = 0; i < offsets.length; i++) {
+          result[centerIdx + offsets[i]] = 1;
         }
       }
     }
