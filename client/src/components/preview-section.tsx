@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2 } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,6 +28,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
+    
+    // Fit to View: calculate zoom to fit canvas within container
+    const fitToView = useCallback(() => {
+      if (!containerRef.current) return;
+      const containerWidth = containerRef.current.clientWidth - 40; // padding
+      const containerHeight = containerRef.current.clientHeight - 40;
+      const canvasSize = 400; // fixed canvas size
+      const scaleX = containerWidth / canvasSize;
+      const scaleY = containerHeight / canvasSize;
+      const fitZoom = Math.min(scaleX, scaleY, 1); // max at 100%
+      setZoom(Math.max(0.2, Math.round(fitZoom * 20) / 20)); // round to 5% steps
+    }, []);
+    
+    // Mouse wheel zoom handler
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setZoom(prev => Math.max(0.2, Math.min(3, prev + delta)));
+    }, []);
     
     // Auto-set zoom to 75% for images with no empty space around them
     useEffect(() => {
@@ -426,7 +445,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
             <div 
               ref={containerRef}
-              className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()}`}
+              onWheel={handleWheel}
+              className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} cursor-zoom-in`}
               style={{ 
                 height: '400px',
                 backgroundColor: getBackgroundColor(),
@@ -463,43 +483,54 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               )}
             </div>
 
-            <div className="mt-3 flex items-center justify-center gap-2">
+            <div className="mt-3 flex items-center justify-center gap-1">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setZoom(prev => Math.max(prev - 0.2, 0.2))}
+                onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
                 className="h-8 w-8 p-0"
-                title="Zoom Out"
+                title="Zoom Out (or scroll down)"
               >
                 <ZoomOut className="h-4 w-4" />
               </Button>
               
-              <span className="text-sm text-gray-500 min-w-[60px] text-center">
+              <span className="text-sm text-gray-400 min-w-[50px] text-center font-medium">
                 {Math.round(zoom * 100)}%
               </span>
               
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setZoom(prev => Math.min(prev + 0.2, 3))}
+                onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
                 className="h-8 w-8 p-0"
-                title="Zoom In"
+                title="Zoom In (or scroll up)"
               >
                 <ZoomIn className="h-4 w-4" />
               </Button>
               
-              {zoom !== 1 && (
-                <Button 
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setZoom(1)}
-                  className="h-8 px-2 ml-2"
-                  title="Reset Zoom"
-                >
-                  <RotateCcw className="h-3 w-3 mr-1" />
-                  Reset
-                </Button>
-              )}
+              <div className="w-px h-6 bg-gray-600 mx-2" />
+              
+              <Button 
+                variant="outline"
+                size="sm"
+                onClick={fitToView}
+                className="h-8 px-2"
+                title="Fit to View"
+              >
+                <Maximize2 className="h-3 w-3 mr-1" />
+                Fit
+              </Button>
+              
+              <Button 
+                variant="outline"
+                size="sm"
+                onClick={() => setZoom(1)}
+                className="h-8 px-2"
+                title="Reset to 100%"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                100%
+              </Button>
             </div>
           </CardContent>
         </Card>
