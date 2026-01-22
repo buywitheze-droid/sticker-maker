@@ -30,6 +30,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
+    const baseContourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
     
     // Drag-to-pan state
@@ -218,32 +219,46 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
+    const generateBaseContourCacheKey = useCallback(() => {
+      if (!imageInfo) return '';
+      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}`;
+    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor]);
+
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      // Cache key excludes outputDPI (always 100 for preview) and color (always #FF00FF for preview)
-      return `${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
-    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, resizeSettings.widthInches, resizeSettings.heightInches]);
+      return `${generateBaseContourCacheKey()}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, generateBaseContourCacheKey, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
       if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
         contourCacheRef.current = null;
+        baseContourCacheRef.current = null;
         return;
       }
 
-      const cacheKey = generateContourCacheKey();
-      if (contourCacheRef.current?.key === cacheKey) return;
+      const baseCacheKey = generateBaseContourCacheKey();
+      const fullCacheKey = generateContourCacheKey();
+      
+      if (contourCacheRef.current?.key === fullCacheKey) return;
+
+      if (baseContourCacheRef.current?.key === baseCacheKey) {
+        contourCacheRef.current = { 
+          key: fullCacheKey, 
+          canvas: baseContourCacheRef.current.canvas 
+        };
+        return;
+      }
 
       const currentId = ++processingIdRef.current;
       setIsProcessing(true);
       setProcessingProgress(0);
 
       const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
-      // Use lower DPI (100) for preview to improve responsiveness
       const workerResizeSettings = {
         widthInches: resizeSettings.widthInches,
         heightInches: resizeSettings.heightInches,
         maintainAspectRatio: resizeSettings.maintainAspectRatio,
-        outputDPI: 100 // Fixed low DPI for preview, full DPI only for export
+        outputDPI: 100
       };
 
       processContourInWorker(
@@ -257,7 +272,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       ).then((contourCanvas) => {
         if (processingIdRef.current === currentId) {
-          contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
+          baseContourCacheRef.current = { key: baseCacheKey, canvas: contourCanvas };
+          contourCacheRef.current = { key: fullCacheKey, canvas: contourCanvas };
           setIsProcessing(false);
         }
       }).catch((error) => {
@@ -266,7 +282,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           setIsProcessing(false);
         }
       });
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateBaseContourCacheKey, generateContourCacheKey]);
 
     useEffect(() => {
       if (!canvasRef.current || !imageInfo) return;
