@@ -31,6 +31,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
+    const [showHighlight, setShowHighlight] = useState(false);
+    const lastSettingsRef = useRef<string>('');
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -291,6 +293,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor, isProcessing]);
 
+    useEffect(() => {
+      if (!imageInfo) return;
+      const settingsKey = `${strokeSettings.enabled}-${strokeSettings.width}-${shapeSettings.enabled}-${shapeSettings.type}-${resizeSettings.widthInches}`;
+      if (lastSettingsRef.current && lastSettingsRef.current !== settingsKey) {
+        setShowHighlight(true);
+        const timer = setTimeout(() => setShowHighlight(false), 500);
+        return () => clearTimeout(timer);
+      }
+      lastSettingsRef.current = settingsKey;
+    }, [imageInfo, strokeSettings.enabled, strokeSettings.width, shapeSettings.enabled, shapeSettings.type, resizeSettings.widthInches]);
+
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
@@ -505,7 +518,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseLeave}
-                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1`}
+                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
                   height: '400px',
                   backgroundColor: getBackgroundColor(),

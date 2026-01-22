@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
-import { ChevronLeft, ChevronRight, Upload, Ruler, Shapes, Download, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Upload, Ruler, Shapes, Download, Check, HelpCircle, ChevronDown, Sparkles, PartyPopper } from "lucide-react";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -38,6 +38,91 @@ const STEPS = [
   { number: 4, label: "Finish", icon: Download },
 ];
 
+const Tooltip = ({ text }: { text: string }) => (
+  <div className="group relative inline-block ml-1">
+    <HelpCircle className="w-4 h-4 text-gray-400 cursor-help" />
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+      {text}
+      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+    </div>
+  </div>
+);
+
+const ProgressSummary = ({ 
+  imageInfo, 
+  stickerSize, 
+  strokeSettings, 
+  shapeSettings,
+  currentStep 
+}: { 
+  imageInfo: ImageInfo | null;
+  stickerSize: StickerSize;
+  strokeSettings: StrokeSettings;
+  shapeSettings: ShapeSettings;
+  currentStep: number;
+}) => {
+  if (currentStep === 1) return null;
+  
+  const items = [];
+  if (imageInfo && currentStep > 1) {
+    items.push({ label: "Image", value: imageInfo.file.name.slice(0, 15) + (imageInfo.file.name.length > 15 ? "..." : "") });
+  }
+  if (currentStep > 2) {
+    items.push({ label: "Size", value: `${stickerSize}"` });
+  }
+  if (currentStep > 3) {
+    if (strokeSettings.enabled) {
+      items.push({ label: "Outline", value: "Contour" });
+    } else if (shapeSettings.enabled) {
+      items.push({ label: "Outline", value: shapeSettings.type.charAt(0).toUpperCase() + shapeSettings.type.slice(1) });
+    }
+  }
+  
+  if (items.length === 0) return null;
+  
+  return (
+    <div className="bg-gray-100 rounded-lg p-2 mb-4 flex flex-wrap gap-2">
+      {items.map((item, i) => (
+        <span key={i} className="text-xs bg-white px-2 py-1 rounded border flex items-center gap-1">
+          <Check className="w-3 h-3 text-green-500" />
+          <span className="text-gray-500">{item.label}:</span>
+          <span className="font-medium">{item.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const CelebrationAnimation = () => {
+  const [show, setShow] = useState(true);
+  
+  useEffect(() => {
+    const timer = setTimeout(() => setShow(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+  
+  if (!show) return null;
+  
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {[...Array(12)].map((_, i) => (
+        <div
+          key={i}
+          className="absolute animate-bounce"
+          style={{
+            left: `${10 + (i * 8)}%`,
+            top: `${Math.random() * 30}%`,
+            animationDelay: `${i * 0.1}s`,
+            animationDuration: `${0.5 + Math.random() * 0.5}s`
+          }}
+        >
+          <Sparkles className={`w-4 h-4 ${i % 3 === 0 ? 'text-yellow-400' : i % 3 === 1 ? 'text-cyan-400' : 'text-pink-400'}`} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default function ControlsSection({
   strokeSettings,
   resizeSettings,
@@ -55,8 +140,14 @@ export default function ControlsSection({
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [currentStep, setCurrentStepInternal] = useState<WizardStep>(1);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   
   const setCurrentStep = (step: WizardStep) => {
+    if (step === 4 && currentStep !== 4) {
+      setShowCelebration(true);
+      setTimeout(() => setShowCelebration(false), 2500);
+    }
     setCurrentStepInternal(step);
     onStepChange?.(step);
   };
@@ -163,7 +254,7 @@ export default function ControlsSection({
   };
 
   const StepIndicator = () => (
-    <div className="flex items-center justify-between mb-6">
+    <div className="flex items-center justify-between mb-4">
       {STEPS.map((step, index) => {
         const Icon = step.icon;
         const isActive = currentStep === step.number;
@@ -181,8 +272,8 @@ export default function ControlsSection({
               disabled={!isClickable}
               className={`flex flex-col items-center ${isClickable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
             >
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                isActive ? 'bg-cyan-500 text-white' :
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                isActive ? 'bg-cyan-500 text-white scale-110 shadow-lg' :
                 isCompleted ? 'bg-green-500 text-white' :
                 'bg-gray-200 text-gray-500'
               }`}>
@@ -193,7 +284,7 @@ export default function ControlsSection({
               </span>
             </button>
             {index < STEPS.length - 1 && (
-              <div className={`w-8 h-0.5 mx-1 ${currentStep > step.number ? 'bg-green-500' : 'bg-gray-200'}`} />
+              <div className={`w-8 h-0.5 mx-1 transition-colors ${currentStep > step.number ? 'bg-green-500' : 'bg-gray-200'}`} />
             )}
           </div>
         );
@@ -207,7 +298,7 @@ export default function ControlsSection({
         <Upload className="w-12 h-12 mx-auto text-cyan-500 mb-4" />
         <h3 className="text-lg font-semibold mb-2">Upload Your Image</h3>
         <p className="text-gray-600 mb-4">
-          Drag and drop your PNG image into the preview area on the left, or click to browse.
+          Drag and drop your PNG image into the preview area, or click to browse.
         </p>
         {imageInfo ? (
           <div className="bg-green-50 border border-green-200 rounded-lg p-3">
@@ -216,7 +307,14 @@ export default function ControlsSection({
             <p className="text-sm text-green-600">{imageInfo.file.name}</p>
           </div>
         ) : (
-          <p className="text-sm text-gray-500">Supported format: PNG with transparency</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
+            <p className="text-sm text-blue-700 font-medium mb-1">Tips for best results:</p>
+            <ul className="text-xs text-blue-600 space-y-1">
+              <li>• Use PNG format with transparent background</li>
+              <li>• Higher resolution = better print quality</li>
+              <li>• Simple shapes work best for contour cutting</li>
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -228,7 +326,7 @@ export default function ControlsSection({
         <Ruler className="w-10 h-10 text-cyan-500 mb-4" />
         <h3 className="text-lg font-semibold mb-2">Choose Sticker Size</h3>
         <p className="text-gray-600 mb-4">
-          Select the maximum width or height for your sticker.
+          Pick the size that fits your needs.
         </p>
         <Select
           value={stickerSize.toString()}
@@ -245,40 +343,60 @@ export default function ControlsSection({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-gray-500 mt-3 text-center">
-          Your design will be resized to fit within this dimension
-        </p>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+          <p className="text-xs text-amber-700">
+            <strong>Tip:</strong> This is the maximum width or height. Your design keeps its proportions and fits within this size.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
 
   const renderStep3 = () => (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-center mb-4">Choose Outline Type</h3>
+      <div className="text-center mb-4">
+        <h3 className="text-lg font-semibold">Choose Outline Type</h3>
+        <p className="text-sm text-gray-500">This determines how your sticker will be cut</p>
+      </div>
       
       <Card 
         className={`border-2 transition-all cursor-pointer hover:shadow-md ${
-          strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50' : 'border-gray-200 hover:border-gray-300'
+          strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50 shadow-md' : 'border-gray-200 hover:border-gray-300'
         }`}
-        onClick={() => onStrokeChange({ enabled: true })}
+        onClick={() => { onStrokeChange({ enabled: true }); setShowAdvanced(false); }}
       >
         <CardContent className="p-4">
-          <div className="flex items-center space-x-3">
-            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+          <div className="flex items-start gap-3">
+            <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
               strokeSettings.enabled ? 'border-cyan-500 bg-cyan-500' : 'border-gray-300'
             }`}>
               {strokeSettings.enabled && <Check className="w-3 h-3 text-white" />}
             </div>
-            <div>
-              <Label className="text-base font-medium cursor-pointer">Contour Outline</Label>
-              <p className="text-sm text-gray-500">Follows the shape of your design</p>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <Label className="text-base font-medium cursor-pointer">Contour Outline</Label>
+                <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded">Most Popular</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">Cut follows your design's shape exactly</p>
+              
+              <div className="flex items-center gap-4 mt-3 p-2 bg-white rounded border">
+                <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center">
+                  <div className="w-8 h-6 bg-cyan-400 rounded-sm relative">
+                    <div className="absolute -inset-1 border-2 border-dashed border-red-400 rounded-md" />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">The cut line traces around your design with a small margin</p>
+              </div>
             </div>
           </div>
           
           {strokeSettings.enabled && (
             <div className="mt-4 pt-4 border-t space-y-4">
               <div>
-                <Label className="text-sm">Contour Offset</Label>
+                <div className="flex items-center">
+                  <Label className="text-sm">Outline Thickness</Label>
+                  <Tooltip text="Controls the margin between your design and the cut line" />
+                </div>
                 <Select
                   value={strokeSettings.width.toString()}
                   onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
@@ -287,32 +405,14 @@ export default function ControlsSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0.02">Tiny</SelectItem>
+                    <SelectItem value="0.02">Tiny (very close to design)</SelectItem>
                     <SelectItem value="0.04">Small</SelectItem>
                     <SelectItem value="0.07">Medium</SelectItem>
-                    <SelectItem value="0.14">Large</SelectItem>
+                    <SelectItem value="0.14">Large (recommended)</SelectItem>
                     <SelectItem value="0.25">Huge</SelectItem>
-                    <SelectItem value="0.5">More bigger</SelectItem>
+                    <SelectItem value="0.5">Extra Large</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              
-              <div className="flex items-center space-x-3">
-                <Checkbox 
-                  id="close-small-gaps"
-                  checked={strokeSettings.closeSmallGaps}
-                  onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
-                />
-                <Label htmlFor="close-small-gaps" className="text-sm cursor-pointer">Close small gaps</Label>
-              </div>
-              
-              <div className="flex items-center space-x-3">
-                <Checkbox 
-                  id="close-big-gaps"
-                  checked={strokeSettings.closeBigGaps}
-                  onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
-                />
-                <Label htmlFor="close-big-gaps" className="text-sm cursor-pointer">Close big gaps</Label>
               </div>
 
               <div>
@@ -327,6 +427,42 @@ export default function ControlsSection({
                   <span className="text-sm text-gray-600">{strokeSettings.backgroundColor}</span>
                 </div>
               </div>
+              
+              <button 
+                onClick={(e) => { e.stopPropagation(); setShowAdvanced(!showAdvanced); }}
+                className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700"
+              >
+                <ChevronDown className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                Advanced Options
+              </button>
+              
+              {showAdvanced && (
+                <div className="space-y-3 pl-2 border-l-2 border-gray-200">
+                  <div className="flex items-center space-x-3">
+                    <Checkbox 
+                      id="close-small-gaps"
+                      checked={strokeSettings.closeSmallGaps}
+                      onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
+                    />
+                    <div>
+                      <Label htmlFor="close-small-gaps" className="text-sm cursor-pointer">Close small gaps</Label>
+                      <p className="text-xs text-gray-400">Connects nearby parts of your design</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-3">
+                    <Checkbox 
+                      id="close-big-gaps"
+                      checked={strokeSettings.closeBigGaps}
+                      onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
+                    />
+                    <div>
+                      <Label htmlFor="close-big-gaps" className="text-sm cursor-pointer">Close big gaps</Label>
+                      <p className="text-xs text-gray-400">Creates bridges between separated elements</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -334,20 +470,28 @@ export default function ControlsSection({
 
       <Card 
         className={`border-2 transition-all cursor-pointer hover:shadow-md ${
-          shapeSettings.enabled ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-gray-300'
+          shapeSettings.enabled ? 'border-green-500 bg-green-50 shadow-md' : 'border-gray-200 hover:border-gray-300'
         }`}
-        onClick={() => onShapeChange({ enabled: true })}
+        onClick={() => { onShapeChange({ enabled: true }); setShowAdvanced(false); }}
       >
         <CardContent className="p-4">
-          <div className="flex items-center space-x-3">
-            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+          <div className="flex items-start gap-3">
+            <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
               shapeSettings.enabled ? 'border-green-500 bg-green-500' : 'border-gray-300'
             }`}>
               {shapeSettings.enabled && <Check className="w-3 h-3 text-white" />}
             </div>
-            <div>
+            <div className="flex-1">
               <Label className="text-base font-medium cursor-pointer">Shape Outline</Label>
-              <p className="text-sm text-gray-500">Square, rectangle, circle, or oval</p>
+              <p className="text-sm text-gray-500 mt-1">Cut in a simple geometric shape</p>
+              
+              <div className="flex items-center gap-3 mt-3 p-2 bg-white rounded border">
+                <div className="flex gap-2">
+                  <div className="w-8 h-8 border-2 border-dashed border-red-400 rounded-sm" />
+                  <div className="w-8 h-8 border-2 border-dashed border-red-400 rounded-full" />
+                </div>
+                <p className="text-xs text-gray-500">Choose square, rectangle, circle, or oval</p>
+              </div>
             </div>
           </div>
           
@@ -355,26 +499,34 @@ export default function ControlsSection({
             <div className="mt-4 pt-4 border-t space-y-4">
               <div>
                 <Label className="text-sm">Shape Type</Label>
-                <Select
-                  value={shapeSettings.type}
-                  onValueChange={(value: 'square' | 'rectangle' | 'circle' | 'oval') => 
-                    onShapeChange({ type: value })
-                  }
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="square">Square</SelectItem>
-                    <SelectItem value="rectangle">Rectangle</SelectItem>
-                    <SelectItem value="circle">Circle</SelectItem>
-                    <SelectItem value="oval">Oval</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  {(['square', 'rectangle', 'circle', 'oval'] as const).map((type) => (
+                    <button
+                      key={type}
+                      onClick={(e) => { e.stopPropagation(); onShapeChange({ type }); }}
+                      className={`p-2 border-2 rounded-lg transition-all ${
+                        shapeSettings.type === type 
+                          ? 'border-green-500 bg-green-50' 
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className={`mx-auto ${
+                        type === 'square' ? 'w-6 h-6 bg-green-300 rounded-sm' :
+                        type === 'rectangle' ? 'w-8 h-5 bg-green-300 rounded-sm' :
+                        type === 'circle' ? 'w-6 h-6 bg-green-300 rounded-full' :
+                        'w-8 h-5 bg-green-300 rounded-full'
+                      }`} />
+                      <p className="text-xs mt-1 capitalize">{type}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>
-                <Label className="text-sm">Margin Around Design</Label>
+                <div className="flex items-center">
+                  <Label className="text-sm">Margin Around Design</Label>
+                  <Tooltip text="Space between your design and the edge of the shape" />
+                </div>
                 <Select
                   value={shapeSettings.offset.toString()}
                   onValueChange={(value) => onShapeChange({ offset: parseFloat(value) })}
@@ -388,18 +540,18 @@ export default function ControlsSection({
                         <SelectItem value="0.40">Tiny</SelectItem>
                         <SelectItem value="0.48">Small</SelectItem>
                         <SelectItem value="0.56">Medium</SelectItem>
-                        <SelectItem value="0.64">Big</SelectItem>
+                        <SelectItem value="0.64">Big (recommended)</SelectItem>
                         <SelectItem value="0.72">Huge</SelectItem>
-                        <SelectItem value="1.44">More bigger</SelectItem>
+                        <SelectItem value="1.44">Extra Large</SelectItem>
                       </>
                     ) : (
                       <>
                         <SelectItem value="0.0625">Tiny</SelectItem>
                         <SelectItem value="0.125">Small</SelectItem>
                         <SelectItem value="0.1875">Medium</SelectItem>
-                        <SelectItem value="0.25">Big</SelectItem>
+                        <SelectItem value="0.25">Big (recommended)</SelectItem>
                         <SelectItem value="0.375">Huge</SelectItem>
-                        <SelectItem value="0.75">More bigger</SelectItem>
+                        <SelectItem value="0.75">Extra Large</SelectItem>
                       </>
                     )}
                   </SelectContent>
@@ -426,19 +578,23 @@ export default function ControlsSection({
   );
 
   const renderStep4 = () => (
-    <div className="space-y-4">
-      <Card className="border-2 border-cyan-500">
+    <div className="space-y-4 relative">
+      {showCelebration && <CelebrationAnimation />}
+      
+      <Card className="border-2 border-green-500 bg-gradient-to-br from-green-50 to-cyan-50">
         <CardContent className="p-6 text-center">
-          <Download className="w-10 h-10 text-cyan-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold mb-2">Your Sticker is Ready!</h3>
+          <div className="relative inline-block">
+            <PartyPopper className="w-12 h-12 text-green-500 mx-auto mb-2" />
+          </div>
+          <h3 className="text-xl font-bold text-green-700 mb-2">Your Sticker is Ready!</h3>
           <p className="text-gray-600 mb-4">
-            Download your print-ready PDF or send it directly to us.
+            Great job! Download your print-ready PDF below.
           </p>
           
           <Button 
             onClick={() => onDownload('standard')}
             disabled={isProcessing}
-            className="w-full bg-cyan-500 hover:bg-cyan-600 text-black text-lg py-6 mb-3"
+            className="w-full bg-green-500 hover:bg-green-600 text-white text-lg py-6 mb-3 shadow-lg"
           >
             <Download className="w-5 h-5 mr-2" />
             Download PDF
@@ -449,7 +605,7 @@ export default function ControlsSection({
             onClick={() => setShowSendForm(!showSendForm)}
             className="w-full"
           >
-            {showSendForm ? 'Hide Send Form' : 'Send Design to Us'}
+            {showSendForm ? 'Hide Send Form' : 'Or Send Design to Us'}
           </Button>
         </CardContent>
       </Card>
@@ -512,6 +668,13 @@ export default function ControlsSection({
   return (
     <div className="lg:col-span-1">
       <StepIndicator />
+      <ProgressSummary 
+        imageInfo={imageInfo}
+        stickerSize={stickerSize}
+        strokeSettings={strokeSettings}
+        shapeSettings={shapeSettings}
+        currentStep={currentStep}
+      />
       
       <div className="min-h-[300px]">
         {currentStep === 1 && renderStep1()}
