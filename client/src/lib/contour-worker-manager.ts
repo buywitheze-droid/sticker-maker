@@ -165,8 +165,11 @@ class ContourWorkerManager {
     );
 
     // Calculate effective DPI based on image pixels and target size in inches
-    // This ensures stroke width is calculated correctly relative to the design size
-    const effectiveDPI = image.width / resizeSettings.widthInches;
+    // Use the dimension that gives the correct scale (min of both to handle aspect ratio)
+    const dpiFromWidth = image.width / resizeSettings.widthInches;
+    const dpiFromHeight = image.height / resizeSettings.heightInches;
+    // Use the minimum to ensure the stroke scales correctly with the actual resize
+    const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
     
     const request: ProcessRequest = {
       imageData: clonedData,
