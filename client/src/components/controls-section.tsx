@@ -26,6 +26,7 @@ interface ControlsSectionProps {
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
+  onStepChange?: (step: number) => void;
 }
 
 type WizardStep = 1 | 2 | 3 | 4;
@@ -49,10 +50,16 @@ export default function ControlsSection({
   onDownload,
   isProcessing,
   imageInfo,
-  canvasRef
+  canvasRef,
+  onStepChange
 }: ControlsSectionProps) {
   const { toast } = useToast();
-  const [currentStep, setCurrentStep] = useState<WizardStep>(1);
+  const [currentStep, setCurrentStepInternal] = useState<WizardStep>(1);
+  
+  const setCurrentStep = (step: WizardStep) => {
+    setCurrentStepInternal(step);
+    onStepChange?.(step);
+  };
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");

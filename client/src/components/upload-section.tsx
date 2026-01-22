@@ -8,9 +8,10 @@ interface UploadSectionProps {
   onImageUpload: (file: File, image: HTMLImageElement) => void;
   imageInfo: ImageInfo | null;
   resizeSettings: ResizeSettings;
+  showCutLineInfo?: boolean;
 }
 
-export default function UploadSection({ onImageUpload, imageInfo, resizeSettings }: UploadSectionProps) {
+export default function UploadSection({ onImageUpload, imageInfo, resizeSettings, showCutLineInfo = false }: UploadSectionProps) {
   const handleFileUpload = useCallback((file: File) => {
     if (!file.type.startsWith('image/png')) {
       alert('Please upload a PNG image file.');
@@ -74,17 +75,19 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         />
       </div>
 
-      {/* Cut Line Info */}
-      <Card className="mt-4">
-        <CardContent className="p-4">
-          <p className="font-bold text-center text-lg" style={{ 
-            fontFamily: "'Inter', sans-serif",
-            color: 'black'
-          }}>
-            The <span style={{ color: 'red' }}>red</span> outline you see is your <span style={{ color: 'red' }}>CUT LINE</span> - that's exactly where the magic scissors will snip!
-          </p>
-        </CardContent>
-      </Card>
+      {/* Cut Line Info - only show from step 2 onwards */}
+      {showCutLineInfo && (
+        <Card className="mt-4">
+          <CardContent className="p-4">
+            <p className="font-bold text-center text-lg" style={{ 
+              fontFamily: "'Inter', sans-serif",
+              color: 'black'
+            }}>
+              The <span style={{ color: 'red' }}>red</span> outline you see is your <span style={{ color: 'red' }}>CUT LINE</span> - that's exactly where the magic scissors will snip!
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

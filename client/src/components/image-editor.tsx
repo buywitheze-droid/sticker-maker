@@ -47,6 +47,7 @@ export default function ImageEditor() {
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -529,6 +530,7 @@ export default function ImageEditor() {
         onImageUpload={handleImageUpload}
         imageInfo={imageInfo}
         resizeSettings={resizeSettings}
+        showCutLineInfo={wizardStep >= 2}
       />
       
       <div className="relative preview-container">
@@ -556,6 +558,7 @@ export default function ImageEditor() {
         isProcessing={isProcessing}
         imageInfo={imageInfo}
         canvasRef={canvasRef}
+        onStepChange={setWizardStep}
       />
       
       {/* Processing Modal */}
