@@ -633,14 +633,17 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   const gaps: Array<{i: number, j: number, dist: number}> = [];
   
-  const stride = n > 500 ? 5 : n > 200 ? 3 : 1;
+  // More aggressive gap detection: smaller stride and larger search range
+  const stride = n > 1000 ? 3 : n > 500 ? 2 : 1;
   const thresholdSq = gapThreshold * gapThreshold;
   
   for (let i = 0; i < n; i += stride) {
     const pi = points[i];
     
-    const maxSearch = Math.min(n - 10, i + 500);
-    for (let j = i + 50; j < maxSearch; j += stride) {
+    // Search much further ahead in path order (up to 2000 points or entire remaining path)
+    const maxSearch = Math.min(n - 5, i + 2000);
+    // Start looking closer (20 points ahead instead of 50)
+    for (let j = i + 20; j < maxSearch; j += stride) {
       const pj = points[j];
       const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
       
