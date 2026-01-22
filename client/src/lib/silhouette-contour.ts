@@ -1029,10 +1029,34 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   
   if (gaps.length === 0) return points;
   
-  // Accept all gaps that passed the protrusion check - don't filter by centroid direction
-  // This allows J-shaped, hook-shaped, and other complex gap geometries to be closed
-  // The protrusion check (maxPerpDist > dist * 3) already prevents closing actual features
-  const exteriorGaps = gaps;
+  // Classify gaps into two categories:
+  // 1. Inward gaps (original detection) - these point toward the centroid and get priority
+  // 2. Geometry gaps (new detection) - J-shaped, hooks, etc. that don't point inward
+  const inwardGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  const geometryGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  
+  for (const gap of gaps) {
+    // Calculate average distance of the gap section from centroid
+    let gapSectionDist = 0;
+    let gapSectionCount = 0;
+    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
+    for (let k = gap.i; k <= gap.j; k += sampleStride) {
+      const pk = points[k];
+      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
+      gapSectionCount++;
+    }
+    const avgGapDist = gapSectionDist / gapSectionCount;
+    
+    // Inward gap: section average is LESS than shape average (dips toward center)
+    if (avgGapDist < avgDistFromCentroid * 0.95) {
+      inwardGaps.push({...gap, priority: 1}); // High priority
+    } else {
+      geometryGaps.push({...gap, priority: 2}); // Lower priority
+    }
+  }
+  
+  // Combine both, with inward gaps first (they get processed and respected first)
+  const exteriorGaps = [...inwardGaps, ...geometryGaps];
   
   // Sort and refine gaps to find the narrowest crossing point
   const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
