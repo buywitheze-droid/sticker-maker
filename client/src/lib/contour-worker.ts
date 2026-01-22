@@ -1093,47 +1093,54 @@ function drawContourToData(
   offsetY: number,
   effectiveDPI: number
 ): void {
-  const r = parseInt(strokeColorHex.slice(1, 3), 16);
-  const g = parseInt(strokeColorHex.slice(3, 5), 16);
-  const b = parseInt(strokeColorHex.slice(5, 7), 16);
-  
   // Parse background color - default to white if undefined
   const bgColorHex = backgroundColorHex || '#ffffff';
   
+  // CRITICAL: Use exact same bleed calculation as PDF export
+  // The bleed must be 0.10 inches regardless of preview DPI
   const bleedInches = 0.10;
+  
+  // The path is in pixel coordinates at effectiveDPI scale
+  // bleedPixels must be relative to the same scale
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
   
-  // Close gaps for solid bleed coverage
-  const maxGapThreshold = Math.round(0.5 * effectiveDPI);
-  const closedPath = closeGapsForBleed(path, maxGapThreshold);
+  // Debug: log values to console
+  console.log('[drawContourToData] effectiveDPI:', effectiveDPI, 'bleedPixels:', bleedPixels, 'lineWidth:', bleedPixels * 2, 'canvasSize:', width, 'x', height);
+  
+  // Use the same path for bleed that PDF uses (no gap closing modification)
+  // PDF export uses the smoothed path directly without modification
+  const bleedPath = path;
   
   // Use OffscreenCanvas for proper canvas stroke rendering (matches PDF exactly)
-  // This ensures the bleed looks identical in preview and PDF export
   const offscreen = new OffscreenCanvas(width, height);
   const ctx = offscreen.getContext('2d');
   
   if (ctx) {
     // Draw bleed using exact same approach as PDF export
-    ctx.fillStyle = backgroundColorHex;
-    ctx.strokeStyle = backgroundColorHex;
-    ctx.lineWidth = bleedPixels * 2; // Same as PDF: extends bleedPixels on each side
+    // PDF uses: lineWidth = bleedPixels * 2, which extends bleedPixels on each side
+    // Since stroke is centered on the path, and we fill the interior,
+    // the visible bleed outside is bleedPixels = 0.10 inches
+    ctx.fillStyle = bgColorHex;
+    ctx.strokeStyle = bgColorHex;
+    ctx.lineWidth = bleedPixels * 2;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     
-    if (closedPath.length > 0) {
+    if (bleedPath.length > 0) {
       ctx.beginPath();
-      ctx.moveTo(closedPath[0].x + offsetX, closedPath[0].y + offsetY);
-      for (let i = 1; i < closedPath.length; i++) {
-        ctx.lineTo(closedPath[i].x + offsetX, closedPath[i].y + offsetY);
+      ctx.moveTo(bleedPath[0].x + offsetX, bleedPath[0].y + offsetY);
+      for (let i = 1; i < bleedPath.length; i++) {
+        ctx.lineTo(bleedPath[i].x + offsetX, bleedPath[i].y + offsetY);
       }
       ctx.closePath();
       ctx.stroke();
       ctx.fill();
     }
     
-    // Draw cut line (magenta)
+    // Draw cut line (magenta) - make it visible at any DPI
+    const cutLineWidth = Math.max(2, Math.round(0.01 * effectiveDPI));
     ctx.strokeStyle = strokeColorHex;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = cutLineWidth;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     
@@ -1157,9 +1164,12 @@ function drawContourToData(
     const bgR = parseInt(bgColorHex.slice(1, 3), 16);
     const bgG = parseInt(bgColorHex.slice(3, 5), 16);
     const bgB = parseInt(bgColorHex.slice(5, 7), 16);
+    const r = parseInt(strokeColorHex.slice(1, 3), 16);
+    const g = parseInt(strokeColorHex.slice(3, 5), 16);
+    const b = parseInt(strokeColorHex.slice(5, 7), 16);
     
-    strokePathThick(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB, bleedPixels);
-    fillContourDirect(output, width, height, closedPath, offsetX, offsetY, bgR, bgG, bgB);
+    strokePathThick(output, width, height, bleedPath, offsetX, offsetY, bgR, bgG, bgB, bleedPixels);
+    fillContourDirect(output, width, height, bleedPath, offsetX, offsetY, bgR, bgG, bgB);
     
     for (let i = 0; i < path.length; i++) {
       const p1 = path[i];
