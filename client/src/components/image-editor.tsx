@@ -329,20 +329,36 @@ export default function ImageEditor() {
     
     setIsRemovingBackground(true);
     try {
-      const newImage = await removeBackgroundFromImage(imageInfo.image, threshold);
+      const bgRemovedImage = await removeBackgroundFromImage(imageInfo.image, threshold);
       
-      const newWidth = newImage.naturalWidth || newImage.width;
-      const newHeight = newImage.naturalHeight || newImage.height;
+      // Crop to content bounds after background removal so shape fits actual visible content
+      const croppedCanvas = cropImageToContent(bgRemovedImage);
+      if (!croppedCanvas) {
+        console.error('Failed to crop image after background removal');
+        setIsRemovingBackground(false);
+        return;
+      }
       
-      // Create new image info with the processed image
+      // Convert cropped canvas to image
+      const finalImage = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = croppedCanvas.toDataURL('image/png');
+      });
+      
+      const newWidth = finalImage.naturalWidth || finalImage.width;
+      const newHeight = finalImage.naturalHeight || finalImage.height;
+      
+      // Create new image info with the processed and cropped image
       const newImageInfo: ImageInfo = {
         ...imageInfo,
-        image: newImage,
+        image: finalImage,
         originalWidth: newWidth,
         originalHeight: newHeight,
       };
       
-      // Recalculate resize settings based on new image dimensions after background removal
+      // Recalculate resize settings based on cropped image dimensions
       const dpi = imageInfo.dpi || 300;
       let { widthInches, heightInches } = calculateImageDimensions(newWidth, newHeight, dpi);
       
