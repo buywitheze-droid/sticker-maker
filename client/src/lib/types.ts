@@ -27,12 +27,13 @@ export interface ResizeSettings {
 
 export interface ShapeSettings {
   enabled: boolean;
-  type: 'square' | 'rectangle' | 'circle' | 'oval';
+  type: 'square' | 'rectangle' | 'circle' | 'oval' | 'rounded-square' | 'rounded-rectangle' | 'heart';
   offset: number; // Margin around design in inches (replaces manual width/height)
   fillColor: string;
   strokeEnabled: boolean;
   strokeWidth: number;
   strokeColor: string;
+  cornerRadius?: number; // Corner radius in inches for rounded shapes (default 0.25)
 }
 
 export type StickerSize = 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5 | 5.5;

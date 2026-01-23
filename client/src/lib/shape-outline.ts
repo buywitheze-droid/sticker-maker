@@ -2,6 +2,54 @@ import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
 
+// Helper function to generate PDF path operations for a rounded rectangle
+function getRoundedRectPath(x: number, y: number, width: number, height: number, radius: number): string {
+  const r = Math.min(radius, width / 2, height / 2);
+  const k = 0.5522847498; // Bezier approximation constant for circles
+  const rk = r * k;
+  
+  let path = `${x + r} ${y} m\n`; // Start at top-left + radius
+  path += `${x + width - r} ${y} l\n`; // Top edge
+  path += `${x + width - r + rk} ${y} ${x + width} ${y + r - rk} ${x + width} ${y + r} c\n`; // Top-right corner
+  path += `${x + width} ${y + height - r} l\n`; // Right edge
+  path += `${x + width} ${y + height - r + rk} ${x + width - r + rk} ${y + height} ${x + width - r} ${y + height} c\n`; // Bottom-right corner
+  path += `${x + r} ${y + height} l\n`; // Bottom edge
+  path += `${x + r - rk} ${y + height} ${x} ${y + height - r + rk} ${x} ${y + height - r} c\n`; // Bottom-left corner
+  path += `${x} ${y + r} l\n`; // Left edge
+  path += `${x} ${y + r - rk} ${x + r - rk} ${y} ${x + r} ${y} c\n`; // Top-left corner
+  
+  return path;
+}
+
+// Helper function to generate PDF path operations for a heart shape
+// PDF coordinate system: Y increases upward (bottom=0), so we use consistent math
+function getHeartPath(cx: number, cy: number, size: number): string {
+  const w = size;
+  const h = size;
+  
+  // In PDF coords: top of heart (lobes) is cy + h*0.35, bottom tip is cy - h*0.5
+  // The dip between lobes is at cy + h*0.15
+  const dipY = cy + h * 0.15;
+  const topY = cy + h * 0.35;
+  const bottomY = cy - h * 0.5;
+  const leftX = cx - w * 0.5;
+  const rightX = cx + w * 0.5;
+  
+  let path = `${cx} ${dipY} m\n`; // Start at the dip between lobes
+  
+  // Left lobe - bezier to top-left then down to bottom tip
+  path += `${cx - w * 0.15} ${dipY + h * 0.15} ${leftX + w * 0.05} ${topY} ${leftX + w * 0.25} ${topY} c\n`;
+  path += `${leftX} ${topY} ${leftX} ${cy + h * 0.1} ${leftX + w * 0.1} ${cy - h * 0.1} c\n`;
+  path += `${leftX + w * 0.2} ${cy - h * 0.3} ${cx} ${bottomY + h * 0.1} ${cx} ${bottomY} c\n`;
+  
+  // Right side - mirror from bottom tip back to dip
+  path += `${cx} ${bottomY + h * 0.1} ${rightX - w * 0.2} ${cy - h * 0.3} ${rightX - w * 0.1} ${cy - h * 0.1} c\n`;
+  path += `${rightX} ${cy + h * 0.1} ${rightX} ${topY} ${rightX - w * 0.25} ${topY} c\n`;
+  path += `${rightX - w * 0.05} ${topY} ${cx + w * 0.15} ${dipY + h * 0.15} ${cx} ${dipY} c\n`;
+  
+  return path;
+}
+
 export function calculateShapeDimensions(
   designWidthInches: number,
   designHeightInches: number,
@@ -14,7 +62,7 @@ export function calculateShapeDimensions(
     // Circle uses the larger dimension to ensure design fits
     const diameter = Math.max(designWidthInches, designHeightInches) + totalOffset;
     return { widthInches: diameter, heightInches: diameter };
-  } else if (shapeType === 'square') {
+  } else if (shapeType === 'square' || shapeType === 'rounded-square') {
     // Square uses the larger dimension
     const size = Math.max(designWidthInches, designHeightInches) + totalOffset;
     return { widthInches: size, heightInches: size };
@@ -24,8 +72,12 @@ export function calculateShapeDimensions(
       widthInches: designWidthInches + totalOffset,
       heightInches: designHeightInches + totalOffset
     };
+  } else if (shapeType === 'heart') {
+    // Heart shape uses the larger dimension for a square bounding box
+    const size = Math.max(designWidthInches, designHeightInches) + totalOffset;
+    return { widthInches: size, heightInches: size };
   } else {
-    // Rectangle follows the design aspect ratio
+    // Rectangle and rounded-rectangle follow the design aspect ratio
     return {
       widthInches: designWidthInches + totalOffset,
       heightInches: designHeightInches + totalOffset
@@ -100,6 +152,8 @@ export async function downloadShapePDF(
   let bgPathOps = 'q\n';
   bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
   
+  const cornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72; // Default 0.25 inch corner radius
+  
   if (shapeSettings.type === 'circle') {
     const r = Math.min(widthPts, heightPts) / 2; // Include bleed
     const k = 0.5522847498;
@@ -128,6 +182,16 @@ export async function downloadShapePDF(
     bgPathOps += `${sx + size} ${sy} l\n`;
     bgPathOps += `${sx + size} ${sy + size} l\n`;
     bgPathOps += `${sx} ${sy + size} l\n`;
+  } else if (shapeSettings.type === 'rounded-square') {
+    const size = Math.min(widthPts, heightPts);
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    bgPathOps += getRoundedRectPath(sx, sy, size, size, cornerRadiusPts);
+  } else if (shapeSettings.type === 'rounded-rectangle') {
+    bgPathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cornerRadiusPts);
+  } else if (shapeSettings.type === 'heart') {
+    const size = Math.min(widthPts, heightPts);
+    bgPathOps += getHeartPath(cx, cy, size);
   } else {
     bgPathOps += `0 0 m\n`;
     bgPathOps += `${widthPts} 0 l\n`;
@@ -193,6 +257,8 @@ export async function downloadShapePDF(
   const outlineCx = cx;
   const outlineCy = cy;
   
+  const cutCornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
+  
   if (shapeSettings.type === 'circle') {
     const r = Math.min(shapeWidthPts, shapeHeightPts) / 2; // Without bleed
     const k = 0.5522847498;
@@ -222,6 +288,16 @@ export async function downloadShapePDF(
     pathOps += `${sx + size} ${sy} l\n`;
     pathOps += `${sx + size} ${sy + size} l\n`;
     pathOps += `${sx} ${sy + size} l\n`;
+  } else if (shapeSettings.type === 'rounded-square') {
+    const size = Math.min(shapeWidthPts, shapeHeightPts);
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    pathOps += getRoundedRectPath(sx, sy, size, size, cutCornerRadiusPts);
+  } else if (shapeSettings.type === 'rounded-rectangle') {
+    pathOps += getRoundedRectPath(bleedPts, bleedPts, shapeWidthPts, shapeHeightPts, cutCornerRadiusPts);
+  } else if (shapeSettings.type === 'heart') {
+    const size = Math.min(shapeWidthPts, shapeHeightPts);
+    pathOps += getHeartPath(outlineCx, outlineCy, size);
   } else {
     // Rectangle without bleed
     pathOps += `${bleedPts} ${bleedPts} m\n`;
@@ -356,6 +432,8 @@ export async function generateShapePDFBase64(
   const outlineCx = cx;
   const outlineCy = cy;
   
+  const cutCornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
+  
   if (shapeSettings.type === 'circle') {
     const r = Math.min(widthPts, heightPts) / 2;
     const k = 0.5522847498;
@@ -385,6 +463,16 @@ export async function generateShapePDFBase64(
     pathOps += `${sx + size} ${sy} l\n`;
     pathOps += `${sx + size} ${sy + size} l\n`;
     pathOps += `${sx} ${sy + size} l\n`;
+  } else if (shapeSettings.type === 'rounded-square') {
+    const size = Math.min(widthPts, heightPts);
+    const sx = (widthPts - size) / 2;
+    const sy = (heightPts - size) / 2;
+    pathOps += getRoundedRectPath(sx, sy, size, size, cutCornerRadiusPts);
+  } else if (shapeSettings.type === 'rounded-rectangle') {
+    pathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cutCornerRadiusPts);
+  } else if (shapeSettings.type === 'heart') {
+    const size = Math.min(widthPts, heightPts);
+    pathOps += getHeartPath(outlineCx, outlineCy, size);
   } else {
     pathOps += `0 0 m\n`;
     pathOps += `${widthPts} 0 l\n`;
