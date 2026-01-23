@@ -824,16 +824,18 @@ export default function ControlsSection({
         {currentStep === 4 && renderStep4()}
       </div>
 
-      <div className="flex justify-between mt-6">
-        <Button
-          variant="outline"
-          onClick={prevStep}
-          disabled={currentStep === 1}
-          className="flex items-center"
-        >
-          <ChevronLeft className="w-4 h-4 mr-1" />
-          Back
-        </Button>
+      <div className="flex justify-between items-center mt-6 gap-3">
+        {currentStep > 1 ? (
+          <button
+            onClick={prevStep}
+            className="text-gray-400 hover:text-white text-sm flex items-center gap-1 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back
+          </button>
+        ) : (
+          <div />
+        )}
         
         {currentStep < 4 && (
           <Button
@@ -843,10 +845,10 @@ export default function ControlsSection({
               (currentStep === 2 && !canProceedToStep3) ||
               (currentStep === 3 && !canProceedToStep4)
             }
-            className="flex items-center bg-cyan-500 hover:bg-cyan-600 text-black"
+            className="flex-1 max-w-[200px] py-3 text-base font-semibold bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-gray-900 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all"
           >
-            Next
-            <ChevronRight className="w-4 h-4 ml-1" />
+            Continue
+            <ChevronRight className="w-5 h-5 ml-1" />
           </Button>
         )}
       </div>
