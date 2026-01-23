@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -168,10 +168,18 @@ export default function ControlsSection({
   const canProceedToStep3 = canProceedToStep2;
   const canProceedToStep4 = canProceedToStep3 && (strokeSettings.enabled || shapeSettings.enabled);
 
-  // Auto-advance to step 2 after image upload
+  // Track the previous image to detect new uploads
+  const prevImageRef = useRef<HTMLImageElement | null>(null);
+  
+  // Auto-advance to step 2 after image upload, or reset to step 2 when new image is uploaded
   useEffect(() => {
-    if (imageInfo && currentStep === 1) {
-      setCurrentStep(2);
+    if (imageInfo) {
+      // Check if this is a new image (different from previous)
+      if (prevImageRef.current !== imageInfo.image) {
+        prevImageRef.current = imageInfo.image;
+        // Always go to step 2 when a new image is uploaded
+        setCurrentStep(2);
+      }
     }
   }, [imageInfo]);
 
