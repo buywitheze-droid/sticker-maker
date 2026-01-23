@@ -712,6 +712,13 @@ export default function ControlsSection({
           >
             {showSendForm ? 'Hide Form' : 'Send Design to Us'}
           </Button>
+          
+          <div className="mt-4 pt-3 border-t border-green-200">
+            <p className="text-xs text-green-700 flex items-center justify-center gap-1">
+              <ShoppingCart className="w-3 h-3" />
+              <span><strong>Tip:</strong> Send your design first, then checkout to complete your order</span>
+            </p>
+          </div>
         </CardContent>
       </Card>
 
