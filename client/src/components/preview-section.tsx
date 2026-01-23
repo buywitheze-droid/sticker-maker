@@ -25,7 +25,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [zoom, setZoom] = useState(1);
     const [panX, setPanX] = useState(0); // -100 to 100 (percent offset)
     const [panY, setPanY] = useState(0); // -100 to 100 (percent offset)
-    const [backgroundColor, setBackgroundColor] = useState("#1f2937");
+    const [backgroundColor, setBackgroundColor] = useState("transparent");
     const lastImageRef = useRef<string | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
@@ -333,7 +333,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       canvas.height = baseSize;
 
       if (backgroundColor === "transparent") {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Draw transparency grid pattern (light grey checkerboard)
+        const gridSize = 10;
+        const lightColor = '#e8e8e8';
+        const darkColor = '#d0d0d0';
+        
+        for (let y = 0; y < canvas.height; y += gridSize) {
+          for (let x = 0; x < canvas.width; x += gridSize) {
+            const isEven = ((x / gridSize) + (y / gridSize)) % 2 === 0;
+            ctx.fillStyle = isEven ? lightColor : darkColor;
+            ctx.fillRect(x, y, gridSize, gridSize);
+          }
+        }
       } else {
         ctx.fillStyle = backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
