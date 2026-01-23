@@ -28,6 +28,8 @@ interface ControlsSectionProps {
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
   onStepChange?: (step: number) => void;
+  onRemoveBackground?: (threshold: number) => void;
+  isRemovingBackground?: boolean;
 }
 
 type WizardStep = 1 | 2 | 3 | 4;
@@ -137,7 +139,9 @@ export default function ControlsSection({
   isProcessing,
   imageInfo,
   canvasRef,
-  onStepChange
+  onStepChange,
+  onRemoveBackground,
+  isRemovingBackground
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [currentStep, setCurrentStepInternal] = useState<WizardStep>(1);
@@ -397,6 +401,32 @@ export default function ControlsSection({
             <strong>Tip:</strong> This is the maximum width or height. Your design keeps its proportions and fits within this size.
           </p>
         </div>
+        
+        {imageInfo && onRemoveBackground && (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <Button
+              onClick={() => onRemoveBackground(95)}
+              disabled={isRemovingBackground}
+              variant="outline"
+              className="w-full flex items-center justify-center gap-2 border-2 border-purple-400 text-purple-700 hover:bg-purple-50 hover:border-purple-500"
+            >
+              {isRemovingBackground ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                  Removing Background...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Remove White Background
+                </>
+              )}
+            </Button>
+            <p className="text-xs text-gray-500 mt-2 text-center">
+              Instantly removes solid white backgrounds from your design
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

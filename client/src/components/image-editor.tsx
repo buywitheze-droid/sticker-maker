@@ -13,6 +13,7 @@ import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outlin
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
+import { removeBackgroundFromImage } from "@/lib/background-removal";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
@@ -48,6 +49,7 @@ export default function ImageEditor() {
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isRemovingBackground, setIsRemovingBackground] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -279,6 +281,36 @@ export default function ImageEditor() {
       }
     }
   }, [imageInfo, shapeSettings, updateCadCutBounds]);
+
+  const handleRemoveBackground = useCallback(async (threshold: number) => {
+    if (!imageInfo) return;
+    
+    setIsRemovingBackground(true);
+    try {
+      const newImage = await removeBackgroundFromImage(imageInfo.image, threshold);
+      
+      // Create new image info with the processed image
+      const newImageInfo: ImageInfo = {
+        ...imageInfo,
+        image: newImage,
+        originalWidth: newImage.naturalWidth || newImage.width,
+        originalHeight: newImage.naturalHeight || newImage.height,
+      };
+      
+      // Clear contour cache to force recomputation with new image
+      const workerManager = getContourWorkerManager();
+      workerManager.clearCache();
+      
+      // Reset CadCut bounds
+      setCadCutBounds(null);
+      
+      setImageInfo(newImageInfo);
+    } catch (error) {
+      console.error('Error removing background:', error);
+    } finally {
+      setIsRemovingBackground(false);
+    }
+  }, [imageInfo]);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     const updated = { ...strokeSettings, ...newSettings };
@@ -560,6 +592,8 @@ export default function ImageEditor() {
         imageInfo={imageInfo}
         canvasRef={canvasRef}
         onStepChange={setWizardStep}
+        onRemoveBackground={handleRemoveBackground}
+        isRemovingBackground={isRemovingBackground}
       />
       
       {/* Processing Modal */}
