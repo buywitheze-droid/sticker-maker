@@ -157,6 +157,7 @@ export default function ControlsSection({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showSendForm, setShowSendForm] = useState(false);
+  const [designSent, setDesignSent] = useState(false);
 
   const canProceedToStep2 = !!imageInfo;
   const canProceedToStep3 = canProceedToStep2;
@@ -259,6 +260,7 @@ export default function ControlsSection({
       setCustomerEmail("");
       setCustomerNotes("");
       setShowSendForm(false);
+      setDesignSent(true);
     } catch (error) {
       console.error('Error sending design:', error);
       toast({
@@ -710,35 +712,37 @@ export default function ControlsSection({
         </Card>
       )}
 
-      {/* Next Step Reminder */}
-      <Card className="border-2 border-dashed border-green-300 bg-green-50">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-              <ShoppingCart className="w-4 h-4 text-white" />
-            </div>
-            <div className="flex-1">
-              <h4 className="font-semibold text-green-800 mb-1">One More Step!</h4>
-              <p className="text-sm text-green-700 mb-3">
-                Don't forget to select your sticker size, quantity, and complete your order.
-              </p>
-              <Button 
-                asChild
-                className="w-full bg-green-500 hover:bg-green-600 text-white"
-              >
-                <a 
-                  href="https://dtfmasters.com/products/uv-die-cut-stickers?variant=44420132962454"
-                  target="_blank"
-                  rel="noopener noreferrer"
+      {/* Next Step Reminder - shows after design is sent */}
+      {designSent && (
+        <Card className="border-2 border-dashed border-green-300 bg-green-50 animate-in slide-in-from-top-2 duration-300">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                <ShoppingCart className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-green-800 mb-1">One More Step!</h4>
+                <p className="text-sm text-green-700 mb-3">
+                  Don't forget to select your sticker size, quantity, and complete your order.
+                </p>
+                <Button 
+                  asChild
+                  className="w-full bg-green-500 hover:bg-green-600 text-white"
                 >
-                  Complete My Order
-                  <ExternalLink className="w-4 h-4 ml-2" />
-                </a>
-              </Button>
+                  <a 
+                    href="https://dtfmasters.com/products/uv-die-cut-stickers?variant=44420132962454"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Complete My Order
+                    <ExternalLink className="w-4 h-4 ml-2" />
+                  </a>
+                </Button>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 
