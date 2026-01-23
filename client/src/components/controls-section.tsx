@@ -290,9 +290,8 @@ export default function ControlsSection({
   };
 
   const StepIndicator = () => (
-    <div className="flex items-center justify-between mb-3 md:mb-4">
+    <div className="flex items-center gap-1 text-sm mb-4 bg-gray-100 rounded-lg p-1">
       {STEPS.map((step, index) => {
-        const Icon = step.icon;
         const isActive = currentStep === step.number;
         const isCompleted = currentStep > step.number;
         const isClickable = 
@@ -302,27 +301,26 @@ export default function ControlsSection({
           (step.number === 4 && canProceedToStep4);
 
         return (
-          <div key={step.number} className="flex items-center">
-            <button
-              onClick={() => isClickable && goToStep(step.number as WizardStep)}
-              disabled={!isClickable}
-              className={`flex flex-col items-center ${isClickable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
-            >
-              <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all ${
-                isActive ? 'bg-cyan-500 text-white scale-110 shadow-lg' :
-                isCompleted ? 'bg-green-500 text-white' :
-                'bg-gray-200 text-gray-500'
-              }`}>
-                {isCompleted ? <Check className="w-4 h-4 md:w-5 md:h-5" /> : <Icon className="w-4 h-4 md:w-5 md:h-5" />}
-              </div>
-              <span className={`text-xs mt-1 hidden sm:block ${isActive ? 'text-cyan-600 font-medium' : 'text-gray-500'}`}>
-                {step.label}
-              </span>
-            </button>
-            {index < STEPS.length - 1 && (
-              <div className={`w-4 sm:w-8 h-0.5 mx-0.5 sm:mx-1 transition-colors ${currentStep > step.number ? 'bg-green-500' : 'bg-gray-200'}`} />
-            )}
-          </div>
+          <button
+            key={step.number}
+            onClick={() => isClickable && goToStep(step.number as WizardStep)}
+            disabled={!isClickable}
+            className={`flex-1 py-1.5 px-2 rounded-md text-center transition-all ${
+              isActive 
+                ? 'bg-white text-cyan-600 font-medium shadow-sm' 
+                : isCompleted 
+                  ? 'text-green-600 hover:bg-white/50' 
+                  : isClickable 
+                    ? 'text-gray-500 hover:bg-white/50' 
+                    : 'text-gray-300 cursor-not-allowed'
+            }`}
+          >
+            <span className="flex items-center justify-center gap-1">
+              {isCompleted && <Check className="w-3 h-3" />}
+              <span className="hidden sm:inline">{step.label}</span>
+              <span className="sm:hidden">{step.number}</span>
+            </span>
+          </button>
         );
       })}
     </div>
