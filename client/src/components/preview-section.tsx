@@ -78,6 +78,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [isDragging]);
     
+    // Touch handlers for mobile pan
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+      if (zoom === 1 || e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      setIsDragging(true);
+      dragStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        panX,
+        panY
+      };
+    }, [zoom, panX, panY]);
+    
+    const handleTouchMove = useCallback((e: React.TouchEvent) => {
+      if (!isDragging || !dragStartRef.current || e.touches.length !== 1) return;
+      e.preventDefault(); // Prevent scrolling while panning
+      const touch = e.touches[0];
+      
+      const deltaX = touch.clientX - dragStartRef.current.x;
+      const deltaY = touch.clientY - dragStartRef.current.y;
+      
+      const sensitivity = 0.6;
+      const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
+      const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
+      
+      setPanX(newPanX);
+      setPanY(newPanY);
+    }, [isDragging]);
+    
+    const handleTouchEnd = useCallback(() => {
+      setIsDragging(false);
+      dragStartRef.current = null;
+    }, []);
+    
     // Fit to View: calculate zoom to fit canvas within container and reset pan
     const fitToView = useCallback(() => {
       if (!containerRef.current) return;
@@ -520,12 +554,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseLeave}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
                 className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
                   height: '400px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
-                  userSelect: 'none'
+                  userSelect: 'none',
+                  touchAction: zoom !== 1 ? 'none' : 'auto'
                 }}
               >
                 <canvas 
@@ -559,7 +597,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
               
               {zoom !== 1 && (
-                <div className="w-3 h-[400px] flex flex-col">
+                <div className="hidden md:flex w-3 flex-col" style={{ height: '400px' }}>
                   <div 
                     className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
                     onClick={(e) => {
@@ -596,7 +634,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
             
             {zoom !== 1 && (
-              <div className="h-3 mt-1 flex">
+              <div className="hidden md:flex h-3 mt-1">
                 <div 
                   className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
                   onClick={(e) => {

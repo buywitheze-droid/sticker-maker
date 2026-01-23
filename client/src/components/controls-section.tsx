@@ -272,7 +272,7 @@ export default function ControlsSection({
   };
 
   const StepIndicator = () => (
-    <div className="flex items-center justify-between mb-4">
+    <div className="flex items-center justify-between mb-3 md:mb-4">
       {STEPS.map((step, index) => {
         const Icon = step.icon;
         const isActive = currentStep === step.number;
@@ -290,19 +290,19 @@ export default function ControlsSection({
               disabled={!isClickable}
               className={`flex flex-col items-center ${isClickable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
             >
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all ${
                 isActive ? 'bg-cyan-500 text-white scale-110 shadow-lg' :
                 isCompleted ? 'bg-green-500 text-white' :
                 'bg-gray-200 text-gray-500'
               }`}>
-                {isCompleted ? <Check className="w-5 h-5" /> : <Icon className="w-5 h-5" />}
+                {isCompleted ? <Check className="w-4 h-4 md:w-5 md:h-5" /> : <Icon className="w-4 h-4 md:w-5 md:h-5" />}
               </div>
-              <span className={`text-xs mt-1 ${isActive ? 'text-cyan-600 font-medium' : 'text-gray-500'}`}>
+              <span className={`text-xs mt-1 hidden sm:block ${isActive ? 'text-cyan-600 font-medium' : 'text-gray-500'}`}>
                 {step.label}
               </span>
             </button>
             {index < STEPS.length - 1 && (
-              <div className={`w-8 h-0.5 mx-1 transition-colors ${currentStep > step.number ? 'bg-green-500' : 'bg-gray-200'}`} />
+              <div className={`w-4 sm:w-8 h-0.5 mx-0.5 sm:mx-1 transition-colors ${currentStep > step.number ? 'bg-green-500' : 'bg-gray-200'}`} />
             )}
           </div>
         );
@@ -312,7 +312,7 @@ export default function ControlsSection({
 
   const renderStep1 = () => (
     <Card className="border-2 border-cyan-500">
-      <CardContent className="p-6">
+      <CardContent className="p-4 md:p-6">
         {imageInfo ? (
           <div className="text-center">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -365,8 +365,8 @@ export default function ControlsSection({
 
   const renderStep2 = () => (
     <Card className="border-2 border-cyan-500">
-      <CardContent className="p-6">
-        <Ruler className="w-10 h-10 text-cyan-500 mb-4" />
+      <CardContent className="p-4 md:p-6">
+        <Ruler className="w-8 h-8 md:w-10 md:h-10 text-cyan-500 mb-3 md:mb-4" />
         <h3 className="text-lg font-semibold mb-2">Choose Sticker Size</h3>
         <p className="text-gray-600 mb-4">
           Pick the size that fits your needs.
@@ -625,7 +625,7 @@ export default function ControlsSection({
       {showCelebration && <CelebrationAnimation />}
       
       <Card className="border-2 border-green-500 bg-gradient-to-br from-green-50 to-cyan-50">
-        <CardContent className="p-6 text-center">
+        <CardContent className="p-4 md:p-6 text-center">
           <div className="relative inline-block">
             <PartyPopper className="w-12 h-12 text-green-500 mx-auto mb-2" />
           </div>
@@ -709,7 +709,7 @@ export default function ControlsSection({
   );
 
   return (
-    <div className="lg:col-span-1">
+    <div className="lg:col-span-1 pb-20 md:pb-0">
       <StepIndicator />
       <ProgressSummary 
         imageInfo={imageInfo}
@@ -752,6 +752,20 @@ export default function ControlsSection({
           </Button>
         )}
       </div>
+
+      {/* Sticky mobile download button */}
+      {currentStep === 4 && (
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t shadow-lg md:hidden z-40">
+          <Button 
+            onClick={() => onDownload('standard')}
+            disabled={isProcessing}
+            className="w-full bg-green-500 hover:bg-green-600 text-white text-lg py-4"
+          >
+            <Download className="w-5 h-5 mr-2" />
+            Download PDF
+          </Button>
+        </div>
+      )}
 
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <DialogContent>
