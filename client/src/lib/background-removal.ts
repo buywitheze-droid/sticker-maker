@@ -1,6 +1,7 @@
 /**
- * Fast client-side background removal for solid white backgrounds
- * Uses canvas pixel analysis to detect and remove white/near-white pixels
+ * Magic Eraser style background removal
+ * Uses flood-fill from edges to remove only contiguous white background
+ * White areas inside the design are preserved
  */
 
 export interface BackgroundRemovalOptions {
@@ -14,8 +15,135 @@ const defaultOptions: BackgroundRemovalOptions = {
 };
 
 /**
- * Removes white/light background from an image
- * Returns a new canvas with transparent background
+ * Check if a pixel at given index is "white enough" to be considered background
+ */
+function isWhitePixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
+  const r = data[index];
+  const g = data[index + 1];
+  const b = data[index + 2];
+  const a = data[index + 3];
+  
+  // If pixel is already transparent, it's part of the background path (can traverse through)
+  if (a < 128) return true;
+  
+  // Check if pixel is close to white using minimum channel
+  const minChannel = Math.min(r, g, b);
+  return minChannel >= thresholdValue;
+}
+
+/**
+ * Check if a pixel should actually be made transparent (white and opaque)
+ */
+function shouldRemovePixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
+  const r = data[index];
+  const g = data[index + 1];
+  const b = data[index + 2];
+  const a = data[index + 3];
+  
+  // Only remove pixels that are opaque and white
+  if (a < 128) return false;
+  
+  const minChannel = Math.min(r, g, b);
+  return minChannel >= thresholdValue;
+}
+
+/**
+ * Flood-fill from edges to find all contiguous white background pixels
+ * Returns a Set of pixel indices that should be made transparent
+ */
+function floodFillFromEdges(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  thresholdValue: number
+): Set<number> {
+  const toRemove = new Set<number>();
+  const visited = new Set<number>();
+  const queue: number[] = [];
+  
+  // Helper to get pixel index from x,y coordinates
+  const getIndex = (x: number, y: number) => (y * width + x) * 4;
+  
+  // Add all edge pixels to queue if they are white
+  // Top and bottom edges
+  for (let x = 0; x < width; x++) {
+    // Top edge
+    const topIndex = getIndex(x, 0);
+    if (isWhitePixel(data, topIndex, thresholdValue) && !visited.has(topIndex)) {
+      queue.push(topIndex);
+      visited.add(topIndex);
+    }
+    // Bottom edge
+    const bottomIndex = getIndex(x, height - 1);
+    if (isWhitePixel(data, bottomIndex, thresholdValue) && !visited.has(bottomIndex)) {
+      queue.push(bottomIndex);
+      visited.add(bottomIndex);
+    }
+  }
+  
+  // Left and right edges
+  for (let y = 0; y < height; y++) {
+    // Left edge
+    const leftIndex = getIndex(0, y);
+    if (isWhitePixel(data, leftIndex, thresholdValue) && !visited.has(leftIndex)) {
+      queue.push(leftIndex);
+      visited.add(leftIndex);
+    }
+    // Right edge
+    const rightIndex = getIndex(width - 1, y);
+    if (isWhitePixel(data, rightIndex, thresholdValue) && !visited.has(rightIndex)) {
+      queue.push(rightIndex);
+      visited.add(rightIndex);
+    }
+  }
+  
+  // Flood fill using BFS with index-based processing (O(1) instead of O(n) for shift)
+  let queueIndex = 0;
+  while (queueIndex < queue.length) {
+    const currentIndex = queue[queueIndex++];
+    
+    // Only add to removal set if it's actually a white opaque pixel
+    if (shouldRemovePixel(data, currentIndex, thresholdValue)) {
+      toRemove.add(currentIndex);
+    }
+    
+    // Get x,y from index
+    const pixelPos = currentIndex / 4;
+    const x = pixelPos % width;
+    const y = Math.floor(pixelPos / width);
+    
+    // Check 4-connected neighbors (up, down, left, right)
+    const neighbors = [
+      { nx: x, ny: y - 1 },     // up
+      { nx: x, ny: y + 1 },     // down
+      { nx: x - 1, ny: y },     // left
+      { nx: x + 1, ny: y },     // right
+    ];
+    
+    for (const { nx, ny } of neighbors) {
+      // Skip if out of bounds
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      
+      const neighborIndex = getIndex(nx, ny);
+      
+      // Skip if already visited
+      if (visited.has(neighborIndex)) continue;
+      
+      visited.add(neighborIndex);
+      
+      // If neighbor is white, add to queue
+      if (isWhitePixel(data, neighborIndex, thresholdValue)) {
+        queue.push(neighborIndex);
+      }
+    }
+  }
+  
+  return toRemove;
+}
+
+/**
+ * Removes white background from edges only (Magic Eraser style)
+ * Returns a new canvas with transparent background where white was connected to edges
  */
 export function removeWhiteBackground(
   image: HTMLImageElement,
@@ -40,31 +168,30 @@ export function removeWhiteBackground(
   // Calculate threshold value (0-255 scale)
   const thresholdValue = (opts.threshold / 100) * 255;
   
-  // Process each pixel
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    
-    // Check if pixel is close to white
-    // Use minimum of RGB to detect near-white pixels
-    const minChannel = Math.min(r, g, b);
-    
-    if (minChannel >= thresholdValue) {
-      // Pixel is near-white, make it transparent
-      if (opts.featherEdge) {
-        // Calculate how close to white (for soft edges)
-        const whiteness = minChannel / 255;
-        const fadeStart = opts.threshold / 100;
-        if (whiteness >= fadeStart) {
-          // Fade alpha based on whiteness
-          const fadeAmount = (whiteness - fadeStart) / (1 - fadeStart);
-          data[i + 3] = Math.round(255 * (1 - fadeAmount));
-        }
-      } else {
-        // Hard edge - fully transparent
-        data[i + 3] = 0;
+  // Find all white pixels connected to edges using flood fill
+  const pixelsToRemove = floodFillFromEdges(data, canvas.width, canvas.height, thresholdValue);
+  
+  // Make the marked pixels transparent
+  const pixelArray = Array.from(pixelsToRemove);
+  for (let i = 0; i < pixelArray.length; i++) {
+    const index = pixelArray[i];
+    if (opts.featherEdge) {
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const minChannel = Math.min(r, g, b);
+      
+      // Calculate how close to white (for soft edges)
+      const whiteness = minChannel / 255;
+      const fadeStart = opts.threshold / 100;
+      if (whiteness >= fadeStart) {
+        // Fade alpha based on whiteness
+        const fadeAmount = (whiteness - fadeStart) / (1 - fadeStart);
+        data[index + 3] = Math.round(255 * (1 - fadeAmount));
       }
+    } else {
+      // Hard edge - fully transparent
+      data[index + 3] = 0;
     }
   }
   
@@ -88,6 +215,7 @@ export async function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImag
 
 /**
  * Removes background and returns a new image element
+ * Uses Magic Eraser style - only removes white connected to edges
  */
 export async function removeBackgroundFromImage(
   image: HTMLImageElement,
