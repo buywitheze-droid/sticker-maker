@@ -256,7 +256,8 @@ export function applyCadCutClipping(
   ctx: CanvasRenderingContext2D,
   shapeSettings: ShapeSettings,
   shapeWidth: number,
-  shapeHeight: number
+  shapeHeight: number,
+  pixelsPerInch: number = 72
 ): void {
   const centerX = shapeWidth / 2;
   const centerY = shapeHeight / 2;
@@ -264,9 +265,8 @@ export function applyCadCutClipping(
   ctx.save();
   ctx.beginPath();
   
-  // Calculate corner radius proportionally to shape size (approx 10% of smaller dimension)
-  const cornerRadiusRatio = (shapeSettings.cornerRadius || 0.25) / 2; // Convert inches to ratio
-  const cornerRadius = Math.min(shapeWidth, shapeHeight) * cornerRadiusRatio * 0.5;
+  // Calculate corner radius in pixels from inches
+  const cornerRadius = (shapeSettings.cornerRadius || 0.25) * pixelsPerInch;
   
   if (shapeSettings.type === 'circle') {
     const radius = Math.min(shapeWidth, shapeHeight) / 2;

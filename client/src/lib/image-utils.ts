@@ -52,20 +52,16 @@ export async function downloadCanvas(
   // Calculate output dimensions based on shape settings
   let outputWidth, outputHeight;
   
-  if (shapeSettings?.enabled) {
-    outputWidth = shapeSettings.widthInches * dpi;
-    outputHeight = shapeSettings.heightInches * dpi;
-  } else {
-    outputWidth = widthInches * dpi;
-    outputHeight = heightInches * dpi;
-  }
+  // Use provided width/height inches - these come from resize settings
+  outputWidth = widthInches * dpi;
+  outputHeight = heightInches * dpi;
 
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
   // Draw background shape if enabled
   if (shapeSettings?.enabled) {
-    drawShapeBackground(ctx, shapeSettings, outputWidth, outputHeight);
+    drawShapeBackground(ctx, shapeSettings, outputWidth, outputHeight, dpi);
   }
 
   // Draw the image with stroke at high resolution
@@ -98,14 +94,15 @@ export async function downloadCanvas(
       drawWidth = drawHeight * imageAspect;
     }
     
-    // Apply manual position offset
+    // Center the image in the shape
     const baseX = (outputWidth - drawWidth) / 2;
     const baseY = (outputHeight - drawHeight) / 2;
-    const finalX = baseX + (shapeSettings.offsetX || 0);
-    const finalY = baseY + (shapeSettings.offsetY || 0);
+    const finalX = baseX;
+    const finalY = baseY;
     
     // Apply clipping to prevent image from extending beyond shape bounds
-    applyCadCutClipping(ctx, shapeSettings, outputWidth, outputHeight);
+    // Pass dpi as pixelsPerInch for correct corner radius calculation
+    applyCadCutClipping(ctx, shapeSettings, outputWidth, outputHeight, dpi);
     
     ctx.drawImage(sourceImage, finalX, finalY, drawWidth, drawHeight);
     
@@ -145,14 +142,35 @@ export async function downloadCanvas(
   });
 }
 
+// Helper function to draw heart path on canvas (Y increases downward)
+function drawHeartPath(ctx: CanvasRenderingContext2D, centerX: number, centerY: number, size: number) {
+  const w = size;
+  const h = size;
+  const dipY = centerY - h * 0.15;
+  const topY = centerY - h * 0.35;
+  const bottomY = centerY + h * 0.5;
+  const leftX = centerX - w * 0.5;
+  const rightX = centerX + w * 0.5;
+  
+  ctx.moveTo(centerX, dipY);
+  ctx.bezierCurveTo(centerX - w * 0.15, dipY - h * 0.15, leftX + w * 0.05, topY, leftX + w * 0.25, topY);
+  ctx.bezierCurveTo(leftX, topY, leftX, centerY - h * 0.1, leftX + w * 0.1, centerY + h * 0.1);
+  ctx.bezierCurveTo(leftX + w * 0.2, centerY + h * 0.3, centerX, bottomY - h * 0.1, centerX, bottomY);
+  ctx.bezierCurveTo(centerX, bottomY - h * 0.1, rightX - w * 0.2, centerY + h * 0.3, rightX - w * 0.1, centerY + h * 0.1);
+  ctx.bezierCurveTo(rightX, centerY - h * 0.1, rightX, topY, rightX - w * 0.25, topY);
+  ctx.bezierCurveTo(rightX - w * 0.05, topY, centerX + w * 0.15, dipY - h * 0.15, centerX, dipY);
+}
+
 function drawShapeBackground(
   ctx: CanvasRenderingContext2D,
   shapeSettings: ShapeSettings,
   width: number,
-  height: number
+  height: number,
+  dpi: number = 300
 ) {
   const centerX = width / 2;
   const centerY = height / 2;
+  const cornerRadius = (shapeSettings.cornerRadius || 0.25) * dpi;
   
   // Fill the shape
   ctx.fillStyle = shapeSettings.fillColor;
@@ -170,6 +188,16 @@ function drawShapeBackground(
     const startX = centerX - size / 2;
     const startY = centerY - size / 2;
     ctx.rect(startX, startY, size, size);
+  } else if (shapeSettings.type === 'rounded-square') {
+    const size = Math.min(width, height);
+    const startX = centerX - size / 2;
+    const startY = centerY - size / 2;
+    ctx.roundRect(startX, startY, size, size, cornerRadius);
+  } else if (shapeSettings.type === 'rounded-rectangle') {
+    ctx.roundRect(0, 0, width, height, cornerRadius);
+  } else if (shapeSettings.type === 'heart') {
+    const size = Math.min(width, height);
+    drawHeartPath(ctx, centerX, centerY, size);
   } else { // rectangle
     ctx.rect(0, 0, width, height);
   }
