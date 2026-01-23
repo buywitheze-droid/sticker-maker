@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Upload } from "lucide-react";
+import { Upload, Sparkles, Zap, Star } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ImageInfo } from "./image-editor";
 import type { ResizeSettings } from "@/lib/types";
@@ -59,17 +59,39 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-white hover:border-cyan-400 hover:bg-cyan-50/80 transition-all duration-300 cursor-pointer shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 group"
+        className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center bg-gradient-to-br from-white to-cyan-50/50 hover:border-cyan-400 hover:from-cyan-50 hover:to-teal-50 transition-all duration-300 cursor-pointer shadow-lg hover:shadow-xl hover:shadow-cyan-500/20 group relative overflow-hidden"
       >
-        <div className="flex flex-col items-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-cyan-50 transition-colors duration-300">
-            <Upload className="w-8 h-8 text-gray-400 group-hover:text-cyan-500 transition-colors duration-300" />
+        {/* Decorative sparkles */}
+        <div className="absolute top-3 right-3 opacity-30 group-hover:opacity-60 transition-opacity">
+          <Sparkles className="w-5 h-5 text-cyan-400" />
+        </div>
+        <div className="absolute bottom-3 left-3 opacity-20 group-hover:opacity-50 transition-opacity">
+          <Star className="w-4 h-4 text-teal-400" />
+        </div>
+        
+        <div className="flex flex-col items-center relative z-10">
+          <div className="w-20 h-20 bg-gradient-to-br from-cyan-100 to-teal-100 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300 shadow-md">
+            <Upload className="w-10 h-10 text-cyan-500 group-hover:text-cyan-600 transition-colors duration-300" />
           </div>
-          <p className="text-gray-700 font-medium mb-2">Drop your PNG image here</p>
-          <p className="text-sm text-gray-500 mb-4">or click to browse</p>
-          <button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-black px-6 py-2.5 rounded-lg hover:from-cyan-600 hover:to-teal-600 transition-all duration-300 font-medium shadow-md hover:shadow-lg">
-            Choose File
+          <h3 className="text-lg font-bold text-gray-800 mb-1">Let's Make Some Stickers!</h3>
+          <p className="text-gray-600 mb-1">Drop your PNG design here</p>
+          <p className="text-xs text-gray-400 mb-4">Works best with transparent backgrounds</p>
+          <button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-black px-6 py-2.5 rounded-lg hover:from-cyan-600 hover:to-teal-600 transition-all duration-300 font-medium shadow-md hover:shadow-lg hover:scale-105 flex items-center gap-2">
+            <Zap className="w-4 h-4" />
+            Choose Your Design
           </button>
+          
+          {/* Quick benefits */}
+          <div className="flex flex-wrap justify-center gap-3 mt-4 text-xs text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+              Instant preview
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+              Print-ready output
+            </span>
+          </div>
         </div>
         <input 
           type="file" 
