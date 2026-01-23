@@ -1,11 +1,8 @@
-import { useState } from "react";
 import ImageEditor from "@/components/image-editor";
 import elephantLogo from "@assets/generated_images/mother_and_baby_elephant_silhouette.png";
 import devilLogo from "@assets/generated_images/mischievous_devil_face_silhouette.png";
 
 export default function StickerMaker() {
-  const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}

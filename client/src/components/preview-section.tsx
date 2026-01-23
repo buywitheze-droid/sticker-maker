@@ -33,6 +33,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const processingIdRef = useRef(0);
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
+    const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -81,6 +82,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     // Touch handlers for mobile pan
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
       if (zoom === 1 || e.touches.length !== 1) return;
+      e.preventDefault(); // Prevent scroll interference when zoomed
       const touch = e.touches[0];
       setIsDragging(true);
       dragStartRef.current = {
@@ -262,6 +264,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
+      // Clear any pending debounce
+      if (contourDebounceRef.current) {
+        clearTimeout(contourDebounceRef.current);
+        contourDebounceRef.current = null;
+      }
+      
       if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
         contourCacheRef.current = null;
         return;
@@ -270,38 +278,47 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const cacheKey = generateContourCacheKey();
       if (contourCacheRef.current?.key === cacheKey) return;
 
-      const currentId = ++processingIdRef.current;
-      setIsProcessing(true);
-      setProcessingProgress(0);
+      // Debounce processing to avoid rapid re-renders during slider drags
+      contourDebounceRef.current = setTimeout(() => {
+        const currentId = ++processingIdRef.current;
+        setIsProcessing(true);
+        setProcessingProgress(0);
 
-      const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
-      const workerResizeSettings = {
-        widthInches: resizeSettings.widthInches,
-        heightInches: resizeSettings.heightInches,
-        maintainAspectRatio: resizeSettings.maintainAspectRatio,
-        outputDPI: 100
-      };
+        const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
+        const workerResizeSettings = {
+          widthInches: resizeSettings.widthInches,
+          heightInches: resizeSettings.heightInches,
+          maintainAspectRatio: resizeSettings.maintainAspectRatio,
+          outputDPI: 100
+        };
 
-      processContourInWorker(
-        imageInfo.image,
-        previewStrokeSettings,
-        workerResizeSettings,
-        (progress) => {
-          if (processingIdRef.current === currentId) {
-            setProcessingProgress(progress);
+        processContourInWorker(
+          imageInfo.image,
+          previewStrokeSettings,
+          workerResizeSettings,
+          (progress) => {
+            if (processingIdRef.current === currentId) {
+              setProcessingProgress(progress);
+            }
           }
+        ).then((contourCanvas) => {
+          if (processingIdRef.current === currentId) {
+            contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
+            setIsProcessing(false);
+          }
+        }).catch((error) => {
+          console.error('Contour processing error:', error);
+          if (processingIdRef.current === currentId) {
+            setIsProcessing(false);
+          }
+        });
+      }, 100); // 100ms debounce for smoother slider interaction
+      
+      return () => {
+        if (contourDebounceRef.current) {
+          clearTimeout(contourDebounceRef.current);
         }
-      ).then((contourCanvas) => {
-        if (processingIdRef.current === currentId) {
-          contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
-          setIsProcessing(false);
-        }
-      }).catch((error) => {
-        console.error('Contour processing error:', error);
-        if (processingIdRef.current === currentId) {
-          setIsProcessing(false);
-        }
-      });
+      };
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey]);
 
     useEffect(() => {
@@ -327,7 +344,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, zoom, backgroundColor, isProcessing]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing]);
 
     useEffect(() => {
       if (!imageInfo) return;
