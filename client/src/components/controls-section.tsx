@@ -11,7 +11,7 @@ import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
-import { ChevronLeft, ChevronRight, Upload, Ruler, Shapes, Download, Check, HelpCircle, ChevronDown, Sparkles, PartyPopper } from "lucide-react";
+import { ChevronLeft, ChevronRight, Upload, Ruler, Shapes, Download, Check, HelpCircle, ChevronDown, Sparkles, PartyPopper, ShoppingCart, ExternalLink } from "lucide-react";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -709,6 +709,36 @@ export default function ControlsSection({
           </CardContent>
         </Card>
       )}
+
+      {/* Next Step Reminder */}
+      <Card className="border-2 border-dashed border-green-300 bg-green-50">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+              <ShoppingCart className="w-4 h-4 text-white" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-semibold text-green-800 mb-1">One More Step!</h4>
+              <p className="text-sm text-green-700 mb-3">
+                Don't forget to select your sticker size, quantity, and complete your order.
+              </p>
+              <Button 
+                asChild
+                className="w-full bg-green-500 hover:bg-green-600 text-white"
+              >
+                <a 
+                  href="https://dtfmasters.com/products/uv-die-cut-stickers?variant=44420132962454"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Complete My Order
+                  <ExternalLink className="w-4 h-4 ml-2" />
+                </a>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 
