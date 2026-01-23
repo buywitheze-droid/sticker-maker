@@ -101,7 +101,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const deltaX = touch.clientX - dragStartRef.current.x;
       const deltaY = touch.clientY - dragStartRef.current.y;
       
-      const sensitivity = 0.6;
+      // Reduced sensitivity for mobile (50% of desktop) for more precise control
+      const sensitivity = 0.3;
       const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
       const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
       
