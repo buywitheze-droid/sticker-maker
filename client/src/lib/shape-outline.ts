@@ -39,9 +39,28 @@ export function calculateShapeDimensions(
     return { widthInches: size, heightInches: size };
   } else if (shapeType === 'oval') {
     // Oval follows the design aspect ratio
+    // But force a minimum aspect ratio difference to ensure it looks like an oval, not a circle
+    let width = designWidthInches + totalOffset;
+    let height = designHeightInches + totalOffset;
+    
+    // Minimum aspect ratio: at least 1.2:1 (20% longer on one side)
+    const minAspectRatio = 1.2;
+    const currentRatio = Math.max(width, height) / Math.min(width, height);
+    
+    if (currentRatio < minAspectRatio) {
+      // Design is too square-ish, stretch to make it a proper oval
+      if (width >= height) {
+        // Make it wider
+        width = height * minAspectRatio;
+      } else {
+        // Make it taller
+        height = width * minAspectRatio;
+      }
+    }
+    
     return {
-      widthInches: designWidthInches + totalOffset,
-      heightInches: designHeightInches + totalOffset
+      widthInches: parseFloat(width.toFixed(3)),
+      heightInches: parseFloat(height.toFixed(3))
     };
   } else {
     // Rectangle and rounded-rectangle follow the design aspect ratio
