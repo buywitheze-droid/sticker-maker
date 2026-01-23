@@ -439,7 +439,7 @@ export default function ControlsSection({
 
   const renderStep3 = () => (
     <div className="space-y-3">
-      <p className="text-xs text-gray-700 font-medium">Pick how your sticker will be cut:</p>
+      <p className="text-xs text-gray-300 font-medium">Pick how your sticker will be cut:</p>
       
       <Card 
         className={`border-2 transition-all duration-300 cursor-pointer ${
