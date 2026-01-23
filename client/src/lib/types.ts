@@ -27,7 +27,7 @@ export interface ResizeSettings {
 
 export interface ShapeSettings {
   enabled: boolean;
-  type: 'square' | 'rectangle' | 'circle' | 'oval' | 'rounded-square' | 'rounded-rectangle' | 'heart';
+  type: 'square' | 'rectangle' | 'circle' | 'oval' | 'rounded-square' | 'rounded-rectangle';
   offset: number; // Margin around design in inches (replaces manual width/height)
   fillColor: string;
   strokeEnabled: boolean;

@@ -368,31 +368,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       lastSettingsRef.current = settingsKey;
     }, [imageInfo, strokeSettings.enabled, strokeSettings.width, shapeSettings.enabled, shapeSettings.type, resizeSettings.widthInches]);
 
-    // Helper function to draw a heart shape path on canvas
-    // Canvas coordinate system: Y increases downward (top=0), matches screen coords
-    const drawHeartPath = (ctx: CanvasRenderingContext2D, centerX: number, centerY: number, size: number) => {
-      const w = size;
-      const h = size;
-      
-      // In canvas coords: top of heart (lobes) is centerY - h*0.35, bottom tip is centerY + h*0.5
-      // The dip between lobes is at centerY - h*0.15
-      const dipY = centerY - h * 0.15;
-      const topY = centerY - h * 0.35;
-      const bottomY = centerY + h * 0.5;
-      const leftX = centerX - w * 0.5;
-      const rightX = centerX + w * 0.5;
-      
-      ctx.moveTo(centerX, dipY);
-      // Left lobe
-      ctx.bezierCurveTo(centerX - w * 0.15, dipY - h * 0.15, leftX + w * 0.05, topY, leftX + w * 0.25, topY);
-      ctx.bezierCurveTo(leftX, topY, leftX, centerY - h * 0.1, leftX + w * 0.1, centerY + h * 0.1);
-      ctx.bezierCurveTo(leftX + w * 0.2, centerY + h * 0.3, centerX, bottomY - h * 0.1, centerX, bottomY);
-      // Right side
-      ctx.bezierCurveTo(centerX, bottomY - h * 0.1, rightX - w * 0.2, centerY + h * 0.3, rightX - w * 0.1, centerY + h * 0.1);
-      ctx.bezierCurveTo(rightX, centerY - h * 0.1, rightX, topY, rightX - w * 0.25, topY);
-      ctx.bezierCurveTo(rightX - w * 0.05, topY, centerX + w * 0.15, dipY - h * 0.15, centerX, dipY);
-    };
-
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
@@ -454,11 +429,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.roundRect(startX, startY, size + bleedPixels * 2, size + bleedPixels * 2, cornerRadiusPixels);
       } else if (shapeSettings.type === 'rounded-rectangle') {
         ctx.roundRect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'heart') {
-        const size = Math.min(shapeWidth, shapeHeight) + bleedPixels * 2;
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        drawHeartPath(ctx, centerX, centerY, size);
       } else {
         ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
       }
@@ -493,11 +463,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.roundRect(startX, startY, size, size, cornerRadiusPixels);
       } else if (shapeSettings.type === 'rounded-rectangle') {
         ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'heart') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        drawHeartPath(ctx, centerX, centerY, size);
       } else {
         ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
       }
@@ -540,11 +505,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.roundRect(startX, startY, size, size, cornerRadiusPixels);
       } else if (shapeSettings.type === 'rounded-rectangle') {
         ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'heart') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        drawHeartPath(ctx, centerX, centerY, size);
       } else {
         ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
       }

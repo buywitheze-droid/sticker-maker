@@ -142,25 +142,6 @@ export async function downloadCanvas(
   });
 }
 
-// Helper function to draw heart path on canvas (Y increases downward)
-function drawHeartPath(ctx: CanvasRenderingContext2D, centerX: number, centerY: number, size: number) {
-  const w = size;
-  const h = size;
-  const dipY = centerY - h * 0.15;
-  const topY = centerY - h * 0.35;
-  const bottomY = centerY + h * 0.5;
-  const leftX = centerX - w * 0.5;
-  const rightX = centerX + w * 0.5;
-  
-  ctx.moveTo(centerX, dipY);
-  ctx.bezierCurveTo(centerX - w * 0.15, dipY - h * 0.15, leftX + w * 0.05, topY, leftX + w * 0.25, topY);
-  ctx.bezierCurveTo(leftX, topY, leftX, centerY - h * 0.1, leftX + w * 0.1, centerY + h * 0.1);
-  ctx.bezierCurveTo(leftX + w * 0.2, centerY + h * 0.3, centerX, bottomY - h * 0.1, centerX, bottomY);
-  ctx.bezierCurveTo(centerX, bottomY - h * 0.1, rightX - w * 0.2, centerY + h * 0.3, rightX - w * 0.1, centerY + h * 0.1);
-  ctx.bezierCurveTo(rightX, centerY - h * 0.1, rightX, topY, rightX - w * 0.25, topY);
-  ctx.bezierCurveTo(rightX - w * 0.05, topY, centerX + w * 0.15, dipY - h * 0.15, centerX, dipY);
-}
-
 function drawShapeBackground(
   ctx: CanvasRenderingContext2D,
   shapeSettings: ShapeSettings,
@@ -195,9 +176,6 @@ function drawShapeBackground(
     ctx.roundRect(startX, startY, size, size, cornerRadius);
   } else if (shapeSettings.type === 'rounded-rectangle') {
     ctx.roundRect(0, 0, width, height, cornerRadius);
-  } else if (shapeSettings.type === 'heart') {
-    const size = Math.min(width, height);
-    drawHeartPath(ctx, centerX, centerY, size);
   } else { // rectangle
     ctx.rect(0, 0, width, height);
   }

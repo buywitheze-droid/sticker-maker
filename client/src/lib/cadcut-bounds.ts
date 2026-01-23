@@ -131,15 +131,6 @@ function getShapePixelBounds(
       width: size,
       height: size
     };
-  } else if (shapeSettings.type === 'heart') {
-    // Heart fits in a square bounding box
-    const size = Math.min(shapeWidthPixels, shapeHeightPixels);
-    return {
-      x: centerX - size / 2,
-      y: centerY - size / 2,
-      width: size,
-      height: size
-    };
   } else { // rectangle or rounded-rectangle
     return {
       x: 0,
@@ -192,42 +183,8 @@ function checkBoundsContainment(
       const dy = (corner.y - centerY) / radiusY;
       return (dx * dx + dy * dy) <= 1;
     });
-  } else if (shapeSettings.type === 'heart') {
-    // Heart containment - use an approximate bounding approach
-    // The heart is narrower at top (lobes) and bottom (tip), widest in middle
-    const centerX = shapeBounds.x + shapeBounds.width / 2;
-    const centerY = shapeBounds.y + shapeBounds.height / 2;
-    const size = shapeBounds.width;
-    
-    // Check corners against simplified heart constraints
-    const corners = [
-      { x: designBounds.x, y: designBounds.y },
-      { x: designBounds.x + designBounds.width, y: designBounds.y },
-      { x: designBounds.x, y: designBounds.y + designBounds.height },
-      { x: designBounds.x + designBounds.width, y: designBounds.y + designBounds.height }
-    ];
-    
-    return corners.every(corner => {
-      const relX = (corner.x - centerX) / (size * 0.5);
-      const relY = (corner.y - centerY) / (size * 0.5);
-      
-      // Simplified heart check: use a combination of bounds
-      // Upper region (lobes): narrower tolerance
-      if (relY < -0.15) {
-        // Above dip - use reduced width
-        const maxWidth = 0.8 * (1 - Math.abs(relY) * 0.5);
-        return Math.abs(relX) <= maxWidth;
-      }
-      // Lower region (tip): progressively narrower
-      if (relY > 0.2) {
-        const maxWidth = 0.9 * (1 - (relY - 0.2) * 1.2);
-        return Math.abs(relX) <= Math.max(0, maxWidth);
-      }
-      // Middle region: full width
-      return Math.abs(relX) <= 0.9;
-    });
   } else {
-    // Rectangle, rounded-rectangle, square, rounded-square - simple bounds check
+    // Square, rounded-square, rectangle, rounded-rectangle: simple bounding box check
     return (
       designBounds.x >= shapeBounds.x &&
       designBounds.y >= shapeBounds.y &&
@@ -287,25 +244,6 @@ export function applyCadCutClipping(
     ctx.roundRect(startX, startY, size, size, cornerRadius);
   } else if (shapeSettings.type === 'rounded-rectangle') {
     ctx.roundRect(0, 0, shapeWidth, shapeHeight, cornerRadius);
-  } else if (shapeSettings.type === 'heart') {
-    // Draw heart shape using bezier curves for accurate clipping
-    const w = Math.min(shapeWidth, shapeHeight);
-    const h = w;
-    const dipY = centerY - h * 0.15;
-    const topY = centerY - h * 0.35;
-    const bottomY = centerY + h * 0.5;
-    const leftX = centerX - w * 0.5;
-    const rightX = centerX + w * 0.5;
-    
-    ctx.moveTo(centerX, dipY);
-    // Left lobe
-    ctx.bezierCurveTo(centerX - w * 0.15, dipY - h * 0.15, leftX + w * 0.05, topY, leftX + w * 0.25, topY);
-    ctx.bezierCurveTo(leftX, topY, leftX, centerY - h * 0.1, leftX + w * 0.1, centerY + h * 0.1);
-    ctx.bezierCurveTo(leftX + w * 0.2, centerY + h * 0.3, centerX, bottomY - h * 0.1, centerX, bottomY);
-    // Right side
-    ctx.bezierCurveTo(centerX, bottomY - h * 0.1, rightX - w * 0.2, centerY + h * 0.3, rightX - w * 0.1, centerY + h * 0.1);
-    ctx.bezierCurveTo(rightX, centerY - h * 0.1, rightX, topY, rightX - w * 0.25, topY);
-    ctx.bezierCurveTo(rightX - w * 0.05, topY, centerX + w * 0.15, dipY - h * 0.15, centerX, dipY);
   } else { // rectangle
     ctx.rect(0, 0, shapeWidth, shapeHeight);
   }

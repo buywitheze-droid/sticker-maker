@@ -603,8 +603,8 @@ export default function ControlsSection({
                     </button>
                   ))}
                 </div>
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  {(['rounded-square', 'rounded-rectangle', 'heart'] as const).map((type) => (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {(['rounded-square', 'rounded-rectangle'] as const).map((type) => (
                     <button
                       key={type}
                       onClick={(e) => { e.stopPropagation(); onShapeChange({ type }); }}
@@ -616,13 +616,8 @@ export default function ControlsSection({
                     >
                       <div className={`mx-auto ${
                         type === 'rounded-square' ? 'w-6 h-6 bg-green-300 rounded-lg' :
-                        type === 'rounded-rectangle' ? 'w-8 h-5 bg-green-300 rounded-lg' :
-                        'w-6 h-6 bg-green-300'
-                      }`} style={type === 'heart' ? {
-                        clipPath: 'path("M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z")',
-                        width: '24px',
-                        height: '24px'
-                      } : undefined} />
+                        'w-8 h-5 bg-green-300 rounded-lg'
+                      }`} />
                       <p className="text-xs mt-1 capitalize">{type.replace('-', ' ')}</p>
                     </button>
                   ))}
@@ -650,15 +645,6 @@ export default function ControlsSection({
                         <SelectItem value="0.64">Big (recommended)</SelectItem>
                         <SelectItem value="0.72">Huge</SelectItem>
                         <SelectItem value="1.44">Extra Large</SelectItem>
-                      </>
-                    ) : shapeSettings.type === 'heart' ? (
-                      <>
-                        <SelectItem value="0.30">Tiny</SelectItem>
-                        <SelectItem value="0.40">Small</SelectItem>
-                        <SelectItem value="0.50">Medium</SelectItem>
-                        <SelectItem value="0.60">Big (recommended)</SelectItem>
-                        <SelectItem value="0.70">Huge</SelectItem>
-                        <SelectItem value="1.00">Extra Large</SelectItem>
                       </>
                     ) : (
                       <>
