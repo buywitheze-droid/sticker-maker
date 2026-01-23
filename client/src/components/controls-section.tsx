@@ -635,24 +635,24 @@ export default function ControlsSection({
           </div>
           <h3 className="text-xl font-bold text-green-700 mb-2">Your Sticker is Ready!</h3>
           <p className="text-gray-600 mb-4">
-            Great job! Download your print-ready PDF below.
+            Great job! Send your design to us below.
           </p>
           
-          <Button 
+          {/* Download PDF button - hidden for now, enable later */}
+          {/* <Button 
             onClick={() => onDownload('standard')}
             disabled={isProcessing}
             className="w-full bg-green-500 hover:bg-green-600 text-white text-lg py-6 mb-3 shadow-lg"
           >
             <Download className="w-5 h-5 mr-2" />
             Download PDF
-          </Button>
+          </Button> */}
 
           <Button
-            variant="outline"
             onClick={() => setShowSendForm(!showSendForm)}
-            className="w-full"
+            className="w-full bg-cyan-500 hover:bg-cyan-600 text-black"
           >
-            {showSendForm ? 'Hide Send Form' : 'Or Send Design to Us'}
+            {showSendForm ? 'Hide Form' : 'Send Design to Us'}
           </Button>
         </CardContent>
       </Card>
@@ -761,8 +761,8 @@ export default function ControlsSection({
         )}
       </div>
 
-      {/* Sticky mobile download button */}
-      {currentStep === 4 && (
+      {/* Sticky mobile download button - hidden for now, enable later */}
+      {/* {currentStep === 4 && (
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t shadow-lg md:hidden z-40">
           <Button 
             onClick={() => onDownload('standard')}
@@ -773,7 +773,7 @@ export default function ControlsSection({
             Download PDF
           </Button>
         </div>
-      )}
+      )} */}
 
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <DialogContent>
