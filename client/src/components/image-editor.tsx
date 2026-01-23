@@ -331,13 +331,34 @@ export default function ImageEditor() {
     try {
       const newImage = await removeBackgroundFromImage(imageInfo.image, threshold);
       
+      const newWidth = newImage.naturalWidth || newImage.width;
+      const newHeight = newImage.naturalHeight || newImage.height;
+      
       // Create new image info with the processed image
       const newImageInfo: ImageInfo = {
         ...imageInfo,
         image: newImage,
-        originalWidth: newImage.naturalWidth || newImage.width,
-        originalHeight: newImage.naturalHeight || newImage.height,
+        originalWidth: newWidth,
+        originalHeight: newHeight,
       };
+      
+      // Recalculate resize settings based on new image dimensions after background removal
+      const dpi = imageInfo.dpi || 300;
+      let { widthInches, heightInches } = calculateImageDimensions(newWidth, newHeight, dpi);
+      
+      // Scale to fit within the selected sticker size if needed
+      const maxDimension = Math.max(widthInches, heightInches);
+      if (maxDimension > stickerSize) {
+        const scale = stickerSize / maxDimension;
+        widthInches = parseFloat((widthInches * scale).toFixed(2));
+        heightInches = parseFloat((heightInches * scale).toFixed(2));
+      }
+      
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
       
       // Clear contour cache to force recomputation with new image
       const workerManager = getContourWorkerManager();
@@ -352,7 +373,7 @@ export default function ImageEditor() {
     } finally {
       setIsRemovingBackground(false);
     }
-  }, [imageInfo]);
+  }, [imageInfo, stickerSize]);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     const updated = { ...strokeSettings, ...newSettings };
