@@ -329,7 +329,10 @@ export default function ImageEditor() {
     
     setIsRemovingBackground(true);
     try {
+      console.log('[BG Removal] Starting - Original image size:', imageInfo.image.width, 'x', imageInfo.image.height);
+      
       const bgRemovedImage = await removeBackgroundFromImage(imageInfo.image, threshold);
+      console.log('[BG Removal] After removal - Image size:', bgRemovedImage.width, 'x', bgRemovedImage.height);
       
       // Crop to content bounds after background removal so shape fits actual visible content
       const croppedCanvas = cropImageToContent(bgRemovedImage);
@@ -338,6 +341,7 @@ export default function ImageEditor() {
         setIsRemovingBackground(false);
         return;
       }
+      console.log('[BG Removal] After crop - Canvas size:', croppedCanvas.width, 'x', croppedCanvas.height);
       
       // Convert cropped canvas to image
       const finalImage = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -349,6 +353,7 @@ export default function ImageEditor() {
       
       const newWidth = finalImage.naturalWidth || finalImage.width;
       const newHeight = finalImage.naturalHeight || finalImage.height;
+      console.log('[BG Removal] Final image size:', newWidth, 'x', newHeight);
       
       // Create new image info with the processed and cropped image
       const newImageInfo: ImageInfo = {
@@ -361,6 +366,7 @@ export default function ImageEditor() {
       // Recalculate resize settings based on cropped image dimensions
       const dpi = imageInfo.dpi || 300;
       let { widthInches, heightInches } = calculateImageDimensions(newWidth, newHeight, dpi);
+      console.log('[BG Removal] Calculated dimensions:', widthInches.toFixed(2), 'x', heightInches.toFixed(2), 'inches');
       
       // Scale to fit within the selected sticker size if needed
       const maxDimension = Math.max(widthInches, heightInches);
@@ -368,6 +374,7 @@ export default function ImageEditor() {
         const scale = stickerSize / maxDimension;
         widthInches = parseFloat((widthInches * scale).toFixed(2));
         heightInches = parseFloat((heightInches * scale).toFixed(2));
+        console.log('[BG Removal] Scaled to fit sticker size:', widthInches, 'x', heightInches, 'inches');
       }
       
       setResizeSettings(prev => ({
@@ -375,6 +382,7 @@ export default function ImageEditor() {
         widthInches,
         heightInches,
       }));
+      console.log('[BG Removal] Updated resizeSettings to:', widthInches, 'x', heightInches);
       
       // Clear contour cache to force recomputation with new image
       const workerManager = getContourWorkerManager();
@@ -384,6 +392,7 @@ export default function ImageEditor() {
       setCadCutBounds(null);
       
       setImageInfo(newImageInfo);
+      console.log('[BG Removal] Complete - imageInfo updated');
     } catch (error) {
       console.error('Error removing background:', error);
     } finally {
