@@ -372,16 +372,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      console.log('[Preview] Drawing shape with resizeSettings:', resizeSettings.widthInches, 'x', resizeSettings.heightInches, 'inches');
-      console.log('[Preview] imageInfo dimensions:', imageInfo.image.width, 'x', imageInfo.image.height, 'pixels');
-
       const shapeDims = calculateShapeDimensions(
         resizeSettings.widthInches,
         resizeSettings.heightInches,
         shapeSettings.type,
         shapeSettings.offset
       );
-      console.log('[Preview] Shape dimensions:', shapeDims.widthInches, 'x', shapeDims.heightInches, 'inches');
 
       const bleedInches = 0.10; // 0.10" bleed around the shape
       const padding = 40;

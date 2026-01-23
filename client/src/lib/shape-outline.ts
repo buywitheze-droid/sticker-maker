@@ -30,18 +30,23 @@ export function calculateShapeDimensions(
   const totalOffset = offset * 2; // offset on each side
   
   if (shapeType === 'circle') {
-    // Circle uses the larger dimension to ensure design fits
-    const diameter = Math.max(designWidthInches, designHeightInches) + totalOffset;
+    // Circle uses the diagonal of the design to ensure entire design fits within the circle
+    // This creates a tighter fit than using the max dimension
+    const diagonal = Math.sqrt(designWidthInches * designWidthInches + designHeightInches * designHeightInches);
+    const diameter = diagonal + totalOffset;
     return { widthInches: diameter, heightInches: diameter };
   } else if (shapeType === 'square' || shapeType === 'rounded-square') {
     // Square uses the larger dimension
     const size = Math.max(designWidthInches, designHeightInches) + totalOffset;
     return { widthInches: size, heightInches: size };
   } else if (shapeType === 'oval') {
-    // Oval follows the design aspect ratio
-    // But force a minimum aspect ratio difference to ensure it looks like an oval, not a circle
-    let width = designWidthInches + totalOffset;
-    let height = designHeightInches + totalOffset;
+    // Oval follows the design aspect ratio with proportional offset to preserve aspect ratio
+    // Calculate offset as a percentage of the smaller dimension to maintain proportions
+    const smallerDim = Math.min(designWidthInches, designHeightInches);
+    const offsetScale = 1 + (totalOffset / smallerDim);
+    
+    let width = designWidthInches * offsetScale;
+    let height = designHeightInches * offsetScale;
     
     // Minimum aspect ratio: at least 1.2:1 (20% longer on one side)
     const minAspectRatio = 1.2;
