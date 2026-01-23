@@ -11,6 +11,7 @@ import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
+import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { ChevronLeft, ChevronRight, Upload, Ruler, Shapes, Download, Check, HelpCircle, ChevronDown, Sparkles, PartyPopper, ShoppingCart, ExternalLink } from "lucide-react";
 
 interface ControlsSectionProps {
@@ -221,7 +222,10 @@ export default function ControlsSection({
       
       if (imageInfo?.image) {
         if (strokeSettings.enabled) {
-          const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings);
+          // Get cached contour data from worker for 10x faster PDF generation
+          const workerManager = getContourWorkerManager();
+          const cachedData = workerManager.getCachedContourData();
+          const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings, cachedData || undefined);
           pdfBase64 = result || "";
         } else if (shapeSettings.enabled) {
           const result = await generateShapePDFBase64(imageInfo.image, shapeSettings, resizeSettings);

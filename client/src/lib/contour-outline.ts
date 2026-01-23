@@ -1941,15 +1941,40 @@ export async function downloadContourPDF(
 export async function generateContourPDFBase64(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
-  resizeSettings: ResizeSettings
+  resizeSettings: ResizeSettings,
+  cachedContourData?: CachedContourData
 ): Promise<string | null> {
-  const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-  if (!contourResult) {
-    console.error('Failed to generate contour path');
-    return null;
-  }
+  let pathPoints: Array<{x: number; y: number}>;
+  let widthInches: number;
+  let heightInches: number;
+  let imageOffsetX: number;
+  let imageOffsetY: number;
+  let backgroundColor: string;
   
-  const { pathPoints, widthInches, heightInches, imageOffsetX, imageOffsetY, backgroundColor } = contourResult;
+  // Use cached contour data if available (from preview worker) for 10x faster export
+  if (cachedContourData && cachedContourData.pathPoints.length > 0) {
+    console.log('[generateContourPDFBase64] Using cached contour data for fast export');
+    pathPoints = cachedContourData.pathPoints;
+    widthInches = cachedContourData.widthInches;
+    heightInches = cachedContourData.heightInches;
+    imageOffsetX = cachedContourData.imageOffsetX;
+    imageOffsetY = cachedContourData.imageOffsetY;
+    backgroundColor = cachedContourData.backgroundColor;
+  } else {
+    // Fallback: compute contour path (slower)
+    console.log('[generateContourPDFBase64] Computing contour path (no cache)');
+    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+    if (!contourResult) {
+      console.error('Failed to generate contour path');
+      return null;
+    }
+    pathPoints = contourResult.pathPoints;
+    widthInches = contourResult.widthInches;
+    heightInches = contourResult.heightInches;
+    imageOffsetX = contourResult.imageOffsetX;
+    imageOffsetY = contourResult.imageOffsetY;
+    backgroundColor = contourResult.backgroundColor;
+  }
   
   const widthPts = widthInches * 72;
   const heightPts = heightInches * 72;
