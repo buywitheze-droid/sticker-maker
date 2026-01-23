@@ -13,8 +13,8 @@ interface UploadSectionProps {
 
 export default function UploadSection({ onImageUpload, imageInfo, resizeSettings, showCutLineInfo = false }: UploadSectionProps) {
   const handleFileUpload = useCallback((file: File) => {
-    if (!file.type.startsWith('image/png')) {
-      alert('Please upload a PNG image file.');
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload an image file (PNG or JPEG).');
       return;
     }
 
@@ -97,7 +97,7 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
           type="file" 
           id="imageInput" 
           className="hidden" 
-          accept=".png,image/png" 
+          accept=".png,.jpg,.jpeg,image/png,image/jpeg" 
           onChange={handleFileInputChange}
         />
       </div>
