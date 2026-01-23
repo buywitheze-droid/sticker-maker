@@ -122,6 +122,27 @@ export default function ImageEditor() {
         
         setImageInfo(newImageInfo);
         
+        // Reset Step 3 (Outline Options) to defaults when new image is uploaded
+        setStrokeSettings({
+          width: 0.14,
+          color: "#ffffff",
+          enabled: false,
+          alphaThreshold: 128,
+          closeSmallGaps: false,
+          closeBigGaps: false,
+          backgroundColor: "#ffffff",
+        });
+        setShapeSettings({
+          enabled: false,
+          type: 'square',
+          offset: 0.25,
+          fillColor: '#FFFFFF',
+          strokeEnabled: false,
+          strokeWidth: 2,
+          strokeColor: '#000000',
+          cornerRadius: 0.25,
+        });
+        
         // Update resize settings based on cropped image
         let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
         
@@ -192,6 +213,27 @@ export default function ImageEditor() {
       };
 
       setImageInfo(newImageInfo);
+
+      // Reset Step 3 (Outline Options) to defaults when new image is uploaded
+      setStrokeSettings({
+        width: 0.14,
+        color: "#ffffff",
+        enabled: false,
+        alphaThreshold: 128,
+        closeSmallGaps: false,
+        closeBigGaps: false,
+        backgroundColor: "#ffffff",
+      });
+      setShapeSettings({
+        enabled: false,
+        type: 'square',
+        offset: 0.25,
+        fillColor: '#FFFFFF',
+        strokeEnabled: false,
+        strokeWidth: 2,
+        strokeColor: '#000000',
+        cornerRadius: 0.25,
+      });
 
       setResizeSettings(prev => ({
         ...prev,
