@@ -49,20 +49,25 @@ export default function UploadSection({ onImageUpload, imageInfo, resizeSettings
 
   return (
     <div className="lg:col-span-1">
-      <h2 className="text-lg font-semibold text-white mb-4">Upload Image</h2>
+      <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <span className="w-8 h-8 bg-cyan-500/20 rounded-full flex items-center justify-center text-cyan-400 text-sm font-bold">1</span>
+        Upload Image
+      </h2>
       
       {/* Drag and Drop Zone */}
       <div 
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-white hover:border-cyan-400 hover:bg-cyan-50 transition-colors cursor-pointer"
+        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-white hover:border-cyan-400 hover:bg-cyan-50/80 transition-all duration-300 cursor-pointer shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 group"
       >
         <div className="flex flex-col items-center">
-          <Upload className="w-12 h-12 text-gray-400 mb-4" />
-          <p className="text-gray-600 mb-2">Drop your PNG image here</p>
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-cyan-50 transition-colors duration-300">
+            <Upload className="w-8 h-8 text-gray-400 group-hover:text-cyan-500 transition-colors duration-300" />
+          </div>
+          <p className="text-gray-700 font-medium mb-2">Drop your PNG image here</p>
           <p className="text-sm text-gray-500 mb-4">or click to browse</p>
-          <button className="bg-cyan-500 text-black px-4 py-2 rounded-lg hover:bg-cyan-600 transition-colors">
+          <button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-black px-6 py-2.5 rounded-lg hover:from-cyan-600 hover:to-teal-600 transition-all duration-300 font-medium shadow-md hover:shadow-lg">
             Choose File
           </button>
         </div>

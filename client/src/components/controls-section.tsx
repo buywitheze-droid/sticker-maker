@@ -311,7 +311,7 @@ export default function ControlsSection({
   );
 
   const renderStep1 = () => (
-    <Card className="border-2 border-cyan-500">
+    <Card className="border-2 border-cyan-500 shadow-lg shadow-cyan-500/10 transition-all duration-300 hover:shadow-xl hover:shadow-cyan-500/20">
       <CardContent className="p-4 md:p-6">
         {imageInfo ? (
           <div className="text-center">
@@ -364,7 +364,7 @@ export default function ControlsSection({
   );
 
   const renderStep2 = () => (
-    <Card className="border-2 border-cyan-500">
+    <Card className="border-2 border-cyan-500 shadow-lg shadow-cyan-500/10 transition-all duration-300 hover:shadow-xl hover:shadow-cyan-500/20">
       <CardContent className="p-4 md:p-6">
         <Ruler className="w-8 h-8 md:w-10 md:h-10 text-cyan-500 mb-3 md:mb-4" />
         <h3 className="text-lg font-semibold mb-2">Choose Sticker Size</h3>
@@ -403,8 +403,10 @@ export default function ControlsSection({
       </div>
       
       <Card 
-        className={`border-2 transition-all cursor-pointer hover:shadow-md ${
-          strokeSettings.enabled ? 'border-cyan-500 bg-cyan-50 shadow-md' : 'border-gray-200 hover:border-gray-300'
+        className={`border-2 transition-all duration-300 cursor-pointer ${
+          strokeSettings.enabled 
+            ? 'border-cyan-500 bg-cyan-50 shadow-lg shadow-cyan-500/20' 
+            : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
         }`}
         onClick={() => { onStrokeChange({ enabled: true }); setShowAdvanced(false); }}
       >
@@ -512,8 +514,10 @@ export default function ControlsSection({
       </Card>
 
       <Card 
-        className={`border-2 transition-all cursor-pointer hover:shadow-md ${
-          shapeSettings.enabled ? 'border-green-500 bg-green-50 shadow-md' : 'border-gray-200 hover:border-gray-300'
+        className={`border-2 transition-all duration-300 cursor-pointer ${
+          shapeSettings.enabled 
+            ? 'border-green-500 bg-green-50 shadow-lg shadow-green-500/20' 
+            : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
         }`}
         onClick={() => { onShapeChange({ enabled: true }); setShowAdvanced(false); }}
       >
@@ -624,7 +628,7 @@ export default function ControlsSection({
     <div className="space-y-4 relative">
       {showCelebration && <CelebrationAnimation />}
       
-      <Card className="border-2 border-green-500 bg-gradient-to-br from-green-50 to-cyan-50">
+      <Card className="border-2 border-green-500 bg-gradient-to-br from-green-50 to-cyan-50 shadow-lg shadow-green-500/10 transition-all duration-300 hover:shadow-xl hover:shadow-green-500/20">
         <CardContent className="p-4 md:p-6 text-center">
           <div className="relative inline-block">
             <PartyPopper className="w-12 h-12 text-green-500 mx-auto mb-2" />
@@ -710,6 +714,10 @@ export default function ControlsSection({
 
   return (
     <div className="lg:col-span-1 pb-20 md:pb-0">
+      <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <span className="w-8 h-8 bg-cyan-500/20 rounded-full flex items-center justify-center text-cyan-400 text-sm font-bold">3</span>
+        Customize
+      </h2>
       <StepIndicator />
       <ProgressSummary 
         imageInfo={imageInfo}

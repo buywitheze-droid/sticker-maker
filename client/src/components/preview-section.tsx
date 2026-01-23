@@ -522,9 +522,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="lg:col-span-1">
-        <h2 className="text-lg font-semibold text-white mb-4">Preview</h2>
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <span className="w-8 h-8 bg-cyan-500/20 rounded-full flex items-center justify-center text-cyan-400 text-sm font-bold">2</span>
+          Preview
+        </h2>
         
-        <Card>
+        <Card className="shadow-xl shadow-black/20 border-gray-700/50">
           <CardContent className="p-6">
             <div className="mb-4 flex items-center space-x-3">
               <Palette className="w-4 h-4 text-gray-600" />
