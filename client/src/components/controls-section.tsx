@@ -49,9 +49,7 @@ export default function ControlsSection({
   isRemovingBackground
 }: ControlsSectionProps) {
   const { toast } = useToast();
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [showShapeAdvanced, setShowShapeAdvanced] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package'>('standard');
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
@@ -252,35 +250,25 @@ export default function ControlsSection({
             </div>
           </div>
           
-          <button 
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-          >
-            <ChevronDown className={`w-3 h-3 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
-            Advanced
-          </button>
-          
-          {showAdvanced && (
-            <div className="space-y-2 pt-2 border-t border-gray-200">
-              <div className="flex items-center gap-2">
-                <Checkbox 
-                  id="close-small-gaps"
-                  checked={strokeSettings.closeSmallGaps}
-                  onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
-                />
-                <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <Checkbox 
-                  id="close-big-gaps"
-                  checked={strokeSettings.closeBigGaps}
-                  onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
-                />
-                <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
-              </div>
+          <div className="space-y-2 pt-2 border-t border-gray-200">
+            <div className="flex items-center gap-2">
+              <Checkbox 
+                id="close-small-gaps"
+                checked={strokeSettings.closeSmallGaps}
+                onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
+              />
+              <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
             </div>
-          )}
+            
+            <div className="flex items-center gap-2">
+              <Checkbox 
+                id="close-big-gaps"
+                checked={strokeSettings.closeBigGaps}
+                onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
+              />
+              <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
+            </div>
+          </div>
         </div>
       )}
 
@@ -409,32 +397,9 @@ export default function ControlsSection({
         </div>
       )}
 
-      {/* Export Options */}
-      {canDownload && imageInfo && (
-        <div>
-          <Label className="text-xs text-gray-600 mb-1 block">Export</Label>
-          <Select
-            value={exportFormat}
-            onValueChange={(value) => setExportFormat(value as typeof exportFormat)}
-          >
-            <SelectTrigger className="bg-white border-gray-300 text-gray-900 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="standard">PDF (Print Ready)</SelectItem>
-              <SelectItem value="highres">High Resolution PNG</SelectItem>
-              <SelectItem value="vector">SVG Vector</SelectItem>
-              <SelectItem value="cutcontour">Cut Contour Only</SelectItem>
-              <SelectItem value="design-only">Design Only</SelectItem>
-              <SelectItem value="download-package">Full Package (ZIP)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       {/* Download Button */}
       <Button
-        onClick={() => onDownload(exportFormat, exportFormat === 'vector' ? 'svg' : 'pdf')}
+        onClick={() => onDownload('standard', 'pdf')}
         disabled={isProcessing || !canDownload || !imageInfo}
         className="w-full bg-cyan-600 hover:bg-cyan-700 text-white"
       >
