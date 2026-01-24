@@ -1946,87 +1946,14 @@ export async function downloadContourPDF(
         const data = imageData.data;
         
         // Helper function to create and embed spot color layer
-        // Uses marching squares to trace the color regions and create vector paths
+        // Uses run-length encoding to draw horizontal spans of matching pixels
         const createSpotColorLayer = async (
           colorName: string,
           markedColors: SpotColorInput[],
           tintCMYK: [number, number, number, number]
         ): Promise<void> => {
-          // Create a binary mask of matching pixels
-          const binaryMask: boolean[][] = [];
           const w = maskCanvas.width;
           const h = maskCanvas.height;
-          
-          for (let y = 0; y < h; y++) {
-            binaryMask[y] = [];
-            for (let x = 0; x < w; x++) {
-              const i = (y * w + x) * 4;
-              const r = data[i];
-              const g = data[i + 1];
-              const b = data[i + 2];
-              const a = data[i + 3];
-              
-              let matches = false;
-              for (const mc of markedColors) {
-                const dr = Math.abs(r - mc.rgb.r);
-                const dg = Math.abs(g - mc.rgb.g);
-                const db = Math.abs(b - mc.rgb.b);
-                if (dr < 30 && dg < 30 && db < 30 && a > 128) {
-                  matches = true;
-                  break;
-                }
-              }
-              binaryMask[y][x] = matches;
-            }
-          }
-          
-          // Find connected regions and trace their outlines using simple contour tracing
-          const visited: boolean[][] = Array(h).fill(null).map(() => Array(w).fill(false));
-          const regions: Array<Array<{x: number; y: number}>> = [];
-          
-          // Simple flood fill to find connected matching regions
-          for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-              if (binaryMask[y][x] && !visited[y][x]) {
-                // Found a new region - trace its boundary
-                const boundary: Array<{x: number; y: number}> = [];
-                const stack: Array<{x: number; y: number}> = [{x, y}];
-                
-                while (stack.length > 0) {
-                  const p = stack.pop()!;
-                  if (p.x < 0 || p.x >= w || p.y < 0 || p.y >= h) continue;
-                  if (visited[p.y][p.x] || !binaryMask[p.y][p.x]) continue;
-                  
-                  visited[p.y][p.x] = true;
-                  
-                  // Check if this is a boundary pixel (has at least one non-matching neighbor)
-                  const isBoundary = 
-                    p.x === 0 || p.x === w-1 || p.y === 0 || p.y === h-1 ||
-                    !binaryMask[p.y-1]?.[p.x] || !binaryMask[p.y+1]?.[p.x] ||
-                    !binaryMask[p.y]?.[p.x-1] || !binaryMask[p.y]?.[p.x+1];
-                  
-                  if (isBoundary) {
-                    boundary.push(p);
-                  }
-                  
-                  // Add neighbors to stack
-                  stack.push({x: p.x+1, y: p.y});
-                  stack.push({x: p.x-1, y: p.y});
-                  stack.push({x: p.x, y: p.y+1});
-                  stack.push({x: p.x, y: p.y-1});
-                }
-                
-                if (boundary.length > 2) {
-                  regions.push(boundary);
-                }
-              }
-            }
-          }
-          
-          if (regions.length === 0) {
-            console.log(`[PDF] No regions found for ${colorName}`);
-            return;
-          }
           
           // Create separation color space for this spot color
           const tintFunction = context.obj({
@@ -2061,35 +1988,90 @@ export async function downloadContourPDF(
           const offsetX = imageOffsetX * 72;
           const offsetY = imageOffsetY * 72;
           
-          // Build path operations for all regions with spot color fill
+          // Use run-length encoding: find horizontal spans of matching pixels per row
+          // This guarantees complete coverage with no gaps
+          const spans: Array<{y: number; x1: number; x2: number}> = [];
+          
+          for (let y = 0; y < h; y++) {
+            let inSpan = false;
+            let spanStart = 0;
+            
+            for (let x = 0; x <= w; x++) {
+              let matches = false;
+              if (x < w) {
+                const i = (y * w + x) * 4;
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const a = data[i + 3];
+                
+                for (const mc of markedColors) {
+                  const dr = Math.abs(r - mc.rgb.r);
+                  const dg = Math.abs(g - mc.rgb.g);
+                  const db = Math.abs(b - mc.rgb.b);
+                  if (dr < 30 && dg < 30 && db < 30 && a > 128) {
+                    matches = true;
+                    break;
+                  }
+                }
+              }
+              
+              if (matches && !inSpan) {
+                inSpan = true;
+                spanStart = x;
+              } else if (!matches && inSpan) {
+                inSpan = false;
+                spans.push({ y, x1: spanStart, x2: x });
+              }
+            }
+          }
+          
+          if (spans.length === 0) {
+            console.log(`[PDF] No matching pixels found for ${colorName}`);
+            return;
+          }
+          
+          // Merge adjacent spans vertically to reduce PDF size
+          // Group spans by their x1-x2 range
+          const mergedSpans: Array<{y1: number; y2: number; x1: number; x2: number}> = [];
+          let currentSpan: {y1: number; y2: number; x1: number; x2: number} | null = null;
+          
+          // Sort by x1, x2, then y for merging
+          spans.sort((a, b) => a.x1 - b.x1 || a.x2 - b.x2 || a.y - b.y);
+          
+          for (const span of spans) {
+            if (currentSpan && 
+                currentSpan.x1 === span.x1 && 
+                currentSpan.x2 === span.x2 && 
+                span.y === currentSpan.y2 + 1) {
+              // Extend current span vertically
+              currentSpan.y2 = span.y;
+            } else {
+              // Start new span
+              if (currentSpan) {
+                mergedSpans.push(currentSpan);
+              }
+              currentSpan = { y1: span.y, y2: span.y, x1: span.x1, x2: span.x2 };
+            }
+          }
+          if (currentSpan) {
+            mergedSpans.push(currentSpan);
+          }
+          
+          // Build path operations - draw each merged span as a rectangle
           let spotOps = `q /${colorName} cs 1 scn\n`;
           
-          for (const region of regions) {
-            // Sort boundary points by angle from centroid to create a proper path
-            const cx = region.reduce((s, p) => s + p.x, 0) / region.length;
-            const cy = region.reduce((s, p) => s + p.y, 0) / region.length;
+          // PDF Y-axis is flipped (0 at bottom)
+          const toY = (py: number) => offsetY + (h - py) * scaleY;
+          const toX = (px: number) => offsetX + px * scaleX;
+          
+          for (const span of mergedSpans) {
+            const x = toX(span.x1);
+            const y = toY(span.y2 + 1); // +1 because we want bottom of span
+            const width = (span.x2 - span.x1) * scaleX;
+            const height = (span.y2 - span.y1 + 1) * scaleY;
             
-            const sorted = [...region].sort((a, b) => {
-              const angleA = Math.atan2(a.y - cy, a.x - cx);
-              const angleB = Math.atan2(b.y - cy, b.x - cx);
-              return angleA - angleB;
-            });
-            
-            // Simplify the path by keeping every Nth point
-            const step = Math.max(1, Math.floor(sorted.length / 100));
-            const simplified = sorted.filter((_, i) => i % step === 0);
-            
-            if (simplified.length < 3) continue;
-            
-            // PDF Y-axis is flipped (0 at bottom)
-            const toY = (py: number) => offsetY + (h - py) * scaleY;
-            const toX = (px: number) => offsetX + px * scaleX;
-            
-            spotOps += `${toX(simplified[0].x).toFixed(2)} ${toY(simplified[0].y).toFixed(2)} m\n`;
-            for (let i = 1; i < simplified.length; i++) {
-              spotOps += `${toX(simplified[i].x).toFixed(2)} ${toY(simplified[i].y).toFixed(2)} l\n`;
-            }
-            spotOps += 'h f\n';
+            spotOps += `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`;
           }
           
           spotOps += 'Q\n';
@@ -2107,7 +2089,7 @@ export async function downloadContourPDF(
             }
           }
           
-          console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} regions`);
+          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles`);
         };
         
         // Create white spot color layer
