@@ -10,7 +10,7 @@ export default function StickerMaker() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <img src={gooseLogo} alt="Sticker Outline Bro" className="w-8 h-8 object-contain" />
-            <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE BRO</h1>
+            <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE ᗷRO</h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
             <span>If you can't figure this out better commit seppuku</span>
