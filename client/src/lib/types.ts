@@ -46,6 +46,7 @@ export interface ShapeSettings {
   strokeWidth: number;
   strokeColor: string;
   cornerRadius?: number; // Corner radius in inches for rounded shapes (default 0.25)
+  bleedEnabled?: boolean; // Whether to add color bleed outside the shape
 }
 
 export type StickerSize = 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5 | 5.5;

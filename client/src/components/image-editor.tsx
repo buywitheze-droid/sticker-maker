@@ -47,6 +47,7 @@ export default function ImageEditor() {
     strokeWidth: 2,
     strokeColor: '#000000',
     cornerRadius: 0.25, // Default corner radius for rounded shapes (in inches)
+    bleedEnabled: false, // Color bleed outside the shape
   });
   const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension

@@ -440,6 +440,7 @@ export default function ControlsSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="0">Zero</SelectItem>
                 <SelectItem value="0.0625">Tiny</SelectItem>
                 <SelectItem value="0.125">Small</SelectItem>
                 <SelectItem value="0.25">Medium</SelectItem>
@@ -459,6 +460,15 @@ export default function ControlsSection({
               />
               <span className="text-xs text-gray-500">{shapeSettings.fillColor}</span>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="shape-color-bleed"
+              checked={shapeSettings.bleedEnabled ?? false}
+              onCheckedChange={(checked) => onShapeChange({ bleedEnabled: checked === true })}
+            />
+            <Label htmlFor="shape-color-bleed" className="text-xs text-gray-600 cursor-pointer">Color Bleed</Label>
           </div>
 
           <button 

@@ -569,11 +569,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const shapeX = (canvasWidth - shapeWidth) / 2;
       const shapeY = (canvasHeight - shapeHeight) / 2;
       
-      // Calculate bleed in pixels based on shape scale
+      // Calculate bleed in pixels based on shape scale (only if bleed is enabled)
       const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
-      const bleedPixels = bleedInches * shapePixelsPerInch;
+      const bleedPixels = shapeSettings.bleedEnabled ? bleedInches * shapePixelsPerInch : 0;
 
-      // Draw background with bleed (larger shape for the fill)
+      // Draw background with bleed (larger shape for the fill if bleed enabled)
       ctx.fillStyle = shapeSettings.fillColor;
       ctx.beginPath();
       

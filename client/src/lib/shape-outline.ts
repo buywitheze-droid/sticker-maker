@@ -107,10 +107,10 @@ export async function downloadShapePDF(
     shapeSettings.offset
   );
   
-  const bleedInches = 0.10; // 0.10" bleed around the shape
+  const bleedInches = shapeSettings.bleedEnabled ? 0.10 : 0; // 0.10" bleed around the shape (if enabled)
   const bleedPts = bleedInches * 72;
   
-  // Page size includes bleed area
+  // Page size includes bleed area (if enabled)
   const widthPts = widthInches * 72 + (bleedPts * 2);
   const heightPts = heightInches * 72 + (bleedPts * 2);
   
