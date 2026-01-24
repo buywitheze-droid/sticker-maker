@@ -94,6 +94,8 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
     
     // Check ColorSpace resources for Separation/CutContour
     const resources = page.node.Resources();
+    const context = pdfDoc.context;
+    
     if (resources) {
       const colorSpaces = resources.get(PDFName.of('ColorSpace'));
       if (colorSpaces instanceof PDFDict) {
@@ -102,11 +104,27 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
           const nameStr = name.toString();
           console.log('[PDF Parser] ColorSpace found:', nameStr);
           
+          // Resolve indirect references
+          let resolvedValue = value;
+          if (value && 'toString' in value && value.toString().startsWith('/')) {
+            // It's a name reference, try to look it up
+          } else {
+            // Try to dereference if it's a ref
+            try {
+              resolvedValue = context.lookup(value as any) || value;
+            } catch (e) {
+              // Keep original value
+            }
+          }
+          
           // Check if this is a Separation color space with CutContour
-          if (value instanceof PDFArray) {
-            const firstElement = value.get(0);
-            if (firstElement && firstElement.toString() === '/Separation') {
-              const spotName = value.get(1);
+          if (resolvedValue instanceof PDFArray) {
+            const firstElement = resolvedValue.get(0);
+            const firstStr = firstElement?.toString() || '';
+            console.log('[PDF Parser] ColorSpace type:', firstStr);
+            
+            if (firstStr === '/Separation') {
+              const spotName = resolvedValue.get(1);
               if (spotName) {
                 const spotNameStr = spotName.toString();
                 console.log('[PDF Parser] Separation spot color:', spotNameStr);
@@ -116,9 +134,20 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
                 }
               }
             }
+          } else {
+            // Log the type for debugging
+            console.log('[PDF Parser] ColorSpace value type:', resolvedValue?.constructor?.name);
           }
         }
       }
+    }
+    
+    // Also search raw PDF bytes for CutContour text as fallback
+    const pdfBytes = new Uint8Array(arrayBuffer);
+    const pdfText = new TextDecoder('latin1').decode(pdfBytes);
+    if (pdfText.toLowerCase().includes('cutcontour')) {
+      console.log('[PDF Parser] CutContour found in raw PDF bytes!');
+      result.hasCutContour = true;
     }
     
     // If CutContour found, try to extract path from content stream
