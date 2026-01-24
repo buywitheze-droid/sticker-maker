@@ -32,6 +32,7 @@ interface WorkerResponse {
     imageOffsetX: number;
     imageOffsetY: number;
     backgroundColor: string;
+    isSolidDesign: boolean;
   };
 }
 
@@ -167,6 +168,7 @@ interface ContourResult {
     imageOffsetX: number;
     imageOffsetY: number;
     backgroundColor: string;
+    isSolidDesign: boolean;
   };
 }
 
@@ -275,8 +277,24 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
+  // Detect if design is solid (use edge-aware bleed) or has gaps (use solid color bleed)
+  const useSolidDesign = isSolidDesign(data, width, height, strokeSettings.alphaThreshold);
   
+  if (useSolidDesign) {
+    // Solid design: use edge-aware bleed (extends edge colors outward)
+    const extendRadius = totalOffsetPixels + bleedPixels;
+    const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
+    
+    // Draw contour with edge-extended background
+    const extendedImageOffsetX = padding - extendRadius;
+    const extendedImageOffsetY = padding - extendRadius;
+    drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
+  } else {
+    // Design with gaps: use solid color bleed (editable background color)
+    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
+  }
+  
+  // Draw original image on top
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
   // Calculate contour data for PDF export (path in inches)
@@ -298,9 +316,55 @@ function processContour(
       heightInches,
       imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
       imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
-      backgroundColor: strokeSettings.backgroundColor
+      backgroundColor: strokeSettings.backgroundColor,
+      isSolidDesign: useSolidDesign
     }
   };
+}
+
+// Detect if design is "solid" (few internal gaps) or has many gaps
+// Returns true if the design is solid enough to use edge-aware bleed
+function isSolidDesign(data: Uint8ClampedArray, width: number, height: number, alphaThreshold: number): boolean {
+  // Count opaque pixels and edge pixels
+  let opaqueCount = 0;
+  let edgeCount = 0;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      if (data[idx + 3] >= alphaThreshold) {
+        opaqueCount++;
+        
+        // Check if this is an edge pixel (has transparent neighbor)
+        let isEdge = false;
+        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+              isEdge = true;
+            } else {
+              const nidx = (ny * width + nx) * 4;
+              if (data[nidx + 3] < alphaThreshold) isEdge = true;
+            }
+          }
+        }
+        if (isEdge) edgeCount++;
+      }
+    }
+  }
+  
+  if (opaqueCount === 0) return false;
+  
+  // Calculate edge-to-area ratio
+  // Solid shapes have lower ratio (few edges relative to area)
+  // Designs with gaps have higher ratio (many internal edges)
+  const edgeRatio = edgeCount / opaqueCount;
+  
+  // Threshold: solid shapes typically have ratio < 0.15
+  // Designs with lots of gaps/lines have ratio > 0.3
+  return edgeRatio < 0.25;
 }
 
 function createSilhouetteMaskFromData(data: Uint8ClampedArray, width: number, height: number, threshold: number): Uint8Array {
@@ -1187,6 +1251,83 @@ function drawContourToData(
   }
 }
 
+// Draw contour with edge-extended background (uses nearest edge colors for bleed)
+function drawContourToDataWithExtendedEdge(
+  output: Uint8ClampedArray, 
+  width: number, 
+  height: number, 
+  path: Point[], 
+  strokeColorHex: string,
+  offsetX: number, 
+  offsetY: number,
+  effectiveDPI: number,
+  extendedImage: ImageData,
+  extendedImageOffsetX: number,
+  extendedImageOffsetY: number
+): void {
+  const bleedInches = 0.10;
+  const bleedPixels = Math.round(bleedInches * effectiveDPI);
+  
+  const offscreen = new OffscreenCanvas(width, height);
+  const ctx = offscreen.getContext('2d');
+  
+  if (ctx) {
+    // Create a clip path from the contour (with bleed)
+    if (path.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(path[0].x + offsetX, path[0].y + offsetY);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x + offsetX, path[i].y + offsetY);
+      }
+      ctx.closePath();
+      
+      // Stroke with bleed width to expand the fill area
+      ctx.lineWidth = bleedPixels * 2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'white';
+      ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.fill();
+    }
+    
+    // Use composite to draw extended image only where we stroked/filled
+    ctx.globalCompositeOperation = 'source-in';
+    
+    // Draw the extended image at the correct position (using separate X and Y offsets)
+    const tempCanvas = new OffscreenCanvas(extendedImage.width, extendedImage.height);
+    const tempCtx = tempCanvas.getContext('2d');
+    if (tempCtx) {
+      tempCtx.putImageData(extendedImage, 0, 0);
+      ctx.drawImage(tempCanvas, extendedImageOffsetX, extendedImageOffsetY);
+    }
+    
+    // Reset composite mode and draw cut line
+    ctx.globalCompositeOperation = 'source-over';
+    const cutLineWidth = Math.max(2, Math.round(0.01 * effectiveDPI));
+    ctx.strokeStyle = strokeColorHex;
+    ctx.lineWidth = cutLineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    
+    if (path.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(path[0].x + offsetX, path[0].y + offsetY);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x + offsetX, path[i].y + offsetY);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    
+    // Copy canvas data to output
+    const imageData = ctx.getImageData(0, 0, width, height);
+    for (let i = 0; i < imageData.data.length; i++) {
+      output[i] = imageData.data[i];
+    }
+  }
+}
+
 // Stroke path with a thick line to create bleed effect
 // Draws circles at each vertex and thick lines between them (like round-join stroke)
 function strokePathThick(
@@ -1498,6 +1639,96 @@ function fillContour(
       }
     }
   }
+}
+
+// Extend edge colors outward to fill the bleed area using BFS propagation (efficient O(W*H))
+// Note: BFS fills all transparent regions including internal holes, which is intentional
+// because the original image (with transparency preserved) is drawn on top in the final render
+function createEdgeExtendedImage(
+  imageData: ImageData,
+  extendRadius: number
+): ImageData {
+  const { width, height, data } = imageData;
+  const newWidth = width + extendRadius * 2;
+  const newHeight = height + extendRadius * 2;
+  const newData = new Uint8ClampedArray(newWidth * newHeight * 4);
+  
+  // Track which output pixels have been assigned colors
+  const assigned = new Uint8Array(newWidth * newHeight);
+  
+  // BFS queue for propagation: [x, y, sourceR, sourceG, sourceB]
+  const queue: Array<[number, number, number, number, number]> = [];
+  
+  // First pass: copy original opaque pixels and find edge pixels for BFS seeds
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const srcIdx = (y * width + x) * 4;
+      if (data[srcIdx + 3] > 128) {
+        // Copy to output at offset position
+        const outX = x + extendRadius;
+        const outY = y + extendRadius;
+        const outIdx = (outY * newWidth + outX) * 4;
+        newData[outIdx] = data[srcIdx];
+        newData[outIdx + 1] = data[srcIdx + 1];
+        newData[outIdx + 2] = data[srcIdx + 2];
+        newData[outIdx + 3] = data[srcIdx + 3];
+        assigned[outY * newWidth + outX] = 1;
+        
+        // Check if this is an edge pixel (has transparent neighbor)
+        let isEdge = false;
+        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+              isEdge = true;
+            } else {
+              const nidx = (ny * width + nx) * 4;
+              if (data[nidx + 3] < 128) isEdge = true;
+            }
+          }
+        }
+        
+        // Add edge pixels to BFS queue - they will propagate their color outward
+        if (isEdge) {
+          queue.push([outX, outY, data[srcIdx], data[srcIdx + 1], data[srcIdx + 2]]);
+        }
+      }
+    }
+  }
+  
+  // BFS propagation: spread edge colors outward
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  let queueIdx = 0;
+  
+  while (queueIdx < queue.length) {
+    const [cx, cy, r, g, b] = queue[queueIdx++];
+    
+    for (const [dx, dy] of directions) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      
+      // Check bounds
+      if (nx < 0 || nx >= newWidth || ny < 0 || ny >= newHeight) continue;
+      
+      // Skip if already assigned
+      if (assigned[ny * newWidth + nx]) continue;
+      
+      // Mark as assigned and set color
+      assigned[ny * newWidth + nx] = 1;
+      const outIdx = (ny * newWidth + nx) * 4;
+      newData[outIdx] = r;
+      newData[outIdx + 1] = g;
+      newData[outIdx + 2] = b;
+      newData[outIdx + 3] = 255;
+      
+      // Add to queue for further propagation
+      queue.push([nx, ny, r, g, b]);
+    }
+  }
+  
+  return new ImageData(newData, newWidth, newHeight);
 }
 
 function drawImageToData(

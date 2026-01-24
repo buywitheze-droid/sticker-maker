@@ -1662,6 +1662,7 @@ export interface CachedContourData {
   imageOffsetX: number;
   imageOffsetY: number;
   backgroundColor: string;
+  isSolidDesign?: boolean;
 }
 
 export interface SpotColorInput {
@@ -1669,6 +1670,166 @@ export interface SpotColorInput {
   rgb: { r: number; g: number; b: number };
   spotWhite: boolean;
   spotGloss: boolean;
+}
+
+// Detect if design is "solid" (few internal gaps) or has many gaps
+// Returns true if the design is solid enough to use edge-aware bleed
+function detectSolidDesign(image: HTMLImageElement, alphaThreshold: number = 128): boolean {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return true;
+  
+  ctx.drawImage(image, 0, 0);
+  const imageData = ctx.getImageData(0, 0, image.width, image.height);
+  const data = imageData.data;
+  const width = image.width;
+  const height = image.height;
+  
+  let opaqueCount = 0;
+  let edgeCount = 0;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      if (data[idx + 3] >= alphaThreshold) {
+        opaqueCount++;
+        
+        let isEdge = false;
+        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+              isEdge = true;
+            } else {
+              const nidx = (ny * width + nx) * 4;
+              if (data[nidx + 3] < alphaThreshold) isEdge = true;
+            }
+          }
+        }
+        if (isEdge) edgeCount++;
+      }
+    }
+  }
+  
+  if (opaqueCount === 0) return false;
+  
+  const edgeRatio = edgeCount / opaqueCount;
+  return edgeRatio < 0.25;
+}
+
+// Create an edge-extended canvas for bleed area using efficient BFS propagation
+// Note: BFS fills all transparent regions including internal holes, which is intentional
+// because the original image (with transparency preserved) is drawn on top in the final render
+function createEdgeExtendedCanvas(
+  image: HTMLImageElement,
+  extendRadius: number
+): HTMLCanvasElement {
+  // Get original image data
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = image.width;
+  srcCanvas.height = image.height;
+  const srcCtx = srcCanvas.getContext('2d');
+  if (!srcCtx) return srcCanvas;
+  
+  srcCtx.drawImage(image, 0, 0);
+  const srcData = srcCtx.getImageData(0, 0, image.width, image.height);
+  const data = srcData.data;
+  const width = image.width;
+  const height = image.height;
+  
+  // Create output canvas with extended size
+  const newWidth = width + extendRadius * 2;
+  const newHeight = height + extendRadius * 2;
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = newWidth;
+  outCanvas.height = newHeight;
+  const outCtx = outCanvas.getContext('2d');
+  if (!outCtx) return outCanvas;
+  
+  const outData = outCtx.createImageData(newWidth, newHeight);
+  const out = outData.data;
+  
+  // Track which output pixels have been assigned colors
+  const assigned = new Uint8Array(newWidth * newHeight);
+  
+  // BFS queue for propagation: [x, y, sourceR, sourceG, sourceB]
+  const queue: Array<[number, number, number, number, number]> = [];
+  
+  // First pass: copy original opaque pixels and find edge pixels for BFS seeds
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const srcIdx = (y * width + x) * 4;
+      if (data[srcIdx + 3] > 128) {
+        // Copy to output at offset position
+        const outX = x + extendRadius;
+        const outY = y + extendRadius;
+        const outIdx = (outY * newWidth + outX) * 4;
+        out[outIdx] = data[srcIdx];
+        out[outIdx + 1] = data[srcIdx + 1];
+        out[outIdx + 2] = data[srcIdx + 2];
+        out[outIdx + 3] = data[srcIdx + 3];
+        assigned[outY * newWidth + outX] = 1;
+        
+        // Check if this is an edge pixel (has transparent neighbor)
+        let isEdge = false;
+        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+              isEdge = true;
+            } else {
+              const nidx = (ny * width + nx) * 4;
+              if (data[nidx + 3] < 128) isEdge = true;
+            }
+          }
+        }
+        
+        // Add edge pixels to BFS queue - they will propagate their color outward
+        if (isEdge) {
+          queue.push([outX, outY, data[srcIdx], data[srcIdx + 1], data[srcIdx + 2]]);
+        }
+      }
+    }
+  }
+  
+  // BFS propagation: spread edge colors outward
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  let queueIdx = 0;
+  
+  while (queueIdx < queue.length) {
+    const [cx, cy, r, g, b] = queue[queueIdx++];
+    
+    for (const [dx, dy] of directions) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      
+      // Check bounds
+      if (nx < 0 || nx >= newWidth || ny < 0 || ny >= newHeight) continue;
+      
+      // Skip if already assigned
+      if (assigned[ny * newWidth + nx]) continue;
+      
+      // Mark as assigned and set color
+      assigned[ny * newWidth + nx] = 1;
+      const outIdx = (ny * newWidth + nx) * 4;
+      out[outIdx] = r;
+      out[outIdx + 1] = g;
+      out[outIdx + 2] = b;
+      out[outIdx + 3] = 255;
+      
+      // Add to queue for further propagation
+      queue.push([nx, ny, r, g, b]);
+    }
+  }
+  
+  outCtx.putImageData(outData, 0, 0);
+  return outCanvas;
 }
 
 export async function downloadContourPDF(
@@ -1692,6 +1853,7 @@ export async function downloadContourPDF(
     let imageOffsetX: number;
     let imageOffsetY: number;
     let backgroundColor: string;
+    let isSolidDesign: boolean = true; // Default to solid for fallback
     
     // Use cached contour data if available (from preview worker) for instant PDF export
     if (cachedContourData && cachedContourData.pathPoints.length > 0) {
@@ -1726,6 +1888,11 @@ export async function downloadContourPDF(
       backgroundColor = contourResult.backgroundColor;
     }
     
+    // Always compute isSolidDesign using original image for accurate detection
+    // (cached value may be from downscaled preview, which can misclassify)
+    isSolidDesign = detectSolidDesign(image, 128);
+    console.log('[downloadContourPDF] Solid design detection:', isSolidDesign);
+    
     console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
   
     const widthPts = widthInches * 72;
@@ -1734,15 +1901,22 @@ export async function downloadContourPDF(
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([widthPts, heightPts]);
     
-    // OPTIMIZATION: Create background and design canvases in parallel
-    // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
-    const bgDPI = 150; // Solid color fill doesn't need high resolution
+    // Background setup
+    const bgDPI = 150;
     const bleedInches = 0.10;
     const bleedPixels = bleedInches * bgDPI;
-    const fillColor = backgroundColor || '#ffffff';
     const drawPath = pathPoints;
+    const fillColor = backgroundColor || '#ffffff';
     
-    // Create background canvas (lower DPI for speed)
+    // For solid designs, create edge-extended canvas; for designs with gaps, use solid color
+    let edgeExtendedCanvas: HTMLCanvasElement | null = null;
+    if (isSolidDesign) {
+      const imageDPI = image.width / resizeSettings.widthInches;
+      const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
+      edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
+    }
+    
+    // Create background canvas (edge-aware for solid designs, solid color for designs with gaps)
     const createBackgroundBlob = (): Promise<Blob> => {
       return new Promise((resolve, reject) => {
         const bgCanvas = document.createElement('canvas');
@@ -1755,12 +1929,7 @@ export async function downloadContourPDF(
         bgCanvas.width = Math.round(widthInches * bgDPI);
         bgCanvas.height = Math.round(heightInches * bgDPI);
         
-        bgCtx.fillStyle = fillColor;
-        bgCtx.strokeStyle = fillColor;
-        bgCtx.lineWidth = bleedPixels * 2;
-        bgCtx.lineJoin = 'round';
-        bgCtx.lineCap = 'round';
-        
+        // Create clip path from contour (with bleed)
         if (drawPath.length > 0) {
           bgCtx.beginPath();
           bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
@@ -1768,8 +1937,29 @@ export async function downloadContourPDF(
             bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
           }
           bgCtx.closePath();
-          bgCtx.stroke();
-          bgCtx.fill();
+          
+          // Stroke with bleed to expand the clip area
+          bgCtx.lineWidth = bleedPixels * 2;
+          bgCtx.lineJoin = 'round';
+          bgCtx.lineCap = 'round';
+          
+          if (isSolidDesign && edgeExtendedCanvas) {
+            // Solid design: use edge-aware bleed
+            bgCtx.strokeStyle = 'white';
+            bgCtx.stroke();
+            bgCtx.fillStyle = 'white';
+            bgCtx.fill();
+            
+            // Draw edge-extended image using composite
+            bgCtx.globalCompositeOperation = 'source-in';
+            bgCtx.drawImage(edgeExtendedCanvas, 0, 0, bgCanvas.width, bgCanvas.height);
+          } else {
+            // Design with gaps: use solid color bleed (editable)
+            bgCtx.strokeStyle = fillColor;
+            bgCtx.stroke();
+            bgCtx.fillStyle = fillColor;
+            bgCtx.fill();
+          }
         }
         
         // Flip for PDF coordinate system
