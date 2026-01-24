@@ -2070,81 +2070,95 @@ export async function downloadContourPDF(
           const toY = (py: number) => offsetY + (h - py) * scaleY;
           const toX = (px: number) => offsetX + px * scaleX;
           
-          // Use run-length encoding with proper vertical merging
-          // Process row by row and merge spans that extend from previous row
-          const mergedRects: Array<{x: number; y: number; w: number; h: number}> = [];
+          // Create a single compound path by using scanline rectangles
+          // Merged into maximal horizontal strips for fewer objects
           
-          // Track active spans that might extend from previous row
-          // Key: "x1-x2", Value: starting y and current y
-          let activeSpans = new Map<string, {y1: number; y2: number; x1: number; x2: number}>();
+          // Step 1: Collect horizontal spans with run-length encoding
+          const spans: Array<{y: number; x1: number; x2: number}> = [];
           
           for (let y = 0; y < h; y++) {
-            // Find all spans in current row
-            const currentRowSpans = new Map<string, {x1: number; x2: number}>();
             let inSpan = false;
             let spanStart = 0;
             
             for (let x = 0; x <= w; x++) {
-              const matches = x < w && binaryMask[y][x];
+              const filled = x < w && binaryMask[y][x];
               
-              if (matches && !inSpan) {
+              if (filled && !inSpan) {
                 inSpan = true;
                 spanStart = x;
-              } else if (!matches && inSpan) {
+              } else if (!filled && inSpan) {
                 inSpan = false;
-                const key = `${spanStart}-${x}`;
-                currentRowSpans.set(key, { x1: spanStart, x2: x });
+                spans.push({ y, x1: spanStart, x2: x });
               }
             }
-            
-            // Check which active spans continue in this row
-            const newActiveSpans = new Map<string, {y1: number; y2: number; x1: number; x2: number}>();
-            
-            Array.from(currentRowSpans.entries()).forEach(([key, span]) => {
-              const active = activeSpans.get(key);
-              if (active && active.y2 === y - 1) {
-                // Extend the active span
-                active.y2 = y;
-                newActiveSpans.set(key, active);
-                activeSpans.delete(key);
-              } else {
-                // Start new span
-                newActiveSpans.set(key, { y1: y, y2: y, x1: span.x1, x2: span.x2 });
-              }
-            });
-            
-            // Flush any active spans that didn't continue
-            Array.from(activeSpans.values()).forEach(existing => {
-              mergedRects.push({
-                x: toX(existing.x1),
-                y: toY(existing.y2 + 1),
-                w: (existing.x2 - existing.x1) * scaleX,
-                h: (existing.y2 - existing.y1 + 1) * scaleY
-              });
-            });
-            
-            activeSpans = newActiveSpans;
           }
           
-          // Flush remaining active spans
-          Array.from(activeSpans.values()).forEach(existing => {
-            mergedRects.push({
-              x: toX(existing.x1),
-              y: toY(existing.y2 + 1),
-              w: (existing.x2 - existing.x1) * scaleX,
-              h: (existing.y2 - existing.y1 + 1) * scaleY
-            });
-          });
+          if (spans.length === 0) {
+            console.log(`[PDF] No matching pixels for ${colorName}`);
+            return;
+          }
           
-          // Build a single filled path that covers all rectangles
+          // Step 2: Merge spans vertically where possible
+          // Group by y, then merge adjacent rows with matching x-ranges
+          const spansByY = new Map<number, Array<{x1: number; x2: number}>>();
+          for (const span of spans) {
+            if (!spansByY.has(span.y)) spansByY.set(span.y, []);
+            spansByY.get(span.y)!.push({x1: span.x1, x2: span.x2});
+          }
+          
+          // Create merged rectangular regions
+          const regions: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
+          const processed = new Set<string>();
+          
+          for (const span of spans) {
+            const key = `${span.y},${span.x1},${span.x2}`;
+            if (processed.has(key)) continue;
+            processed.add(key);
+            
+            let y1 = span.y;
+            let y2 = span.y;
+            
+            // Extend upward
+            for (let y = span.y - 1; y >= 0; y--) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y1 = y;
+                processed.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            // Extend downward
+            for (let y = span.y + 1; y < h; y++) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y2 = y;
+                processed.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
+          }
+          
+          // Step 3: Build a single compound path with subpaths
+          // Use moveto/lineto/close for each rectangle, then fill all at once
           let spotOps = `q /${colorName} cs 1 scn\n`;
           
-          for (const rect of mergedRects) {
-            spotOps += `${rect.x.toFixed(2)} ${rect.y.toFixed(2)} ${rect.w.toFixed(2)} ${rect.h.toFixed(2)} re\n`;
+          // Draw all regions as a single compound path
+          for (const r of regions) {
+            const px1 = toX(r.x1);
+            const px2 = toX(r.x2);
+            const py1 = toY(r.y1);
+            const py2 = toY(r.y2 + 1);
+            
+            // Each rectangle as a subpath
+            spotOps += `${px1.toFixed(2)} ${py1.toFixed(2)} m `;
+            spotOps += `${px2.toFixed(2)} ${py1.toFixed(2)} l `;
+            spotOps += `${px2.toFixed(2)} ${py2.toFixed(2)} l `;
+            spotOps += `${px1.toFixed(2)} ${py2.toFixed(2)} l h\n`;
           }
           
-          // Fill all rectangles at once
-          spotOps += 'f Q\n';
+          // Single fill command for entire compound path
+          spotOps += 'f\nQ\n';
           
           // Add content stream to page
           const spotStream = context.stream(spotOps);
@@ -2162,7 +2176,7 @@ export async function downloadContourPDF(
             targetPage.node.set(PDFName.of('Contents'), spotStreamRef);
           }
           
-          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedRects.length} merged rectangles`);
+          console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} solid regions`);
         };
         
         // Create additional pages for White and Gloss spot colors
