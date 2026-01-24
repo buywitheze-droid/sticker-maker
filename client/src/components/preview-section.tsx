@@ -421,15 +421,36 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const clipW = scaledWidth + bleedPixels * 2;
           const clipH = scaledHeight + bleedPixels * 2;
           ctx.rect(clipX, clipY, clipW, clipH);
+          ctx.closePath();
+          
+          // Fill background color for the fallback rect area directly
+          if (effectiveBackgroundColor !== "transparent") {
+            ctx.fillStyle = effectiveBackgroundColor;
+            ctx.fillRect(clipX, clipY, clipW, clipH);
+          }
+          
+          // Clip and draw image
+          ctx.clip();
+          ctx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
+          ctx.restore();
+          
+          // Draw image bounds as cut indicator
+          ctx.save();
+          ctx.strokeStyle = '#FF00FF';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 5]);
+          ctx.strokeRect(offsetX, offsetY, scaledWidth, scaledHeight);
+          ctx.restore();
+          return; // Early return for fallback case
+        }
+        
+        // For extracted paths: fill the path, then clip for the image
+        if (effectiveBackgroundColor !== "transparent") {
+          ctx.fillStyle = effectiveBackgroundColor;
+          ctx.fill();
         }
         
         ctx.clip();
-        
-        // Fill with background color inside clipped region
-        if (effectiveBackgroundColor !== "transparent") {
-          ctx.fillStyle = effectiveBackgroundColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
         
         // Draw the image inside the clipped region
         ctx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
