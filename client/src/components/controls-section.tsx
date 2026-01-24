@@ -206,14 +206,7 @@ export default function ControlsSection({
         {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
           <div className="p-3 bg-green-50 border border-green-200 rounded-lg space-y-2">
             <p className="text-sm font-medium text-green-700">Cutline already in file</p>
-            <p className="text-xs text-green-600">CutContour spot color detected in PDF</p>
-            <Button
-              onClick={() => onDownload('cutcontour', 'pdf')}
-              disabled={isProcessing}
-              className="w-full bg-green-600 hover:bg-green-700 text-white text-sm"
-            >
-              Download PDF with CutContour
-            </Button>
+            <p className="text-xs text-green-600">CutContour spot color detected - contour options disabled</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
@@ -325,8 +318,46 @@ export default function ControlsSection({
         </div>
       )}
 
-      {/* Spot Colors Button & Panel - Only visible in contour mode */}
-      {strokeSettings.enabled && imageInfo && (
+      {/* PDF CutContour Options - Background, Bleed, and Download */}
+      {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour && (
+        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="text-sm font-medium text-gray-700">PDF Options</div>
+          
+          <div>
+            <Label className="text-xs text-gray-600">Background Color</Label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                type="color"
+                value={strokeSettings.backgroundColor}
+                onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
+                className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                disabled={!strokeSettings.useCustomBackground}
+              />
+              <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox 
+              id="pdf-same-color-bleed"
+              checked={!strokeSettings.useCustomBackground}
+              onCheckedChange={(checked) => onStrokeChange({ useCustomBackground: !(checked as boolean) })}
+            />
+            <Label htmlFor="pdf-same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
+          </div>
+
+          <Button
+            onClick={() => onDownload('cutcontour', 'pdf')}
+            disabled={isProcessing}
+            className="w-full bg-green-600 hover:bg-green-700 text-white text-sm"
+          >
+            Download PDF with CutContour
+          </Button>
+        </div>
+      )}
+
+      {/* Spot Colors Button & Panel - Visible in contour mode OR when PDF has CutContour */}
+      {(strokeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
         <>
           <Button
             variant="outline"
@@ -386,8 +417,8 @@ export default function ControlsSection({
         </>
       )}
 
-      {/* Shape Options */}
-      {shapeSettings.enabled && (
+      {/* Shape Options - Hidden when PDF has CutContour */}
+      {shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
         <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
             <Label className="text-xs text-gray-600">Shape</Label>
