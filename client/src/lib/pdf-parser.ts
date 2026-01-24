@@ -45,12 +45,15 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
   canvas.height = viewport.height;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d', { alpha: true })!;
+  
+  // Clear canvas to transparent (not white)
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   
   await page.render({
     canvasContext: ctx,
     viewport: viewport,
-    canvas: canvas
+    background: 'rgba(0,0,0,0)' // Transparent background
   } as any).promise;
   
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -152,6 +155,33 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
     
     // If CutContour found, try to extract path from content stream
     if (result.hasCutContour) {
+      // First find which color space name maps to CutContour
+      let cutContourCSName = 'CutContour';
+      if (resources) {
+        const colorSpaces = resources.get(PDFName.of('ColorSpace'));
+        if (colorSpaces instanceof PDFDict) {
+          const entries = colorSpaces.entries();
+          for (const [name, value] of entries) {
+            let resolvedValue = value;
+            try {
+              resolvedValue = context.lookup(value as any) || value;
+            } catch (e) {}
+            
+            if (resolvedValue instanceof PDFArray) {
+              const firstStr = resolvedValue.get(0)?.toString() || '';
+              if (firstStr === '/Separation') {
+                const spotName = resolvedValue.get(1)?.toString() || '';
+                if (spotName.toLowerCase().includes('cutcontour')) {
+                  cutContourCSName = name.toString().replace('/', '');
+                  console.log('[PDF Parser] CutContour color space reference name:', cutContourCSName);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      
       const contents = page.node.Contents();
       if (contents) {
         // Get content stream as string to parse path commands
@@ -170,19 +200,18 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
         }
         
         console.log('[PDF Parser] Content stream length:', contentStr.length);
+        console.log('[PDF Parser] Looking for color space:', cutContourCSName);
         
-        // Look for CutContour color space usage and following path
-        const cutContourPattern = /\/CutContour\s+(?:CS|cs)\s+[\d.]+\s+(?:SCN|scn|SC|sc)/gi;
-        if (cutContourPattern.test(contentStr)) {
-          console.log('[PDF Parser] CutContour usage found in content stream');
-          
-          // Extract path points after CutContour color is set
-          // Parse the content stream for path operations
-          const pathPoints = extractPathFromContentStream(contentStr, width, height);
-          if (pathPoints.length > 0) {
-            result.cutContourPoints = pathPoints;
-            console.log('[PDF Parser] Extracted', pathPoints.length, 'paths');
-          }
+        // Log a snippet of the content stream for debugging
+        console.log('[PDF Parser] Content stream snippet:', contentStr.substring(0, 500));
+        
+        // Extract path points using the color space name
+        const pathPoints = extractPathFromContentStream(contentStr, width, height, cutContourCSName);
+        if (pathPoints.length > 0) {
+          result.cutContourPoints = pathPoints;
+          console.log('[PDF Parser] Extracted', pathPoints.length, 'paths with', pathPoints.reduce((a, p) => a + p.length, 0), 'total points');
+        } else {
+          console.log('[PDF Parser] No paths extracted from content stream');
         }
       }
     }
@@ -195,74 +224,125 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
 }
 
 // Extract path points from PDF content stream
-function extractPathFromContentStream(content: string, pageWidth: number, pageHeight: number): { x: number; y: number }[][] {
+function extractPathFromContentStream(content: string, pageWidth: number, pageHeight: number, colorSpaceName: string): { x: number; y: number }[][] {
   const paths: { x: number; y: number }[][] = [];
   let currentPath: { x: number; y: number }[] = [];
   let inCutContour = false;
   
-  // Split content into tokens
-  const lines = content.split(/\r?\n/);
+  // Parse content stream - tokenize properly handling numbers (including negatives, decimals)
+  const tokens = content.match(/-?\d+\.?\d*(?:[eE][+-]?\d+)?|\/[\w]+|[a-zA-Z\*]+/g) || [];
+  const stack: string[] = [];
   
-  for (const line of lines) {
-    const trimmed = line.trim();
+  // Known operators that consume operands and should clear stack
+  const operators = new Set([
+    'q', 'Q', 'cm', 'w', 'J', 'j', 'M', 'd', 'ri', 'i', 'gs',
+    'm', 'l', 'c', 'v', 'y', 'h', 're',
+    'S', 's', 'f', 'F', 'f*', 'B', 'B*', 'b', 'b*', 'n',
+    'W', 'W*',
+    'BT', 'ET', 'Tc', 'Tw', 'Tz', 'TL', 'Tf', 'Tr', 'Ts', 'Td', 'TD', 'Tm', 'T*', 'Tj', 'TJ', "'", '"',
+    'CS', 'cs', 'SC', 'SCN', 'sc', 'scn', 'G', 'g', 'RG', 'rg', 'K', 'k',
+    'Do', 'BI', 'ID', 'EI',
+    'BMC', 'BDC', 'EMC', 'MP', 'DP'
+  ]);
+  
+  console.log('[PDF Parser] Tokenizing content stream, got', tokens.length, 'tokens');
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
     
-    // Check if we're entering CutContour mode
-    if (/\/CutContour\s+(?:CS|cs)/i.test(trimmed)) {
-      inCutContour = true;
-      continue;
-    }
-    
-    // Check if we're exiting CutContour mode (different color space)
-    if (inCutContour && /\/\w+\s+(?:CS|cs)\s/i.test(trimmed) && !/CutContour/i.test(trimmed)) {
-      if (currentPath.length > 0) {
-        paths.push([...currentPath]);
-        currentPath = [];
-      }
-      inCutContour = false;
-      continue;
-    }
-    
-    if (inCutContour) {
-      // Parse path commands: m (moveto), l (lineto), c (curveto), h (closepath), S/s (stroke)
-      const moveMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+m$/);
-      if (moveMatch) {
-        if (currentPath.length > 0) {
-          paths.push([...currentPath]);
-          currentPath = [];
+    // Check if it's an operator
+    if (operators.has(token)) {
+      // Handle specific operators
+      if (token === 'CS' || token === 'cs') {
+        const csName = stack.length > 0 ? stack[stack.length - 1] : '';
+        if (csName === '/' + colorSpaceName || csName.toLowerCase() === '/cutcontour') {
+          inCutContour = true;
+          console.log('[PDF Parser] Entering CutContour mode with', csName);
+        } else if (inCutContour && csName.startsWith('/')) {
+          console.log('[PDF Parser] Exiting CutContour mode, switching to', csName);
+          if (currentPath.length > 0) {
+            paths.push([...currentPath]);
+            currentPath = [];
+          }
+          inCutContour = false;
         }
-        currentPath.push({ x: parseFloat(moveMatch[1]), y: parseFloat(moveMatch[2]) });
-        continue;
-      }
-      
-      const lineMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+l$/);
-      if (lineMatch) {
-        currentPath.push({ x: parseFloat(lineMatch[1]), y: parseFloat(lineMatch[2]) });
-        continue;
-      }
-      
-      const curveMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+c$/);
-      if (curveMatch) {
-        // For curves, just use the endpoint
-        currentPath.push({ x: parseFloat(curveMatch[5]), y: parseFloat(curveMatch[6]) });
-        continue;
-      }
-      
-      if (trimmed === 'h' || trimmed === 'H') {
-        // Close path
-        if (currentPath.length > 0) {
+      } else if (token === 'm') {
+        // moveto - requires 2 numbers
+        if (stack.length >= 2) {
+          if (currentPath.length > 0 && inCutContour) {
+            paths.push([...currentPath]);
+            currentPath = [];
+          }
+          const y = parseFloat(stack[stack.length - 1]);
+          const x = parseFloat(stack[stack.length - 2]);
+          if (inCutContour && !isNaN(x) && !isNaN(y)) {
+            // Flip Y coordinate (PDF origin is bottom-left, canvas is top-left)
+            currentPath.push({ x, y: pageHeight - y });
+          }
+        }
+      } else if (token === 'l') {
+        // lineto - requires 2 numbers
+        if (stack.length >= 2 && inCutContour) {
+          const y = parseFloat(stack[stack.length - 1]);
+          const x = parseFloat(stack[stack.length - 2]);
+          if (!isNaN(x) && !isNaN(y)) {
+            currentPath.push({ x, y: pageHeight - y });
+          }
+        }
+      } else if (token === 'c') {
+        // curveto - requires 6 numbers, use endpoint
+        if (stack.length >= 6 && inCutContour) {
+          const y3 = parseFloat(stack[stack.length - 1]);
+          const x3 = parseFloat(stack[stack.length - 2]);
+          if (!isNaN(x3) && !isNaN(y3)) {
+            currentPath.push({ x: x3, y: pageHeight - y3 });
+          }
+        }
+      } else if (token === 'v' || token === 'y') {
+        // curveto variants - requires 4 numbers
+        if (stack.length >= 4 && inCutContour) {
+          const y3 = parseFloat(stack[stack.length - 1]);
+          const x3 = parseFloat(stack[stack.length - 2]);
+          if (!isNaN(x3) && !isNaN(y3)) {
+            currentPath.push({ x: x3, y: pageHeight - y3 });
+          }
+        }
+      } else if (token === 're') {
+        // rectangle - 4 numbers: x, y, width, height
+        if (stack.length >= 4 && inCutContour) {
+          const h = parseFloat(stack[stack.length - 1]);
+          const w = parseFloat(stack[stack.length - 2]);
+          const y = parseFloat(stack[stack.length - 3]);
+          const x = parseFloat(stack[stack.length - 4]);
+          if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h)) {
+            // Rectangle as 4 corners
+            currentPath.push({ x, y: pageHeight - y });
+            currentPath.push({ x: x + w, y: pageHeight - y });
+            currentPath.push({ x: x + w, y: pageHeight - (y + h) });
+            currentPath.push({ x, y: pageHeight - (y + h) });
+            currentPath.push({ x, y: pageHeight - y }); // Close
+          }
+        }
+      } else if (token === 'h') {
+        // closepath
+        if (currentPath.length > 0 && inCutContour) {
           currentPath.push({ ...currentPath[0] });
         }
-        continue;
-      }
-      
-      if (trimmed === 'S' || trimmed === 's' || trimmed === 'f' || trimmed === 'F' || trimmed === 'B' || trimmed === 'b') {
-        // Stroke or fill - end of path
-        if (currentPath.length > 0) {
+      } else if (token === 'S' || token === 's' || token === 'f' || token === 'F' || 
+                 token === 'B' || token === 'B*' || token === 'b' || token === 'b*' || 
+                 token === 'f*' || token === 'n') {
+        // stroke, fill, or end path
+        if (currentPath.length > 0 && inCutContour) {
           paths.push([...currentPath]);
           currentPath = [];
         }
-        continue;
       }
+      
+      // Clear stack after any operator
+      stack.length = 0;
+    } else {
+      // It's an operand (number or name) - push to stack
+      stack.push(token);
     }
   }
   
@@ -270,6 +350,7 @@ function extractPathFromContentStream(content: string, pageWidth: number, pageHe
     paths.push(currentPath);
   }
   
+  console.log('[PDF Parser] Extraction complete, found', paths.length, 'paths');
   return paths;
 }
 
