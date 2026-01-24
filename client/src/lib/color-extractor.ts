@@ -72,7 +72,7 @@ export function extractDominantColors(
     .sort((a, b) => b.count - a.count);
 
   const mergedColors: ExtractedColor[] = [];
-  const mergeThreshold = 40;
+  const mergeThreshold = 25;
 
   for (const color of colors) {
     let merged = false;
@@ -115,7 +115,7 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
 export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 9): ExtractedColor[] {
   if (!image.complete || image.width === 0 || image.height === 0) return [];
   
-  const sampleSize = Math.min(image.width, image.height, 300);
+  const sampleSize = Math.min(image.width, image.height, 500);
   const scaleX = sampleSize / image.width;
   const scaleY = sampleSize / image.height;
   
