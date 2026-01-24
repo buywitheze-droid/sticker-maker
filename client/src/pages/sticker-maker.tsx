@@ -13,7 +13,7 @@ export default function StickerMaker() {
             <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE BRO</h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
-            <span>The pro's secret weapon for raised stickers</span>
+            <span>If you can't figure this out, maybe try coloring books</span>
             <img src={devilLogo} alt="" className="w-5 h-5 object-contain" />
           </div>
         </div>
