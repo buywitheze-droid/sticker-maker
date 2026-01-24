@@ -44,6 +44,7 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
   } as any).promise;
   
   const cutContourInfo = await extractCutContour(page, viewport, pdfScale);
+  console.log('[PDF Parser] CutContour result:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
   
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
@@ -84,6 +85,22 @@ async function extractCutContour(
     let currentPath: { x: number; y: number }[] = [];
     const path2D = new Path2D();
     
+    // Debug: Log all spot color names found
+    const spotColors: string[] = [];
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i];
+      const arg = args[i];
+      if (op === pdfjsLib.OPS.setFillColorN || op === pdfjsLib.OPS.setStrokeColorN) {
+        const colorName = arg?.[arg.length - 1];
+        if (typeof colorName === 'string') {
+          spotColors.push(colorName);
+        }
+      }
+    }
+    if (spotColors.length > 0) {
+      console.log('[PDF Parser] Spot colors found:', [...new Set(spotColors)]);
+    }
+    
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i];
       const arg = args[i];
@@ -94,6 +111,7 @@ async function extractCutContour(
             colorName.toLowerCase().includes('cutcontour')) {
           inCutContour = true;
           result.hasCutContour = true;
+          console.log('[PDF Parser] CutContour detected:', colorName);
         }
       }
       
