@@ -121,7 +121,7 @@ export default function ImageEditor() {
         
         setImageInfo(newImageInfo);
         
-        // Reset Step 3 (Outline Options) to defaults when new image is uploaded
+        // Reset all settings to defaults when new image is uploaded
         setStrokeSettings({
           width: 0.14,
           color: "#ffffff",
@@ -141,6 +141,8 @@ export default function ImageEditor() {
           strokeColor: '#000000',
           cornerRadius: 0.25,
         });
+        setStrokeMode('none');
+        setCadCutBounds(null);
         
         // Update resize settings based on cropped image
         let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
@@ -213,7 +215,7 @@ export default function ImageEditor() {
 
       setImageInfo(newImageInfo);
 
-      // Reset Step 3 (Outline Options) to defaults when new image is uploaded
+      // Reset all settings to defaults when new image is uploaded
       setStrokeSettings({
         width: 0.14,
         color: "#ffffff",
@@ -233,6 +235,8 @@ export default function ImageEditor() {
         strokeColor: '#000000',
         cornerRadius: 0.25,
       });
+      setStrokeMode('none');
+      setCadCutBounds(null);
 
       setResizeSettings(prev => ({
         ...prev,
