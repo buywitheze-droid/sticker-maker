@@ -345,14 +345,6 @@ export default function ControlsSection({
             />
             <Label htmlFor="pdf-same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
           </div>
-
-          <Button
-            onClick={() => onDownload('cutcontour', 'pdf')}
-            disabled={isProcessing}
-            className="w-full bg-green-600 hover:bg-green-700 text-white text-sm"
-          >
-            Download PDF with CutContour
-          </Button>
         </div>
       )}
 
