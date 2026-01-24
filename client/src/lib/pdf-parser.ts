@@ -25,12 +25,22 @@ export interface ParsedPDFData {
 
 export async function parsePDF(file: File): Promise<ParsedPDFData> {
   const arrayBuffer = await file.arrayBuffer();
+  
+  // First, use pdf-lib to check for CutContour spot color in resources
+  const cutContourInfo = await extractCutContourFromRawPDF(arrayBuffer);
+  console.log('[PDF Parser] CutContour result:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
+  
+  // Then render with PDF.js for the image
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const page = await pdf.getPage(1);
   
   const targetDPI = 300;
   const pdfScale = targetDPI / 72;
   const viewport = page.getViewport({ scale: pdfScale });
+  
+  // Update cutContourInfo with page dimensions
+  cutContourInfo.pageWidth = viewport.width;
+  cutContourInfo.pageHeight = viewport.height;
   
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
@@ -42,9 +52,6 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
     viewport: viewport,
     canvas: canvas
   } as any).promise;
-  
-  const cutContourInfo = await extractCutContour(page, viewport, pdfScale);
-  console.log('[PDF Parser] CutContour result:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
   
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
@@ -61,6 +68,180 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
     originalPdfData: arrayBuffer,
     dpi: targetDPI
   };
+}
+
+// Extract CutContour from raw PDF using pdf-lib to read resources and content streams
+async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PDFCutContourInfo> {
+  const { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream } = await import('pdf-lib');
+  
+  const result: PDFCutContourInfo = {
+    hasCutContour: false,
+    cutContourPath: null,
+    cutContourPoints: [],
+    pageWidth: 0,
+    pageHeight: 0
+  };
+  
+  try {
+    const pdfDoc = await PDFDocument.load(arrayBuffer);
+    const pages = pdfDoc.getPages();
+    if (pages.length === 0) return result;
+    
+    const page = pages[0];
+    const { width, height } = page.getSize();
+    result.pageWidth = width;
+    result.pageHeight = height;
+    
+    // Check ColorSpace resources for Separation/CutContour
+    const resources = page.node.Resources();
+    if (resources) {
+      const colorSpaces = resources.get(PDFName.of('ColorSpace'));
+      if (colorSpaces instanceof PDFDict) {
+        const entries = colorSpaces.entries();
+        for (const [name, value] of entries) {
+          const nameStr = name.toString();
+          console.log('[PDF Parser] ColorSpace found:', nameStr);
+          
+          // Check if this is a Separation color space with CutContour
+          if (value instanceof PDFArray) {
+            const firstElement = value.get(0);
+            if (firstElement && firstElement.toString() === '/Separation') {
+              const spotName = value.get(1);
+              if (spotName) {
+                const spotNameStr = spotName.toString();
+                console.log('[PDF Parser] Separation spot color:', spotNameStr);
+                if (spotNameStr.toLowerCase().includes('cutcontour')) {
+                  result.hasCutContour = true;
+                  console.log('[PDF Parser] CutContour spot color detected!');
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // If CutContour found, try to extract path from content stream
+    if (result.hasCutContour) {
+      const contents = page.node.Contents();
+      if (contents) {
+        // Get content stream as string to parse path commands
+        let contentStr = '';
+        if (contents instanceof PDFStream) {
+          const decoded = contents.getContents();
+          contentStr = new TextDecoder().decode(decoded);
+        } else if (contents instanceof PDFArray) {
+          for (let i = 0; i < contents.size(); i++) {
+            const stream = contents.get(i);
+            if (stream instanceof PDFStream) {
+              const decoded = stream.getContents();
+              contentStr += new TextDecoder().decode(decoded) + '\n';
+            }
+          }
+        }
+        
+        console.log('[PDF Parser] Content stream length:', contentStr.length);
+        
+        // Look for CutContour color space usage and following path
+        const cutContourPattern = /\/CutContour\s+(?:CS|cs)\s+[\d.]+\s+(?:SCN|scn|SC|sc)/gi;
+        if (cutContourPattern.test(contentStr)) {
+          console.log('[PDF Parser] CutContour usage found in content stream');
+          
+          // Extract path points after CutContour color is set
+          // Parse the content stream for path operations
+          const pathPoints = extractPathFromContentStream(contentStr, width, height);
+          if (pathPoints.length > 0) {
+            result.cutContourPoints = pathPoints;
+            console.log('[PDF Parser] Extracted', pathPoints.length, 'paths');
+          }
+        }
+      }
+    }
+    
+  } catch (error) {
+    console.warn('[PDF Parser] Error parsing PDF with pdf-lib:', error);
+  }
+  
+  return result;
+}
+
+// Extract path points from PDF content stream
+function extractPathFromContentStream(content: string, pageWidth: number, pageHeight: number): { x: number; y: number }[][] {
+  const paths: { x: number; y: number }[][] = [];
+  let currentPath: { x: number; y: number }[] = [];
+  let inCutContour = false;
+  
+  // Split content into tokens
+  const lines = content.split(/\r?\n/);
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Check if we're entering CutContour mode
+    if (/\/CutContour\s+(?:CS|cs)/i.test(trimmed)) {
+      inCutContour = true;
+      continue;
+    }
+    
+    // Check if we're exiting CutContour mode (different color space)
+    if (inCutContour && /\/\w+\s+(?:CS|cs)\s/i.test(trimmed) && !/CutContour/i.test(trimmed)) {
+      if (currentPath.length > 0) {
+        paths.push([...currentPath]);
+        currentPath = [];
+      }
+      inCutContour = false;
+      continue;
+    }
+    
+    if (inCutContour) {
+      // Parse path commands: m (moveto), l (lineto), c (curveto), h (closepath), S/s (stroke)
+      const moveMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+m$/);
+      if (moveMatch) {
+        if (currentPath.length > 0) {
+          paths.push([...currentPath]);
+          currentPath = [];
+        }
+        currentPath.push({ x: parseFloat(moveMatch[1]), y: parseFloat(moveMatch[2]) });
+        continue;
+      }
+      
+      const lineMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+l$/);
+      if (lineMatch) {
+        currentPath.push({ x: parseFloat(lineMatch[1]), y: parseFloat(lineMatch[2]) });
+        continue;
+      }
+      
+      const curveMatch = trimmed.match(/^([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+c$/);
+      if (curveMatch) {
+        // For curves, just use the endpoint
+        currentPath.push({ x: parseFloat(curveMatch[5]), y: parseFloat(curveMatch[6]) });
+        continue;
+      }
+      
+      if (trimmed === 'h' || trimmed === 'H') {
+        // Close path
+        if (currentPath.length > 0) {
+          currentPath.push({ ...currentPath[0] });
+        }
+        continue;
+      }
+      
+      if (trimmed === 'S' || trimmed === 's' || trimmed === 'f' || trimmed === 'F' || trimmed === 'B' || trimmed === 'b') {
+        // Stroke or fill - end of path
+        if (currentPath.length > 0) {
+          paths.push([...currentPath]);
+          currentPath = [];
+        }
+        continue;
+      }
+    }
+  }
+  
+  if (currentPath.length > 0) {
+    paths.push(currentPath);
+  }
+  
+  return paths;
 }
 
 async function extractCutContour(
