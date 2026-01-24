@@ -639,8 +639,6 @@ export default function ImageEditor() {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <UploadSection 
         onImageUpload={handleImageUpload}
-        imageInfo={imageInfo}
-        resizeSettings={resizeSettings}
         showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
       />
       
