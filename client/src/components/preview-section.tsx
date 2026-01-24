@@ -333,7 +333,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       canvas.width = baseSize;
       canvas.height = baseSize;
 
-      if (backgroundColor === "transparent") {
+      // Determine which background color to use:
+      // - For PDFs with CutContour, use strokeSettings.backgroundColor
+      // - For regular images, use local backgroundColor state
+      const hasPdfCutContour = imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour;
+      const effectiveBackgroundColor = hasPdfCutContour 
+        ? strokeSettings.backgroundColor 
+        : backgroundColor;
+
+      if (effectiveBackgroundColor === "transparent") {
         // Draw transparency grid pattern (light grey checkerboard)
         const gridSize = 10;
         const lightColor = '#e8e8e8';
@@ -347,7 +355,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           }
         }
       } else {
-        ctx.fillStyle = backgroundColor;
+        ctx.fillStyle = effectiveBackgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
@@ -593,42 +601,51 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     const getBackgroundStyle = () => {
-      if (backgroundColor === "transparent") {
+      // For PDFs with CutContour, use strokeSettings.backgroundColor
+      const hasPdfCutContour = imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour;
+      const effectiveBg = hasPdfCutContour ? strokeSettings.backgroundColor : backgroundColor;
+      if (effectiveBg === "transparent") {
         return "checkerboard";
       }
       return "";
     };
 
     const getBackgroundColor = () => {
-      if (backgroundColor === "transparent") {
+      // For PDFs with CutContour, use strokeSettings.backgroundColor
+      const hasPdfCutContour = imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour;
+      const effectiveBg = hasPdfCutContour ? strokeSettings.backgroundColor : backgroundColor;
+      if (effectiveBg === "transparent") {
         return "transparent";
       }
-      return backgroundColor;
+      return effectiveBg;
     };
 
     return (
       <div className="lg:col-span-1">
         <Card className="shadow-xl shadow-black/20 border-gray-700/50">
           <CardContent className="p-6">
-            <div className="mb-4 flex items-center space-x-3">
-              <Palette className="w-4 h-4 text-gray-600" />
-              <span className="text-sm text-gray-600">Preview Color:</span>
-              <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                <SelectTrigger className="w-32">
-                  <SelectValue>{getColorName(backgroundColor)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="transparent">Transparent</SelectItem>
-                  <SelectItem value="#ffffff">White</SelectItem>
-                  <SelectItem value="#000000">Black</SelectItem>
-                  <SelectItem value="#f3f4f6">Light Gray</SelectItem>
-                  <SelectItem value="#1f2937">Dark Gray</SelectItem>
-                  <SelectItem value="#3b82f6">Blue</SelectItem>
-                  <SelectItem value="#ef4444">Red</SelectItem>
-                  <SelectItem value="#10b981">Green</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
+            {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+              <div className="mb-4 flex items-center space-x-3">
+                <Palette className="w-4 h-4 text-gray-600" />
+                <span className="text-sm text-gray-600">Preview Color:</span>
+                <Select value={backgroundColor} onValueChange={setBackgroundColor}>
+                  <SelectTrigger className="w-32">
+                    <SelectValue>{getColorName(backgroundColor)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="transparent">Transparent</SelectItem>
+                    <SelectItem value="#ffffff">White</SelectItem>
+                    <SelectItem value="#000000">Black</SelectItem>
+                    <SelectItem value="#f3f4f6">Light Gray</SelectItem>
+                    <SelectItem value="#1f2937">Dark Gray</SelectItem>
+                    <SelectItem value="#3b82f6">Blue</SelectItem>
+                    <SelectItem value="#ef4444">Red</SelectItem>
+                    <SelectItem value="#10b981">Green</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <div 
