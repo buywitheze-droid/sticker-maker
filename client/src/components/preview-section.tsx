@@ -8,7 +8,7 @@ import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./imag
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
-import { cropImageToContent, getImageBounds } from "@/lib/image-crop";
+import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -572,41 +572,83 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       // Calculate bleed in pixels based on shape scale (only if bleed is enabled)
       const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
       const bleedPixels = shapeSettings.bleedEnabled ? bleedInches * shapePixelsPerInch : 0;
-
-      // Draw background with bleed (larger shape for the fill if bleed enabled)
-      ctx.fillStyle = shapeSettings.fillColor;
-      ctx.beginPath();
       
       const cornerRadiusPixels = (shapeSettings.cornerRadius || 0.25) * shapePixelsPerInch;
       
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2 + bleedPixels;
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'oval') {
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        const radiusX = shapeWidth / 2 + bleedPixels;
-        const radiusY = shapeHeight / 2 + bleedPixels;
-        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2 - bleedPixels;
-        const startY = shapeY + (shapeHeight - size) / 2 - bleedPixels;
-        ctx.rect(startX, startY, size + bleedPixels * 2, size + bleedPixels * 2);
-      } else if (shapeSettings.type === 'rounded-square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2 - bleedPixels;
-        const startY = shapeY + (shapeHeight - size) / 2 - bleedPixels;
-        ctx.roundRect(startX, startY, size + bleedPixels * 2, size + bleedPixels * 2, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'rounded-rectangle') {
-        ctx.roundRect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2, cornerRadiusPixels);
-      } else {
-        ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
-      }
+      // Prepare source image for edge bleeding
+      const croppedCanvas = cropImageToContent(imageInfo.image);
+      const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
       
-      ctx.fill();
+      // Image dimensions within the shape
+      const imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
+      const imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
+      const imageX = shapeX + (shapeWidth - imageWidth) / 2;
+      const imageY = shapeY + (shapeHeight - imageHeight) / 2;
+      
+      // Draw background with bleed
+      if (shapeSettings.bleedEnabled) {
+        // Edge bleeding mode - extend edge colors outward
+        // Calculate bleed in source image pixels using consistent scale
+        const sourceScaleX = sourceImage.width / imageWidth;
+        const sourceScaleY = sourceImage.height / imageHeight;
+        const sourceScale = Math.max(sourceScaleX, sourceScaleY);
+        const sourceBleedPixels = Math.round(bleedPixels * sourceScale);
+        
+        // Create edge-bled canvas
+        const edgeBledCanvas = createEdgeBleedCanvas(sourceImage, sourceBleedPixels);
+        
+        // Draw edge-bled image clipped to expanded shape
+        ctx.save();
+        ctx.beginPath();
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2 + bleedPixels;
+          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2 + bleedPixels, shapeHeight / 2 + bleedPixels, 0, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.rect(shapeX + (shapeWidth - size) / 2 - bleedPixels, shapeY + (shapeHeight - size) / 2 - bleedPixels, size + bleedPixels * 2, size + bleedPixels * 2);
+        } else if (shapeSettings.type === 'rounded-square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.roundRect(shapeX + (shapeWidth - size) / 2 - bleedPixels, shapeY + (shapeHeight - size) / 2 - bleedPixels, size + bleedPixels * 2, size + bleedPixels * 2, cornerRadiusPixels);
+        } else if (shapeSettings.type === 'rounded-rectangle') {
+          ctx.roundRect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2, cornerRadiusPixels);
+        } else {
+          ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
+        }
+        
+        ctx.clip();
+        
+        // Draw the edge-bled image positioned so bleed aligns with the bleed area
+        // Use the same scale factor for consistency
+        const displayBleedPixels = sourceBleedPixels / sourceScale;
+        ctx.drawImage(edgeBledCanvas, imageX - displayBleedPixels, imageY - displayBleedPixels, imageWidth + displayBleedPixels * 2, imageHeight + displayBleedPixels * 2);
+        ctx.restore();
+      } else {
+        // Solid fill mode
+        ctx.fillStyle = shapeSettings.fillColor;
+        ctx.beginPath();
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2;
+          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
+        } else if (shapeSettings.type === 'rounded-square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
+        } else if (shapeSettings.type === 'rounded-rectangle') {
+          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
+        } else {
+          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+        }
+        
+        ctx.fill();
+      }
       
       // Draw CutContour outline at exact cut position (without bleed)
       ctx.strokeStyle = '#FF00FF';
@@ -642,49 +684,33 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.stroke();
 
-      const croppedCanvas = cropImageToContent(imageInfo.image);
-      const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
-      
-      // Reuse shapePixelsPerInch from above for image sizing
-      const imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
-      const imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
-
-      const imageX = shapeX + (shapeWidth - imageWidth) / 2;
-      const imageY = shapeY + (shapeHeight - imageHeight) / 2;
-
-      ctx.save();
-      ctx.beginPath();
-      
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2;
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'oval') {
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        const radiusX = shapeWidth / 2;
-        const radiusY = shapeHeight / 2;
-        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2;
-        const startY = shapeY + (shapeHeight - size) / 2;
-        ctx.rect(startX, startY, size, size);
-      } else if (shapeSettings.type === 'rounded-square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2;
-        const startY = shapeY + (shapeHeight - size) / 2;
-        ctx.roundRect(startX, startY, size, size, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'rounded-rectangle') {
-        ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-      } else {
-        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+      // Draw the original image on top (clipped to cut line), only if not edge bleeding
+      // Edge bleeding already drew the full image including bleed
+      if (!shapeSettings.bleedEnabled) {
+        ctx.save();
+        ctx.beginPath();
+        
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2;
+          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
+        } else if (shapeSettings.type === 'rounded-square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
+        } else if (shapeSettings.type === 'rounded-rectangle') {
+          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
+        } else {
+          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+        }
+        
+        ctx.clip();
+        ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
+        ctx.restore();
       }
-      
-      ctx.clip();
-      ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
-      ctx.restore();
     };
 
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {

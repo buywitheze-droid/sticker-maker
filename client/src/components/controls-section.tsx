@@ -502,43 +502,6 @@ export default function ControlsSection({
                 </div>
               )}
 
-              {/* Stroke Options */}
-              <div className="flex items-center gap-2">
-                <Checkbox 
-                  id="shape-stroke"
-                  checked={shapeSettings.strokeEnabled}
-                  onCheckedChange={(checked) => onShapeChange({ strokeEnabled: checked as boolean })}
-                />
-                <Label htmlFor="shape-stroke" className="text-xs text-gray-600 cursor-pointer">Add stroke</Label>
-              </div>
-
-              {shapeSettings.strokeEnabled && (
-                <div className="space-y-2 pl-4">
-                  <div>
-                    <Label className="text-xs text-gray-600">Stroke Width (px)</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={shapeSettings.strokeWidth}
-                      onChange={(e) => onShapeChange({ strokeWidth: parseInt(e.target.value) || 2 })}
-                      className="mt-1 bg-white border-gray-300 text-gray-900 text-sm h-8"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-600">Stroke Color</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <input
-                        type="color"
-                        value={shapeSettings.strokeColor}
-                        onChange={(e) => onShapeChange({ strokeColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-                      />
-                      <span className="text-xs text-gray-500">{shapeSettings.strokeColor}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>

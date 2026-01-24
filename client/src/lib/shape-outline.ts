@@ -1,6 +1,6 @@
 import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { cropImageToContent } from './image-crop';
+import { cropImageToContent, createEdgeBleedCanvas } from './image-crop';
 
 // Helper function to generate PDF path operations for a rounded rectangle
 function getRoundedRectPath(x: number, y: number, width: number, height: number, radius: number): string {
@@ -138,12 +138,12 @@ export async function downloadShapePDF(
     if (ctx) ctx.drawImage(image, 0, 0);
   }
   
-  const blob = await new Promise<Blob>((resolve) => {
-    imageCanvas.toBlob((b) => resolve(b!), 'image/png');
-  });
-  const pngBytes = new Uint8Array(await blob.arrayBuffer());
+  const imageWidth = resizeSettings.widthInches * 72;
+  const imageHeight = resizeSettings.heightInches * 72;
   
-  const pngImage = await pdfDoc.embedPng(pngBytes);
+  // Center the image in the page (which includes bleed)
+  const imageX = (widthPts - imageWidth) / 2;
+  const imageY = (heightPts - imageHeight) / 2;
   
   // Convert hex fill color to RGB values (0-1 range)
   const hexToRgb = (hex: string) => {
@@ -156,75 +156,160 @@ export async function downloadShapePDF(
   };
   const fillRgb = hexToRgb(shapeSettings.fillColor);
   
-  // Draw background shape with bleed (fills entire page)
-  let bgPathOps = 'q\n';
-  bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`; // Set fill color
+  const cornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
   
-  const cornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72; // Default 0.25 inch corner radius
-  
-  if (shapeSettings.type === 'circle') {
-    const r = Math.min(widthPts, heightPts) / 2; // Include bleed
-    const k = 0.5522847498;
-    const rk = r * k;
-    bgPathOps += `${cx + r} ${cy} m\n`;
-    bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-    bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-    bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-    bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
-  } else if (shapeSettings.type === 'oval') {
-    const rx = widthPts / 2; // Include bleed
-    const ry = heightPts / 2;
-    const k = 0.5522847498;
-    const rxk = rx * k;
-    const ryk = ry * k;
-    bgPathOps += `${cx + rx} ${cy} m\n`;
-    bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-    bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-    bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-    bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
-  } else if (shapeSettings.type === 'square') {
-    const size = Math.min(widthPts, heightPts); // Include bleed
-    const sx = (widthPts - size) / 2;
-    const sy = (heightPts - size) / 2;
-    bgPathOps += `${sx} ${sy} m\n`;
-    bgPathOps += `${sx + size} ${sy} l\n`;
-    bgPathOps += `${sx + size} ${sy + size} l\n`;
-    bgPathOps += `${sx} ${sy + size} l\n`;
-  } else if (shapeSettings.type === 'rounded-square') {
-    const size = Math.min(widthPts, heightPts);
-    const sx = (widthPts - size) / 2;
-    const sy = (heightPts - size) / 2;
-    bgPathOps += getRoundedRectPath(sx, sy, size, size, cornerRadiusPts);
-  } else if (shapeSettings.type === 'rounded-rectangle') {
-    bgPathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cornerRadiusPts);
+  if (shapeSettings.bleedEnabled && bleedPts > 0) {
+    // Edge bleeding mode - create edge-bled canvas
+    // Use same scaling approach as preview: Math.max(scaleX, scaleY)
+    const sourceScaleX = imageCanvas.width / imageWidth;
+    const sourceScaleY = imageCanvas.height / imageHeight;
+    const sourceScale = Math.max(sourceScaleX, sourceScaleY);
+    const sourceBleedPixels = Math.round(bleedPts * sourceScale);
+    const edgeBledCanvas = createEdgeBleedCanvas(imageCanvas, sourceBleedPixels);
+    
+    // Work in a consistent coordinate system (canvas pixels at 2x PDF points)
+    const canvasScale = 2;
+    const canvasWidth = Math.round(widthPts * canvasScale);
+    const canvasHeight = Math.round(heightPts * canvasScale);
+    
+    // Shape dimensions in canvas pixels (without bleed)
+    const shapeWidthPx = shapeWidthPts * canvasScale;
+    const shapeHeightPx = shapeHeightPts * canvasScale;
+    const shapeX = (canvasWidth - shapeWidthPx) / 2;
+    const shapeY = (canvasHeight - shapeHeightPx) / 2;
+    
+    // Bleed in canvas pixels
+    const bleedPx = bleedPts * canvasScale;
+    
+    // Image dimensions in canvas pixels
+    const imgWidthPx = imageWidth * canvasScale;
+    const imgHeightPx = imageHeight * canvasScale;
+    const imgX = shapeX + (shapeWidthPx - imgWidthPx) / 2;
+    const imgY = shapeY + (shapeHeightPx - imgHeightPx) / 2;
+    
+    // Create clipped canvas
+    const clippedCanvas = document.createElement('canvas');
+    clippedCanvas.width = canvasWidth;
+    clippedCanvas.height = canvasHeight;
+    const clipCtx = clippedCanvas.getContext('2d')!;
+    
+    // Create clipping path for the shape WITH bleed (same logic as preview)
+    clipCtx.beginPath();
+    const cornerRadiusPx = cornerRadiusPts * canvasScale;
+    
+    if (shapeSettings.type === 'circle') {
+      const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2 + bleedPx;
+      clipCtx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'oval') {
+      clipCtx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2 + bleedPx, shapeHeightPx / 2 + bleedPx, 0, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2 - bleedPx;
+      const sy = shapeY + (shapeHeightPx - size) / 2 - bleedPx;
+      clipCtx.rect(sx, sy, size + bleedPx * 2, size + bleedPx * 2);
+    } else if (shapeSettings.type === 'rounded-square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2 - bleedPx;
+      const sy = shapeY + (shapeHeightPx - size) / 2 - bleedPx;
+      clipCtx.roundRect(sx, sy, size + bleedPx * 2, size + bleedPx * 2, cornerRadiusPx);
+    } else if (shapeSettings.type === 'rounded-rectangle') {
+      clipCtx.roundRect(shapeX - bleedPx, shapeY - bleedPx, shapeWidthPx + bleedPx * 2, shapeHeightPx + bleedPx * 2, cornerRadiusPx);
+    } else {
+      clipCtx.rect(shapeX - bleedPx, shapeY - bleedPx, shapeWidthPx + bleedPx * 2, shapeHeightPx + bleedPx * 2);
+    }
+    clipCtx.clip();
+    
+    // Draw edge-bled image (same positioning as preview)
+    const displayBleedPx = sourceBleedPixels / sourceScale * canvasScale;
+    clipCtx.drawImage(
+      edgeBledCanvas, 
+      imgX - displayBleedPx, 
+      imgY - displayBleedPx, 
+      imgWidthPx + displayBleedPx * 2, 
+      imgHeightPx + displayBleedPx * 2
+    );
+    
+    // Embed clipped canvas as PNG
+    const clippedBlob = await new Promise<Blob>((resolve) => {
+      clippedCanvas.toBlob((b) => resolve(b!), 'image/png');
+    });
+    const clippedPngBytes = new Uint8Array(await clippedBlob.arrayBuffer());
+    const clippedImage = await pdfDoc.embedPng(clippedPngBytes);
+    
+    // Draw clipped image filling the page
+    page.drawImage(clippedImage, {
+      x: 0,
+      y: 0,
+      width: widthPts,
+      height: heightPts,
+    });
   } else {
-    bgPathOps += `0 0 m\n`;
-    bgPathOps += `${widthPts} 0 l\n`;
-    bgPathOps += `${widthPts} ${heightPts} l\n`;
-    bgPathOps += `0 ${heightPts} l\n`;
+    // Solid fill background mode
+    let bgPathOps = 'q\n';
+    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
+    
+    if (shapeSettings.type === 'circle') {
+      const r = Math.min(widthPts, heightPts) / 2;
+      const k = 0.5522847498;
+      const rk = r * k;
+      bgPathOps += `${cx + r} ${cy} m\n`;
+      bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
+      bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
+      bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
+      bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
+    } else if (shapeSettings.type === 'oval') {
+      const rx = widthPts / 2;
+      const ry = heightPts / 2;
+      const k = 0.5522847498;
+      const rxk = rx * k;
+      const ryk = ry * k;
+      bgPathOps += `${cx + rx} ${cy} m\n`;
+      bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
+      bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
+      bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
+      bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
+    } else if (shapeSettings.type === 'square') {
+      const size = Math.min(widthPts, heightPts);
+      const sx = (widthPts - size) / 2;
+      const sy = (heightPts - size) / 2;
+      bgPathOps += `${sx} ${sy} m\n`;
+      bgPathOps += `${sx + size} ${sy} l\n`;
+      bgPathOps += `${sx + size} ${sy + size} l\n`;
+      bgPathOps += `${sx} ${sy + size} l\n`;
+    } else if (shapeSettings.type === 'rounded-square') {
+      const size = Math.min(widthPts, heightPts);
+      const sx = (widthPts - size) / 2;
+      const sy = (heightPts - size) / 2;
+      bgPathOps += getRoundedRectPath(sx, sy, size, size, cornerRadiusPts);
+    } else if (shapeSettings.type === 'rounded-rectangle') {
+      bgPathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cornerRadiusPts);
+    } else {
+      bgPathOps += `0 0 m\n`;
+      bgPathOps += `${widthPts} 0 l\n`;
+      bgPathOps += `${widthPts} ${heightPts} l\n`;
+      bgPathOps += `0 ${heightPts} l\n`;
+    }
+    bgPathOps += 'h f\n';
+    bgPathOps += 'Q\n';
+    
+    const bgStream = context.stream(bgPathOps);
+    const bgStreamRef = context.register(bgStream);
+    page.node.set(PDFName.of('Contents'), bgStreamRef);
+    
+    // Draw the original image on top
+    const blob = await new Promise<Blob>((resolve) => {
+      imageCanvas.toBlob((b) => resolve(b!), 'image/png');
+    });
+    const pngBytes = new Uint8Array(await blob.arrayBuffer());
+    const pngImage = await pdfDoc.embedPng(pngBytes);
+    
+    page.drawImage(pngImage, {
+      x: imageX,
+      y: imageY,
+      width: imageWidth,
+      height: imageHeight,
+    });
   }
-  bgPathOps += 'h f\n'; // Close and fill
-  bgPathOps += 'Q\n';
-  
-  const bgStream = context.stream(bgPathOps);
-  const bgStreamRef = context.register(bgStream);
-  
-  // Insert background as first content stream
-  page.node.set(PDFName.of('Contents'), bgStreamRef);
-  
-  const imageWidth = resizeSettings.widthInches * 72;
-  const imageHeight = resizeSettings.heightInches * 72;
-  
-  // Center the image in the page (which includes bleed)
-  const imageX = (widthPts - imageWidth) / 2;
-  const imageY = (heightPts - imageHeight) / 2;
-  
-  page.drawImage(pngImage, {
-    x: imageX,
-    y: imageY,
-    width: imageWidth,
-    height: imageHeight,
-  });
   
   let resources = page.node.Resources();
   
