@@ -8,7 +8,7 @@ import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./imag
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
-import { cropImageToContent } from "@/lib/image-crop";
+import { cropImageToContent, getImageBounds } from "@/lib/image-crop";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -349,21 +349,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const availableWidth = canvas.width - (viewPadding * 2);
         const availableHeight = canvas.height - (viewPadding * 2);
         
-        // Calculate scale to fit the PDF/image in the preview
-        const pdfWidth = cutContourInfo.pageWidth || imageInfo.image.naturalWidth;
-        const pdfHeight = cutContourInfo.pageHeight || imageInfo.image.naturalHeight;
-        const scaleX = availableWidth / pdfWidth;
-        const scaleY = availableHeight / pdfHeight;
+        // Get actual content bounds of the rendered PDF (removes empty space and white background)
+        const contentBounds = getImageBounds(imageInfo.image, true);
+        
+        // Use content bounds for sizing, not full PDF page size
+        const contentWidth = contentBounds.width;
+        const contentHeight = contentBounds.height;
+        const scaleX = availableWidth / contentWidth;
+        const scaleY = availableHeight / contentHeight;
         const scale = Math.min(scaleX, scaleY);
         
-        const scaledWidth = pdfWidth * scale;
-        const scaledHeight = pdfHeight * scale;
+        const scaledWidth = contentWidth * scale;
+        const scaledHeight = contentHeight * scale;
         const offsetX = viewPadding + (availableWidth - scaledWidth) / 2;
         const offsetY = viewPadding + (availableHeight - scaledHeight) / 2;
         
-        // Bleed offset in PDF points (0.10 inches * 72 points/inch = 7.2 points)
-        const bleedPts = 7.2;
-        const bleedPixels = bleedPts * scale;
+        // Store content bounds offset for image drawing
+        const contentOffsetX = contentBounds.x;
+        const contentOffsetY = contentBounds.y;
+        
+        // Bleed offset based on content scale (0.10 inches at render DPI)
+        const bleedInches = 0.10;
+        const renderDPI = imageInfo.pdfCutContourInfo.pageWidth ? 
+          (imageInfo.image.naturalWidth / (imageInfo.pdfCutContourInfo.pageWidth / 72 * 72)) : 300;
+        const bleedPixelsAtRender = bleedInches * renderDPI;
+        const bleedPixels = bleedPixelsAtRender * scale;
         
         // First draw checkerboard background for transparency indication
         const gridSize = 10;
@@ -429,9 +439,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             ctx.fillRect(clipX, clipY, clipW, clipH);
           }
           
-          // Clip and draw image
+          // Clip and draw only the content portion of the image
           ctx.clip();
-          ctx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
+          ctx.drawImage(
+            imageInfo.image,
+            contentOffsetX, contentOffsetY, contentWidth, contentHeight,
+            offsetX, offsetY, scaledWidth, scaledHeight
+          );
           ctx.restore();
           
           // Draw image bounds as cut indicator
@@ -452,8 +466,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         ctx.clip();
         
-        // Draw the image inside the clipped region
-        ctx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
+        // Draw only the content portion of the image inside the clipped region
+        ctx.drawImage(
+          imageInfo.image,
+          contentOffsetX, contentOffsetY, contentWidth, contentHeight,
+          offsetX, offsetY, scaledWidth, scaledHeight
+        );
         
         ctx.restore();
         

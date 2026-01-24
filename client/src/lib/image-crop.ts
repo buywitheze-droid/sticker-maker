@@ -1,4 +1,4 @@
-export function getImageBounds(image: HTMLImageElement): { x: number; y: number; width: number; height: number } {
+export function getImageBounds(image: HTMLImageElement, excludeWhite: boolean = false): { x: number; y: number; width: number; height: number } {
   // Create a temporary canvas to analyze the image
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -19,12 +19,30 @@ export function getImageBounds(image: HTMLImageElement): { x: number; y: number;
   let maxX = 0;
   let maxY = 0;
   
-  // Find the exact bounding box of visible content (alpha > 10 to handle anti-aliasing)
+  // Threshold for considering a pixel as "white" (0-255 scale)
+  const whiteThreshold = 250;
+  
+  // Find the exact bounding box of visible content
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
-      const alpha = data[(y * canvas.width + x) * 4 + 3];
+      const idx = (y * canvas.width + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const alpha = data[idx + 3];
       
-      if (alpha > 10) { // Visible pixel found (includes anti-aliased edges)
+      // Check if pixel is visible
+      let isContent = alpha > 10;
+      
+      // If excludeWhite mode, also exclude near-white pixels
+      if (isContent && excludeWhite) {
+        const isNearWhite = r >= whiteThreshold && g >= whiteThreshold && b >= whiteThreshold;
+        if (isNearWhite) {
+          isContent = false;
+        }
+      }
+      
+      if (isContent) {
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
@@ -33,7 +51,7 @@ export function getImageBounds(image: HTMLImageElement): { x: number; y: number;
     }
   }
   
-  // If no non-transparent pixels found, return original dimensions
+  // If no content pixels found, return original dimensions
   if (minX > maxX || minY > maxY) {
     return { x: 0, y: 0, width: image.width, height: image.height };
   }
