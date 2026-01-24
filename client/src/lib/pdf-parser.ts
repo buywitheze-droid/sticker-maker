@@ -85,21 +85,44 @@ async function extractCutContour(
     let currentPath: { x: number; y: number }[] = [];
     const path2D = new Path2D();
     
-    // Debug: Log all spot color names found
-    const spotColors: string[] = [];
+    // Debug: Log all operators and look for spot color patterns
+    const colorOps: string[] = [];
+    const allColorArgs: any[] = [];
+    
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i];
       const arg = args[i];
-      if (op === pdfjsLib.OPS.setFillColorN || op === pdfjsLib.OPS.setStrokeColorN) {
-        const colorName = arg?.[arg.length - 1];
-        if (typeof colorName === 'string') {
-          spotColors.push(colorName);
+      
+      // Check for various color-related operators
+      if (op === pdfjsLib.OPS.setFillColorN || 
+          op === pdfjsLib.OPS.setStrokeColorN ||
+          op === pdfjsLib.OPS.setFillColorSpace ||
+          op === pdfjsLib.OPS.setStrokeColorSpace) {
+        colorOps.push(`op${op}`);
+        allColorArgs.push(arg);
+        
+        // Check for CutContour in any argument
+        if (Array.isArray(arg)) {
+          for (const a of arg) {
+            if (typeof a === 'string' && a.toLowerCase().includes('cutcontour')) {
+              result.hasCutContour = true;
+              inCutContour = true;
+              console.log('[PDF Parser] CutContour found in args:', a);
+            }
+          }
         }
       }
     }
-    if (spotColors.length > 0) {
-      console.log('[PDF Parser] Spot colors found:', [...new Set(spotColors)]);
+    
+    if (colorOps.length > 0) {
+      console.log('[PDF Parser] Color operators found:', colorOps.length);
+      console.log('[PDF Parser] Sample color args:', allColorArgs.slice(0, 5));
+    } else {
+      console.log('[PDF Parser] No color operators found in operator list');
     }
+    
+    // Also check the raw PDF stream for CutContour text
+    console.log('[PDF Parser] Total operators:', ops.length);
     
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i];
