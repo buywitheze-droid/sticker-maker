@@ -1955,8 +1955,22 @@ export async function downloadContourPDF(
           const w = maskCanvas.width;
           const h = maskCanvas.height;
           
-          // Create binary mask
+          // Create binary mask - only match pixels where the selected spot color is the CLOSEST match
+          // This ensures each pixel belongs to only one spot color (the dominant visible one)
           const binaryMask: boolean[][] = [];
+          const colorTolerance = 60; // Maximum distance to consider a match
+          const alphaThreshold = 180; // Require fairly opaque pixels to avoid blended areas
+          
+          // Build set of marked color hex values for quick lookup
+          const markedHexSet = new Set(markedColors.map(mc => mc.hex));
+          
+          // Build indexed list of ALL spot colors for comparison
+          const allSpotColorsIndexed = spotColors.map((c, idx) => ({ 
+            rgb: c.rgb, 
+            hex: c.hex,
+            index: idx
+          }));
+          
           for (let y = 0; y < h; y++) {
             binaryMask[y] = [];
             for (let x = 0; x < w; x++) {
@@ -1966,16 +1980,34 @@ export async function downloadContourPDF(
               const b = data[i + 2];
               const a = data[i + 3];
               
-              let matches = false;
-              for (const mc of markedColors) {
-                const dr = Math.abs(r - mc.rgb.r);
-                const dg = Math.abs(g - mc.rgb.g);
-                const db = Math.abs(b - mc.rgb.b);
-                if (dr < 30 && dg < 30 && db < 30 && a > 128) {
-                  matches = true;
-                  break;
+              // Skip pixels that aren't sufficiently opaque
+              // This filters out blended/anti-aliased edge pixels where colors mix
+              if (a < alphaThreshold) {
+                binaryMask[y][x] = false;
+                continue;
+              }
+              
+              // Find the closest spot color to this pixel among ALL extracted colors
+              let closestHex = '';
+              let closestDistance = Infinity;
+              
+              for (const sc of allSpotColorsIndexed) {
+                const dr = r - sc.rgb.r;
+                const dg = g - sc.rgb.g;
+                const db = b - sc.rgb.b;
+                const distance = Math.sqrt(dr*dr + dg*dg + db*db);
+                
+                if (distance < closestDistance) {
+                  closestDistance = distance;
+                  closestHex = sc.hex;
                 }
               }
+              
+              // Only match if:
+              // 1. The closest color is within tolerance
+              // 2. The closest color is one of the marked colors for this layer (by hex)
+              const matches = closestDistance < colorTolerance && markedHexSet.has(closestHex);
+              
               binaryMask[y][x] = matches;
             }
           }
@@ -2068,7 +2100,7 @@ export async function downloadContourPDF(
             // Check which active spans continue in this row
             const newActiveSpans = new Map<string, {y1: number; y2: number; x1: number; x2: number}>();
             
-            for (const [key, span] of currentRowSpans) {
+            Array.from(currentRowSpans.entries()).forEach(([key, span]) => {
               const active = activeSpans.get(key);
               if (active && active.y2 === y - 1) {
                 // Extend the active span
@@ -2079,30 +2111,30 @@ export async function downloadContourPDF(
                 // Start new span
                 newActiveSpans.set(key, { y1: y, y2: y, x1: span.x1, x2: span.x2 });
               }
-            }
+            });
             
             // Flush any active spans that didn't continue
-            for (const existing of activeSpans.values()) {
+            Array.from(activeSpans.values()).forEach(existing => {
               mergedRects.push({
                 x: toX(existing.x1),
                 y: toY(existing.y2 + 1),
                 w: (existing.x2 - existing.x1) * scaleX,
                 h: (existing.y2 - existing.y1 + 1) * scaleY
               });
-            }
+            });
             
             activeSpans = newActiveSpans;
           }
           
           // Flush remaining active spans
-          for (const existing of activeSpans.values()) {
+          Array.from(activeSpans.values()).forEach(existing => {
             mergedRects.push({
               x: toX(existing.x1),
               y: toY(existing.y2 + 1),
               w: (existing.x2 - existing.x1) * scaleX,
               h: (existing.y2 - existing.y1 + 1) * scaleY
             });
-          }
+          });
           
           // Build a single filled path that covers all rectangles
           let spotOps = `q /${colorName} cs 1 scn\n`;
