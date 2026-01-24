@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
-import { Download, ChevronDown, Sparkles } from "lucide-react";
+import { Download, ChevronDown } from "lucide-react";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -161,29 +161,6 @@ export default function ControlsSection({
           </div>
         )}
       </div>
-
-      {/* Remove Background */}
-      {imageInfo && onRemoveBackground && (
-        <Button
-          onClick={() => onRemoveBackground(95)}
-          disabled={isRemovingBackground}
-          variant="outline"
-          size="sm"
-          className="w-full border-purple-400 text-purple-600 hover:bg-purple-50"
-        >
-          {isRemovingBackground ? (
-            <>
-              <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mr-2" />
-              Removing...
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-3 h-3 mr-2" />
-              Remove White BG
-            </>
-          )}
-        </Button>
-      )}
 
       {/* Outline Type */}
       <div className="space-y-2">
