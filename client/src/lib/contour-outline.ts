@@ -1664,12 +1664,20 @@ export interface CachedContourData {
   backgroundColor: string;
 }
 
+export interface SpotColorInput {
+  hex: string;
+  rgb: { r: number; g: number; b: number };
+  spotWhite: boolean;
+  spotGloss: boolean;
+}
+
 export async function downloadContourPDF(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
-  cachedContourData?: CachedContourData
+  cachedContourData?: CachedContourData,
+  spotColors?: SpotColorInput[]
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -1917,9 +1925,201 @@ export async function downloadContourPDF(
     }
   }
   
+  // Add spot color layers (RDG_WHITE and RDG_GLOSS) if any colors are marked
+  if (spotColors && spotColors.length > 0) {
+    const context = pdfDoc.context;
+    const resources = page.node.Resources();
+    
+    // Check if any colors are marked for white or gloss
+    const hasWhite = spotColors.some(c => c.spotWhite);
+    const hasGloss = spotColors.some(c => c.spotGloss);
+    
+    if (hasWhite || hasGloss) {
+      // Create spot color masks by extracting matching pixels from the design
+      const maskCanvas = document.createElement('canvas');
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        maskCanvas.width = image.width;
+        maskCanvas.height = image.height;
+        maskCtx.drawImage(image, 0, 0);
+        const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+        const data = imageData.data;
+        
+        // Helper function to create and embed spot color layer
+        const createSpotColorLayer = async (
+          colorName: string,
+          markedColors: SpotColorInput[],
+          tintCMYK: [number, number, number, number]
+        ): Promise<void> => {
+          const spotMaskCanvas = document.createElement('canvas');
+          spotMaskCanvas.width = maskCanvas.width;
+          spotMaskCanvas.height = maskCanvas.height;
+          const spotMaskCtx = spotMaskCanvas.getContext('2d');
+          
+          if (!spotMaskCtx) return;
+          
+          const spotMaskData = spotMaskCtx.createImageData(maskCanvas.width, maskCanvas.height);
+          
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const a = data[i + 3];
+            
+            let matches = false;
+            for (const mc of markedColors) {
+              const dr = Math.abs(r - mc.rgb.r);
+              const dg = Math.abs(g - mc.rgb.g);
+              const db = Math.abs(b - mc.rgb.b);
+              if (dr < 30 && dg < 30 && db < 30 && a > 128) {
+                matches = true;
+                break;
+              }
+            }
+            
+            // For spot colors, we create an alpha mask
+            spotMaskData.data[i] = matches ? 255 : 0;
+            spotMaskData.data[i + 1] = matches ? 255 : 0;
+            spotMaskData.data[i + 2] = matches ? 255 : 0;
+            spotMaskData.data[i + 3] = matches ? 255 : 0;
+          }
+          
+          spotMaskCtx.putImageData(spotMaskData, 0, 0);
+          
+          // Flip the mask for PDF coordinate system
+          const flippedMask = document.createElement('canvas');
+          flippedMask.width = spotMaskCanvas.width;
+          flippedMask.height = spotMaskCanvas.height;
+          const flippedCtx = flippedMask.getContext('2d');
+          if (flippedCtx) {
+            flippedCtx.translate(0, flippedMask.height);
+            flippedCtx.scale(1, -1);
+            flippedCtx.drawImage(spotMaskCanvas, 0, 0);
+          }
+          
+          // Convert to PNG and embed in PDF
+          const maskBlob = await new Promise<Blob>((resolve, reject) => {
+            flippedMask.toBlob((b) => {
+              if (b) resolve(b);
+              else reject(new Error('Failed to create mask blob'));
+            }, 'image/png');
+          });
+          
+          const maskBytes = new Uint8Array(await maskBlob.arrayBuffer());
+          const maskImage = await pdfDoc.embedPng(maskBytes);
+          
+          // Create separation color space for this spot color
+          const tintFunction = context.obj({
+            FunctionType: 2,
+            Domain: [0, 1],
+            C0: [0, 0, 0, 0],
+            C1: tintCMYK,
+            N: 1,
+          });
+          const tintRef = context.register(tintFunction);
+          
+          const separation = context.obj([
+            PDFName.of('Separation'),
+            PDFName.of(colorName),
+            PDFName.of('DeviceCMYK'),
+            tintRef,
+          ]);
+          const sepRef = context.register(separation);
+          
+          if (resources) {
+            let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+            if (!colorSpaceDict) {
+              colorSpaceDict = context.obj({});
+              resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+            }
+            (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
+          }
+          
+          // Draw the spot color mask using the separation color space
+          // Position it at the same location as the design image
+          const maskWidthPts = resizeSettings.widthInches * 72;
+          const maskHeightPts = resizeSettings.heightInches * 72;
+          const maskXPts = imageOffsetX * 72;
+          const maskYPts = imageOffsetY * 72;
+          
+          // Create an XObject for the mask and register it
+          const maskRef = (maskImage as any).ref;
+          const xObjectName = `SpotMask_${colorName}`;
+          
+          if (resources) {
+            let xObjectDict = resources.get(PDFName.of('XObject'));
+            if (!xObjectDict) {
+              xObjectDict = context.obj({});
+              resources.set(PDFName.of('XObject'), xObjectDict);
+            }
+            (xObjectDict as PDFDict).set(PDFName.of(xObjectName), maskRef);
+          }
+          
+          // Create SMask (soft mask) for the spot color using the mask image
+          const sMaskDict = context.obj({
+            Type: PDFName.of('Mask'),
+            S: PDFName.of('Alpha'),
+            G: maskRef,
+          });
+          const sMaskRef = context.register(sMaskDict);
+          
+          // Create an ExtGState with the SMask
+          const gStateName = `GS_${colorName}`;
+          const gState = context.obj({
+            Type: PDFName.of('ExtGState'),
+            SMask: sMaskRef,
+            ca: 1,
+            CA: 1,
+          });
+          const gStateRef = context.register(gState);
+          
+          if (resources) {
+            let extGStateDict = resources.get(PDFName.of('ExtGState'));
+            if (!extGStateDict) {
+              extGStateDict = context.obj({});
+              resources.set(PDFName.of('ExtGState'), extGStateDict);
+            }
+            (extGStateDict as PDFDict).set(PDFName.of(gStateName), gStateRef);
+          }
+          
+          // Draw the mask XObject using cm (transformation matrix) and Do operator
+          // The matrix positions and scales the image to match the design
+          const spotOps = `q /${gStateName} gs /${colorName} cs 1 scn ${maskXPts.toFixed(2)} ${maskYPts.toFixed(2)} m ${(maskXPts + maskWidthPts).toFixed(2)} ${maskYPts.toFixed(2)} l ${(maskXPts + maskWidthPts).toFixed(2)} ${(maskYPts + maskHeightPts).toFixed(2)} l ${maskXPts.toFixed(2)} ${(maskYPts + maskHeightPts).toFixed(2)} l f Q\n`;
+          
+          const existingContents = page.node.Contents();
+          if (existingContents) {
+            const spotStream = context.stream(spotOps);
+            const spotStreamRef = context.register(spotStream);
+            
+            if (existingContents instanceof PDFArray) {
+              existingContents.push(spotStreamRef);
+            } else {
+              const newContents = context.obj([existingContents, spotStreamRef]);
+              page.node.set(PDFName.of('Contents'), newContents);
+            }
+          }
+          
+          console.log(`[PDF] Added ${colorName} spot color layer`);
+        };
+        
+        // Create white spot color layer
+        if (hasWhite) {
+          const whiteColors = spotColors.filter(c => c.spotWhite);
+          await createSpotColorLayer('RDG_WHITE', whiteColors, [0, 0, 0, 1]);
+        }
+        
+        // Create gloss spot color layer
+        if (hasGloss) {
+          const glossColors = spotColors.filter(c => c.spotGloss);
+          await createSpotColorLayer('RDG_GLOSS', glossColors, [1, 0, 1, 0]);
+        }
+      }
+    }
+  }
+  
   pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  pdfDoc.setSubject('Contains CutContour and spot colors for printing');
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'RDG_WHITE', 'RDG_GLOSS']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });

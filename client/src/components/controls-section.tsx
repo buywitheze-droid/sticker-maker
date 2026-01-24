@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
-import { Download, ChevronDown } from "lucide-react";
+import { extractColorsFromCanvas, ExtractedColor } from "@/lib/color-extractor";
+import { Download, ChevronDown, Palette } from "lucide-react";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -22,7 +23,7 @@ interface ControlsSectionProps {
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
   onStickerSizeChange: (size: StickerSize) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg') => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean}>) => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
@@ -50,6 +51,9 @@ export default function ControlsSection({
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [showShapeAdvanced, setShowShapeAdvanced] = useState(false);
+  const [showContourOptions, setShowContourOptions] = useState(true);
+  const [showSpotColors, setShowSpotColors] = useState(false);
+  const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
@@ -58,6 +62,38 @@ export default function ControlsSection({
   const [showSendForm, setShowSendForm] = useState(false);
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
+
+  // Extract colors when canvas or image changes
+  useEffect(() => {
+    if (canvasRef?.current && imageInfo) {
+      const colors = extractColorsFromCanvas(canvasRef.current, 6);
+      setExtractedColors(colors);
+    }
+  }, [canvasRef?.current, imageInfo]);
+
+  const handleSpotColorsToggle = () => {
+    if (!showSpotColors) {
+      // Opening spot colors - close contour options
+      setShowContourOptions(false);
+      setShowSpotColors(true);
+    } else {
+      setShowSpotColors(false);
+    }
+  };
+
+  const handleContourOptionsToggle = () => {
+    if (!showContourOptions) {
+      // Opening contour options - close spot colors
+      setShowSpotColors(false);
+      setShowContourOptions(true);
+    }
+  };
+
+  const updateSpotColor = (index: number, field: 'spotWhite' | 'spotGloss', value: boolean) => {
+    setExtractedColors(prev => prev.map((color, i) => 
+      i === index ? { ...color, [field]: value } : color
+    ));
+  };
 
   const handleSendDesign = async () => {
     if (!customerName.trim() || !customerEmail.trim()) {
@@ -194,59 +230,132 @@ export default function ControlsSection({
       {/* Contour Options */}
       {strokeSettings.enabled && (
         <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-          <div>
-            <Label className="text-xs text-gray-600">Thickness</Label>
-            <Select
-              value={strokeSettings.width.toString()}
-              onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
-            >
-              <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0.02">Tiny</SelectItem>
-                <SelectItem value="0.04">Small</SelectItem>
-                <SelectItem value="0.07">Medium</SelectItem>
-                <SelectItem value="0.14">Large</SelectItem>
-                <SelectItem value="0.25">Huge</SelectItem>
-                <SelectItem value="0.5">XL</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label className="text-xs text-gray-600">Background</Label>
-            <div className="flex items-center gap-2 mt-1">
-              <input
-                type="color"
-                value={strokeSettings.backgroundColor}
-                onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-              />
-              <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
-            </div>
-          </div>
+          <button 
+            onClick={handleContourOptionsToggle}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <span className="text-sm font-medium text-gray-700">Contour Settings</span>
+            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showContourOptions ? 'rotate-180' : ''}`} />
+          </button>
           
-          <div className="space-y-2 pt-2 border-t border-gray-200">
-            <div className="flex items-center gap-2">
-              <Checkbox 
-                id="close-small-gaps"
-                checked={strokeSettings.closeSmallGaps}
-                onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
-              />
-              <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
+          {showContourOptions && (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs text-gray-600">Thickness</Label>
+                <Select
+                  value={strokeSettings.width.toString()}
+                  onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
+                >
+                  <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0.02">Tiny</SelectItem>
+                    <SelectItem value="0.04">Small</SelectItem>
+                    <SelectItem value="0.07">Medium</SelectItem>
+                    <SelectItem value="0.14">Large</SelectItem>
+                    <SelectItem value="0.25">Huge</SelectItem>
+                    <SelectItem value="0.5">XL</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs text-gray-600">Background</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="color"
+                    value={strokeSettings.backgroundColor}
+                    onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
+                    className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                  />
+                  <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
+                </div>
+              </div>
+              
+              <div className="space-y-2 pt-2 border-t border-gray-200">
+                <div className="flex items-center gap-2">
+                  <Checkbox 
+                    id="close-small-gaps"
+                    checked={strokeSettings.closeSmallGaps}
+                    onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
+                  />
+                  <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <Checkbox 
+                    id="close-big-gaps"
+                    checked={strokeSettings.closeBigGaps}
+                    onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
+                  />
+                  <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
+                </div>
+              </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              <Checkbox 
-                id="close-big-gaps"
-                checked={strokeSettings.closeBigGaps}
-                onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
-              />
-              <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
-            </div>
-          </div>
+          )}
         </div>
+      )}
+
+      {/* Spot Colors Button & Panel - Only visible in contour mode */}
+      {strokeSettings.enabled && imageInfo && (
+        <>
+          <Button
+            variant="outline"
+            onClick={handleSpotColorsToggle}
+            className={`w-full border-2 ${showSpotColors ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-300 text-gray-700 hover:border-purple-400'}`}
+          >
+            <Palette className="w-4 h-4 mr-2" />
+            SPOT COLORS
+            <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
+          </Button>
+
+          {showSpotColors && (
+            <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="text-xs text-gray-600 font-medium mb-2">Design Colors</div>
+              
+              {extractedColors.length === 0 ? (
+                <div className="text-xs text-gray-500 italic">No colors detected</div>
+              ) : (
+                <div className="space-y-2">
+                  {extractedColors.map((color, index) => (
+                    <div key={index} className="flex items-center gap-3 p-2 bg-white rounded border border-gray-200">
+                      <div 
+                        className="w-8 h-8 rounded border border-gray-300 flex-shrink-0"
+                        style={{ backgroundColor: color.hex }}
+                        title={color.hex}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-mono text-gray-700 truncate">{color.hex}</div>
+                        <div className="text-[10px] text-gray-400">{color.percentage.toFixed(1)}%</div>
+                      </div>
+                      <div className="flex gap-3">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <Checkbox
+                            checked={color.spotWhite}
+                            onCheckedChange={(checked) => updateSpotColor(index, 'spotWhite', checked as boolean)}
+                          />
+                          <span className="text-xs text-gray-600">White</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <Checkbox
+                            checked={color.spotGloss}
+                            onCheckedChange={(checked) => updateSpotColor(index, 'spotGloss', checked as boolean)}
+                          />
+                          <span className="text-xs text-gray-600">Gloss</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200">
+                White → RDG_WHITE | Gloss → RDG_GLOSS
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Shape Options */}
@@ -376,7 +485,7 @@ export default function ControlsSection({
 
       {/* Download Button */}
       <Button
-        onClick={() => onDownload('standard', 'pdf')}
+        onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss))}
         disabled={isProcessing || !canDownload || !imageInfo}
         className="w-full bg-cyan-600 hover:bg-cyan-700 text-white"
       >

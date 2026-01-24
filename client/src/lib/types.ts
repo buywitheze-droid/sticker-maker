@@ -48,3 +48,10 @@ export const STICKER_SIZES: { value: StickerSize; label: string }[] = [
   { value: 5, label: '5 inch' },
   { value: 5.5, label: '5.5 inch' },
 ];
+
+export interface SpotColorData {
+  hex: string;
+  rgb: { r: number; g: number; b: number };
+  spotWhite: boolean;
+  spotGloss: boolean;
+}
