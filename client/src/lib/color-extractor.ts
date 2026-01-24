@@ -30,7 +30,7 @@ function quantizeColor(r: number, g: number, b: number, levels: number = 32): st
 export function extractDominantColors(
   imageData: ImageData,
   maxColors: number = 9,
-  minPercentage: number = 0.3
+  minPercentage: number = 0.1
 ): ExtractedColor[] {
   const colorCounts = new Map<string, { r: number; g: number; b: number; count: number }>();
   const data = imageData.data;
@@ -42,7 +42,7 @@ export function extractDominantColors(
     const b = data[i + 2];
     const a = data[i + 3];
 
-    if (a < 128) continue;
+    if (a < 50) continue;
     totalOpaquePixels++;
 
     const key = quantizeColor(r, g, b);
