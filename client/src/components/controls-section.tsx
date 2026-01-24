@@ -205,24 +205,24 @@ export default function ControlsSection({
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onStrokeChange({ enabled: true })}
-            className={`p-3 rounded-lg border-2 text-left transition-all ${
+            className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
               strokeSettings.enabled 
-                ? 'border-cyan-500 bg-cyan-50 text-cyan-700' 
-                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300'
+                ? 'bg-cyan-600 text-white shadow-sm' 
+                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
             }`}
           >
-            <span className="text-sm font-medium">Contour</span>
+            Contour
           </button>
           
           <button
             onClick={() => onShapeChange({ enabled: true })}
-            className={`p-3 rounded-lg border-2 text-left transition-all ${
+            className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
               shapeSettings.enabled 
-                ? 'border-green-500 bg-green-50 text-green-700' 
-                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300'
+                ? 'bg-green-600 text-white shadow-sm' 
+                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
             }`}
           >
-            <span className="text-sm font-medium">Shape</span>
+            Shape
           </button>
         </div>
       </div>
