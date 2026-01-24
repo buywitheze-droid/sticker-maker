@@ -15,62 +15,6 @@ import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline"
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
 
-// Detect if image is "solid" (few internal gaps) or has lots of transparency
-// Returns true if the design is solid enough to use edge-aware bleed
-function detectSolidDesign(image: HTMLImageElement, alphaThreshold: number = 128): boolean {
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return true;
-  
-  ctx.drawImage(image, 0, 0);
-  const imageData = ctx.getImageData(0, 0, image.width, image.height);
-  const data = imageData.data;
-  const width = image.width;
-  const height = image.height;
-  
-  // Count opaque pixels and edge pixels
-  let opaqueCount = 0;
-  let edgeCount = 0;
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      if (data[idx + 3] >= alphaThreshold) {
-        opaqueCount++;
-        
-        // Check if this is an edge pixel (has transparent neighbor)
-        let isEdge = false;
-        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
-          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-              const nIdx = (ny * width + nx) * 4;
-              if (data[nIdx + 3] < alphaThreshold) {
-                isEdge = true;
-              }
-            }
-          }
-        }
-        if (isEdge) edgeCount++;
-      }
-    }
-  }
-  
-  if (opaqueCount === 0) return true;
-  
-  // Calculate edge-to-area ratio
-  // Solid designs have low edge-to-area ratio (mostly interior pixels)
-  // Designs with lots of gaps have high edge-to-area ratio (many edge pixels)
-  const edgeRatio = edgeCount / opaqueCount;
-  
-  // If more than 25% of opaque pixels are edges, it has lots of internal gaps
-  return edgeRatio < 0.25;
-}
-
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 
@@ -85,7 +29,7 @@ export default function ImageEditor() {
     closeSmallGaps: false, // Close gaps within 0.06" of each other
     closeBigGaps: false, // Close gaps within 0.19" of each other
     backgroundColor: "#ffffff", // Default white background for contour
-    useCustomBackground: false, // Default to edge-aware bleed
+    useCustomBackground: true, // Default to solid background color
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -178,9 +122,6 @@ export default function ImageEditor() {
         
         setImageInfo(newImageInfo);
         
-        // Detect if image is solid (use edge-aware bleed) or has gaps (use white background)
-        const isSolid = detectSolidDesign(croppedImage);
-        
         // Reset all settings to defaults when new image is uploaded
         setStrokeSettings({
           width: 0.14,
@@ -190,7 +131,7 @@ export default function ImageEditor() {
           closeSmallGaps: false,
           closeBigGaps: false,
           backgroundColor: "#ffffff",
-          useCustomBackground: !isSolid, // Use white background for images with lots of transparency
+          useCustomBackground: true, // Default to solid background color
         });
         setShapeSettings({
           enabled: false,
@@ -276,9 +217,6 @@ export default function ImageEditor() {
 
       setImageInfo(newImageInfo);
 
-      // Detect if image is solid (use edge-aware bleed) or has gaps (use white background)
-      const isSolid = detectSolidDesign(finalImage);
-
       // Reset all settings to defaults when new image is uploaded
       setStrokeSettings({
         width: 0.14,
@@ -288,7 +226,7 @@ export default function ImageEditor() {
         closeSmallGaps: false,
         closeBigGaps: false,
         backgroundColor: "#ffffff",
-        useCustomBackground: !isSolid, // Use white background for images with lots of transparency
+        useCustomBackground: true, // Default to solid background color
       });
       setShapeSettings({
         enabled: false,
@@ -450,14 +388,6 @@ export default function ImageEditor() {
       
       // Reset CadCut bounds
       setCadCutBounds(null);
-      
-      // Re-detect if image is solid after background removal
-      // Background removal typically creates lots of transparency, so default to white background
-      const isSolid = detectSolidDesign(finalImage);
-      setStrokeSettings(prev => ({
-        ...prev,
-        useCustomBackground: !isSolid, // Use white background for images with lots of transparency
-      }));
       
       setImageInfo(newImageInfo);
     } catch (error) {

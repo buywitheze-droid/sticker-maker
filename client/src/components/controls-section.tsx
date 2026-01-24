@@ -261,25 +261,26 @@ export default function ControlsSection({
               </div>
 
               <div>
-                <div className="flex items-center gap-2">
-                  <Checkbox 
-                    id="use-custom-background"
-                    checked={strokeSettings.useCustomBackground}
-                    onCheckedChange={(checked) => onStrokeChange({ useCustomBackground: checked as boolean })}
+                <Label className="text-xs text-gray-600">Background</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="color"
+                    value={strokeSettings.backgroundColor}
+                    onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
+                    className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                    disabled={!strokeSettings.useCustomBackground}
                   />
-                  <Label htmlFor="use-custom-background" className="text-xs text-gray-600 cursor-pointer">Background</Label>
-                  {strokeSettings.useCustomBackground && (
-                    <div className="flex items-center gap-1 ml-auto">
-                      <input
-                        type="color"
-                        value={strokeSettings.backgroundColor}
-                        onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                        className="w-6 h-6 rounded cursor-pointer border border-gray-300"
-                      />
-                      <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
-                    </div>
-                  )}
+                  <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  id="same-color-bleed"
+                  checked={!strokeSettings.useCustomBackground}
+                  onCheckedChange={(checked) => onStrokeChange({ useCustomBackground: !(checked as boolean) })}
+                />
+                <Label htmlFor="same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
               </div>
               
               <div className="space-y-2 pt-2 border-t border-gray-200">
