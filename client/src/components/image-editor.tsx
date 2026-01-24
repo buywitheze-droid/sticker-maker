@@ -532,19 +532,18 @@ export default function ImageEditor() {
     setIsProcessing(true);
     
     try {
-      // Handle PDF with existing CutContour - download original PDF
-      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && imageInfo.originalPdfData && downloadType === 'cutcontour') {
-        const blob = new Blob([imageInfo.originalPdfData], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
+      // Handle PDF with existing CutContour - generate proper vector CutContour PDF
+      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && downloadType === 'cutcontour') {
+        const { generatePDFWithVectorCutContour } = await import('@/lib/pdf-parser');
         const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
-        link.download = `${nameWithoutExt}_with_cutcontour.pdf`;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        await generatePDFWithVectorCutContour(
+          imageInfo.image,
+          imageInfo.pdfCutContourInfo.cutContourPoints,
+          imageInfo.pdfCutContourInfo.pageWidth,
+          imageInfo.pdfCutContourInfo.pageHeight,
+          imageInfo.dpi || 300,
+          `${nameWithoutExt}_with_cutcontour.pdf`
+        );
         setIsProcessing(false);
         return;
       }

@@ -154,3 +154,125 @@ async function extractCutContour(
 export function isPDFFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 }
+
+// Generate a PDF with the image and a proper vector CutContour spot color path
+export async function generatePDFWithVectorCutContour(
+  image: HTMLImageElement,
+  cutContourPoints: { x: number; y: number }[][],
+  pageWidth: number,
+  pageHeight: number,
+  dpi: number,
+  filename: string
+): Promise<void> {
+  const { PDFDocument, PDFName, PDFArray, PDFDict } = await import('pdf-lib');
+  
+  // Convert from pixels to points (72 points per inch)
+  const widthPts = (pageWidth / dpi) * 72;
+  const heightPts = (pageHeight / dpi) * 72;
+  
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([widthPts, heightPts]);
+  const context = pdfDoc.context;
+  
+  // Embed the image
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(image, 0, 0);
+  const imageDataUrl = canvas.toDataURL('image/png');
+  const imageBytes = await fetch(imageDataUrl).then(res => res.arrayBuffer());
+  const pngImage = await pdfDoc.embedPng(imageBytes);
+  
+  // Draw the image to fill the page
+  page.drawImage(pngImage, {
+    x: 0,
+    y: 0,
+    width: widthPts,
+    height: heightPts,
+  });
+  
+  // Create CutContour spot color using Separation color space
+  if (cutContourPoints.length > 0 && cutContourPoints.some(path => path.length > 2)) {
+    const tintFunction = context.obj({
+      FunctionType: 2,
+      Domain: [0, 1],
+      C0: [0, 0, 0, 0],
+      C1: [0, 1, 0, 0], // Magenta in CMYK
+      N: 1,
+    });
+    const tintFunctionRef = context.register(tintFunction);
+    
+    const separationColorSpace = context.obj([
+      PDFName.of('Separation'),
+      PDFName.of('CutContour'),
+      PDFName.of('DeviceCMYK'),
+      tintFunctionRef,
+    ]);
+    const separationRef = context.register(separationColorSpace);
+    
+    // Add color space to page resources
+    const resources = page.node.Resources();
+    if (resources) {
+      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+      if (!colorSpaceDict) {
+        colorSpaceDict = context.obj({});
+        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+      }
+      (colorSpaceDict as any).set(PDFName.of('CutContour'), separationRef);
+    }
+    
+    // Build path operators
+    let pathOps = '/CutContour CS 1 SCN\n0.5 w\n';
+    
+    for (const path of cutContourPoints) {
+      if (path.length < 2) continue;
+      
+      // Scale from pixels to points and flip Y coordinate
+      const scaleX = widthPts / pageWidth;
+      const scaleY = heightPts / pageHeight;
+      
+      const startX = path[0].x * scaleX;
+      const startY = heightPts - (path[0].y * scaleY);
+      pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+      
+      for (let i = 1; i < path.length; i++) {
+        const x = path[i].x * scaleX;
+        const y = heightPts - (path[i].y * scaleY);
+        pathOps += `${x.toFixed(4)} ${y.toFixed(4)} l\n`;
+      }
+      
+      pathOps += 'S\n';
+    }
+    
+    // Append to page content stream
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
+  }
+  
+  pdfDoc.setTitle('PDF with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  
+  const pdfBytes = await pdfDoc.save();
+  const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(pdfBlob);
+  
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
