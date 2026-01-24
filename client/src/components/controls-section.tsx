@@ -118,16 +118,7 @@ export default function ControlsSection({
         if (strokeSettings.enabled) {
           const workerManager = getContourWorkerManager();
           const cachedData = workerManager.getCachedContourData();
-          // Convert extracted colors to spot color format for PDF
-          const spotColorData = extractedColors
-            .filter(c => c.spotWhite || c.spotGloss)
-            .map(c => ({
-              hex: c.hex,
-              rgb: c.rgb,
-              spotWhite: c.spotWhite,
-              spotGloss: c.spotGloss
-            }));
-          const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings, cachedData || undefined, spotColorData);
+          const result = await generateContourPDFBase64(imageInfo.image, strokeSettings, resizeSettings, cachedData || undefined);
           pdfBase64 = result || "";
         } else if (shapeSettings.enabled) {
           const result = await generateShapePDFBase64(imageInfo.image, shapeSettings, resizeSettings);

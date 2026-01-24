@@ -1732,17 +1732,7 @@ export async function downloadContourPDF(
     const heightPts = heightInches * 72;
     
     const pdfDoc = await PDFDocument.create();
-    
-    // Create 3 artboards (pages) of the same size:
-    // Page 1: RDG_WHITE spot color
-    // Page 2: RDG_GLOSS spot color  
-    // Page 3: Design + CutContour
-    const pageWhite = pdfDoc.addPage([widthPts, heightPts]);
-    const pageGloss = pdfDoc.addPage([widthPts, heightPts]);
-    const pageDesign = pdfDoc.addPage([widthPts, heightPts]);
-    
-    // Main page reference for design content
-    const page = pageDesign;
+    const page = pdfDoc.addPage([widthPts, heightPts]);
     
     // OPTIMIZATION: Create background and design canvases in parallel
     // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
@@ -1935,9 +1925,10 @@ export async function downloadContourPDF(
     }
   }
   
-  // Add spot color layers (RDG_WHITE and RDG_GLOSS) to their respective pages
+  // Add spot color layers (RDG_WHITE and RDG_GLOSS) if any colors are marked
   if (spotColors && spotColors.length > 0) {
     const context = pdfDoc.context;
+    const resources = page.node.Resources();
     
     // Check if any colors are marked for white or gloss
     const hasWhite = spotColors.some(c => c.spotWhite);
@@ -1954,17 +1945,56 @@ export async function downloadContourPDF(
         const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
         const data = imageData.data;
         
-        // Helper function to create and embed spot color layer on a specific page
-        // Uses run-length encoding to draw horizontal spans of matching pixels
+        // Create spot color layer using merged rectangles for clean filled shapes
         const createSpotColorLayer = async (
-          targetPage: typeof pageWhite,
           colorName: string,
           markedColors: SpotColorInput[],
-          tintCMYK: [number, number, number, number]
+          tintCMYK: [number, number, number, number],
+          targetPage: typeof page
         ): Promise<void> => {
-          const resources = targetPage.node.Resources();
           const w = maskCanvas.width;
           const h = maskCanvas.height;
+          
+          // Create binary mask
+          const binaryMask: boolean[][] = [];
+          for (let y = 0; y < h; y++) {
+            binaryMask[y] = [];
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+              const a = data[i + 3];
+              
+              let matches = false;
+              for (const mc of markedColors) {
+                const dr = Math.abs(r - mc.rgb.r);
+                const dg = Math.abs(g - mc.rgb.g);
+                const db = Math.abs(b - mc.rgb.b);
+                if (dr < 30 && dg < 30 && db < 30 && a > 128) {
+                  matches = true;
+                  break;
+                }
+              }
+              binaryMask[y][x] = matches;
+            }
+          }
+          
+          // Check if any pixels match
+          let hasMatch = false;
+          outer: for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              if (binaryMask[y][x]) {
+                hasMatch = true;
+                break outer;
+              }
+            }
+          }
+          
+          if (!hasMatch) {
+            console.log(`[PDF] No matching pixels found for ${colorName}`);
+            return;
+          }
           
           // Create separation color space for this spot color
           const tintFunction = context.obj({
@@ -1984,14 +2014,19 @@ export async function downloadContourPDF(
           ]);
           const sepRef = context.register(separation);
           
-          if (resources) {
-            let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-            if (!colorSpaceDict) {
-              colorSpaceDict = context.obj({});
-              resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-            }
-            (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
+          // Ensure Resources dictionary exists on page
+          let pageResources = targetPage.node.Resources();
+          if (!pageResources) {
+            pageResources = context.obj({});
+            targetPage.node.set(PDFName.of('Resources'), pageResources);
           }
+          
+          let colorSpaceDict = pageResources.get(PDFName.of('ColorSpace'));
+          if (!colorSpaceDict) {
+            colorSpaceDict = context.obj({});
+            (pageResources as PDFDict).set(PDFName.of('ColorSpace'), colorSpaceDict);
+          }
+          (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
           
           // Convert pixel coordinates to PDF points
           const scaleX = (resizeSettings.widthInches * 72) / w;
@@ -1999,127 +2034,125 @@ export async function downloadContourPDF(
           const offsetX = imageOffsetX * 72;
           const offsetY = imageOffsetY * 72;
           
-          // Use run-length encoding: find horizontal spans of matching pixels per row
-          // This guarantees complete coverage with no gaps
-          const spans: Array<{y: number; x1: number; x2: number}> = [];
+          // PDF Y-axis is flipped (0 at bottom)
+          const toY = (py: number) => offsetY + (h - py) * scaleY;
+          const toX = (px: number) => offsetX + px * scaleX;
+          
+          // Use run-length encoding with proper vertical merging
+          // Process row by row and merge spans that extend from previous row
+          const mergedRects: Array<{x: number; y: number; w: number; h: number}> = [];
+          
+          // Track active spans that might extend from previous row
+          // Key: "x1-x2", Value: starting y and current y
+          let activeSpans = new Map<string, {y1: number; y2: number; x1: number; x2: number}>();
           
           for (let y = 0; y < h; y++) {
+            // Find all spans in current row
+            const currentRowSpans = new Map<string, {x1: number; x2: number}>();
             let inSpan = false;
             let spanStart = 0;
             
             for (let x = 0; x <= w; x++) {
-              let matches = false;
-              if (x < w) {
-                const i = (y * w + x) * 4;
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                const a = data[i + 3];
-                
-                for (const mc of markedColors) {
-                  const dr = Math.abs(r - mc.rgb.r);
-                  const dg = Math.abs(g - mc.rgb.g);
-                  const db = Math.abs(b - mc.rgb.b);
-                  if (dr < 30 && dg < 30 && db < 30 && a > 128) {
-                    matches = true;
-                    break;
-                  }
-                }
-              }
+              const matches = x < w && binaryMask[y][x];
               
               if (matches && !inSpan) {
                 inSpan = true;
                 spanStart = x;
               } else if (!matches && inSpan) {
                 inSpan = false;
-                spans.push({ y, x1: spanStart, x2: x });
+                const key = `${spanStart}-${x}`;
+                currentRowSpans.set(key, { x1: spanStart, x2: x });
               }
             }
-          }
-          
-          if (spans.length === 0) {
-            console.log(`[PDF] No matching pixels found for ${colorName}`);
-            return;
-          }
-          
-          // Merge adjacent spans vertically to reduce PDF size
-          // Group spans by their x1-x2 range
-          const mergedSpans: Array<{y1: number; y2: number; x1: number; x2: number}> = [];
-          let currentSpan: {y1: number; y2: number; x1: number; x2: number} | null = null;
-          
-          // Sort by x1, x2, then y for merging
-          spans.sort((a, b) => a.x1 - b.x1 || a.x2 - b.x2 || a.y - b.y);
-          
-          for (const span of spans) {
-            if (currentSpan && 
-                currentSpan.x1 === span.x1 && 
-                currentSpan.x2 === span.x2 && 
-                span.y === currentSpan.y2 + 1) {
-              // Extend current span vertically
-              currentSpan.y2 = span.y;
-            } else {
-              // Start new span
-              if (currentSpan) {
-                mergedSpans.push(currentSpan);
+            
+            // Check which active spans continue in this row
+            const newActiveSpans = new Map<string, {y1: number; y2: number; x1: number; x2: number}>();
+            
+            for (const [key, span] of currentRowSpans) {
+              const active = activeSpans.get(key);
+              if (active && active.y2 === y - 1) {
+                // Extend the active span
+                active.y2 = y;
+                newActiveSpans.set(key, active);
+                activeSpans.delete(key);
+              } else {
+                // Start new span
+                newActiveSpans.set(key, { y1: y, y2: y, x1: span.x1, x2: span.x2 });
               }
-              currentSpan = { y1: span.y, y2: span.y, x1: span.x1, x2: span.x2 };
             }
-          }
-          if (currentSpan) {
-            mergedSpans.push(currentSpan);
+            
+            // Flush any active spans that didn't continue
+            for (const existing of activeSpans.values()) {
+              mergedRects.push({
+                x: toX(existing.x1),
+                y: toY(existing.y2 + 1),
+                w: (existing.x2 - existing.x1) * scaleX,
+                h: (existing.y2 - existing.y1 + 1) * scaleY
+              });
+            }
+            
+            activeSpans = newActiveSpans;
           }
           
-          // Build path operations - draw each merged span as a rectangle
+          // Flush remaining active spans
+          for (const existing of activeSpans.values()) {
+            mergedRects.push({
+              x: toX(existing.x1),
+              y: toY(existing.y2 + 1),
+              w: (existing.x2 - existing.x1) * scaleX,
+              h: (existing.y2 - existing.y1 + 1) * scaleY
+            });
+          }
+          
+          // Build a single filled path that covers all rectangles
           let spotOps = `q /${colorName} cs 1 scn\n`;
           
-          // PDF Y-axis is flipped (0 at bottom)
-          const toY = (py: number) => offsetY + (h - py) * scaleY;
-          const toX = (px: number) => offsetX + px * scaleX;
-          
-          for (const span of mergedSpans) {
-            const x = toX(span.x1);
-            const y = toY(span.y2 + 1); // +1 because we want bottom of span
-            const width = (span.x2 - span.x1) * scaleX;
-            const height = (span.y2 - span.y1 + 1) * scaleY;
-            
-            spotOps += `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`;
+          for (const rect of mergedRects) {
+            spotOps += `${rect.x.toFixed(2)} ${rect.y.toFixed(2)} ${rect.w.toFixed(2)} ${rect.h.toFixed(2)} re\n`;
           }
           
-          spotOps += 'Q\n';
+          // Fill all rectangles at once
+          spotOps += 'f Q\n';
+          
+          // Add content stream to page
+          const spotStream = context.stream(spotOps);
+          const spotStreamRef = context.register(spotStream);
           
           const existingContents = targetPage.node.Contents();
           if (existingContents) {
-            const spotStream = context.stream(spotOps);
-            const spotStreamRef = context.register(spotStream);
-            
             if (existingContents instanceof PDFArray) {
               existingContents.push(spotStreamRef);
             } else {
               const newContents = context.obj([existingContents, spotStreamRef]);
               targetPage.node.set(PDFName.of('Contents'), newContents);
             }
+          } else {
+            targetPage.node.set(PDFName.of('Contents'), spotStreamRef);
           }
           
-          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles on separate page`);
+          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedRects.length} merged rectangles`);
         };
         
-        // Create white spot color layer on Page 1
+        // Create additional pages for White and Gloss spot colors
+        // Page 2: White spot color layer only
         if (hasWhite) {
+          const whitePage = pdfDoc.addPage([widthPts, heightPts]);
           const whiteColors = spotColors.filter(c => c.spotWhite);
-          await createSpotColorLayer(pageWhite, 'RDG_WHITE', whiteColors, [0, 0, 0, 1]);
+          await createSpotColorLayer('RDG_WHITE', whiteColors, [0, 0, 0, 1], whitePage);
         }
         
-        // Create gloss spot color layer on Page 2
+        // Page 3: Gloss spot color layer only
         if (hasGloss) {
+          const glossPage = pdfDoc.addPage([widthPts, heightPts]);
           const glossColors = spotColors.filter(c => c.spotGloss);
-          await createSpotColorLayer(pageGloss, 'RDG_GLOSS', glossColors, [1, 0, 1, 0]);
+          await createSpotColorLayer('RDG_GLOSS', glossColors, [1, 0, 1, 0], glossPage);
         }
       }
     }
   }
   
-  pdfDoc.setTitle('Sticker with Spot Colors and CutContour');
-  pdfDoc.setSubject('3 artboards: RDG_WHITE, RDG_GLOSS, Design+CutContour');
+  pdfDoc.setTitle('Sticker with CutContour and Spot Colors');
+  pdfDoc.setSubject('Page 1: Raster + CutContour, Page 2: RDG_WHITE, Page 3: RDG_GLOSS');
   pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'RDG_WHITE', 'RDG_GLOSS']);
   
   const pdfBytes = await pdfDoc.save();
@@ -2143,8 +2176,7 @@ export async function generateContourPDFBase64(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
-  cachedContourData?: CachedContourData,
-  spotColors?: SpotColorInput[]
+  cachedContourData?: CachedContourData
 ): Promise<string | null> {
   let pathPoints: Array<{x: number; y: number}>;
   let widthInches: number;
@@ -2182,17 +2214,7 @@ export async function generateContourPDFBase64(
   const heightPts = heightInches * 72;
   
   const pdfDoc = await PDFDocument.create();
-  
-  // Create 3 artboards (pages) of the same size:
-  // Page 1: RDG_WHITE spot color
-  // Page 2: RDG_GLOSS spot color  
-  // Page 3: Design + CutContour
-  const pageWhite = pdfDoc.addPage([widthPts, heightPts]);
-  const pageGloss = pdfDoc.addPage([widthPts, heightPts]);
-  const pageDesign = pdfDoc.addPage([widthPts, heightPts]);
-  
-  // Main page reference for design content
-  const page = pageDesign;
+  const page = pdfDoc.addPage([widthPts, heightPts]);
   
   // OPTIMIZATION: Create background and design canvases in parallel
   // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
@@ -2385,180 +2407,8 @@ export async function generateContourPDFBase64(
     }
   }
   
-  // Add spot color layers (RDG_WHITE and RDG_GLOSS) to their respective pages
-  if (spotColors && spotColors.length > 0) {
-    const context = pdfDoc.context;
-    
-    // Check if any colors are marked for white or gloss
-    const hasWhite = spotColors.some(c => c.spotWhite);
-    const hasGloss = spotColors.some(c => c.spotGloss);
-    
-    if (hasWhite || hasGloss) {
-      // Create spot color masks by extracting matching pixels from the design
-      const maskCanvas = document.createElement('canvas');
-      const maskCtx = maskCanvas.getContext('2d');
-      if (maskCtx) {
-        maskCanvas.width = image.width;
-        maskCanvas.height = image.height;
-        maskCtx.drawImage(image, 0, 0);
-        const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-        const data = imageData.data;
-        
-        // Helper function to create and embed spot color layer on a specific page
-        const createSpotColorLayer = async (
-          targetPage: typeof pageWhite,
-          colorName: string,
-          markedColors: SpotColorInput[],
-          tintCMYK: [number, number, number, number]
-        ): Promise<void> => {
-          const resources = targetPage.node.Resources();
-          const w = maskCanvas.width;
-          const h = maskCanvas.height;
-          
-          // Create separation color space for this spot color
-          const spotTintFunction = context.obj({
-            FunctionType: 2,
-            Domain: [0, 1],
-            C0: [0, 0, 0, 0],
-            C1: tintCMYK,
-            N: 1,
-          });
-          const spotTintRef = context.register(spotTintFunction);
-          
-          const spotSeparation = context.obj([
-            PDFName.of('Separation'),
-            PDFName.of(colorName),
-            PDFName.of('DeviceCMYK'),
-            spotTintRef,
-          ]);
-          const spotSepRef = context.register(spotSeparation);
-          
-          if (resources) {
-            let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-            if (!colorSpaceDict) {
-              colorSpaceDict = context.obj({});
-              resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-            }
-            (colorSpaceDict as PDFDict).set(PDFName.of(colorName), spotSepRef);
-          }
-          
-          // Find matching pixels using run-length encoding
-          const spans: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
-          
-          for (let y = 0; y < h; y++) {
-            let spanStart = -1;
-            
-            for (let x = 0; x <= w; x++) {
-              let matches = false;
-              
-              if (x < w) {
-                const idx = (y * w + x) * 4;
-                const r = data[idx];
-                const g = data[idx + 1];
-                const b = data[idx + 2];
-                const a = data[idx + 3];
-                
-                if (a > 10) {
-                  for (const mc of markedColors) {
-                    const dr = Math.abs(r - mc.rgb.r);
-                    const dg = Math.abs(g - mc.rgb.g);
-                    const db = Math.abs(b - mc.rgb.b);
-                    if (dr <= 5 && dg <= 5 && db <= 5) {
-                      matches = true;
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              if (matches && spanStart === -1) {
-                spanStart = x;
-              } else if (!matches && spanStart !== -1) {
-                spans.push({ x1: spanStart, x2: x, y1: y, y2: y });
-                spanStart = -1;
-              }
-            }
-          }
-          
-          // Merge adjacent rows into vertical spans
-          const mergedSpans: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
-          const spansByKey = new Map<string, {x1: number; x2: number; y1: number; y2: number}>();
-          
-          for (const span of spans) {
-            const key = `${span.x1}-${span.x2}`;
-            const existing = spansByKey.get(key);
-            if (existing && existing.y2 === span.y1 - 1) {
-              existing.y2 = span.y2;
-            } else {
-              if (existing) {
-                mergedSpans.push(existing);
-              }
-              spansByKey.set(key, { ...span });
-            }
-          }
-          spansByKey.forEach(span => mergedSpans.push(span));
-          
-          if (mergedSpans.length === 0) return;
-          
-          // Generate PDF operations for spot color
-          const scaleX = imageWidthPts / w;
-          const scaleY = imageHeightPts / h;
-          const toX = (px: number) => imageXPts + px * scaleX;
-          const toY = (py: number) => imageYPts + (h - py) * scaleY;
-          
-          let spotOps = 'q\n';
-          spotOps += `/${colorName} cs 1 scn\n`;
-          
-          for (const span of mergedSpans) {
-            const x = toX(span.x1);
-            const y = toY(span.y2 + 1);
-            const width = (span.x2 - span.x1) * scaleX;
-            const height = (span.y2 - span.y1 + 1) * scaleY;
-            
-            spotOps += `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`;
-          }
-          
-          spotOps += 'Q\n';
-          
-          const existingContents = targetPage.node.Contents();
-          if (existingContents) {
-            const spotStream = context.stream(spotOps);
-            const spotStreamRef = context.register(spotStream);
-            
-            if (existingContents instanceof PDFArray) {
-              existingContents.push(spotStreamRef);
-            } else {
-              const newContents = context.obj([existingContents, spotStreamRef]);
-              targetPage.node.set(PDFName.of('Contents'), newContents);
-            }
-          }
-          
-          console.log(`[PDF Base64] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles`);
-        };
-        
-        // Calculate image dimensions for spot color positioning
-        const imageXPts = imageOffsetX * 72;
-        const imageWidthPts = resizeSettings.widthInches * 72;
-        const imageHeightPts = resizeSettings.heightInches * 72;
-        const imageYPts = imageOffsetY * 72;
-        
-        // Create white spot color layer on Page 1
-        if (hasWhite) {
-          const whiteColors = spotColors.filter(c => c.spotWhite);
-          await createSpotColorLayer(pageWhite, 'RDG_WHITE', whiteColors, [0, 0, 0, 1]);
-        }
-        
-        // Create gloss spot color layer on Page 2
-        if (hasGloss) {
-          const glossColors = spotColors.filter(c => c.spotGloss);
-          await createSpotColorLayer(pageGloss, 'RDG_GLOSS', glossColors, [1, 0, 1, 0]);
-        }
-      }
-    }
-  }
-  
-  pdfDoc.setTitle('Sticker with Spot Colors and CutContour');
-  pdfDoc.setSubject('3 artboards: RDG_WHITE, RDG_GLOSS, Design+CutContour');
+  pdfDoc.setTitle('Sticker with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
   
   const pdfBytes = await pdfDoc.save();
   
