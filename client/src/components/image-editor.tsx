@@ -109,6 +109,11 @@ export default function ImageEditor() {
       const croppedImage = new Image();
       
       croppedImage.onload = () => {
+        // Close any open dropdowns by blurring active element
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        
         const dpi = 300; // Default DPI for high-quality printing
         
         // Create final cropped image info with zero padding
@@ -198,6 +203,11 @@ export default function ImageEditor() {
     })() : image;
 
     const processImage = () => {
+      // Close any open dropdowns by blurring active element
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      
       let { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
       
       // Always resize to fit within the selected sticker size
