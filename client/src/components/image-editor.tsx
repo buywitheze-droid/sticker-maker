@@ -145,6 +145,7 @@ export default function ImageEditor() {
         });
         setStrokeMode('none');
         setCadCutBounds(null);
+        setStickerSize(4); // Reset to default 4 inch
         
         // Update resize settings based on cropped image
         let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
@@ -240,6 +241,7 @@ export default function ImageEditor() {
       });
       setStrokeMode('none');
       setCadCutBounds(null);
+      setStickerSize(4); // Reset to default 4 inch
 
       setResizeSettings(prev => ({
         ...prev,
