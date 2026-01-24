@@ -49,14 +49,14 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false }
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center bg-gray-800/50 hover:border-cyan-500 hover:bg-gray-800 transition-all cursor-pointer"
+        className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-white hover:border-cyan-500 hover:bg-cyan-50 transition-all cursor-pointer shadow-sm"
       >
         <div className="flex flex-col items-center">
-          <div className="w-12 h-12 bg-gray-700 rounded-lg flex items-center justify-center mb-3">
-            <Upload className="w-6 h-6 text-gray-400" />
+          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-3">
+            <Upload className="w-6 h-6 text-gray-500" />
           </div>
-          <p className="text-gray-300 text-sm mb-1">Drop image or click to upload</p>
-          <p className="text-xs text-gray-500">PNG with transparent background</p>
+          <p className="text-gray-700 text-sm mb-1">Drop image or click to upload</p>
+          <p className="text-xs text-gray-400">PNG with transparent background</p>
         </div>
         <input 
           type="file" 
@@ -69,9 +69,9 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false }
 
       {/* Cut Line Info */}
       {showCutLineInfo && (
-        <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
-          <p className="text-xs text-gray-400">
-            <span className="text-red-400 font-medium">Red outline</span> = cut line
+        <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 text-center shadow-sm">
+          <p className="text-xs text-gray-500">
+            <span className="text-red-500 font-medium">Red outline</span> = cut line
           </p>
         </div>
       )}

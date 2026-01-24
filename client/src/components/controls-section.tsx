@@ -136,15 +136,15 @@ export default function ControlsSection({
   };
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4 p-4 bg-white rounded-lg shadow-sm">
       {/* Size Selection */}
       <div>
-        <Label className="text-sm font-medium text-gray-300 mb-2 block">Size</Label>
+        <Label className="text-sm font-medium text-gray-700 mb-2 block">Size</Label>
         <Select
           value={stickerSize.toString()}
           onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
         >
-          <SelectTrigger className="w-full bg-gray-800 border-gray-700 text-white">
+          <SelectTrigger className="w-full bg-white border-gray-300 text-gray-900">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -158,7 +158,7 @@ export default function ControlsSection({
         
         {/* Dimensions display */}
         {imageInfo && (
-          <div className="mt-2 text-xs text-gray-500">
+          <div className="mt-2 text-xs text-gray-400">
             {resizeSettings.widthInches.toFixed(2)}" x {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
           </div>
         )}
@@ -171,11 +171,11 @@ export default function ControlsSection({
           disabled={isRemovingBackground}
           variant="outline"
           size="sm"
-          className="w-full border-purple-500/50 text-purple-300 hover:bg-purple-500/20"
+          className="w-full border-purple-400 text-purple-600 hover:bg-purple-50"
         >
           {isRemovingBackground ? (
             <>
-              <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin mr-2" />
+              <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mr-2" />
               Removing...
             </>
           ) : (
@@ -189,15 +189,15 @@ export default function ControlsSection({
 
       {/* Outline Type */}
       <div className="space-y-2">
-        <Label className="text-sm font-medium text-gray-300">Outline Type</Label>
+        <Label className="text-sm font-medium text-gray-700">Outline Type</Label>
         
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onStrokeChange({ enabled: true })}
             className={`p-3 rounded-lg border-2 text-left transition-all ${
               strokeSettings.enabled 
-                ? 'border-cyan-500 bg-cyan-500/10 text-white' 
-                : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-600'
+                ? 'border-cyan-500 bg-cyan-50 text-cyan-700' 
+                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300'
             }`}
           >
             <span className="text-sm font-medium">Contour</span>
@@ -207,8 +207,8 @@ export default function ControlsSection({
             onClick={() => onShapeChange({ enabled: true })}
             className={`p-3 rounded-lg border-2 text-left transition-all ${
               shapeSettings.enabled 
-                ? 'border-green-500 bg-green-500/10 text-white' 
-                : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-600'
+                ? 'border-green-500 bg-green-50 text-green-700' 
+                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300'
             }`}
           >
             <span className="text-sm font-medium">Shape</span>
@@ -218,14 +218,14 @@ export default function ControlsSection({
 
       {/* Contour Options */}
       {strokeSettings.enabled && (
-        <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
-            <Label className="text-xs text-gray-400">Thickness</Label>
+            <Label className="text-xs text-gray-600">Thickness</Label>
             <Select
               value={strokeSettings.width.toString()}
               onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
             >
-              <SelectTrigger className="mt-1 bg-gray-900 border-gray-700 text-white text-sm">
+              <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -240,13 +240,13 @@ export default function ControlsSection({
           </div>
 
           <div>
-            <Label className="text-xs text-gray-400">Background</Label>
+            <Label className="text-xs text-gray-600">Background</Label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
                 value={strokeSettings.backgroundColor}
                 onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                className="w-8 h-8 rounded cursor-pointer border border-gray-600"
+                className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
               <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
             </div>
@@ -254,21 +254,21 @@ export default function ControlsSection({
           
           <button 
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300"
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
           >
             <ChevronDown className={`w-3 h-3 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
             Advanced
           </button>
           
           {showAdvanced && (
-            <div className="space-y-2 pt-2 border-t border-gray-700">
+            <div className="space-y-2 pt-2 border-t border-gray-200">
               <div className="flex items-center gap-2">
                 <Checkbox 
                   id="close-small-gaps"
                   checked={strokeSettings.closeSmallGaps}
                   onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
                 />
-                <Label htmlFor="close-small-gaps" className="text-xs text-gray-400 cursor-pointer">Close small gaps</Label>
+                <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
               </div>
               
               <div className="flex items-center gap-2">
@@ -277,7 +277,7 @@ export default function ControlsSection({
                   checked={strokeSettings.closeBigGaps}
                   onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
                 />
-                <Label htmlFor="close-big-gaps" className="text-xs text-gray-400 cursor-pointer">Close big gaps</Label>
+                <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
               </div>
             </div>
           )}
@@ -286,14 +286,14 @@ export default function ControlsSection({
 
       {/* Shape Options */}
       {shapeSettings.enabled && (
-        <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
-            <Label className="text-xs text-gray-400">Shape</Label>
+            <Label className="text-xs text-gray-600">Shape</Label>
             <Select
               value={shapeSettings.type}
               onValueChange={(value) => onShapeChange({ type: value as ShapeSettings['type'] })}
             >
-              <SelectTrigger className="mt-1 bg-gray-900 border-gray-700 text-white text-sm">
+              <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -306,12 +306,12 @@ export default function ControlsSection({
           </div>
 
           <div>
-            <Label className="text-xs text-gray-400">Padding</Label>
+            <Label className="text-xs text-gray-600">Padding</Label>
             <Select
               value={shapeSettings.offset.toString()}
               onValueChange={(value) => onShapeChange({ offset: parseFloat(value) })}
             >
-              <SelectTrigger className="mt-1 bg-gray-900 border-gray-700 text-white text-sm">
+              <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -324,13 +324,13 @@ export default function ControlsSection({
           </div>
 
           <div>
-            <Label className="text-xs text-gray-400">Fill Color</Label>
+            <Label className="text-xs text-gray-600">Fill Color</Label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
                 value={shapeSettings.fillColor}
                 onChange={(e) => onShapeChange({ fillColor: e.target.value })}
-                className="w-8 h-8 rounded cursor-pointer border border-gray-600"
+                className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
               <span className="text-xs text-gray-500">{shapeSettings.fillColor}</span>
             </div>
@@ -338,23 +338,23 @@ export default function ControlsSection({
 
           <button 
             onClick={() => setShowShapeAdvanced(!showShapeAdvanced)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300"
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
           >
             <ChevronDown className={`w-3 h-3 transition-transform ${showShapeAdvanced ? 'rotate-180' : ''}`} />
             Advanced
           </button>
 
           {showShapeAdvanced && (
-            <div className="space-y-3 pt-2 border-t border-gray-700">
+            <div className="space-y-3 pt-2 border-t border-gray-200">
               {/* Corner Radius for square/rectangle */}
               {(shapeSettings.type === 'square' || shapeSettings.type === 'rectangle') && (
                 <div>
-                  <Label className="text-xs text-gray-400">Corner Radius</Label>
+                  <Label className="text-xs text-gray-600">Corner Radius</Label>
                   <Select
                     value={shapeSettings.cornerRadius?.toString() || "0"}
                     onValueChange={(value) => onShapeChange({ cornerRadius: parseFloat(value) })}
                   >
-                    <SelectTrigger className="mt-1 bg-gray-900 border-gray-700 text-white text-sm">
+                    <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -374,30 +374,30 @@ export default function ControlsSection({
                   checked={shapeSettings.strokeEnabled}
                   onCheckedChange={(checked) => onShapeChange({ strokeEnabled: checked as boolean })}
                 />
-                <Label htmlFor="shape-stroke" className="text-xs text-gray-400 cursor-pointer">Add stroke</Label>
+                <Label htmlFor="shape-stroke" className="text-xs text-gray-600 cursor-pointer">Add stroke</Label>
               </div>
 
               {shapeSettings.strokeEnabled && (
                 <div className="space-y-2 pl-4">
                   <div>
-                    <Label className="text-xs text-gray-400">Stroke Width (px)</Label>
+                    <Label className="text-xs text-gray-600">Stroke Width (px)</Label>
                     <Input
                       type="number"
                       min="1"
                       max="20"
                       value={shapeSettings.strokeWidth}
                       onChange={(e) => onShapeChange({ strokeWidth: parseInt(e.target.value) || 2 })}
-                      className="mt-1 bg-gray-900 border-gray-700 text-white text-sm h-8"
+                      className="mt-1 bg-white border-gray-300 text-gray-900 text-sm h-8"
                     />
                   </div>
                   <div>
-                    <Label className="text-xs text-gray-400">Stroke Color</Label>
+                    <Label className="text-xs text-gray-600">Stroke Color</Label>
                     <div className="flex items-center gap-2 mt-1">
                       <input
                         type="color"
                         value={shapeSettings.strokeColor}
                         onChange={(e) => onShapeChange({ strokeColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-gray-600"
+                        className="w-8 h-8 rounded cursor-pointer border border-gray-300"
                       />
                       <span className="text-xs text-gray-500">{shapeSettings.strokeColor}</span>
                     </div>
@@ -412,12 +412,12 @@ export default function ControlsSection({
       {/* Export Options */}
       {canDownload && imageInfo && (
         <div>
-          <Label className="text-xs text-gray-400 mb-1 block">Export</Label>
+          <Label className="text-xs text-gray-600 mb-1 block">Export</Label>
           <Select
             value={exportFormat}
             onValueChange={(value) => setExportFormat(value as typeof exportFormat)}
           >
-            <SelectTrigger className="bg-gray-900 border-gray-700 text-white text-sm">
+            <SelectTrigger className="bg-white border-gray-300 text-gray-900 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -459,37 +459,37 @@ export default function ControlsSection({
               variant="outline"
               size="sm"
               onClick={() => setShowSendForm(true)}
-              className="w-full border-gray-600 text-gray-300 hover:bg-gray-800"
+              className="w-full border-gray-300 text-gray-600 hover:bg-gray-50"
             >
               Send to Print Shop
             </Button>
           ) : (
-            <div className="space-y-2 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+            <div className="space-y-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
               <Input
                 placeholder="Your Name"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                className="bg-gray-900 border-gray-700 text-white text-sm"
+                className="bg-white border-gray-300 text-gray-900 text-sm"
               />
               <Input
                 placeholder="Email"
                 type="email"
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
-                className="bg-gray-900 border-gray-700 text-white text-sm"
+                className="bg-white border-gray-300 text-gray-900 text-sm"
               />
               <Input
                 placeholder="Notes (optional)"
                 value={customerNotes}
                 onChange={(e) => setCustomerNotes(e.target.value)}
-                className="bg-gray-900 border-gray-700 text-white text-sm"
+                className="bg-white border-gray-300 text-gray-900 text-sm"
               />
               <div className="flex gap-2">
                 <Button
                   size="sm"
                   onClick={handleSendDesign}
                   disabled={isSending}
-                  className="flex-1 bg-green-600 hover:bg-green-700"
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 >
                   {isSending ? 'Sending...' : 'Send'}
                 </Button>
@@ -497,7 +497,7 @@ export default function ControlsSection({
                   size="sm"
                   variant="ghost"
                   onClick={() => setShowSendForm(false)}
-                  className="text-gray-400"
+                  className="text-gray-500"
                 >
                   Cancel
                 </Button>
@@ -509,16 +509,16 @@ export default function ControlsSection({
 
       {/* Confirm Dialog */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <DialogContent className="bg-gray-900 border-gray-700 text-white">
+        <DialogContent className="bg-white border-gray-200">
           <DialogHeader>
-            <DialogTitle>Confirm Send</DialogTitle>
-            <DialogDescription className="text-gray-400">
+            <DialogTitle className="text-gray-900">Confirm Send</DialogTitle>
+            <DialogDescription className="text-gray-500">
               Send your design to {customerEmail}?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowConfirmDialog(false)}>Cancel</Button>
-            <Button onClick={confirmAndSend} className="bg-green-600 hover:bg-green-700">Send</Button>
+            <Button onClick={confirmAndSend} className="bg-green-600 hover:bg-green-700 text-white">Send</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
