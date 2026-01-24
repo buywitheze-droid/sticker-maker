@@ -1,5 +1,5 @@
 import ImageEditor from "@/components/image-editor";
-import elephantLogo from "@assets/generated_images/mother_and_baby_elephant_silhouette.png";
+import gooseLogo from "@assets/goose_silhouette.png";
 import devilLogo from "@assets/generated_images/mischievous_devil_face_silhouette.png";
 
 export default function StickerMaker() {
@@ -9,8 +9,8 @@ export default function StickerMaker() {
       <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <img src={elephantLogo} alt="Sticker Outline" className="w-8 h-8 object-contain" />
-            <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>Sticker Outline</h1>
+            <img src={gooseLogo} alt="Sticker Outline Bro" className="w-8 h-8 object-contain" />
+            <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE BRO</h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
             <span>The pro's secret weapon for raised stickers</span>
