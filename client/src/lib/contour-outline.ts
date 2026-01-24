@@ -1732,7 +1732,17 @@ export async function downloadContourPDF(
     const heightPts = heightInches * 72;
     
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([widthPts, heightPts]);
+    
+    // Create 3 artboards (pages) of the same size:
+    // Page 1: RDG_WHITE spot color
+    // Page 2: RDG_GLOSS spot color  
+    // Page 3: Design + CutContour
+    const pageWhite = pdfDoc.addPage([widthPts, heightPts]);
+    const pageGloss = pdfDoc.addPage([widthPts, heightPts]);
+    const pageDesign = pdfDoc.addPage([widthPts, heightPts]);
+    
+    // Main page reference for design content
+    const page = pageDesign;
     
     // OPTIMIZATION: Create background and design canvases in parallel
     // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
@@ -1925,10 +1935,9 @@ export async function downloadContourPDF(
     }
   }
   
-  // Add spot color layers (RDG_WHITE and RDG_GLOSS) if any colors are marked
+  // Add spot color layers (RDG_WHITE and RDG_GLOSS) to their respective pages
   if (spotColors && spotColors.length > 0) {
     const context = pdfDoc.context;
-    const resources = page.node.Resources();
     
     // Check if any colors are marked for white or gloss
     const hasWhite = spotColors.some(c => c.spotWhite);
@@ -1945,13 +1954,15 @@ export async function downloadContourPDF(
         const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
         const data = imageData.data;
         
-        // Helper function to create and embed spot color layer
+        // Helper function to create and embed spot color layer on a specific page
         // Uses run-length encoding to draw horizontal spans of matching pixels
         const createSpotColorLayer = async (
+          targetPage: typeof pageWhite,
           colorName: string,
           markedColors: SpotColorInput[],
           tintCMYK: [number, number, number, number]
         ): Promise<void> => {
+          const resources = targetPage.node.Resources();
           const w = maskCanvas.width;
           const h = maskCanvas.height;
           
@@ -2076,7 +2087,7 @@ export async function downloadContourPDF(
           
           spotOps += 'Q\n';
           
-          const existingContents = page.node.Contents();
+          const existingContents = targetPage.node.Contents();
           if (existingContents) {
             const spotStream = context.stream(spotOps);
             const spotStreamRef = context.register(spotStream);
@@ -2085,30 +2096,30 @@ export async function downloadContourPDF(
               existingContents.push(spotStreamRef);
             } else {
               const newContents = context.obj([existingContents, spotStreamRef]);
-              page.node.set(PDFName.of('Contents'), newContents);
+              targetPage.node.set(PDFName.of('Contents'), newContents);
             }
           }
           
-          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles`);
+          console.log(`[PDF] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles on separate page`);
         };
         
-        // Create white spot color layer
+        // Create white spot color layer on Page 1
         if (hasWhite) {
           const whiteColors = spotColors.filter(c => c.spotWhite);
-          await createSpotColorLayer('RDG_WHITE', whiteColors, [0, 0, 0, 1]);
+          await createSpotColorLayer(pageWhite, 'RDG_WHITE', whiteColors, [0, 0, 0, 1]);
         }
         
-        // Create gloss spot color layer
+        // Create gloss spot color layer on Page 2
         if (hasGloss) {
           const glossColors = spotColors.filter(c => c.spotGloss);
-          await createSpotColorLayer('RDG_GLOSS', glossColors, [1, 0, 1, 0]);
+          await createSpotColorLayer(pageGloss, 'RDG_GLOSS', glossColors, [1, 0, 1, 0]);
         }
       }
     }
   }
   
-  pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject('Contains CutContour and spot colors for printing');
+  pdfDoc.setTitle('Sticker with Spot Colors and CutContour');
+  pdfDoc.setSubject('3 artboards: RDG_WHITE, RDG_GLOSS, Design+CutContour');
   pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'RDG_WHITE', 'RDG_GLOSS']);
   
   const pdfBytes = await pdfDoc.save();
@@ -2132,7 +2143,8 @@ export async function generateContourPDFBase64(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
-  cachedContourData?: CachedContourData
+  cachedContourData?: CachedContourData,
+  spotColors?: SpotColorInput[]
 ): Promise<string | null> {
   let pathPoints: Array<{x: number; y: number}>;
   let widthInches: number;
@@ -2170,7 +2182,17 @@ export async function generateContourPDFBase64(
   const heightPts = heightInches * 72;
   
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([widthPts, heightPts]);
+  
+  // Create 3 artboards (pages) of the same size:
+  // Page 1: RDG_WHITE spot color
+  // Page 2: RDG_GLOSS spot color  
+  // Page 3: Design + CutContour
+  const pageWhite = pdfDoc.addPage([widthPts, heightPts]);
+  const pageGloss = pdfDoc.addPage([widthPts, heightPts]);
+  const pageDesign = pdfDoc.addPage([widthPts, heightPts]);
+  
+  // Main page reference for design content
+  const page = pageDesign;
   
   // OPTIMIZATION: Create background and design canvases in parallel
   // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
@@ -2363,8 +2385,180 @@ export async function generateContourPDFBase64(
     }
   }
   
-  pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  // Add spot color layers (RDG_WHITE and RDG_GLOSS) to their respective pages
+  if (spotColors && spotColors.length > 0) {
+    const context = pdfDoc.context;
+    
+    // Check if any colors are marked for white or gloss
+    const hasWhite = spotColors.some(c => c.spotWhite);
+    const hasGloss = spotColors.some(c => c.spotGloss);
+    
+    if (hasWhite || hasGloss) {
+      // Create spot color masks by extracting matching pixels from the design
+      const maskCanvas = document.createElement('canvas');
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        maskCanvas.width = image.width;
+        maskCanvas.height = image.height;
+        maskCtx.drawImage(image, 0, 0);
+        const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+        const data = imageData.data;
+        
+        // Helper function to create and embed spot color layer on a specific page
+        const createSpotColorLayer = async (
+          targetPage: typeof pageWhite,
+          colorName: string,
+          markedColors: SpotColorInput[],
+          tintCMYK: [number, number, number, number]
+        ): Promise<void> => {
+          const resources = targetPage.node.Resources();
+          const w = maskCanvas.width;
+          const h = maskCanvas.height;
+          
+          // Create separation color space for this spot color
+          const spotTintFunction = context.obj({
+            FunctionType: 2,
+            Domain: [0, 1],
+            C0: [0, 0, 0, 0],
+            C1: tintCMYK,
+            N: 1,
+          });
+          const spotTintRef = context.register(spotTintFunction);
+          
+          const spotSeparation = context.obj([
+            PDFName.of('Separation'),
+            PDFName.of(colorName),
+            PDFName.of('DeviceCMYK'),
+            spotTintRef,
+          ]);
+          const spotSepRef = context.register(spotSeparation);
+          
+          if (resources) {
+            let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+            if (!colorSpaceDict) {
+              colorSpaceDict = context.obj({});
+              resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+            }
+            (colorSpaceDict as PDFDict).set(PDFName.of(colorName), spotSepRef);
+          }
+          
+          // Find matching pixels using run-length encoding
+          const spans: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
+          
+          for (let y = 0; y < h; y++) {
+            let spanStart = -1;
+            
+            for (let x = 0; x <= w; x++) {
+              let matches = false;
+              
+              if (x < w) {
+                const idx = (y * w + x) * 4;
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+                const a = data[idx + 3];
+                
+                if (a > 10) {
+                  for (const mc of markedColors) {
+                    const dr = Math.abs(r - mc.rgb.r);
+                    const dg = Math.abs(g - mc.rgb.g);
+                    const db = Math.abs(b - mc.rgb.b);
+                    if (dr <= 5 && dg <= 5 && db <= 5) {
+                      matches = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              if (matches && spanStart === -1) {
+                spanStart = x;
+              } else if (!matches && spanStart !== -1) {
+                spans.push({ x1: spanStart, x2: x, y1: y, y2: y });
+                spanStart = -1;
+              }
+            }
+          }
+          
+          // Merge adjacent rows into vertical spans
+          const mergedSpans: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
+          const spansByKey = new Map<string, {x1: number; x2: number; y1: number; y2: number}>();
+          
+          for (const span of spans) {
+            const key = `${span.x1}-${span.x2}`;
+            const existing = spansByKey.get(key);
+            if (existing && existing.y2 === span.y1 - 1) {
+              existing.y2 = span.y2;
+            } else {
+              if (existing) {
+                mergedSpans.push(existing);
+              }
+              spansByKey.set(key, { ...span });
+            }
+          }
+          spansByKey.forEach(span => mergedSpans.push(span));
+          
+          if (mergedSpans.length === 0) return;
+          
+          // Generate PDF operations for spot color
+          const scaleX = imageWidthPts / w;
+          const scaleY = imageHeightPts / h;
+          const toX = (px: number) => imageXPts + px * scaleX;
+          const toY = (py: number) => imageYPts + (h - py) * scaleY;
+          
+          let spotOps = 'q\n';
+          spotOps += `/${colorName} cs 1 scn\n`;
+          
+          for (const span of mergedSpans) {
+            const x = toX(span.x1);
+            const y = toY(span.y2 + 1);
+            const width = (span.x2 - span.x1) * scaleX;
+            const height = (span.y2 - span.y1 + 1) * scaleY;
+            
+            spotOps += `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`;
+          }
+          
+          spotOps += 'Q\n';
+          
+          const existingContents = targetPage.node.Contents();
+          if (existingContents) {
+            const spotStream = context.stream(spotOps);
+            const spotStreamRef = context.register(spotStream);
+            
+            if (existingContents instanceof PDFArray) {
+              existingContents.push(spotStreamRef);
+            } else {
+              const newContents = context.obj([existingContents, spotStreamRef]);
+              targetPage.node.set(PDFName.of('Contents'), newContents);
+            }
+          }
+          
+          console.log(`[PDF Base64] Added ${colorName} spot color layer with ${mergedSpans.length} rectangles`);
+        };
+        
+        // Calculate image dimensions for spot color positioning
+        const imageXPts = imageOffsetX * 72;
+        const imageWidthPts = resizeSettings.widthInches * 72;
+        const imageHeightPts = resizeSettings.heightInches * 72;
+        const imageYPts = imageOffsetY * 72;
+        
+        // Create white spot color layer on Page 1
+        if (hasWhite) {
+          const whiteColors = spotColors.filter(c => c.spotWhite);
+          await createSpotColorLayer(pageWhite, 'RDG_WHITE', whiteColors, [0, 0, 0, 1]);
+        }
+        
+        // Create gloss spot color layer on Page 2
+        if (hasGloss) {
+          const glossColors = spotColors.filter(c => c.spotGloss);
+          await createSpotColorLayer(pageGloss, 'RDG_GLOSS', glossColors, [1, 0, 1, 0]);
+        }
+      }
+    }
+  }
+  
+  pdfDoc.setTitle('Sticker with Spot Colors and CutContour');
+  pdfDoc.setSubject('3 artboards: RDG_WHITE, RDG_GLOSS, Design+CutContour');
   
   const pdfBytes = await pdfDoc.save();
   
