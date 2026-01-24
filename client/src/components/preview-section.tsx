@@ -341,12 +341,34 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ? strokeSettings.backgroundColor 
         : backgroundColor;
 
-      if (effectiveBackgroundColor === "transparent") {
-        // Draw transparency grid pattern (light grey checkerboard)
+      // For PDFs with CutContour, we need special rendering to clip background to the cut path
+      if (hasPdfCutContour && imageInfo.pdfCutContourInfo) {
+        const cutContourInfo = imageInfo.pdfCutContourInfo;
+        const hasExtractedPaths = cutContourInfo.cutContourPoints && cutContourInfo.cutContourPoints.length > 0;
+        const viewPadding = 40;
+        const availableWidth = canvas.width - (viewPadding * 2);
+        const availableHeight = canvas.height - (viewPadding * 2);
+        
+        // Calculate scale to fit the PDF/image in the preview
+        const pdfWidth = cutContourInfo.pageWidth || imageInfo.image.naturalWidth;
+        const pdfHeight = cutContourInfo.pageHeight || imageInfo.image.naturalHeight;
+        const scaleX = availableWidth / pdfWidth;
+        const scaleY = availableHeight / pdfHeight;
+        const scale = Math.min(scaleX, scaleY);
+        
+        const scaledWidth = pdfWidth * scale;
+        const scaledHeight = pdfHeight * scale;
+        const offsetX = viewPadding + (availableWidth - scaledWidth) / 2;
+        const offsetY = viewPadding + (availableHeight - scaledHeight) / 2;
+        
+        // Bleed offset in PDF points (0.10 inches * 72 points/inch = 7.2 points)
+        const bleedPts = 7.2;
+        const bleedPixels = bleedPts * scale;
+        
+        // First draw checkerboard background for transparency indication
         const gridSize = 10;
         const lightColor = '#e8e8e8';
         const darkColor = '#d0d0d0';
-        
         for (let y = 0; y < canvas.height; y += gridSize) {
           for (let x = 0; x < canvas.width; x += gridSize) {
             const isEven = ((x / gridSize) + (y / gridSize)) % 2 === 0;
@@ -354,49 +376,118 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             ctx.fillRect(x, y, gridSize, gridSize);
           }
         }
-      } else {
-        ctx.fillStyle = effectiveBackgroundColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-
-      if (shapeSettings.enabled) {
-        drawShapePreview(ctx, canvas.width, canvas.height);
-      } else {
-        drawImageWithResizePreview(ctx, canvas.width, canvas.height);
-      }
-      
-      // Draw PDF CutContour path if present
-      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && imageInfo.pdfCutContourInfo.cutContourPoints.length > 0) {
-        const viewPadding = 40;
-        const availableWidth = canvas.width - (viewPadding * 2);
-        const availableHeight = canvas.height - (viewPadding * 2);
         
-        // Calculate scale to fit the contour in the preview
-        const pdfWidth = imageInfo.pdfCutContourInfo.pageWidth;
-        const pdfHeight = imageInfo.pdfCutContourInfo.pageHeight;
-        const scaleX = availableWidth / pdfWidth;
-        const scaleY = availableHeight / pdfHeight;
-        const scale = Math.min(scaleX, scaleY);
-        
-        const offsetX = viewPadding + (availableWidth - pdfWidth * scale) / 2;
-        const offsetY = viewPadding + (availableHeight - pdfHeight * scale) / 2;
-        
+        // Create clipping path - use extracted paths if available, otherwise use image bounds
         ctx.save();
-        ctx.strokeStyle = '#FF00FF'; // Magenta for CutContour
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
         
-        for (const path of imageInfo.pdfCutContourInfo.cutContourPoints) {
-          if (path.length < 2) continue;
-          ctx.beginPath();
-          ctx.moveTo(offsetX + path[0].x * scale, offsetY + path[0].y * scale);
-          for (let i = 1; i < path.length; i++) {
-            ctx.lineTo(offsetX + path[i].x * scale, offsetY + path[i].y * scale);
+        if (hasExtractedPaths) {
+          // Use extracted CutContour paths with bleed expansion
+          for (const path of cutContourInfo.cutContourPoints) {
+            if (path.length < 2) continue;
+            
+            // Calculate centroid of path for offset direction
+            let cx = 0, cy = 0;
+            for (const pt of path) {
+              cx += offsetX + pt.x * scale;
+              cy += offsetY + pt.y * scale;
+            }
+            cx /= path.length;
+            cy /= path.length;
+            
+            // Draw path with bleed expansion (offset away from centroid)
+            const firstX = offsetX + path[0].x * scale;
+            const firstY = offsetY + path[0].y * scale;
+            const firstDist = Math.sqrt((firstX - cx) ** 2 + (firstY - cy) ** 2);
+            const firstExpandX = firstDist > 0 ? (firstX - cx) / firstDist * bleedPixels : 0;
+            const firstExpandY = firstDist > 0 ? (firstY - cy) / firstDist * bleedPixels : 0;
+            
+            ctx.moveTo(firstX + firstExpandX, firstY + firstExpandY);
+            
+            for (let i = 1; i < path.length; i++) {
+              const px = offsetX + path[i].x * scale;
+              const py = offsetY + path[i].y * scale;
+              const dist = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2);
+              const expandX = dist > 0 ? (px - cx) / dist * bleedPixels : 0;
+              const expandY = dist > 0 ? (py - cy) / dist * bleedPixels : 0;
+              ctx.lineTo(px + expandX, py + expandY);
+            }
+            ctx.closePath();
           }
-          ctx.stroke();
+        } else {
+          // Fallback: use image bounds with bleed for clipping
+          const clipX = offsetX - bleedPixels;
+          const clipY = offsetY - bleedPixels;
+          const clipW = scaledWidth + bleedPixels * 2;
+          const clipH = scaledHeight + bleedPixels * 2;
+          ctx.rect(clipX, clipY, clipW, clipH);
         }
         
+        ctx.clip();
+        
+        // Fill with background color inside clipped region
+        if (effectiveBackgroundColor !== "transparent") {
+          ctx.fillStyle = effectiveBackgroundColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        // Draw the image inside the clipped region
+        ctx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
+        
         ctx.restore();
+        
+        // Draw the CutContour path indicator (magenta dashed line)
+        if (hasExtractedPaths) {
+          ctx.save();
+          ctx.strokeStyle = '#FF00FF';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 5]);
+          
+          for (const path of cutContourInfo.cutContourPoints) {
+            if (path.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(offsetX + path[0].x * scale, offsetY + path[0].y * scale);
+            for (let i = 1; i < path.length; i++) {
+              ctx.lineTo(offsetX + path[i].x * scale, offsetY + path[i].y * scale);
+            }
+            ctx.stroke();
+          }
+          
+          ctx.restore();
+        } else {
+          // Draw image bounds as cut indicator when no paths extracted
+          ctx.save();
+          ctx.strokeStyle = '#FF00FF';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 5]);
+          ctx.strokeRect(offsetX, offsetY, scaledWidth, scaledHeight);
+          ctx.restore();
+        }
+      } else {
+        // Regular image rendering (non-PDF or no CutContour)
+        if (effectiveBackgroundColor === "transparent") {
+          // Draw transparency grid pattern (light grey checkerboard)
+          const gridSize = 10;
+          const lightColor = '#e8e8e8';
+          const darkColor = '#d0d0d0';
+          
+          for (let y = 0; y < canvas.height; y += gridSize) {
+            for (let x = 0; x < canvas.width; x += gridSize) {
+              const isEven = ((x / gridSize) + (y / gridSize)) % 2 === 0;
+              ctx.fillStyle = isEven ? lightColor : darkColor;
+              ctx.fillRect(x, y, gridSize, gridSize);
+            }
+          }
+        } else {
+          ctx.fillStyle = effectiveBackgroundColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        if (shapeSettings.enabled) {
+          drawShapePreview(ctx, canvas.width, canvas.height);
+        } else {
+          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
+        }
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing]);
 

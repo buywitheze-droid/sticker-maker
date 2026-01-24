@@ -28,7 +28,7 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
   
   // First, use pdf-lib to check for CutContour spot color in resources
   const cutContourInfo = await extractCutContourFromRawPDF(arrayBuffer);
-  console.log('[PDF Parser] CutContour result:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
+  console.log('[PDF Parser] CutContour detected:', cutContourInfo.hasCutContour);
   
   // Then render with PDF.js for the image
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -38,9 +38,27 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
   const pdfScale = targetDPI / 72;
   const viewport = page.getViewport({ scale: pdfScale });
   
-  // Update cutContourInfo with page dimensions
+  // Get base viewport at 1:1 scale for path coordinates
+  const baseViewport = page.getViewport({ scale: 1 });
+  
+  // Update cutContourInfo with page dimensions (at render DPI)
   cutContourInfo.pageWidth = viewport.width;
   cutContourInfo.pageHeight = viewport.height;
+  
+  // If CutContour was detected but no paths extracted, try using PDF.js operator list
+  if (cutContourInfo.hasCutContour && cutContourInfo.cutContourPoints.length === 0) {
+    try {
+      const paths = await extractPathsFromOperatorList(page, baseViewport.height, pdfScale);
+      if (paths.length > 0) {
+        cutContourInfo.cutContourPoints = paths;
+        console.log('[PDF Parser] Extracted', paths.length, 'paths from operator list');
+      }
+    } catch (e) {
+      console.warn('[PDF Parser] Operator list extraction failed:', e);
+    }
+  }
+  
+  console.log('[PDF Parser] Final result: hasCutContour:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
   
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
@@ -71,6 +89,118 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
     originalPdfData: arrayBuffer,
     dpi: targetDPI
   };
+}
+
+// Extract paths from PDF.js operator list (handles decompressed content)
+async function extractPathsFromOperatorList(
+  page: pdfjsLib.PDFPageProxy,
+  pageHeight: number,
+  scale: number
+): Promise<{ x: number; y: number }[][]> {
+  const operatorList = await page.getOperatorList();
+  const OPS = pdfjsLib.OPS;
+  
+  const paths: { x: number; y: number }[][] = [];
+  let currentPath: { x: number; y: number }[] = [];
+  let inCutContourMode = false;
+  
+  for (let i = 0; i < operatorList.fnArray.length; i++) {
+    const fn = operatorList.fnArray[i];
+    const args = operatorList.argsArray[i];
+    
+    // Check for setFillColorSpace or setStrokeColorSpace - these might indicate CutContour
+    // In PDF.js, color space changes are tracked but spot colors are hard to detect
+    // We'll capture all paths and filter later based on stroke color (magenta-ish)
+    
+    if (fn === OPS.moveTo && args) {
+      if (currentPath.length > 0) {
+        paths.push([...currentPath]);
+        currentPath = [];
+      }
+      const x = args[0] * scale;
+      const y = (pageHeight - args[1]) * scale; // Flip Y
+      currentPath.push({ x, y });
+    } else if (fn === OPS.lineTo && args) {
+      const x = args[0] * scale;
+      const y = (pageHeight - args[1]) * scale;
+      currentPath.push({ x, y });
+    } else if (fn === OPS.curveTo && args) {
+      // Bezier curve - use endpoint
+      const x = args[4] * scale;
+      const y = (pageHeight - args[5]) * scale;
+      currentPath.push({ x, y });
+    } else if (fn === OPS.curveTo2 && args) {
+      const x = args[2] * scale;
+      const y = (pageHeight - args[3]) * scale;
+      currentPath.push({ x, y });
+    } else if (fn === OPS.curveTo3 && args) {
+      const x = args[2] * scale;
+      const y = (pageHeight - args[3]) * scale;
+      currentPath.push({ x, y });
+    } else if (fn === OPS.closePath) {
+      if (currentPath.length > 0) {
+        currentPath.push({ ...currentPath[0] });
+      }
+    } else if (fn === OPS.rectangle && args) {
+      // Rectangle: x, y, width, height
+      const x = args[0] * scale;
+      const y = (pageHeight - args[1]) * scale;
+      const w = args[2] * scale;
+      const h = args[3] * scale;
+      if (currentPath.length > 0) {
+        paths.push([...currentPath]);
+        currentPath = [];
+      }
+      currentPath = [
+        { x, y },
+        { x: x + w, y },
+        { x: x + w, y: y - h },
+        { x, y: y - h },
+        { x, y }
+      ];
+    } else if (fn === OPS.stroke || fn === OPS.fill || fn === OPS.eoFill ||
+               fn === OPS.fillStroke || fn === OPS.eoFillStroke ||
+               fn === OPS.closeStroke || fn === OPS.closeFillStroke) {
+      if (currentPath.length > 0) {
+        paths.push([...currentPath]);
+        currentPath = [];
+      }
+    } else if (fn === OPS.endPath) {
+      currentPath = [];
+    }
+  }
+  
+  if (currentPath.length > 0) {
+    paths.push(currentPath);
+  }
+  
+  // Filter to find the likely CutContour path (usually the outermost/largest path)
+  // For now, return the path with most points or largest bounding box
+  if (paths.length > 1) {
+    // Find the largest path by bounding box area
+    let largestPath = paths[0];
+    let largestArea = 0;
+    
+    for (const path of paths) {
+      if (path.length < 3) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const pt of path) {
+        minX = Math.min(minX, pt.x);
+        minY = Math.min(minY, pt.y);
+        maxX = Math.max(maxX, pt.x);
+        maxY = Math.max(maxY, pt.y);
+      }
+      const area = (maxX - minX) * (maxY - minY);
+      if (area > largestArea) {
+        largestArea = area;
+        largestPath = path;
+      }
+    }
+    
+    return [largestPath];
+  }
+  
+  return paths;
 }
 
 // Extract CutContour from raw PDF using pdf-lib to read resources and content streams
