@@ -1,6 +1,6 @@
 import ImageEditor from "@/components/image-editor";
 import gooseLogo from "@assets/goose_silhouette.png";
-import katanaIcon from "@assets/katana_silhouette.png";
+import samuraiIcon from "@assets/samurai_katana.png";
 
 export default function StickerMaker() {
   return (
@@ -14,7 +14,7 @@ export default function StickerMaker() {
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
             <span>If you can't figure this out better commit seppuku</span>
-            <img src={katanaIcon} alt="" className="w-5 h-5 object-contain" />
+            <img src={samuraiIcon} alt="" className="w-8 h-8 object-contain" />
           </div>
         </div>
       </header>
