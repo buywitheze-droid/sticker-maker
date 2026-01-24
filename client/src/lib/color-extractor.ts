@@ -5,6 +5,7 @@ export interface ExtractedColor {
   percentage: number;
   spotWhite: boolean;
   spotGloss: boolean;
+  name?: string;
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -19,12 +20,45 @@ function colorDistance(c1: { r: number; g: number; b: number }, c2: { r: number;
   );
 }
 
-function quantizeColor(r: number, g: number, b: number, levels: number = 16): string {
-  const step = 256 / levels;
-  const qr = Math.floor(r / step) * step;
-  const qg = Math.floor(g / step) * step;
-  const qb = Math.floor(b / step) * step;
-  return `${qr},${qg},${qb}`;
+// Predefined palette of primary, secondary, and neutral colors
+// Chromatic colors first (priority), then minimal neutrals
+const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: number }; hex: string; isNeutral: boolean }> = [
+  // Primary colors
+  { name: 'Red', rgb: { r: 200, g: 30, b: 30 }, hex: '#C81E1E', isNeutral: false },
+  { name: 'Yellow', rgb: { r: 250, g: 210, b: 50 }, hex: '#FAD232', isNeutral: false },
+  { name: 'Blue', rgb: { r: 40, g: 100, b: 220 }, hex: '#2864DC', isNeutral: false },
+  
+  // Secondary colors
+  { name: 'Orange', rgb: { r: 240, g: 120, b: 20 }, hex: '#F07814', isNeutral: false },
+  { name: 'Green', rgb: { r: 50, g: 180, b: 80 }, hex: '#32B450', isNeutral: false },
+  { name: 'Purple', rgb: { r: 140, g: 60, b: 180 }, hex: '#8C3CB4', isNeutral: false },
+  
+  // Tertiary colors
+  { name: 'Cyan', rgb: { r: 40, g: 190, b: 220 }, hex: '#28BEDC', isNeutral: false },
+  { name: 'Magenta', rgb: { r: 220, g: 50, b: 150 }, hex: '#DC3296', isNeutral: false },
+  { name: 'Pink', rgb: { r: 255, g: 150, b: 180 }, hex: '#FF96B4', isNeutral: false },
+  { name: 'Teal', rgb: { r: 30, g: 150, b: 150 }, hex: '#1E9696', isNeutral: false },
+  { name: 'Brown', rgb: { r: 140, g: 80, b: 40 }, hex: '#8C5028', isNeutral: false },
+  
+  // Minimal neutrals (grouped)
+  { name: 'Black', rgb: { r: 30, g: 30, b: 30 }, hex: '#1E1E1E', isNeutral: true },
+  { name: 'Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true },
+  { name: 'White', rgb: { r: 245, g: 245, b: 245 }, hex: '#F5F5F5', isNeutral: true },
+];
+
+function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_PALETTE[0] {
+  let closest = COLOR_PALETTE[0];
+  let minDistance = Infinity;
+  
+  for (const paletteColor of COLOR_PALETTE) {
+    const dist = colorDistance({ r, g, b }, paletteColor.rgb);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closest = paletteColor;
+    }
+  }
+  
+  return closest;
 }
 
 export function extractDominantColors(
@@ -32,10 +66,16 @@ export function extractDominantColors(
   maxColors: number = 9,
   minPercentage: number = 0.1
 ): ExtractedColor[] {
-  const colorCounts = new Map<string, { r: number; g: number; b: number; count: number }>();
+  const paletteCounts = new Map<string, { color: typeof COLOR_PALETTE[0]; count: number }>();
   const data = imageData.data;
   let totalOpaquePixels = 0;
 
+  // Initialize all palette colors
+  for (const paletteColor of COLOR_PALETTE) {
+    paletteCounts.set(paletteColor.name, { color: paletteColor, count: 0 });
+  }
+
+  // Count pixels matching each palette color
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
@@ -45,51 +85,36 @@ export function extractDominantColors(
     if (a < 50) continue;
     totalOpaquePixels++;
 
-    const key = quantizeColor(r, g, b);
-    const existing = colorCounts.get(key);
-    if (existing) {
-      existing.count++;
-      existing.r = Math.round((existing.r * (existing.count - 1) + r) / existing.count);
-      existing.g = Math.round((existing.g * (existing.count - 1) + g) / existing.count);
-      existing.b = Math.round((existing.b * (existing.count - 1) + b) / existing.count);
-    } else {
-      colorCounts.set(key, { r, g, b, count: 1 });
-    }
+    const closestColor = findClosestPaletteColor(r, g, b);
+    const entry = paletteCounts.get(closestColor.name)!;
+    entry.count++;
   }
 
   if (totalOpaquePixels === 0) return [];
 
-  let colors = Array.from(colorCounts.values())
-    .map(c => ({
-      rgb: { r: c.r, g: c.g, b: c.b },
-      hex: rgbToHex(c.r, c.g, c.b),
-      count: c.count,
-      percentage: (c.count / totalOpaquePixels) * 100,
+  // Convert to ExtractedColor array
+  const allColors: Array<ExtractedColor & { isNeutral: boolean }> = Array.from(paletteCounts.values())
+    .filter(entry => entry.count > 0)
+    .map(entry => ({
+      rgb: entry.color.rgb,
+      hex: entry.color.hex,
+      count: entry.count,
+      percentage: (entry.count / totalOpaquePixels) * 100,
       spotWhite: false,
-      spotGloss: false
+      spotGloss: false,
+      name: entry.color.name,
+      isNeutral: entry.color.isNeutral
     }))
-    .filter(c => c.percentage >= minPercentage)
-    .sort((a, b) => b.count - a.count);
+    .filter(c => c.percentage >= minPercentage);
 
-  const mergedColors: ExtractedColor[] = [];
-  const mergeThreshold = 60;
+  // Sort: chromatic colors first (by percentage), then neutrals (by percentage)
+  const chromaticColors = allColors.filter(c => !c.isNeutral).sort((a, b) => b.percentage - a.percentage);
+  const neutralColors = allColors.filter(c => c.isNeutral).sort((a, b) => b.percentage - a.percentage);
+  
+  // Combine: all chromatic first, then neutrals
+  const sortedColors = [...chromaticColors, ...neutralColors];
 
-  for (const color of colors) {
-    let merged = false;
-    for (const existing of mergedColors) {
-      if (colorDistance(color.rgb, existing.rgb) < mergeThreshold) {
-        existing.count += color.count;
-        existing.percentage += color.percentage;
-        merged = true;
-        break;
-      }
-    }
-    if (!merged && mergedColors.length < maxColors) {
-      mergedColors.push(color);
-    }
-  }
-
-  return mergedColors.slice(0, maxColors).sort((a, b) => b.percentage - a.percentage);
+  return sortedColors.slice(0, maxColors).map(({ isNeutral, ...color }) => color);
 }
 
 export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 9): ExtractedColor[] {
@@ -126,6 +151,6 @@ export function extractColorsFromImage(image: HTMLImageElement, maxColors: numbe
   const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
   
   const colors = extractDominantColors(imageData, maxColors);
-  console.log('[ColorExtractor] Detected colors:', colors.map(c => ({ hex: c.hex, pct: c.percentage.toFixed(2) })));
+  console.log('[ColorExtractor] Detected colors:', colors.map(c => ({ name: c.name, hex: c.hex, pct: c.percentage.toFixed(2) })));
   return colors;
 }
