@@ -50,7 +50,6 @@ export default function ImageEditor() {
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRemovingBackground, setIsRemovingBackground] = useState(false);
-  const [wizardStep, setWizardStep] = useState(1);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -642,7 +641,7 @@ export default function ImageEditor() {
         onImageUpload={handleImageUpload}
         imageInfo={imageInfo}
         resizeSettings={resizeSettings}
-        showCutLineInfo={wizardStep >= 3}
+        showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
       />
       
       <div className="relative preview-container">
@@ -670,23 +669,18 @@ export default function ImageEditor() {
         isProcessing={isProcessing}
         imageInfo={imageInfo}
         canvasRef={canvasRef}
-        onStepChange={setWizardStep}
+        onStepChange={() => {}}
         onRemoveBackground={handleRemoveBackground}
         isRemovingBackground={isRemovingBackground}
       />
       
       {/* Processing Modal */}
       {isProcessing && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-sm mx-4">
             <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-cyan-500"></div>
-              <div className="text-gray-700">
-                <div className="font-medium">Processing image...</div>
-                <div className="text-sm text-gray-500 mt-1">
-                  Creating high-quality stroke and preparing download
-                </div>
-              </div>
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-cyan-500 border-t-transparent"></div>
+              <span className="text-white">Processing...</span>
             </div>
           </div>
         </div>
