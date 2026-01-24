@@ -1,6 +1,7 @@
 import ImageEditor from "@/components/image-editor";
 import gooseLogo from "@assets/goose_silhouette.png";
 import samuraiIcon from "@assets/samurai_katana.png";
+import broLogo from "@assets/bro_logo.png";
 
 export default function StickerMaker() {
   return (
@@ -10,7 +11,7 @@ export default function StickerMaker() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <img src={gooseLogo} alt="Sticker Outline Bro" className="w-8 h-8 object-contain" />
-            <h1 className="text-xl text-black font-medium" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE BRO</h1>
+            <h1 className="text-xl text-black font-medium flex items-center" style={{ fontFamily: '"Nabana Shadow", sans-serif' }}>STICKER OUTLINE <img src={broLogo} alt="BRO" className="h-6 ml-1 object-contain" /></h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
             <span>If you can't figure this out better commit seppuku</span>
