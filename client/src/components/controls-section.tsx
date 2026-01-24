@@ -283,6 +283,7 @@ export default function ControlsSection({
                 <Label htmlFor="same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
               </div>
               
+              {/* Hidden for now - may add back later
               <div className="space-y-2 pt-2 border-t border-gray-200">
                 <div className="flex items-center gap-2">
                   <Checkbox 
@@ -302,6 +303,7 @@ export default function ControlsSection({
                   <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
                 </div>
               </div>
+              */}
             </div>
           )}
         </div>
