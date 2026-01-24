@@ -1946,67 +1946,87 @@ export async function downloadContourPDF(
         const data = imageData.data;
         
         // Helper function to create and embed spot color layer
+        // Uses marching squares to trace the color regions and create vector paths
         const createSpotColorLayer = async (
           colorName: string,
           markedColors: SpotColorInput[],
           tintCMYK: [number, number, number, number]
         ): Promise<void> => {
-          const spotMaskCanvas = document.createElement('canvas');
-          spotMaskCanvas.width = maskCanvas.width;
-          spotMaskCanvas.height = maskCanvas.height;
-          const spotMaskCtx = spotMaskCanvas.getContext('2d');
+          // Create a binary mask of matching pixels
+          const binaryMask: boolean[][] = [];
+          const w = maskCanvas.width;
+          const h = maskCanvas.height;
           
-          if (!spotMaskCtx) return;
+          for (let y = 0; y < h; y++) {
+            binaryMask[y] = [];
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+              const a = data[i + 3];
+              
+              let matches = false;
+              for (const mc of markedColors) {
+                const dr = Math.abs(r - mc.rgb.r);
+                const dg = Math.abs(g - mc.rgb.g);
+                const db = Math.abs(b - mc.rgb.b);
+                if (dr < 30 && dg < 30 && db < 30 && a > 128) {
+                  matches = true;
+                  break;
+                }
+              }
+              binaryMask[y][x] = matches;
+            }
+          }
           
-          const spotMaskData = spotMaskCtx.createImageData(maskCanvas.width, maskCanvas.height);
+          // Find connected regions and trace their outlines using simple contour tracing
+          const visited: boolean[][] = Array(h).fill(null).map(() => Array(w).fill(false));
+          const regions: Array<Array<{x: number; y: number}>> = [];
           
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const a = data[i + 3];
-            
-            let matches = false;
-            for (const mc of markedColors) {
-              const dr = Math.abs(r - mc.rgb.r);
-              const dg = Math.abs(g - mc.rgb.g);
-              const db = Math.abs(b - mc.rgb.b);
-              if (dr < 30 && dg < 30 && db < 30 && a > 128) {
-                matches = true;
-                break;
+          // Simple flood fill to find connected matching regions
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              if (binaryMask[y][x] && !visited[y][x]) {
+                // Found a new region - trace its boundary
+                const boundary: Array<{x: number; y: number}> = [];
+                const stack: Array<{x: number; y: number}> = [{x, y}];
+                
+                while (stack.length > 0) {
+                  const p = stack.pop()!;
+                  if (p.x < 0 || p.x >= w || p.y < 0 || p.y >= h) continue;
+                  if (visited[p.y][p.x] || !binaryMask[p.y][p.x]) continue;
+                  
+                  visited[p.y][p.x] = true;
+                  
+                  // Check if this is a boundary pixel (has at least one non-matching neighbor)
+                  const isBoundary = 
+                    p.x === 0 || p.x === w-1 || p.y === 0 || p.y === h-1 ||
+                    !binaryMask[p.y-1]?.[p.x] || !binaryMask[p.y+1]?.[p.x] ||
+                    !binaryMask[p.y]?.[p.x-1] || !binaryMask[p.y]?.[p.x+1];
+                  
+                  if (isBoundary) {
+                    boundary.push(p);
+                  }
+                  
+                  // Add neighbors to stack
+                  stack.push({x: p.x+1, y: p.y});
+                  stack.push({x: p.x-1, y: p.y});
+                  stack.push({x: p.x, y: p.y+1});
+                  stack.push({x: p.x, y: p.y-1});
+                }
+                
+                if (boundary.length > 2) {
+                  regions.push(boundary);
+                }
               }
             }
-            
-            // For spot colors, we create an alpha mask
-            spotMaskData.data[i] = matches ? 255 : 0;
-            spotMaskData.data[i + 1] = matches ? 255 : 0;
-            spotMaskData.data[i + 2] = matches ? 255 : 0;
-            spotMaskData.data[i + 3] = matches ? 255 : 0;
           }
           
-          spotMaskCtx.putImageData(spotMaskData, 0, 0);
-          
-          // Flip the mask for PDF coordinate system
-          const flippedMask = document.createElement('canvas');
-          flippedMask.width = spotMaskCanvas.width;
-          flippedMask.height = spotMaskCanvas.height;
-          const flippedCtx = flippedMask.getContext('2d');
-          if (flippedCtx) {
-            flippedCtx.translate(0, flippedMask.height);
-            flippedCtx.scale(1, -1);
-            flippedCtx.drawImage(spotMaskCanvas, 0, 0);
+          if (regions.length === 0) {
+            console.log(`[PDF] No regions found for ${colorName}`);
+            return;
           }
-          
-          // Convert to PNG and embed in PDF
-          const maskBlob = await new Promise<Blob>((resolve, reject) => {
-            flippedMask.toBlob((b) => {
-              if (b) resolve(b);
-              else reject(new Error('Failed to create mask blob'));
-            }, 'image/png');
-          });
-          
-          const maskBytes = new Uint8Array(await maskBlob.arrayBuffer());
-          const maskImage = await pdfDoc.embedPng(maskBytes);
           
           // Create separation color space for this spot color
           const tintFunction = context.obj({
@@ -2035,56 +2055,44 @@ export async function downloadContourPDF(
             (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
           }
           
-          // Draw the spot color mask using the separation color space
-          // Position it at the same location as the design image
-          const maskWidthPts = resizeSettings.widthInches * 72;
-          const maskHeightPts = resizeSettings.heightInches * 72;
-          const maskXPts = imageOffsetX * 72;
-          const maskYPts = imageOffsetY * 72;
+          // Convert pixel coordinates to PDF points
+          const scaleX = (resizeSettings.widthInches * 72) / w;
+          const scaleY = (resizeSettings.heightInches * 72) / h;
+          const offsetX = imageOffsetX * 72;
+          const offsetY = imageOffsetY * 72;
           
-          // Create an XObject for the mask and register it
-          const maskRef = (maskImage as any).ref;
-          const xObjectName = `SpotMask_${colorName}`;
+          // Build path operations for all regions with spot color fill
+          let spotOps = `q /${colorName} cs 1 scn\n`;
           
-          if (resources) {
-            let xObjectDict = resources.get(PDFName.of('XObject'));
-            if (!xObjectDict) {
-              xObjectDict = context.obj({});
-              resources.set(PDFName.of('XObject'), xObjectDict);
+          for (const region of regions) {
+            // Sort boundary points by angle from centroid to create a proper path
+            const cx = region.reduce((s, p) => s + p.x, 0) / region.length;
+            const cy = region.reduce((s, p) => s + p.y, 0) / region.length;
+            
+            const sorted = [...region].sort((a, b) => {
+              const angleA = Math.atan2(a.y - cy, a.x - cx);
+              const angleB = Math.atan2(b.y - cy, b.x - cx);
+              return angleA - angleB;
+            });
+            
+            // Simplify the path by keeping every Nth point
+            const step = Math.max(1, Math.floor(sorted.length / 100));
+            const simplified = sorted.filter((_, i) => i % step === 0);
+            
+            if (simplified.length < 3) continue;
+            
+            // PDF Y-axis is flipped (0 at bottom)
+            const toY = (py: number) => offsetY + (h - py) * scaleY;
+            const toX = (px: number) => offsetX + px * scaleX;
+            
+            spotOps += `${toX(simplified[0].x).toFixed(2)} ${toY(simplified[0].y).toFixed(2)} m\n`;
+            for (let i = 1; i < simplified.length; i++) {
+              spotOps += `${toX(simplified[i].x).toFixed(2)} ${toY(simplified[i].y).toFixed(2)} l\n`;
             }
-            (xObjectDict as PDFDict).set(PDFName.of(xObjectName), maskRef);
+            spotOps += 'h f\n';
           }
           
-          // Create SMask (soft mask) for the spot color using the mask image
-          const sMaskDict = context.obj({
-            Type: PDFName.of('Mask'),
-            S: PDFName.of('Alpha'),
-            G: maskRef,
-          });
-          const sMaskRef = context.register(sMaskDict);
-          
-          // Create an ExtGState with the SMask
-          const gStateName = `GS_${colorName}`;
-          const gState = context.obj({
-            Type: PDFName.of('ExtGState'),
-            SMask: sMaskRef,
-            ca: 1,
-            CA: 1,
-          });
-          const gStateRef = context.register(gState);
-          
-          if (resources) {
-            let extGStateDict = resources.get(PDFName.of('ExtGState'));
-            if (!extGStateDict) {
-              extGStateDict = context.obj({});
-              resources.set(PDFName.of('ExtGState'), extGStateDict);
-            }
-            (extGStateDict as PDFDict).set(PDFName.of(gStateName), gStateRef);
-          }
-          
-          // Draw the mask XObject using cm (transformation matrix) and Do operator
-          // The matrix positions and scales the image to match the design
-          const spotOps = `q /${gStateName} gs /${colorName} cs 1 scn ${maskXPts.toFixed(2)} ${maskYPts.toFixed(2)} m ${(maskXPts + maskWidthPts).toFixed(2)} ${maskYPts.toFixed(2)} l ${(maskXPts + maskWidthPts).toFixed(2)} ${(maskYPts + maskHeightPts).toFixed(2)} l ${maskXPts.toFixed(2)} ${(maskYPts + maskHeightPts).toFixed(2)} l f Q\n`;
+          spotOps += 'Q\n';
           
           const existingContents = page.node.Contents();
           if (existingContents) {
@@ -2099,7 +2107,7 @@ export async function downloadContourPDF(
             }
           }
           
-          console.log(`[PDF] Added ${colorName} spot color layer`);
+          console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} regions`);
         };
         
         // Create white spot color layer
