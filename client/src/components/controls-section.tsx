@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
-import { extractColorsFromCanvas, ExtractedColor } from "@/lib/color-extractor";
+import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
 import { Download, ChevronDown, Palette } from "lucide-react";
 
 interface ControlsSectionProps {
@@ -63,13 +63,13 @@ export default function ControlsSection({
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
-  // Extract colors when canvas or image changes
+  // Extract colors from original image (not preview canvas) to avoid contour/shape interference
   useEffect(() => {
-    if (canvasRef?.current && imageInfo) {
-      const colors = extractColorsFromCanvas(canvasRef.current, 9);
+    if (imageInfo?.image) {
+      const colors = extractColorsFromImage(imageInfo.image, 9);
       setExtractedColors(colors);
     }
-  }, [canvasRef?.current, imageInfo]);
+  }, [imageInfo]);
 
   const handleSpotColorsToggle = () => {
     if (!showSpotColors) {

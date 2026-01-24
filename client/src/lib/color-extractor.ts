@@ -111,3 +111,22 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
   
   return extractDominantColors(imageData, maxColors);
 }
+
+export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 9): ExtractedColor[] {
+  if (!image.complete || image.width === 0 || image.height === 0) return [];
+  
+  const sampleSize = Math.min(image.width, image.height, 300);
+  const scaleX = sampleSize / image.width;
+  const scaleY = sampleSize / image.height;
+  
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = Math.max(1, Math.floor(image.width * scaleX));
+  tempCanvas.height = Math.max(1, Math.floor(image.height * scaleY));
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return [];
+  
+  tempCtx.drawImage(image, 0, 0, tempCanvas.width, tempCanvas.height);
+  const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  
+  return extractDominantColors(imageData, maxColors);
+}
