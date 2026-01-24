@@ -356,6 +356,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         drawImageWithResizePreview(ctx, canvas.width, canvas.height);
       }
+      
+      // Draw PDF CutContour path if present
+      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && imageInfo.pdfCutContourInfo.cutContourPoints.length > 0) {
+        const viewPadding = 40;
+        const availableWidth = canvas.width - (viewPadding * 2);
+        const availableHeight = canvas.height - (viewPadding * 2);
+        
+        // Calculate scale to fit the contour in the preview
+        const pdfWidth = imageInfo.pdfCutContourInfo.pageWidth;
+        const pdfHeight = imageInfo.pdfCutContourInfo.pageHeight;
+        const scaleX = availableWidth / pdfWidth;
+        const scaleY = availableHeight / pdfHeight;
+        const scale = Math.min(scaleX, scaleY);
+        
+        const offsetX = viewPadding + (availableWidth - pdfWidth * scale) / 2;
+        const offsetY = viewPadding + (availableHeight - pdfHeight * scale) / 2;
+        
+        ctx.save();
+        ctx.strokeStyle = '#FF00FF'; // Magenta for CutContour
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        
+        for (const path of imageInfo.pdfCutContourInfo.cutContourPoints) {
+          if (path.length < 2) continue;
+          ctx.beginPath();
+          ctx.moveTo(offsetX + path[0].x * scale, offsetY + path[0].y * scale);
+          for (let i = 1; i < path.length; i++) {
+            ctx.lineTo(offsetX + path[i].x * scale, offsetY + path[i].y * scale);
+          }
+          ctx.stroke();
+        }
+        
+        ctx.restore();
+      }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing]);
 
     useEffect(() => {

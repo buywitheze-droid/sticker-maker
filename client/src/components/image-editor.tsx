@@ -14,6 +14,7 @@ import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
+import type { ParsedPDFData } from "@/lib/pdf-parser";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
@@ -276,6 +277,76 @@ export default function ImageEditor() {
     }
   }, [shapeSettings, stickerSize, updateCadCutBounds]);
 
+  const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
+    // Close any open dropdowns
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    
+    const { image, cutContourInfo, originalPdfData, dpi } = pdfData;
+    
+    // Create image info with PDF-specific data
+    const newImageInfo: ImageInfo = {
+      file,
+      image,
+      originalWidth: image.width,
+      originalHeight: image.height,
+      dpi,
+      isPDF: true,
+      pdfCutContourInfo: cutContourInfo,
+      originalPdfData,
+    };
+    
+    setImageInfo(newImageInfo);
+    
+    // Reset settings
+    setStrokeSettings({
+      width: 0.14,
+      color: "#ffffff",
+      enabled: false,
+      alphaThreshold: 128,
+      closeSmallGaps: false,
+      closeBigGaps: false,
+      backgroundColor: "#ffffff",
+      useCustomBackground: true,
+    });
+    setShapeSettings({
+      enabled: false,
+      type: 'square',
+      offset: 0.25,
+      fillColor: '#FFFFFF',
+      strokeEnabled: false,
+      strokeWidth: 2,
+      strokeColor: '#000000',
+      cornerRadius: 0.25,
+    });
+    
+    // If PDF has CutContour, set mode to 'contour' but disable generation
+    if (cutContourInfo.hasCutContour) {
+      setStrokeMode('none'); // Keep as none since contour is in file
+    } else {
+      setStrokeMode('none');
+    }
+    
+    setCadCutBounds(null);
+    setStickerSize(4);
+    
+    // Calculate dimensions
+    let { widthInches, heightInches } = calculateImageDimensions(image.width, image.height, dpi);
+    const maxDimension = Math.max(widthInches, heightInches);
+    if (maxDimension > 4) {
+      const scale = 4 / maxDimension;
+      widthInches = parseFloat((widthInches * scale).toFixed(2));
+      heightInches = parseFloat((heightInches * scale).toFixed(2));
+    }
+    
+    setResizeSettings(prev => ({
+      ...prev,
+      widthInches,
+      heightInches,
+    }));
+  }, []);
+
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {
       const updated = { ...prev, ...newSettings };
@@ -461,6 +532,22 @@ export default function ImageEditor() {
     setIsProcessing(true);
     
     try {
+      // Handle PDF with existing CutContour - download original PDF
+      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && imageInfo.originalPdfData && downloadType === 'cutcontour') {
+        const blob = new Blob([imageInfo.originalPdfData], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
+        link.download = `${nameWithoutExt}_with_cutcontour.pdf`;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        setIsProcessing(false);
+        return;
+      }
       if (downloadType === 'download-package') {
         // Create zip package with original and cutlines
         const canvas = document.createElement('canvas');
@@ -659,6 +746,7 @@ export default function ImageEditor() {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <UploadSection 
         onImageUpload={handleImageUpload}
+        onPDFUpload={handlePDFUpload}
         showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
       />
       

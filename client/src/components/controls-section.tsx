@@ -202,33 +202,48 @@ export default function ControlsSection({
       <div className="space-y-2">
         <Label className="text-sm font-medium text-gray-700">Outline Type</Label>
         
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => onStrokeChange({ enabled: true })}
-            className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
-              strokeSettings.enabled 
-                ? 'bg-cyan-600 text-white shadow-sm' 
-                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
-            }`}
-          >
-            Contour
-          </button>
-          
-          <button
-            onClick={() => onShapeChange({ enabled: true })}
-            className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
-              shapeSettings.enabled 
-                ? 'bg-green-600 text-white shadow-sm' 
-                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
-            }`}
-          >
-            Shape
-          </button>
-        </div>
+        {/* Show message if PDF has CutContour */}
+        {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
+          <div className="p-3 bg-green-50 border border-green-200 rounded-lg space-y-2">
+            <p className="text-sm font-medium text-green-700">Cutline already in file</p>
+            <p className="text-xs text-green-600">CutContour spot color detected in PDF</p>
+            <Button
+              onClick={() => onDownload('cutcontour', 'pdf')}
+              disabled={isProcessing}
+              className="w-full bg-green-600 hover:bg-green-700 text-white text-sm"
+            >
+              Download PDF with CutContour
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onStrokeChange({ enabled: true })}
+              className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
+                strokeSettings.enabled 
+                  ? 'bg-cyan-600 text-white shadow-sm' 
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+              }`}
+            >
+              Contour
+            </button>
+            
+            <button
+              onClick={() => onShapeChange({ enabled: true })}
+              className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
+                shapeSettings.enabled 
+                  ? 'bg-green-600 text-white shadow-sm' 
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+              }`}
+            >
+              Shape
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Contour Options */}
-      {strokeSettings.enabled && (
+      {/* Contour Options - Hidden when PDF has CutContour */}
+      {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
         <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           <button 
             onClick={handleContourOptionsToggle}

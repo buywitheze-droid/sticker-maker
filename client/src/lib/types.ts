@@ -1,9 +1,20 @@
+export interface PDFCutContourInfo {
+  hasCutContour: boolean;
+  cutContourPath: Path2D | null;
+  cutContourPoints: { x: number; y: number }[][];
+  pageWidth: number;
+  pageHeight: number;
+}
+
 export interface ImageInfo {
   file: File;
   image: HTMLImageElement;
   originalWidth: number;
   originalHeight: number;
   dpi: number;
+  isPDF?: boolean;
+  pdfCutContourInfo?: PDFCutContourInfo;
+  originalPdfData?: ArrayBuffer;
 }
 
 export interface StrokeSettings {
