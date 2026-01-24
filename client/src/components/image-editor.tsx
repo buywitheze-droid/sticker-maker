@@ -29,6 +29,7 @@ export default function ImageEditor() {
     closeSmallGaps: false, // Close gaps within 0.06" of each other
     closeBigGaps: false, // Close gaps within 0.19" of each other
     backgroundColor: "#ffffff", // Default white background for contour
+    useCustomBackground: false, // Default to edge-aware bleed
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -130,6 +131,7 @@ export default function ImageEditor() {
           closeSmallGaps: false,
           closeBigGaps: false,
           backgroundColor: "#ffffff",
+          useCustomBackground: false,
         });
         setShapeSettings({
           enabled: false,
@@ -224,6 +226,7 @@ export default function ImageEditor() {
         closeSmallGaps: false,
         closeBigGaps: false,
         backgroundColor: "#ffffff",
+        useCustomBackground: false,
       });
       setShapeSettings({
         enabled: false,

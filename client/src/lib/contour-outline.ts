@@ -1662,7 +1662,7 @@ export interface CachedContourData {
   imageOffsetX: number;
   imageOffsetY: number;
   backgroundColor: string;
-  isSolidDesign?: boolean;
+  useEdgeBleed?: boolean;
 }
 
 export interface SpotColorInput {
@@ -1853,7 +1853,7 @@ export async function downloadContourPDF(
     let imageOffsetX: number;
     let imageOffsetY: number;
     let backgroundColor: string;
-    let isSolidDesign: boolean = true; // Default to solid for fallback
+    let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
     // Use cached contour data if available (from preview worker) for instant PDF export
     if (cachedContourData && cachedContourData.pathPoints.length > 0) {
@@ -1867,10 +1867,12 @@ export async function downloadContourPDF(
       imageOffsetX = cachedContourData.imageOffsetX;
       imageOffsetY = cachedContourData.imageOffsetY;
       backgroundColor = cachedContourData.backgroundColor;
+      useEdgeBleed = cachedContourData.useEdgeBleed ?? true;
       
       console.log('[downloadContourPDF] Using cached dimensions:', {
         size: `${widthInches.toFixed(2)}x${heightInches.toFixed(2)}`,
-        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`
+        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`,
+        useEdgeBleed
       });
     } else {
       // Fallback: compute contour path (slower)
@@ -1886,12 +1888,10 @@ export async function downloadContourPDF(
       imageOffsetX = contourResult.imageOffsetX;
       imageOffsetY = contourResult.imageOffsetY;
       backgroundColor = contourResult.backgroundColor;
+      useEdgeBleed = !strokeSettings.useCustomBackground;
     }
     
-    // Always compute isSolidDesign using original image for accurate detection
-    // (cached value may be from downscaled preview, which can misclassify)
-    isSolidDesign = detectSolidDesign(image, 128);
-    console.log('[downloadContourPDF] Solid design detection:', isSolidDesign);
+    console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
     
     console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
   
@@ -1908,9 +1908,9 @@ export async function downloadContourPDF(
     const drawPath = pathPoints;
     const fillColor = backgroundColor || '#ffffff';
     
-    // For solid designs, create edge-extended canvas; for designs with gaps, use solid color
+    // For edge bleed mode, create edge-extended canvas; for custom background, use solid color
     let edgeExtendedCanvas: HTMLCanvasElement | null = null;
-    if (isSolidDesign) {
+    if (useEdgeBleed) {
       const imageDPI = image.width / resizeSettings.widthInches;
       const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
       edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
@@ -1943,8 +1943,8 @@ export async function downloadContourPDF(
           bgCtx.lineJoin = 'round';
           bgCtx.lineCap = 'round';
           
-          if (isSolidDesign && edgeExtendedCanvas) {
-            // Solid design: use edge-aware bleed
+          if (useEdgeBleed && edgeExtendedCanvas) {
+            // Edge-aware bleed: extends edge colors outward
             bgCtx.strokeStyle = 'white';
             bgCtx.stroke();
             bgCtx.fillStyle = 'white';
@@ -1954,7 +1954,7 @@ export async function downloadContourPDF(
             bgCtx.globalCompositeOperation = 'source-in';
             bgCtx.drawImage(edgeExtendedCanvas, 0, 0, bgCanvas.width, bgCanvas.height);
           } else {
-            // Design with gaps: use solid color bleed (editable)
+            // Custom background: use solid color bleed
             bgCtx.strokeStyle = fillColor;
             bgCtx.stroke();
             bgCtx.fillStyle = fillColor;

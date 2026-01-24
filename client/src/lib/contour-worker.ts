@@ -14,6 +14,7 @@ interface WorkerMessage {
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
+    useCustomBackground: boolean;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -32,7 +33,7 @@ interface WorkerResponse {
     imageOffsetX: number;
     imageOffsetY: number;
     backgroundColor: string;
-    isSolidDesign: boolean;
+    useEdgeBleed: boolean;
   };
 }
 
@@ -168,7 +169,7 @@ interface ContourResult {
     imageOffsetX: number;
     imageOffsetY: number;
     backgroundColor: string;
-    isSolidDesign: boolean;
+    useEdgeBleed: boolean;
   };
 }
 
@@ -182,6 +183,7 @@ function processContour(
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
+    useCustomBackground: boolean;
   },
   effectiveDPI: number
 ): ContourResult {
@@ -277,11 +279,11 @@ function processContour(
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  // Detect if design is solid (use edge-aware bleed) or has gaps (use solid color bleed)
-  const useSolidDesign = isSolidDesign(data, width, height, strokeSettings.alphaThreshold);
+  // Use custom background color if enabled, otherwise use edge-aware bleed
+  const useEdgeBleed = !strokeSettings.useCustomBackground;
   
-  if (useSolidDesign) {
-    // Solid design: use edge-aware bleed (extends edge colors outward)
+  if (useEdgeBleed) {
+    // Edge-aware bleed: extends edge colors outward
     const extendRadius = totalOffsetPixels + bleedPixels;
     const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
     
@@ -290,7 +292,7 @@ function processContour(
     const extendedImageOffsetY = padding - extendRadius;
     drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
   } else {
-    // Design with gaps: use solid color bleed (editable background color)
+    // Custom background: use solid color bleed
     drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
   }
   
@@ -317,7 +319,7 @@ function processContour(
       imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
       imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
       backgroundColor: strokeSettings.backgroundColor,
-      isSolidDesign: useSolidDesign
+      useEdgeBleed: useEdgeBleed
     }
   };
 }

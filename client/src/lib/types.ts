@@ -14,6 +14,7 @@ export interface StrokeSettings {
   closeSmallGaps: boolean;
   closeBigGaps: boolean;
   backgroundColor: string;
+  useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

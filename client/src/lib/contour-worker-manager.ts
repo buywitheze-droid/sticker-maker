@@ -7,6 +7,7 @@ export interface ContourData {
   imageOffsetX: number;
   imageOffsetY: number;
   backgroundColor: string;
+  useEdgeBleed: boolean;
 }
 
 interface WorkerResponse {
@@ -39,6 +40,7 @@ interface ProcessRequest {
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
+    useCustomBackground: boolean;
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -141,6 +143,7 @@ class ContourWorkerManager {
       closeSmallGaps: boolean;
       closeBigGaps: boolean;
       backgroundColor: string;
+      useCustomBackground: boolean;
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -221,6 +224,7 @@ class ContourWorkerManager {
       closeSmallGaps: boolean;
       closeBigGaps: boolean;
       backgroundColor: string;
+      useCustomBackground: boolean;
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -255,6 +259,7 @@ export async function processContourInWorker(
     closeSmallGaps: boolean;
     closeBigGaps: boolean;
     backgroundColor: string;
+    useCustomBackground: boolean;
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
