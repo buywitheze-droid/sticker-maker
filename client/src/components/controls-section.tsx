@@ -250,6 +250,7 @@ export default function ControlsSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="0">Zero Hero</SelectItem>
                     <SelectItem value="0.02">Smol</SelectItem>
                     <SelectItem value="0.04">Lil bit</SelectItem>
                     <SelectItem value="0.07">Kinda big</SelectItem>
