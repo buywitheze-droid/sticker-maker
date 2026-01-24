@@ -19,7 +19,7 @@ function colorDistance(c1: { r: number; g: number; b: number }, c2: { r: number;
   );
 }
 
-function quantizeColor(r: number, g: number, b: number, levels: number = 32): string {
+function quantizeColor(r: number, g: number, b: number, levels: number = 16): string {
   const step = 256 / levels;
   const qr = Math.floor(r / step) * step;
   const qg = Math.floor(g / step) * step;
@@ -72,7 +72,7 @@ export function extractDominantColors(
     .sort((a, b) => b.count - a.count);
 
   const mergedColors: ExtractedColor[] = [];
-  const mergeThreshold = 25;
+  const mergeThreshold = 60;
 
   for (const color of colors) {
     let merged = false;
