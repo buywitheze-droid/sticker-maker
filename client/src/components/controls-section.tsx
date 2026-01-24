@@ -66,7 +66,7 @@ export default function ControlsSection({
   // Extract colors when canvas or image changes
   useEffect(() => {
     if (canvasRef?.current && imageInfo) {
-      const colors = extractColorsFromCanvas(canvasRef.current, 6);
+      const colors = extractColorsFromCanvas(canvasRef.current, 9);
       setExtractedColors(colors);
     }
   }, [canvasRef?.current, imageInfo]);

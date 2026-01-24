@@ -29,7 +29,7 @@ function quantizeColor(r: number, g: number, b: number, levels: number = 32): st
 
 export function extractDominantColors(
   imageData: ImageData,
-  maxColors: number = 6,
+  maxColors: number = 9,
   minPercentage: number = 1
 ): ExtractedColor[] {
   const colorCounts = new Map<string, { r: number; g: number; b: number; count: number }>();
@@ -92,7 +92,7 @@ export function extractDominantColors(
   return mergedColors.slice(0, maxColors).sort((a, b) => b.percentage - a.percentage);
 }
 
-export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 6): ExtractedColor[] {
+export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 9): ExtractedColor[] {
   const ctx = canvas.getContext('2d');
   if (!ctx) return [];
   
