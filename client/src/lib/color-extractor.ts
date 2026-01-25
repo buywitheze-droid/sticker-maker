@@ -84,7 +84,7 @@ function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_
 export function extractDominantColors(
   imageData: ImageData,
   maxColors: number = 9,
-  minPercentage: number = 0.1
+  minPercentage: number = 1
 ): ExtractedColor[] {
   const paletteCounts = new Map<string, { color: typeof COLOR_PALETTE[0]; count: number }>();
   const data = imageData.data;
