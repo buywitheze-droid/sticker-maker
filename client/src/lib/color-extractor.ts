@@ -60,6 +60,17 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Teal', rgb: { r: 30, g: 150, b: 150 }, hex: '#1E9696', isNeutral: false },
   { name: 'Brown', rgb: { r: 140, g: 80, b: 40 }, hex: '#8C5028', isNeutral: false },
   
+  // Skin Tones (for character illustrations like Disney)
+  { name: 'Light Skin', rgb: { r: 255, g: 224, b: 189 }, hex: '#FFE0BD', isNeutral: false },
+  { name: 'Medium Skin', rgb: { r: 234, g: 192, b: 134 }, hex: '#EAC086', isNeutral: false },
+  { name: 'Tan Skin', rgb: { r: 198, g: 134, b: 66 }, hex: '#C68642', isNeutral: false },
+  { name: 'Dark Skin', rgb: { r: 141, g: 85, b: 36 }, hex: '#8D5524', isNeutral: false },
+  
+  // Olive variations (additional to existing Olive in greens)
+  { name: 'Dark Olive', rgb: { r: 85, g: 85, b: 0 }, hex: '#555500', isNeutral: false },
+  { name: 'Light Olive', rgb: { r: 170, g: 170, b: 85 }, hex: '#AAAA55', isNeutral: false },
+  { name: 'Olive Drab', rgb: { r: 107, g: 142, b: 35 }, hex: '#6B8E23', isNeutral: false },
+  
   // Minimal neutrals (grouped)
   { name: 'Black', rgb: { r: 30, g: 30, b: 30 }, hex: '#1E1E1E', isNeutral: true },
   { name: 'Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true },
