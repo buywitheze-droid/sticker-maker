@@ -50,7 +50,6 @@ export default function ControlsSection({
   isRemovingBackground
 }: ControlsSectionProps) {
   const { toast } = useToast();
-  const [showShapeAdvanced, setShowShapeAdvanced] = useState(false);
   const [showContourOptions, setShowContourOptions] = useState(true);
   const [showSpotColors, setShowSpotColors] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
@@ -64,10 +63,13 @@ export default function ControlsSection({
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
   // Extract colors from original image (not preview canvas) to avoid contour/shape interference
+  // Reset extracted colors when image changes to prevent stale colors from showing
   useEffect(() => {
     if (imageInfo?.image) {
       const colors = extractColorsFromImage(imageInfo.image, 9);
       setExtractedColors(colors);
+    } else {
+      setExtractedColors([]);
     }
   }, [imageInfo]);
 
@@ -471,39 +473,6 @@ export default function ControlsSection({
             <Label htmlFor="shape-color-bleed" className="text-xs text-gray-600 cursor-pointer">Color Bleed</Label>
           </div>
 
-          <button 
-            onClick={() => setShowShapeAdvanced(!showShapeAdvanced)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-          >
-            <ChevronDown className={`w-3 h-3 transition-transform ${showShapeAdvanced ? 'rotate-180' : ''}`} />
-            Advanced
-          </button>
-
-          {showShapeAdvanced && (
-            <div className="space-y-3 pt-2 border-t border-gray-200">
-              {/* Corner Radius for square/rectangle */}
-              {(shapeSettings.type === 'square' || shapeSettings.type === 'rectangle') && (
-                <div>
-                  <Label className="text-xs text-gray-600">Corner Radius</Label>
-                  <Select
-                    value={shapeSettings.cornerRadius?.toString() || "0"}
-                    onValueChange={(value) => onShapeChange({ cornerRadius: parseFloat(value) })}
-                  >
-                    <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">None</SelectItem>
-                      <SelectItem value="0.125">Small</SelectItem>
-                      <SelectItem value="0.25">Medium</SelectItem>
-                      <SelectItem value="0.5">Large</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-            </div>
-          )}
         </div>
       )}
 
