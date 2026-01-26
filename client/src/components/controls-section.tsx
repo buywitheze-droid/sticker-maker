@@ -262,7 +262,7 @@ export default function ControlsSection({
           {showContourOptions && (
             <div className="space-y-3">
               <div>
-                <Label className="text-xs text-gray-600">Thickness</Label>
+                <Label className="text-xs text-gray-600">Contour Margin</Label>
                 <Select
                   value={strokeSettings.width.toString()}
                   onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
@@ -271,13 +271,13 @@ export default function ControlsSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0">Zero Hero</SelectItem>
-                    <SelectItem value="0.02">Smol</SelectItem>
-                    <SelectItem value="0.04">Lil bit</SelectItem>
-                    <SelectItem value="0.07">Kinda big</SelectItem>
-                    <SelectItem value="0.14">Chonky</SelectItem>
-                    <SelectItem value="0.25">Thicc</SelectItem>
-                    <SelectItem value="0.5">More bigger</SelectItem>
+                    <SelectItem value="0">None</SelectItem>
+                    <SelectItem value="0.02">1/64" - Hairline</SelectItem>
+                    <SelectItem value="0.04">1/32" - Fine</SelectItem>
+                    <SelectItem value="0.07">1/16" - Standard</SelectItem>
+                    <SelectItem value="0.14">1/8" - Medium</SelectItem>
+                    <SelectItem value="0.25">1/4" - Wide</SelectItem>
+                    <SelectItem value="0.5">1/2" - Extra Wide</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -489,7 +489,7 @@ export default function ControlsSection({
           </div>
 
           <div>
-            <Label className="text-xs text-gray-600">Padding</Label>
+            <Label className="text-xs text-gray-600">Inner Padding</Label>
             <Select
               value={shapeSettings.offset.toString()}
               onValueChange={(value) => onShapeChange({ offset: parseFloat(value) })}
@@ -498,11 +498,11 @@ export default function ControlsSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="0">Zero</SelectItem>
-                <SelectItem value="0.0625">Tiny</SelectItem>
-                <SelectItem value="0.125">Small</SelectItem>
-                <SelectItem value="0.25">Medium</SelectItem>
-                <SelectItem value="0.40">Large</SelectItem>
+                <SelectItem value="0">None</SelectItem>
+                <SelectItem value="0.0625">1/16" - Minimal</SelectItem>
+                <SelectItem value="0.125">1/8" - Standard</SelectItem>
+                <SelectItem value="0.25">1/4" - Comfortable</SelectItem>
+                <SelectItem value="0.40">3/8" - Spacious</SelectItem>
               </SelectContent>
             </Select>
           </div>
