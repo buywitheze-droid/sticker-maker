@@ -57,9 +57,9 @@ export default function ResizeModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-xs bg-slate-800 border-slate-700">
+      <DialogContent className="sm:max-w-xs bg-white border-gray-200">
         <DialogHeader>
-          <DialogTitle className="text-center text-base font-medium text-slate-200">
+          <DialogTitle className="text-center text-base font-medium text-gray-700">
             Choose size
           </DialogTitle>
         </DialogHeader>
@@ -69,17 +69,17 @@ export default function ResizeModal({
             <button
               key={size.value}
               onClick={() => handleSizeSelect(size.value)}
-              className="h-10 text-sm font-medium rounded-md border border-slate-600 text-slate-300 bg-slate-700/50 hover:bg-slate-600 hover:border-slate-500 hover:text-white transition-colors"
+              className="h-10 text-sm font-medium rounded-md border border-gray-300 text-gray-600 bg-gray-50 hover:bg-gray-100 hover:border-gray-400 hover:text-gray-800 transition-colors"
             >
               {size.label}
             </button>
           ))}
         </div>
 
-        <div className="border-t border-slate-700 pt-2">
+        <div className="border-t border-gray-200 pt-2">
           <button
             onClick={() => setShowCustom(!showCustom)}
-            className="flex items-center justify-center w-full text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            className="flex items-center justify-center w-full text-xs text-gray-400 hover:text-gray-600 transition-colors"
           >
             Custom
             {showCustom ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />}
@@ -94,14 +94,14 @@ export default function ResizeModal({
                 max="12"
                 value={customSize}
                 onChange={(e) => setCustomSize(e.target.value)}
-                className="text-center text-sm h-8 bg-slate-700 border-slate-600 text-slate-200"
+                className="text-center text-sm h-8 bg-white border-gray-300 text-gray-700"
                 placeholder="Size"
               />
-              <span className="text-xs text-slate-500">in</span>
+              <span className="text-xs text-gray-500">in</span>
               <Button 
                 onClick={handleCustomConfirm}
                 size="sm"
-                className="h-8 bg-slate-600 hover:bg-slate-500 text-slate-200"
+                className="h-8 bg-gray-600 hover:bg-gray-700 text-white"
               >
                 Go
               </Button>
