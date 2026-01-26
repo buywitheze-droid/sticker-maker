@@ -1,5 +1,9 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Loader2, Smartphone, Tablet, Monitor } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
@@ -30,12 +34,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    
-    // Responsive preview state
-    const [showResponsivePreview, setShowResponsivePreview] = useState(false);
-    const [responsiveDevice, setResponsiveDevice] = useState<'phone' | 'tablet' | 'desktop'>('phone');
-    const responsiveCanvasRef = useRef<HTMLCanvasElement>(null);
-    const [responsiveKey, setResponsiveKey] = useState(0);
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -780,56 +778,80 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="lg:col-span-1">
-        <div className="bg-[#1a1a1a] rounded-lg">
-          <div className="flex items-center gap-2 p-3">
-            <div 
-              ref={containerRef}
-              onWheel={handleWheel}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseLeave}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              className={`relative flex items-center justify-center rounded-lg border border-gray-700/60 ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-200 ${showHighlight ? 'ring-2 ring-cyan-400' : ''}`}
-              style={{ 
-                height: '400px',
-                backgroundColor: getBackgroundColor(),
-                overflow: 'hidden',
-                userSelect: 'none',
-                touchAction: zoom !== 1 ? 'none' : 'auto'
-              }}
-            >
-              <canvas 
-                ref={canvasRef}
-                className="relative z-10 block"
+        <Card className="shadow-xl shadow-black/20 border-gray-700/50">
+          <CardContent className="p-6">
+            {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
+            {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+              <div className="mb-4 flex items-center space-x-3">
+                <Palette className="w-4 h-4 text-gray-600" />
+                <span className="text-sm text-gray-600">Preview Color:</span>
+                <Select value={backgroundColor} onValueChange={setBackgroundColor}>
+                  <SelectTrigger className="w-32">
+                    <SelectValue>{getColorName(backgroundColor)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="transparent">Transparent</SelectItem>
+                    <SelectItem value="#ffffff">White</SelectItem>
+                    <SelectItem value="#000000">Black</SelectItem>
+                    <SelectItem value="#f3f4f6">Light Gray</SelectItem>
+                    <SelectItem value="#1f2937">Dark Gray</SelectItem>
+                    <SelectItem value="#3b82f6">Blue</SelectItem>
+                    <SelectItem value="#ef4444">Red</SelectItem>
+                    <SelectItem value="#10b981">Green</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <div 
+                ref={containerRef}
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
-                  width: '400px',
                   height: '400px',
-                  transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
-                  transformOrigin: 'center'
+                  backgroundColor: getBackgroundColor(),
+                  overflow: 'hidden',
+                  userSelect: 'none',
+                  touchAction: zoom !== 1 ? 'none' : 'auto'
                 }}
-              />
-              
-              {!imageInfo && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <ImageIcon className="w-12 h-12 text-gray-500 mx-auto mb-3" />
-                    <p className="text-gray-400 text-sm">Drop image here</p>
+              >
+                <canvas 
+                  ref={canvasRef}
+                  className="relative z-10 block"
+                  style={{ 
+                    width: '400px',
+                    height: '400px',
+                    transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
+                    transformOrigin: 'center'
+                  }}
+                />
+                
+                {!imageInfo && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                      <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500">Upload an image to see preview</p>
+                    </div>
                   </div>
-                </div>
-              )}
-              
-              {isProcessing && imageInfo && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-20">
-                  <div className="text-center">
-                    <Loader2 className="w-6 h-6 text-white mx-auto mb-2 animate-spin" />
-                    <p className="text-white text-xs">{processingProgress}%</p>
+                )}
+                
+                {isProcessing && imageInfo && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
+                    <div className="text-center">
+                      <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
+                      <p className="text-white text-sm">Processing... {processingProgress}%</p>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
               
               {zoom !== 1 && (
                 <div className="hidden md:flex w-3 flex-col" style={{ height: '400px' }}>
@@ -866,6 +888,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 </div>
               )}
+            </div>
             
             {zoom !== 1 && (
               <div className="hidden md:flex h-3 mt-1">
@@ -904,168 +927,59 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            {/* Simple toolbar */}
-            <div className="flex items-center justify-center gap-3 mt-3 py-2">
-              <div className="flex items-center gap-1">
-                <button
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center justify-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
-                  className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-                  title="Zoom Out"
+                  className="h-8 w-8 p-0"
+                  title="Zoom Out (or scroll down)"
                 >
                   <ZoomOut className="h-4 w-4" />
-                </button>
+                </Button>
                 
-                <span className="text-xs text-gray-400 min-w-[40px] text-center">
+                <span className="text-sm text-gray-400 min-w-[50px] text-center font-medium">
                   {Math.round(zoom * 100)}%
                 </span>
                 
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-                  title="Zoom In"
+                  className="h-8 w-8 p-0"
+                  title="Zoom In (or scroll up)"
                 >
                   <ZoomIn className="h-4 w-4" />
-                </button>
-              </div>
-              
-              <div className="w-px h-4 bg-gray-600" />
-              
-              <button
-                onClick={fitToView}
-                className="text-xs text-gray-400 hover:text-white transition-colors px-2"
-                title="Fit to View"
-              >
-                Fit
-              </button>
-              
-              <button
-                onClick={resetView}
-                className="text-xs text-gray-400 hover:text-white transition-colors px-2"
-                title="Reset"
-              >
-                Reset
-              </button>
-              
-              {/* Preview background colors */}
-              {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-                <>
-                  <div className="w-px h-4 bg-gray-600" />
-                  <div className="flex items-center gap-1">
-                    {[
-                      { value: 'transparent', style: 'bg-[#333] bg-[linear-gradient(45deg,#555_25%,transparent_25%,transparent_75%,#555_75%),linear-gradient(45deg,#555_25%,transparent_25%,transparent_75%,#555_75%)] bg-[length:6px_6px] bg-[position:0_0,3px_3px]' },
-                      { value: '#ffffff', style: 'bg-white' },
-                      { value: '#000000', style: 'bg-black border-gray-500' },
-                      { value: '#1f2937', style: 'bg-gray-800' },
-                    ].map((color) => (
-                      <button
-                        key={color.value}
-                        onClick={() => setBackgroundColor(color.value)}
-                        className={`w-5 h-5 rounded border transition-all ${color.style} ${backgroundColor === color.value ? 'ring-1 ring-cyan-400' : 'border-gray-600 hover:border-gray-400'}`}
-                        title={color.value === 'transparent' ? 'Transparent' : color.value}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-              
-              {/* Responsive preview toggle */}
-              {imageInfo && (
-                <>
-                  <div className="w-px h-4 bg-gray-600" />
-                  <button
-                    onClick={() => setShowResponsivePreview(!showResponsivePreview)}
-                    className={`text-xs px-2 py-1 rounded transition-colors ${showResponsivePreview ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                    title="Responsive Preview"
-                  >
-                    <Monitor className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-            </div>
-            
-            {/* Responsive Preview Panel */}
-            {showResponsivePreview && imageInfo && canvasRef.current && (
-              <div className="mt-3 p-4 bg-[#222] rounded-lg border border-gray-700/60">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-sm text-gray-300 font-medium">Responsive Preview</span>
-                  <div className="flex items-center gap-1 bg-[#1a1a1a] rounded-lg p-1">
-                    <button
-                      onClick={() => setResponsiveDevice('phone')}
-                      className={`p-2 rounded transition-colors ${responsiveDevice === 'phone' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                      title="Phone (375px)"
-                    >
-                      <Smartphone className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => setResponsiveDevice('tablet')}
-                      className={`p-2 rounded transition-colors ${responsiveDevice === 'tablet' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                      title="Tablet (768px)"
-                    >
-                      <Tablet className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => setResponsiveDevice('desktop')}
-                      className={`p-2 rounded transition-colors ${responsiveDevice === 'desktop' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                      title="Desktop (1200px)"
-                    >
-                      <Monitor className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
+                </Button>
                 
-                <div className="flex justify-center gap-4">
-                  {/* Phone preview */}
-                  <div className={`flex flex-col items-center ${responsiveDevice === 'phone' ? 'opacity-100' : 'opacity-50'}`}>
-                    <div 
-                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
-                      style={{ width: '80px', height: '140px' }}
-                    >
-                      <img 
-                        src={canvasRef.current.toDataURL()} 
-                        alt="Phone preview"
-                        className="max-w-full max-h-full object-contain"
-                        style={{ maxWidth: '70px', maxHeight: '130px' }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-500 mt-1">Phone</span>
-                  </div>
-                  
-                  {/* Tablet preview */}
-                  <div className={`flex flex-col items-center ${responsiveDevice === 'tablet' ? 'opacity-100' : 'opacity-50'}`}>
-                    <div 
-                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
-                      style={{ width: '120px', height: '90px' }}
-                    >
-                      <img 
-                        src={canvasRef.current.toDataURL()} 
-                        alt="Tablet preview"
-                        className="max-w-full max-h-full object-contain"
-                        style={{ maxWidth: '110px', maxHeight: '80px' }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-500 mt-1">Tablet</span>
-                  </div>
-                  
-                  {/* Desktop preview */}
-                  <div className={`flex flex-col items-center ${responsiveDevice === 'desktop' ? 'opacity-100' : 'opacity-50'}`}>
-                    <div 
-                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
-                      style={{ width: '160px', height: '100px' }}
-                    >
-                      <img 
-                        src={canvasRef.current.toDataURL()} 
-                        alt="Desktop preview"
-                        className="max-w-full max-h-full object-contain"
-                        style={{ maxWidth: '150px', maxHeight: '90px' }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-500 mt-1">Desktop</span>
-                  </div>
-                </div>
+                <div className="w-px h-6 bg-gray-600 mx-2" />
+                
+                <Button 
+                  variant="outline"
+                  size="sm"
+                  onClick={fitToView}
+                  className="h-8 px-2"
+                  title="Fit to View"
+                >
+                  <Maximize2 className="h-3 w-3 mr-1" />
+                  Fit
+                </Button>
+                
+                <Button 
+                  variant="outline"
+                  size="sm"
+                  onClick={resetView}
+                  className="h-8 px-2"
+                  title="Reset zoom and position"
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset
+                </Button>
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
