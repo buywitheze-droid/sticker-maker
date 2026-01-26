@@ -1,9 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
 import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
@@ -778,31 +775,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="lg:col-span-1">
-        <Card className="shadow-xl shadow-black/20 border-gray-700/50">
-          <CardContent className="p-6">
-            {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
-            {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-              <div className="mb-4 flex items-center space-x-3">
-                <Palette className="w-4 h-4 text-gray-600" />
-                <span className="text-sm text-gray-600">Preview Color:</span>
-                <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue>{getColorName(backgroundColor)}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="transparent">Transparent</SelectItem>
-                    <SelectItem value="#ffffff">White</SelectItem>
-                    <SelectItem value="#000000">Black</SelectItem>
-                    <SelectItem value="#f3f4f6">Light Gray</SelectItem>
-                    <SelectItem value="#1f2937">Dark Gray</SelectItem>
-                    <SelectItem value="#3b82f6">Blue</SelectItem>
-                    <SelectItem value="#ef4444">Red</SelectItem>
-                    <SelectItem value="#10b981">Green</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
+        <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/90 rounded-2xl p-1 shadow-2xl shadow-black/30">
+          <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4">
             <div className="flex items-center gap-2">
               <div 
                 ref={containerRef}
@@ -814,7 +788,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
-                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                className={`relative rounded-xl border border-gray-700/50 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''} shadow-inner`}
                 style={{ 
                   height: '400px',
                   backgroundColor: getBackgroundColor(),
@@ -836,18 +810,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 
                 {!imageInfo && (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                      <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                      <p className="text-gray-500">Upload an image to see preview</p>
+                    <div className="text-center px-8">
+                      <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-gray-700/50 to-gray-800/50 flex items-center justify-center border border-gray-600/30">
+                        <ImageIcon className="w-10 h-10 text-gray-400" />
+                      </div>
+                      <p className="text-gray-400 font-medium">Drop an image here</p>
+                      <p className="text-gray-500 text-sm mt-1">or use the upload button</p>
                     </div>
                   </div>
                 )}
                 
                 {isProcessing && imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
-                    <div className="text-center">
-                      <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
-                      <p className="text-white text-sm">Processing... {processingProgress}%</p>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-20 rounded-xl">
+                    <div className="text-center bg-gray-800/80 px-6 py-4 rounded-xl border border-gray-700/50">
+                      <Loader2 className="w-8 h-8 text-cyan-400 mx-auto mb-2 animate-spin" />
+                      <p className="text-white text-sm font-medium">Processing... {processingProgress}%</p>
                     </div>
                   </div>
                 )}
@@ -927,59 +904,87 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
-                  className="h-8 w-8 p-0"
-                  title="Zoom Out (or scroll down)"
-                >
-                  <ZoomOut className="h-4 w-4" />
-                </Button>
+            {/* Modern floating toolbar */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between bg-gray-800/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-gray-700/50">
+                {/* Zoom controls */}
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
+                    className="h-8 w-8 p-0 hover:bg-gray-700/50 text-gray-300"
+                    title="Zoom Out (or scroll down)"
+                  >
+                    <ZoomOut className="h-4 w-4" />
+                  </Button>
+                  
+                  <span className="text-sm text-gray-300 min-w-[50px] text-center font-medium">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
+                    className="h-8 w-8 p-0 hover:bg-gray-700/50 text-gray-300"
+                    title="Zoom In (or scroll up)"
+                  >
+                    <ZoomIn className="h-4 w-4" />
+                  </Button>
+                  
+                  <div className="w-px h-5 bg-gray-600 mx-2" />
+                  
+                  <Button 
+                    variant="ghost"
+                    size="sm"
+                    onClick={fitToView}
+                    className="h-8 px-2 hover:bg-gray-700/50 text-gray-300"
+                    title="Fit to View"
+                  >
+                    <Maximize2 className="h-3 w-3 mr-1" />
+                    Fit
+                  </Button>
+                  
+                  <Button 
+                    variant="ghost"
+                    size="sm"
+                    onClick={resetView}
+                    className="h-8 px-2 hover:bg-gray-700/50 text-gray-300"
+                    title="Reset zoom and position"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Reset
+                  </Button>
+                </div>
                 
-                <span className="text-sm text-gray-400 min-w-[50px] text-center font-medium">
-                  {Math.round(zoom * 100)}%
-                </span>
-                
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="h-8 w-8 p-0"
-                  title="Zoom In (or scroll up)"
-                >
-                  <ZoomIn className="h-4 w-4" />
-                </Button>
-                
-                <div className="w-px h-6 bg-gray-600 mx-2" />
-                
-                <Button 
-                  variant="outline"
-                  size="sm"
-                  onClick={fitToView}
-                  className="h-8 px-2"
-                  title="Fit to View"
-                >
-                  <Maximize2 className="h-3 w-3 mr-1" />
-                  Fit
-                </Button>
-                
-                <Button 
-                  variant="outline"
-                  size="sm"
-                  onClick={resetView}
-                  className="h-8 px-2"
-                  title="Reset zoom and position"
-                >
-                  <RotateCcw className="h-3 w-3 mr-1" />
-                  Reset
-                </Button>
+                {/* Preview background color swatches */}
+                {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+                  <>
+                    <div className="w-px h-5 bg-gray-600 mx-2" />
+                    <div className="flex items-center gap-1">
+                      <Palette className="w-3 h-3 text-gray-400 mr-1" />
+                      {[
+                        { value: 'transparent', style: 'bg-gray-600 bg-[linear-gradient(45deg,#444_25%,transparent_25%,transparent_75%,#444_75%),linear-gradient(45deg,#444_25%,transparent_25%,transparent_75%,#444_75%)] bg-[length:8px_8px] bg-[position:0_0,4px_4px]' },
+                        { value: '#ffffff', style: 'bg-white' },
+                        { value: '#000000', style: 'bg-black' },
+                        { value: '#f3f4f6', style: 'bg-gray-100' },
+                        { value: '#1f2937', style: 'bg-gray-800' },
+                      ].map((color) => (
+                        <button
+                          key={color.value}
+                          onClick={() => setBackgroundColor(color.value)}
+                          className={`w-6 h-6 rounded-md border transition-all ${color.style} ${backgroundColor === color.value ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-gray-800' : 'border-gray-600 hover:border-gray-400'}`}
+                          title={color.value === 'transparent' ? 'Transparent' : color.value}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     );
   }
