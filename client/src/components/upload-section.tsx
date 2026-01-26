@@ -101,7 +101,7 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
           </p>
           {stickerSize && (
             <p className="text-xs text-gray-400">
-              Sticker size: {stickerSize}"
+              Sticker size: {stickerSize}" <span className="text-gray-300">(max w/h)</span>
             </p>
           )}
         </div>
