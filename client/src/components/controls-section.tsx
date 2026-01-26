@@ -434,11 +434,11 @@ export default function ControlsSection({
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
-                value={shapeSettings.fillColor === 'transparent' ? '#FFFFFF' : shapeSettings.fillColor}
+                value={shapeSettings.fillColor === 'transparent' || shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : shapeSettings.fillColor}
                 onChange={(e) => onShapeChange({ fillColor: e.target.value })}
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
-              <div className="flex gap-1">
+              <div className="flex gap-1 flex-wrap">
                 {/* Transparent option with red diagonal line (none symbol) */}
                 <button
                   onClick={() => onShapeChange({ fillColor: 'transparent' })}
@@ -453,6 +453,15 @@ export default function ControlsSection({
                     }}
                   />
                 </button>
+                {/* Holographic option with rainbow gradient */}
+                <button
+                  onClick={() => onShapeChange({ fillColor: 'holographic' })}
+                  className={`w-5 h-5 rounded border relative overflow-hidden ${shapeSettings.fillColor === 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                  style={{
+                    background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
+                  }}
+                  title="Holographic Preview"
+                />
                 {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
                   <button
                     key={color}
@@ -463,6 +472,12 @@ export default function ControlsSection({
                   />
                 ))}
               </div>
+              {/* Holographic label when selected */}
+              {shapeSettings.fillColor === 'holographic' && (
+                <div className="mt-1 px-2 py-0.5 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white text-xs rounded-full inline-block">
+                  Holographic Preview (prints transparent)
+                </div>
+              )}
             </div>
           </div>
 

@@ -2500,7 +2500,9 @@ export async function downloadShapePDF(
     } : { r: 1, g: 1, b: 1 };
   };
   
-  const fillColor = hexToRgb(shapeSettings.fillColor);
+  // Holographic is preview-only, exports as transparent (white fallback for PDF)
+  const effectiveFillColor = shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : shapeSettings.fillColor;
+  const fillColor = hexToRgb(effectiveFillColor);
   
   // Center coordinates
   const cx = widthPts / 2;

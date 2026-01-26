@@ -155,8 +155,9 @@ export async function downloadShapePDF(
       b: parseInt(result[3], 16) / 255
     } : { r: 1, g: 1, b: 1 };
   };
-  const fillRgb = hexToRgb(shapeSettings.fillColor);
-  const isTransparentFill = shapeSettings.fillColor === 'transparent';
+  const effectiveFillColor = shapeSettings.fillColor === 'holographic' ? 'transparent' : shapeSettings.fillColor;
+  const fillRgb = hexToRgb(effectiveFillColor);
+  const isTransparentFill = effectiveFillColor === 'transparent';
   
   const cornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
   
@@ -211,9 +212,9 @@ export async function downloadShapePDF(
     }
     ctx.fill();
     
-    // Draw fill color on top (within cut line) - skip if transparent
-    if (shapeSettings.fillColor !== 'transparent') {
-      ctx.fillStyle = shapeSettings.fillColor;
+    // Draw fill color on top (within cut line) - skip if transparent or holographic
+    if (effectiveFillColor !== 'transparent') {
+      ctx.fillStyle = effectiveFillColor;
       ctx.beginPath();
       if (shapeSettings.type === 'circle') {
         const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2;

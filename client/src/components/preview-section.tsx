@@ -610,7 +610,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.fill();
         
         // Then draw the fill color on top (within the cut line)
-        ctx.fillStyle = shapeSettings.fillColor;
+        // Handle holographic fill with animated rainbow gradient for preview
+        if (shapeSettings.fillColor === 'holographic') {
+          const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
+          gradient.addColorStop(0, '#ff6b6b');
+          gradient.addColorStop(0.17, '#feca57');
+          gradient.addColorStop(0.34, '#48dbfb');
+          gradient.addColorStop(0.51, '#ff9ff3');
+          gradient.addColorStop(0.68, '#54a0ff');
+          gradient.addColorStop(0.85, '#5f27cd');
+          gradient.addColorStop(1, '#ff6b6b');
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = shapeSettings.fillColor;
+        }
         ctx.beginPath();
         
         if (shapeSettings.type === 'circle') {
@@ -632,7 +645,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.fill();
       } else {
         // Solid fill mode
-        ctx.fillStyle = shapeSettings.fillColor;
+        // Handle holographic fill with rainbow gradient for preview
+        if (shapeSettings.fillColor === 'holographic') {
+          const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
+          gradient.addColorStop(0, '#ff6b6b');
+          gradient.addColorStop(0.17, '#feca57');
+          gradient.addColorStop(0.34, '#48dbfb');
+          gradient.addColorStop(0.51, '#ff9ff3');
+          gradient.addColorStop(0.68, '#54a0ff');
+          gradient.addColorStop(0.85, '#5f27cd');
+          gradient.addColorStop(1, '#ff6b6b');
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = shapeSettings.fillColor;
+        }
         ctx.beginPath();
         
         if (shapeSettings.type === 'circle') {

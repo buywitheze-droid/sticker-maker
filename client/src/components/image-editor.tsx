@@ -625,7 +625,8 @@ export default function ImageEditor() {
         canvas.height = outputHeight;
 
         // Draw shape background
-        ctx.fillStyle = shapeSettings.fillColor;
+        // Holographic fill downloads as transparent (preview only)
+        ctx.fillStyle = shapeSettings.fillColor === 'holographic' ? 'transparent' : shapeSettings.fillColor;
         ctx.beginPath();
         
         if (shapeSettings.type === 'circle') {
