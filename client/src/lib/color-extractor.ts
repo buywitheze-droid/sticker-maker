@@ -43,6 +43,9 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   
   // Blues - WIDER matching (maxDistance: 55) to catch various blue shades
   { name: 'Blue', rgb: { r: 40, g: 100, b: 220 }, hex: '#2864DC', isNeutral: false, maxDistance: 55 },
+  { name: 'Electric Blue', rgb: { r: 42, g: 0, b: 239 }, hex: '#2A00EF', isNeutral: false, maxDistance: 55 },
+  { name: 'Ultramarine', rgb: { r: 63, g: 0, b: 255 }, hex: '#3F00FF', isNeutral: false, maxDistance: 55 },
+  { name: 'Indigo', rgb: { r: 75, g: 0, b: 130 }, hex: '#4B0082', isNeutral: false, maxDistance: 55 },
   { name: 'Navy', rgb: { r: 0, g: 0, b: 128 }, hex: '#000080', isNeutral: false, maxDistance: 55 },
   { name: 'Royal Blue', rgb: { r: 65, g: 105, b: 225 }, hex: '#4169E1', isNeutral: false, maxDistance: 55 },
   { name: 'Cobalt', rgb: { r: 0, g: 71, b: 171 }, hex: '#0047AB', isNeutral: false, maxDistance: 55 },
