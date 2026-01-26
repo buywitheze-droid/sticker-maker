@@ -389,8 +389,8 @@ export default function ControlsSection({
         </div>
       )}
 
-      {/* Spot Colors Button & Panel - Visible in contour mode OR when PDF has CutContour */}
-      {(strokeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
+      {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
+      {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
         <>
           <Button
             variant="outline"
