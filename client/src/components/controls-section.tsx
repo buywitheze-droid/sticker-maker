@@ -287,11 +287,25 @@ export default function ControlsSection({
                 <div className="flex items-center gap-2 mt-1">
                   <input
                     type="color"
-                    value={strokeSettings.backgroundColor}
+                    value={strokeSettings.backgroundColor === 'transparent' ? '#FFFFFF' : strokeSettings.backgroundColor}
                     onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                     className="w-8 h-8 rounded cursor-pointer border border-gray-300"
                   />
                   <div className="flex gap-1">
+                    {/* Transparent option with red diagonal line (none symbol) */}
+                    <button
+                      onClick={() => onStrokeChange({ backgroundColor: 'transparent' })}
+                      className={`w-5 h-5 rounded border relative overflow-hidden ${strokeSettings.backgroundColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                      style={{ backgroundColor: '#fff' }}
+                      title="Transparent / None"
+                    >
+                      <div 
+                        className="absolute inset-0" 
+                        style={{
+                          background: 'linear-gradient(to top right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
+                        }}
+                      />
+                    </button>
                     {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
                       <button
                         key={color}
@@ -341,11 +355,25 @@ export default function ControlsSection({
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
-                value={strokeSettings.backgroundColor}
+                value={strokeSettings.backgroundColor === 'transparent' ? '#FFFFFF' : strokeSettings.backgroundColor}
                 onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
               <div className="flex gap-1">
+                {/* Transparent option with red diagonal line (none symbol) */}
+                <button
+                  onClick={() => onStrokeChange({ backgroundColor: 'transparent' })}
+                  className={`w-5 h-5 rounded border relative overflow-hidden ${strokeSettings.backgroundColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                  style={{ backgroundColor: '#fff' }}
+                  title="Transparent / None"
+                >
+                  <div 
+                    className="absolute inset-0" 
+                    style={{
+                      background: 'linear-gradient(to top right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
+                    }}
+                  />
+                </button>
                 {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
                   <button
                     key={color}
