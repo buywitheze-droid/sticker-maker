@@ -802,6 +802,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const contourX = (canvasWidth - contourWidth) / 2;
         const contourY = (canvasHeight - contourHeight) / 2;
         
+        // If holographic is selected, draw rainbow gradient behind the contour
+        if (strokeSettings.backgroundColor === 'holographic') {
+          const gradient = ctx.createLinearGradient(contourX, contourY, contourX + contourWidth, contourY + contourHeight);
+          gradient.addColorStop(0, '#ff6b6b');
+          gradient.addColorStop(0.17, '#feca57');
+          gradient.addColorStop(0.34, '#48dbfb');
+          gradient.addColorStop(0.51, '#ff9ff3');
+          gradient.addColorStop(0.68, '#54a0ff');
+          gradient.addColorStop(0.85, '#5f27cd');
+          gradient.addColorStop(1, '#ff6b6b');
+          ctx.fillStyle = gradient;
+          ctx.fillRect(contourX, contourY, contourWidth, contourHeight);
+        }
+        
         ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
