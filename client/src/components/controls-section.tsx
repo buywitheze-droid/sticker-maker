@@ -272,7 +272,7 @@ export default function ControlsSection({
               </div>
 
               <div>
-                <Label className="text-xs text-gray-600">Fill</Label>
+                <Label className="text-xs text-gray-600">Fill Color</Label>
                 <div className="flex items-center gap-2 mt-1">
                   <input
                     type="color"
