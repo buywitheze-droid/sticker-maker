@@ -211,8 +211,13 @@ export function createSilhouetteContour(
       bridgedHeight = image.height;
     }
     
-    // Step 3: Dilate by base offset to create unified silhouette
-    const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
+    // Step 3 (UNIFIED): Apply morphological closing to connect all objects into ONE shape
+    // This ensures multi-object images produce a single contour (consistent with PDF export)
+    const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI));
+    const unifiedMask = unifyDisconnectedObjects(bridgedMask, bridgedWidth, bridgedHeight, unifyRadius);
+    
+    // Step 4: Dilate by base offset to create unified silhouette
+    const baseDilatedMask = dilateSilhouette(unifiedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
     const baseWidth = bridgedWidth + baseOffsetPixels * 2;
     const baseHeight = bridgedHeight + baseOffsetPixels * 2;
     
@@ -649,6 +654,148 @@ function erodeSilhouette(mask: Uint8Array, width: number, height: number, radius
   }
   
   return eroded;
+}
+
+// Unify disconnected objects into a single shape using TRUE morphological closing
+// Closing = Dilation followed by Erosion - connects nearby objects while preserving outer boundary
+// This ensures multi-object images (cloud + wings + text) become ONE cut contour
+function unifyDisconnectedObjects(mask: Uint8Array, width: number, height: number, closingRadius: number): Uint8Array {
+  if (closingRadius <= 0) return mask;
+  
+  // Step 1: Create padded mask so erosion doesn't lose edge content
+  const paddedWidth = width + closingRadius * 2;
+  const paddedHeight = height + closingRadius * 2;
+  const paddedMask = new Uint8Array(paddedWidth * paddedHeight);
+  
+  // Copy original mask into center of padded mask
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      paddedMask[(y + closingRadius) * paddedWidth + (x + closingRadius)] = mask[y * width + x];
+    }
+  }
+  
+  // Step 2: Dilate the padded mask to connect nearby objects
+  const dilatedMask = dilateSilhouetteInPlace(paddedMask, paddedWidth, paddedHeight, closingRadius);
+  
+  // Step 3: Fill interior holes in the dilated mask
+  const filledMask = fillInteriorHolesForUnification(dilatedMask, paddedWidth, paddedHeight);
+  
+  // Step 4: Erode back to restore original boundary (this shrinks connections)
+  const erodedMask = erodeSilhouetteInPlace(filledMask, paddedWidth, paddedHeight, closingRadius);
+  
+  // Step 5: Extract center portion matching original dimensions (properly aligned)
+  const unifiedMask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      unifiedMask[y * width + x] = erodedMask[(y + closingRadius) * paddedWidth + (x + closingRadius)];
+    }
+  }
+  
+  return unifiedMask;
+}
+
+// Dilate mask in-place (same dimensions, edge pixels become solid if neighbor is solid)
+function dilateSilhouetteInPlace(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const result = new Uint8Array(width * height);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let hasNeighbor = false;
+      
+      for (let dy = -radius; dy <= radius && !hasNeighbor; dy++) {
+        for (let dx = -radius; dx <= radius && !hasNeighbor; dx++) {
+          if (dx * dx + dy * dy > radius * radius) continue;
+          
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            if (mask[ny * width + nx] === 1) {
+              hasNeighbor = true;
+            }
+          }
+        }
+      }
+      
+      result[y * width + x] = hasNeighbor ? 1 : 0;
+    }
+  }
+  
+  return result;
+}
+
+// Erode mask in-place (same dimensions, pixel only solid if all neighbors are solid)
+function erodeSilhouetteInPlace(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const result = new Uint8Array(width * height);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let allSolid = true;
+      
+      for (let dy = -radius; dy <= radius && allSolid; dy++) {
+        for (let dx = -radius; dx <= radius && allSolid; dx++) {
+          if (dx * dx + dy * dy > radius * radius) continue;
+          
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            if (mask[ny * width + nx] === 0) {
+              allSolid = false;
+            }
+          } else {
+            allSolid = false;
+          }
+        }
+      }
+      
+      result[y * width + x] = allSolid ? 1 : 0;
+    }
+  }
+  
+  return result;
+}
+
+// Fill interior holes for unification (flood fill from edges)
+function fillInteriorHolesForUnification(mask: Uint8Array, width: number, height: number): Uint8Array {
+  // Flood fill from edges to find exterior, then invert to get filled shape
+  const exterior = new Uint8Array(width * height);
+  const stack: Array<{x: number, y: number}> = [];
+  
+  // Start from all edge pixels that are empty
+  for (let x = 0; x < width; x++) {
+    if (mask[x] === 0) stack.push({x, y: 0});
+    if (mask[(height - 1) * width + x] === 0) stack.push({x, y: height - 1});
+  }
+  for (let y = 0; y < height; y++) {
+    if (mask[y * width] === 0) stack.push({x: 0, y});
+    if (mask[y * width + width - 1] === 0) stack.push({x: width - 1, y});
+  }
+  
+  // Flood fill exterior
+  while (stack.length > 0) {
+    const {x, y} = stack.pop()!;
+    
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+    
+    const idx = y * width + x;
+    if (exterior[idx] === 1 || mask[idx] === 1) continue;
+    
+    exterior[idx] = 1;
+    
+    stack.push({x: x + 1, y});
+    stack.push({x: x - 1, y});
+    stack.push({x, y: y + 1});
+    stack.push({x, y: y - 1});
+  }
+  
+  // Result: anything not exterior is filled (solid)
+  const filled = new Uint8Array(width * height);
+  for (let i = 0; i < filled.length; i++) {
+    filled[i] = exterior[i] === 0 ? 1 : 0;
+  }
+  
+  return filled;
 }
 
 interface Point {
@@ -1784,7 +1931,12 @@ export function getContourPath(
       }
     }
     
-    const baseDilatedMask = dilateSilhouette(bridgedMask, image.width, image.height, baseOffsetPixels);
+    // CRITICAL: Apply morphological closing to unify all objects into ONE shape
+    // This ensures disconnected elements (cloud, wings, text) become a single cut contour
+    const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI)); // ~0.05" or 10px minimum
+    const unifiedMask = unifyDisconnectedObjects(bridgedMask, image.width, image.height, unifyRadius);
+    
+    const baseDilatedMask = dilateSilhouette(unifiedMask, image.width, image.height, baseOffsetPixels);
     const baseWidth = image.width + baseOffsetPixels * 2;
     const baseHeight = image.height + baseOffsetPixels * 2;
     

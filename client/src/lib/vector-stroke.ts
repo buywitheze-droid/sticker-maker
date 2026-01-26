@@ -188,12 +188,18 @@ export function createVectorPaths(
   };
 }
 
-function traceImageToPath(imageData: ImageData): string[] {
+function traceImageToPath(imageData: ImageData, unifiedEnvelope: boolean = true): string[] {
   const { data, width, height } = imageData;
+  
+  if (unifiedEnvelope) {
+    // Create a single unified outer envelope around all objects
+    return traceUnifiedOuterEnvelope(data, width, height);
+  }
+  
+  // Original multi-path approach (kept for backwards compatibility)
   const paths: string[] = [];
   const visited = new Set<string>();
   
-  // Simple edge detection and path tracing
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const key = `${x},${y}`;
@@ -202,8 +208,7 @@ function traceImageToPath(imageData: ImageData): string[] {
       const idx = (y * width + x) * 4;
       const alpha = data[idx + 3];
       
-      if (alpha > 128) { // Opaque pixel
-        // Check if this is an edge pixel
+      if (alpha > 128) {
         const neighbors = [
           data[((y-1) * width + x) * 4 + 3],
           data[((y+1) * width + x) * 4 + 3],
@@ -214,9 +219,8 @@ function traceImageToPath(imageData: ImageData): string[] {
         const hasTransparentNeighbor = neighbors.some(a => a < 128);
         
         if (hasTransparentNeighbor) {
-          // This is an edge pixel, start tracing a path
           const path = tracePath(data, width, height, x, y, visited);
-          if (path.length > 10) { // Only include substantial paths
+          if (path.length > 10) {
             paths.push(path);
           }
         }
@@ -225,6 +229,281 @@ function traceImageToPath(imageData: ImageData): string[] {
   }
   
   return paths;
+}
+
+// Create a single unified outer envelope that wraps around ALL objects
+function traceUnifiedOuterEnvelope(data: Uint8ClampedArray, width: number, height: number): string[] {
+  // Step 1: Create binary mask from alpha channel
+  const mask = new Uint8Array(width * height);
+  for (let i = 0; i < mask.length; i++) {
+    mask[i] = data[i * 4 + 3] > 128 ? 1 : 0;
+  }
+  
+  // Step 2: Apply morphological closing to connect all objects
+  // DPI-aware radius: assume ~150 DPI for typical web images, use ~0.05" as closing distance
+  // Minimum 8px, maximum 30px to handle various input resolutions
+  const estimatedDPI = Math.max(72, Math.min(300, (width + height) / 10));
+  const closingRadius = Math.max(8, Math.min(30, Math.round(0.05 * estimatedDPI)));
+  const dilatedMask = dilateUnifiedMask(mask, width, height, closingRadius);
+  
+  // Step 3: Fill interior holes in the dilated mask
+  const filledMask = fillInteriorHoles(dilatedMask, width, height);
+  
+  // Step 4: Erode back to original boundary (minus the closing connections)
+  const closedMask = erodeUnifiedMask(filledMask, width, height, closingRadius);
+  
+  // Step 5: Trace ONLY the outermost boundary using Moore-Neighbor tracing
+  const outerBoundary = traceOuterBoundary(closedMask, width, height);
+  
+  if (outerBoundary.length < 10) {
+    return [];
+  }
+  
+  // Step 6: Smooth and simplify the boundary
+  const smoothedBoundary = smoothBoundaryPath(outerBoundary);
+  
+  // Convert to SVG path string
+  let pathString = `M ${smoothedBoundary[0].x} ${smoothedBoundary[0].y}`;
+  for (let i = 1; i < smoothedBoundary.length; i++) {
+    pathString += ` L ${smoothedBoundary[i].x} ${smoothedBoundary[i].y}`;
+  }
+  pathString += ' Z';
+  
+  return [pathString]; // Always return a single path
+}
+
+function dilateUnifiedMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const result = new Uint8Array(width * height);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let hasNeighbor = false;
+      
+      // Check circular neighborhood
+      for (let dy = -radius; dy <= radius && !hasNeighbor; dy++) {
+        for (let dx = -radius; dx <= radius && !hasNeighbor; dx++) {
+          if (dx * dx + dy * dy > radius * radius) continue; // Circular check
+          
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            if (mask[ny * width + nx] === 1) {
+              hasNeighbor = true;
+            }
+          }
+        }
+      }
+      
+      result[y * width + x] = hasNeighbor ? 1 : 0;
+    }
+  }
+  
+  return result;
+}
+
+function erodeUnifiedMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const result = new Uint8Array(width * height);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] === 0) continue;
+      
+      let allNeighborsSet = true;
+      
+      // Check circular neighborhood
+      for (let dy = -radius; dy <= radius && allNeighborsSet; dy++) {
+        for (let dx = -radius; dx <= radius && allNeighborsSet; dx++) {
+          if (dx * dx + dy * dy > radius * radius) continue;
+          
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            if (mask[ny * width + nx] === 0) {
+              allNeighborsSet = false;
+            }
+          } else {
+            allNeighborsSet = false;
+          }
+        }
+      }
+      
+      result[y * width + x] = allNeighborsSet ? 1 : 0;
+    }
+  }
+  
+  return result;
+}
+
+function fillInteriorHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
+  // Flood fill from edges to find exterior, then invert
+  const exterior = new Uint8Array(width * height);
+  const stack: Array<{x: number, y: number}> = [];
+  
+  // Start from all edge pixels that are empty
+  for (let x = 0; x < width; x++) {
+    if (mask[x] === 0) stack.push({x, y: 0});
+    if (mask[(height - 1) * width + x] === 0) stack.push({x, y: height - 1});
+  }
+  for (let y = 0; y < height; y++) {
+    if (mask[y * width] === 0) stack.push({x: 0, y});
+    if (mask[y * width + width - 1] === 0) stack.push({x: width - 1, y});
+  }
+  
+  // Flood fill exterior
+  while (stack.length > 0) {
+    const {x, y} = stack.pop()!;
+    const idx = y * width + x;
+    
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+    if (exterior[idx] === 1 || mask[idx] === 1) continue;
+    
+    exterior[idx] = 1;
+    
+    stack.push({x: x + 1, y});
+    stack.push({x: x - 1, y});
+    stack.push({x, y: y + 1});
+    stack.push({x, y: y - 1});
+  }
+  
+  // Result: anything not exterior is filled
+  const filled = new Uint8Array(width * height);
+  for (let i = 0; i < filled.length; i++) {
+    filled[i] = exterior[i] === 0 ? 1 : 0;
+  }
+  
+  return filled;
+}
+
+function traceOuterBoundary(mask: Uint8Array, width: number, height: number): Array<{x: number, y: number}> {
+  // Find starting point: leftmost then topmost filled pixel
+  let startX = -1, startY = -1;
+  
+  for (let x = 0; x < width && startX === -1; x++) {
+    for (let y = 0; y < height; y++) {
+      if (mask[y * width + x] === 1) {
+        startX = x;
+        startY = y;
+        break;
+      }
+    }
+  }
+  
+  if (startX === -1) return [];
+  
+  // Moore-Neighbor boundary tracing (always traces outer boundary only)
+  const boundary: Array<{x: number, y: number}> = [];
+  const directions = [
+    {dx: 1, dy: 0},   // 0: right
+    {dx: 1, dy: 1},   // 1: down-right
+    {dx: 0, dy: 1},   // 2: down
+    {dx: -1, dy: 1},  // 3: down-left
+    {dx: -1, dy: 0},  // 4: left
+    {dx: -1, dy: -1}, // 5: up-left
+    {dx: 0, dy: -1},  // 6: up
+    {dx: 1, dy: -1}   // 7: up-right
+  ];
+  
+  let x = startX;
+  let y = startY;
+  let dir = 0; // Start looking right
+  let steps = 0;
+  const maxSteps = width * height * 2;
+  
+  do {
+    boundary.push({x, y});
+    
+    // Find next boundary pixel by checking neighbors counter-clockwise
+    let found = false;
+    const startDir = (dir + 5) % 8; // Start search from 3 positions back
+    
+    for (let i = 0; i < 8; i++) {
+      const checkDir = (startDir + i) % 8;
+      const nx = x + directions[checkDir].dx;
+      const ny = y + directions[checkDir].dy;
+      
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        if (mask[ny * width + nx] === 1) {
+          x = nx;
+          y = ny;
+          dir = checkDir;
+          found = true;
+          break;
+        }
+      }
+    }
+    
+    if (!found) break;
+    steps++;
+    
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
+  
+  return boundary;
+}
+
+function smoothBoundaryPath(boundary: Array<{x: number, y: number}>): Array<{x: number, y: number}> {
+  if (boundary.length < 10) return boundary;
+  
+  // Step 1: Reduce point density (keep every Nth point)
+  const skipFactor = Math.max(1, Math.floor(boundary.length / 500));
+  let reduced = boundary.filter((_, i) => i % skipFactor === 0);
+  
+  // Step 2: Apply smoothing filter
+  const smoothed: Array<{x: number, y: number}> = [];
+  const n = reduced.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = reduced[(i - 1 + n) % n];
+    const curr = reduced[i];
+    const next = reduced[(i + 1) % n];
+    
+    smoothed.push({
+      x: Math.round((prev.x + curr.x * 2 + next.x) / 4),
+      y: Math.round((prev.y + curr.y * 2 + next.y) / 4)
+    });
+  }
+  
+  // Step 3: Douglas-Peucker simplification
+  return douglasPeuckerSimplify(smoothed, 2);
+}
+
+function douglasPeuckerSimplify(points: Array<{x: number, y: number}>, tolerance: number): Array<{x: number, y: number}> {
+  if (points.length <= 2) return points;
+  
+  let maxDistance = 0;
+  let maxIndex = 0;
+  
+  const first = points[0];
+  const last = points[points.length - 1];
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const distance = perpendicularDistance(points[i], first, last);
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      maxIndex = i;
+    }
+  }
+  
+  if (maxDistance > tolerance) {
+    const left = douglasPeuckerSimplify(points.slice(0, maxIndex + 1), tolerance);
+    const right = douglasPeuckerSimplify(points.slice(maxIndex), tolerance);
+    return left.slice(0, -1).concat(right);
+  } else {
+    return [first, last];
+  }
+}
+
+function perpendicularDistance(point: {x: number, y: number}, lineStart: {x: number, y: number}, lineEnd: {x: number, y: number}): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  
+  if (length === 0) {
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  return Math.abs(dx * (lineStart.y - point.y) - (lineStart.x - point.x) * dy) / length;
 }
 
 function tracePath(
