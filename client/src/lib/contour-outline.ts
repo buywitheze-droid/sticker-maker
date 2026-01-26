@@ -1906,18 +1906,26 @@ export async function downloadContourPDF(
     const bleedInches = 0.10;
     const bleedPixels = bleedInches * bgDPI;
     const drawPath = pathPoints;
-    const fillColor = backgroundColor || '#ffffff';
+    // Holographic and transparent mean no background fill - skip background layer
+    const isTransparentBackground = !backgroundColor || backgroundColor === 'transparent' || backgroundColor === 'holographic';
+    const fillColor = isTransparentBackground ? 'transparent' : backgroundColor;
     
     // For edge bleed mode, create edge-extended canvas; for custom background, use solid color
     let edgeExtendedCanvas: HTMLCanvasElement | null = null;
-    if (useEdgeBleed) {
+    if (useEdgeBleed && !isTransparentBackground) {
       const imageDPI = image.width / resizeSettings.widthInches;
       const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
       edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
     }
     
     // Create background canvas (edge-aware for solid designs, solid color for designs with gaps)
-    const createBackgroundBlob = (): Promise<Blob> => {
+    // Skip entirely for transparent/holographic backgrounds
+    const createBackgroundBlob = (): Promise<Blob | null> => {
+      // Skip background layer for transparent backgrounds
+      if (isTransparentBackground) {
+        return Promise.resolve(null);
+      }
+      
       return new Promise((resolve, reject) => {
         const bgCanvas = document.createElement('canvas');
         const bgCtx = bgCanvas.getContext('2d');
@@ -2008,22 +2016,22 @@ export async function downloadContourPDF(
       createDesignBlob()
     ]);
     
-    // Convert blobs to bytes in parallel
-    const [bgPngBytes, pngBytes] = await Promise.all([
-      bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
-      designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
-    ]);
+    // Convert design blob to bytes (background may be null for transparent)
+    const pngBytes = await designBlob.arrayBuffer().then(buf => new Uint8Array(buf));
     
-    // Embed images in PDF as PNG for better quality
-    const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
-    
-    // Draw the background raster image first
-    page.drawImage(bgPngImage, {
-      x: 0,
-      y: 0,
-      width: widthPts,
-      height: heightPts,
-    });
+    // Only draw background if we have one (skip for transparent/holographic)
+    if (bgBlob) {
+      const bgPngBytes = await bgBlob.arrayBuffer().then(buf => new Uint8Array(buf));
+      const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
+      
+      // Draw the background raster image first
+      page.drawImage(bgPngImage, {
+        x: 0,
+        y: 0,
+        width: widthPts,
+        height: heightPts,
+      });
+    }
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   

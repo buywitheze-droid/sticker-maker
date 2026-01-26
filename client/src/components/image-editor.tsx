@@ -625,8 +625,8 @@ export default function ImageEditor() {
         canvas.height = outputHeight;
 
         // Draw shape background
-        // Holographic fill downloads as transparent (preview only)
-        ctx.fillStyle = shapeSettings.fillColor === 'holographic' ? 'transparent' : shapeSettings.fillColor;
+        // Holographic fill downloads as transparent (preview only) - skip fill entirely
+        const isHolographicFill = shapeSettings.fillColor === 'holographic';
         ctx.beginPath();
         
         if (shapeSettings.type === 'circle') {
@@ -647,7 +647,11 @@ export default function ImageEditor() {
           ctx.rect(0, 0, outputWidth, outputHeight);
         }
         
-        ctx.fill();
+        // Only fill if not holographic - holographic downloads as transparent
+        if (!isHolographicFill) {
+          ctx.fillStyle = shapeSettings.fillColor;
+          ctx.fill();
+        }
 
         // Draw cutlines in magenta
         ctx.strokeStyle = '#FF00FF';
