@@ -62,7 +62,7 @@ export default function ResizeModal({
           <DialogTitle className="text-center text-base font-medium text-gray-700">
             Choose size
           </DialogTitle>
-          <p className="text-center text-xs text-gray-400 mt-1">max width or height</p>
+          <p className="text-center text-xs text-gray-500 mt-1 italic">longest side</p>
         </DialogHeader>
 
         <div className="grid grid-cols-4 gap-2 py-2">

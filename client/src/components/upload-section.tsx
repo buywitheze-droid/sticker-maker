@@ -90,19 +90,32 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
 
       {/* Image Info */}
       {imageInfo && resizeSettings && (
-        <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 shadow-sm space-y-1">
+        <div className="mt-3 p-4 bg-gradient-to-br from-slate-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
           {imageInfo.file?.name && (
-            <p className="text-xs text-gray-600 truncate" title={imageInfo.file.name}>
+            <p className="text-sm font-semibold text-gray-700 truncate mb-2" title={imageInfo.file.name}>
               {imageInfo.file.name}
             </p>
           )}
-          <p className="text-xs text-gray-500">
-            {resizeSettings.widthInches.toFixed(2)}" × {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
-          </p>
+          <div className="flex items-center gap-3 text-gray-600">
+            <div className="text-center">
+              <p className="text-lg font-bold text-cyan-600">{resizeSettings.widthInches.toFixed(1)}"</p>
+              <p className="text-[10px] uppercase tracking-wide text-gray-400">width</p>
+            </div>
+            <span className="text-gray-300 text-lg">×</span>
+            <div className="text-center">
+              <p className="text-lg font-bold text-cyan-600">{resizeSettings.heightInches.toFixed(1)}"</p>
+              <p className="text-[10px] uppercase tracking-wide text-gray-400">height</p>
+            </div>
+            <div className="ml-auto text-right">
+              <p className="text-sm font-medium text-gray-500">{resizeSettings.outputDPI} DPI</p>
+            </div>
+          </div>
           {stickerSize && (
-            <p className="text-xs text-gray-400">
-              Sticker size: {stickerSize}" <span className="text-gray-300">(max w/h)</span>
-            </p>
+            <div className="mt-3 pt-2 border-t border-gray-200">
+              <p className="text-xs text-gray-500">
+                Sticker: <span className="font-semibold text-gray-700">{stickerSize}"</span> <span className="italic">(longest side)</span>
+              </p>
+            </div>
           )}
         </div>
       )}
