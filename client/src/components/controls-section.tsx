@@ -326,27 +326,36 @@ export default function ControlsSection({
                   onClick={() => onStrokeChange({ 
                     backgroundColor: strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : 'holographic' 
                   })}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
                     strokeSettings.backgroundColor === 'holographic' 
-                      ? 'border-transparent bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white' 
-                      : 'border-gray-300 bg-white hover:bg-gray-50'
+                      ? 'border-purple-400 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white shadow-purple-200' 
+                      : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <div 
-                      className="w-5 h-5 rounded border border-white/30"
+                      className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                       style={{
                         background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
                       }}
                     />
-                    <span className="text-sm font-medium">Holographic Preview</span>
+                    <span className="text-sm font-semibold">Holographic Preview</span>
                   </div>
-                  <span className={`text-xs ${strokeSettings.backgroundColor === 'holographic' ? 'text-white/80' : 'text-gray-500'}`}>
-                    {strokeSettings.backgroundColor === 'holographic' ? 'ON' : 'OFF'}
-                  </span>
+                  {/* Toggle switch style */}
+                  <div className={`relative w-11 h-6 rounded-full transition-all ${
+                    strokeSettings.backgroundColor === 'holographic' 
+                      ? 'bg-white/30' 
+                      : 'bg-gray-200'
+                  }`}>
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
+                      strokeSettings.backgroundColor === 'holographic' 
+                        ? 'right-0.5 bg-white' 
+                        : 'left-0.5 bg-gray-400'
+                    }`} />
+                  </div>
                 </button>
                 {strokeSettings.backgroundColor === 'holographic' && (
-                  <p className="mt-1 text-xs text-gray-500">Shows rainbow effect in preview. Downloads as transparent.</p>
+                  <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
                 )}
               </div>
               
@@ -424,27 +433,36 @@ export default function ControlsSection({
             onClick={() => onStrokeChange({ 
               backgroundColor: strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : 'holographic' 
             })}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
               strokeSettings.backgroundColor === 'holographic' 
-                ? 'border-transparent bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white' 
-                : 'border-gray-300 bg-white hover:bg-gray-50'
+                ? 'border-purple-400 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white shadow-purple-200' 
+                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
             }`}
           >
             <div className="flex items-center gap-2">
               <div 
-                className="w-5 h-5 rounded border border-white/30"
+                className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                 style={{
                   background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
                 }}
               />
-              <span className="text-sm font-medium">Holographic Preview</span>
+              <span className="text-sm font-semibold">Holographic Preview</span>
             </div>
-            <span className={`text-xs ${strokeSettings.backgroundColor === 'holographic' ? 'text-white/80' : 'text-gray-500'}`}>
-              {strokeSettings.backgroundColor === 'holographic' ? 'ON' : 'OFF'}
-            </span>
+            {/* Toggle switch style */}
+            <div className={`relative w-11 h-6 rounded-full transition-all ${
+              strokeSettings.backgroundColor === 'holographic' 
+                ? 'bg-white/30' 
+                : 'bg-gray-200'
+            }`}>
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
+                strokeSettings.backgroundColor === 'holographic' 
+                  ? 'right-0.5 bg-white' 
+                  : 'left-0.5 bg-gray-400'
+              }`} />
+            </div>
           </button>
           {strokeSettings.backgroundColor === 'holographic' && (
-            <p className="text-xs text-gray-500">Shows rainbow effect in preview. Downloads as transparent.</p>
+            <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
           )}
         </div>
       )}
@@ -532,27 +550,36 @@ export default function ControlsSection({
             onClick={() => onShapeChange({ 
               fillColor: shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : 'holographic' 
             })}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
               shapeSettings.fillColor === 'holographic' 
-                ? 'border-transparent bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white' 
-                : 'border-gray-300 bg-white hover:bg-gray-50'
+                ? 'border-purple-400 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white shadow-purple-200' 
+                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
             }`}
           >
             <div className="flex items-center gap-2">
               <div 
-                className="w-5 h-5 rounded border border-white/30"
+                className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                 style={{
                   background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
                 }}
               />
-              <span className="text-sm font-medium">Holographic Preview</span>
+              <span className="text-sm font-semibold">Holographic Preview</span>
             </div>
-            <span className={`text-xs ${shapeSettings.fillColor === 'holographic' ? 'text-white/80' : 'text-gray-500'}`}>
-              {shapeSettings.fillColor === 'holographic' ? 'ON' : 'OFF'}
-            </span>
+            {/* Toggle switch style */}
+            <div className={`relative w-11 h-6 rounded-full transition-all ${
+              shapeSettings.fillColor === 'holographic' 
+                ? 'bg-white/30' 
+                : 'bg-gray-200'
+            }`}>
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
+                shapeSettings.fillColor === 'holographic' 
+                  ? 'right-0.5 bg-white' 
+                  : 'left-0.5 bg-gray-400'
+              }`} />
+            </div>
           </button>
           {shapeSettings.fillColor === 'holographic' && (
-            <p className="text-xs text-gray-500">Shows rainbow effect in preview. Downloads as transparent.</p>
+            <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
           )}
 
           <div>
