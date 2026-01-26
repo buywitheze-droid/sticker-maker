@@ -235,13 +235,6 @@ function processContour(
   
   postProgress(40);
   
-  // Two-step smoothing approach for reduced nodes and smoother cut paths:
-  // - For positive offset: first shrink by smoothingAmount, then expand by (offset + smoothingAmount)
-  // - For zero offset: first expand by smoothingAmount, then shrink by smoothingAmount
-  const smoothingInches = 0.1; // 0.1" smoothing intermediate step
-  const smoothingPixels = Math.round(smoothingInches * effectiveDPI);
-  
-  // First, apply base dilation and fill
   const baseDilatedMask = dilateSilhouette(autoBridgedMask, width, height, baseOffsetPixels);
   const baseWidth = width + baseOffsetPixels * 2;
   const baseHeight = height + baseOffsetPixels * 2;
@@ -250,51 +243,11 @@ function processContour(
   
   const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
   
-  postProgress(55);
-  
-  // Apply two-step smoothing for cleaner paths with fewer nodes
-  let smoothedMask: Uint8Array;
-  let smoothedWidth: number;
-  let smoothedHeight: number;
-  
-  if (userOffsetPixels === 0) {
-    // Zero hero mode: dilate first, then erode back
-    // This smooths the edge without changing final position
-    const expandedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, smoothingPixels);
-    const expandedWidth = baseWidth + smoothingPixels * 2;
-    const expandedHeight = baseHeight + smoothingPixels * 2;
-    
-    // Erode back to original size
-    smoothedMask = erodeSilhouette(expandedMask, expandedWidth, expandedHeight, smoothingPixels);
-    smoothedWidth = expandedWidth - smoothingPixels * 2;
-    smoothedHeight = expandedHeight - smoothingPixels * 2;
-  } else {
-    // Positive offset mode: erode first, then dilate more
-    // The erosion removes small details, then we expand to final size
-    const erodedMask = erodeSilhouette(filledMask, baseWidth, baseHeight, smoothingPixels);
-    const erodedWidth = baseWidth - smoothingPixels * 2;
-    const erodedHeight = baseHeight - smoothingPixels * 2;
-    
-    // If erosion eliminated the mask, fall back to direct dilation
-    if (erodedWidth <= 0 || erodedHeight <= 0 || !hasContent(erodedMask)) {
-      // Fall back to direct dilation without smoothing
-      smoothedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-      smoothedWidth = baseWidth + userOffsetPixels * 2;
-      smoothedHeight = baseHeight + userOffsetPixels * 2;
-    } else {
-      // Dilate by (userOffset + smoothingAmount) to reach final size
-      const totalDilation = userOffsetPixels + smoothingPixels;
-      smoothedMask = dilateSilhouette(erodedMask, erodedWidth, erodedHeight, totalDilation);
-      smoothedWidth = erodedWidth + totalDilation * 2;
-      smoothedHeight = erodedHeight + totalDilation * 2;
-    }
-  }
-  
   postProgress(60);
   
-  const finalDilatedMask = smoothedMask;
-  const dilatedWidth = smoothedWidth;
-  const dilatedHeight = smoothedHeight;
+  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+  const dilatedWidth = baseWidth + userOffsetPixels * 2;
+  const dilatedHeight = baseHeight + userOffsetPixels * 2;
   
   postProgress(70);
   
@@ -454,60 +407,6 @@ function dilateSilhouette(mask: Uint8Array, width: number, height: number, radiu
         for (let i = 0; i < offsets.length; i++) {
           result[centerIdx + offsets[i]] = 1;
         }
-      }
-    }
-  }
-  
-  return result;
-}
-
-// Check if mask has any content (at least one pixel set)
-function hasContent(mask: Uint8Array): boolean {
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i] === 1) return true;
-  }
-  return false;
-}
-
-// Morphological erosion - shrinks the mask by radius
-// Returns a smaller mask (width - 2*radius, height - 2*radius)
-function erodeSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  // Erosion shrinks the mask, so output is smaller
-  const newWidth = Math.max(1, width - radius * 2);
-  const newHeight = Math.max(1, height - radius * 2);
-  const result = new Uint8Array(newWidth * newHeight);
-  
-  if (newWidth <= 0 || newHeight <= 0) {
-    return result;
-  }
-  
-  const radiusSq = radius * radius;
-  
-  // For each pixel in the output, check if ALL pixels within radius in the input are set
-  for (let y = 0; y < newHeight; y++) {
-    for (let x = 0; x < newWidth; x++) {
-      const srcX = x + radius;
-      const srcY = y + radius;
-      
-      let allSet = true;
-      for (let dy = -radius; dy <= radius && allSet; dy++) {
-        for (let dx = -radius; dx <= radius && allSet; dx++) {
-          if (dx * dx + dy * dy <= radiusSq) {
-            const checkX = srcX + dx;
-            const checkY = srcY + dy;
-            if (checkX >= 0 && checkX < width && checkY >= 0 && checkY < height) {
-              if (mask[checkY * width + checkX] === 0) {
-                allSet = false;
-              }
-            } else {
-              allSet = false;
-            }
-          }
-        }
-      }
-      
-      if (allSet) {
-        result[y * newWidth + x] = 1;
       }
     }
   }
@@ -1904,8 +1803,7 @@ function createOutputWithImage(
       heightInches,
       imageOffsetX: padding / effectiveDPI,
       imageOffsetY: padding / effectiveDPI,
-      backgroundColor,
-      useEdgeBleed: false
+      backgroundColor
     }
   };
 }
