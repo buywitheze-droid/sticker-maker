@@ -28,6 +28,13 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
+  // Detect if image contains text or small complex shapes that need extra smoothing
+  const hasTextOrSmallShapes = detectTextOrSmallShapes(image, strokeSettings.alphaThreshold);
+  
+  // Extra offset for text/small shapes (0.05") to create smoother contours
+  const textExtraOffsetInches = hasTextOrSmallShapes ? 0.05 : 0;
+  const textExtraOffsetPixels = Math.round(textExtraOffsetInches * effectiveDPI);
+  
   // Auto-bridge offset (0.02") - always applied to bridge outlines within 0.02" of each other
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
@@ -43,8 +50,8 @@ export function createSilhouetteContour(
   // User-selected offset on top of base
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
-  // Total offset is base + user selection (gap close doesn't add to outline size)
-  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+  // Total offset is base + user selection + text extra offset (gap close doesn't add to outline size)
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels + textExtraOffsetPixels;
   
   // Canvas needs extra space for the total contour offset
   const padding = totalOffsetPixels + 10;
@@ -224,10 +231,11 @@ export function createSilhouetteContour(
     // Step 4: Fill the base silhouette to create solid shape
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // Step 5: Dilate the filled silhouette by user-selected offset
-    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-    const dilatedWidth = baseWidth + userOffsetPixels * 2;
-    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    // Step 5: Dilate the filled silhouette by user-selected offset + text extra offset
+    const combinedUserOffset = userOffsetPixels + textExtraOffsetPixels;
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, combinedUserOffset);
+    const dilatedWidth = baseWidth + combinedUserOffset * 2;
+    const dilatedHeight = baseHeight + combinedUserOffset * 2;
     
     // Step 5a: Auto-bridge any touching or nearly touching contours after dilation
     // This detects where contour outlines are touching and fills the gaps
@@ -242,7 +250,9 @@ export function createSilhouetteContour(
     }
     
     // Step 6: Smooth and simplify the path
-    let smoothedPath = smoothPath(boundaryPath, 2);
+    // Apply extra smoothing for text/small shapes (window size 4 vs 2 for normal)
+    const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
+    let smoothedPath = smoothPath(boundaryPath, smoothingWindow);
     
     // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -269,6 +279,107 @@ export function createSilhouetteContour(
   }
   
   return canvas;
+}
+
+// Detect if image contains text or small complex shapes that benefit from extra smoothing
+// Looks for high edge-to-area ratio (lots of detail relative to size) and multiple disconnected regions
+function detectTextOrSmallShapes(image: HTMLImageElement, alphaThreshold: number): boolean {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  
+  canvas.width = image.width;
+  canvas.height = image.height;
+  ctx.drawImage(image, 0, 0);
+  
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  
+  let edgeCount = 0;
+  let opaqueCount = 0;
+  let componentCount = 0;
+  
+  // Create visited array for component counting
+  const visited = new Uint8Array(canvas.width * canvas.height);
+  
+  for (let y = 1; y < canvas.height - 1; y++) {
+    for (let x = 1; x < canvas.width - 1; x++) {
+      const idx = y * canvas.width + x;
+      const alpha = data[idx * 4 + 3];
+      
+      if (alpha >= alphaThreshold) {
+        opaqueCount++;
+        
+        // Count as edge if any neighbor is transparent
+        const neighbors = [
+          data[((y - 1) * canvas.width + x) * 4 + 3],
+          data[((y + 1) * canvas.width + x) * 4 + 3],
+          data[(y * canvas.width + (x - 1)) * 4 + 3],
+          data[(y * canvas.width + (x + 1)) * 4 + 3],
+        ];
+        
+        if (neighbors.some(n => n < alphaThreshold)) {
+          edgeCount++;
+        }
+        
+        // Count connected components using simple flood fill
+        if (!visited[idx]) {
+          componentCount++;
+          const queue = [idx];
+          visited[idx] = 1;
+          
+          while (queue.length > 0 && queue.length < 10000) { // Limit to avoid infinite loops
+            const current = queue.pop()!;
+            const cx = current % canvas.width;
+            const cy = Math.floor(current / canvas.width);
+            
+            // Check 4 neighbors
+            const neighborCoords = [
+              [cx, cy - 1], [cx, cy + 1], [cx - 1, cy], [cx + 1, cy]
+            ];
+            
+            for (const [nx, ny] of neighborCoords) {
+              if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
+                const nidx = ny * canvas.width + nx;
+                if (!visited[nidx] && data[nidx * 4 + 3] >= alphaThreshold) {
+                  visited[nidx] = 1;
+                  queue.push(nidx);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  if (opaqueCount === 0) return false;
+  
+  // Calculate edge-to-area ratio (higher = more detailed/complex shapes)
+  const edgeRatio = edgeCount / opaqueCount;
+  
+  // Text typically has:
+  // - High edge ratio (> 0.15) due to thin strokes with lots of edges
+  // - Multiple components (individual letters)
+  // - Relatively small total area
+  
+  const hasHighEdgeRatio = edgeRatio > 0.12;
+  const hasMultipleComponents = componentCount >= 3;
+  const hasSmallTotalArea = opaqueCount < (canvas.width * canvas.height * 0.4);
+  
+  // Consider it text/small shapes if it has high edge ratio OR multiple small components
+  const isTextLike = (hasHighEdgeRatio && hasSmallTotalArea) || 
+                     (hasMultipleComponents && hasHighEdgeRatio);
+  
+  if (isTextLike) {
+    console.log('[detectTextOrSmallShapes] Detected text/small shapes:', {
+      edgeRatio: edgeRatio.toFixed(3),
+      componentCount,
+      opaqueRatio: (opaqueCount / (canvas.width * canvas.height)).toFixed(3)
+    });
+  }
+  
+  return isTextLike;
 }
 
 // Fill interior of silhouette using flood fill from edges
