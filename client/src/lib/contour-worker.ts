@@ -191,9 +191,11 @@ function processContour(
   const height = imageData.height;
   const data = imageData.data;
   
-  // Holographic is preview-only, exports as transparent
-  const effectiveBackgroundColor = strokeSettings.backgroundColor === 'holographic' 
-    ? 'transparent' 
+  // Holographic uses white as placeholder for preview (will be replaced with gradient in UI)
+  // Export functions will treat holographic as transparent separately
+  const isHolographic = strokeSettings.backgroundColor === 'holographic';
+  const effectiveBackgroundColor = isHolographic 
+    ? '#FFFFFF' 
     : strokeSettings.backgroundColor;
   
   const baseOffsetInches = 0.015;
@@ -323,7 +325,7 @@ function processContour(
       heightInches,
       imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
       imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
-      backgroundColor: effectiveBackgroundColor,
+      backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
       useEdgeBleed: useEdgeBleed
     }
   };

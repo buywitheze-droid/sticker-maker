@@ -802,21 +802,27 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const contourX = (canvasWidth - contourWidth) / 2;
         const contourY = (canvasHeight - contourHeight) / 2;
         
-        // If holographic is selected, we need to composite the gradient onto the contour shape
+        // If holographic is selected, replace the white placeholder with holographic gradient
         if (strokeSettings.backgroundColor === 'holographic') {
-          // Create a temporary canvas to composite the holographic effect
+          // Create a temporary canvas to apply the holographic effect
           const tempCanvas = document.createElement('canvas');
           tempCanvas.width = contourCanvas.width;
           tempCanvas.height = contourCanvas.height;
           const tempCtx = tempCanvas.getContext('2d')!;
           
-          // First draw the contour canvas (which has transparent background where holographic should go)
+          // Draw the contour canvas (which has white background as placeholder)
           tempCtx.drawImage(contourCanvas, 0, 0);
           
-          // Use destination-over to draw the gradient BEHIND the existing content
-          // This fills the transparent areas (the bleed zone) with the holographic gradient
-          tempCtx.globalCompositeOperation = 'destination-over';
-          const gradient = tempCtx.createLinearGradient(0, 0, tempCanvas.width, tempCanvas.height);
+          // Get image data to replace white pixels with gradient
+          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          const pixels = imageData.data;
+          
+          // Create gradient canvas
+          const gradientCanvas = document.createElement('canvas');
+          gradientCanvas.width = tempCanvas.width;
+          gradientCanvas.height = tempCanvas.height;
+          const gradCtx = gradientCanvas.getContext('2d')!;
+          const gradient = gradCtx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
           gradient.addColorStop(0, '#ff6b6b');
           gradient.addColorStop(0.17, '#feca57');
           gradient.addColorStop(0.34, '#48dbfb');
@@ -824,10 +830,27 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           gradient.addColorStop(0.68, '#54a0ff');
           gradient.addColorStop(0.85, '#5f27cd');
           gradient.addColorStop(1, '#ff6b6b');
-          tempCtx.fillStyle = gradient;
-          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+          gradCtx.fillStyle = gradient;
+          gradCtx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
+          const gradientData = gradCtx.getImageData(0, 0, gradientCanvas.width, gradientCanvas.height);
+          const gradPixels = gradientData.data;
           
-          // Draw the composited result
+          // Replace white/near-white pixels with gradient colors
+          for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i];
+            const g = pixels[i + 1];
+            const b = pixels[i + 2];
+            const a = pixels[i + 3];
+            
+            // Check if pixel is white/near-white (the placeholder background)
+            if (a > 200 && r > 240 && g > 240 && b > 240) {
+              pixels[i] = gradPixels[i];
+              pixels[i + 1] = gradPixels[i + 1];
+              pixels[i + 2] = gradPixels[i + 2];
+            }
+          }
+          
+          tempCtx.putImageData(imageData, 0, 0);
           ctx.drawImage(tempCanvas, contourX, contourY, contourWidth, contourHeight);
         } else {
           ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
