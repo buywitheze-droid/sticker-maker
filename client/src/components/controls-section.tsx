@@ -467,11 +467,23 @@ export default function ControlsSection({
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
-                value={shapeSettings.fillColor}
+                value={shapeSettings.fillColor === 'transparent' ? '#FFFFFF' : shapeSettings.fillColor}
                 onChange={(e) => onShapeChange({ fillColor: e.target.value })}
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
               <div className="flex gap-1">
+                {/* Transparent option with checkerboard pattern */}
+                <button
+                  onClick={() => onShapeChange({ fillColor: 'transparent' })}
+                  className={`w-5 h-5 rounded border ${shapeSettings.fillColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                  style={{ 
+                    backgroundImage: 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)',
+                    backgroundSize: '6px 6px',
+                    backgroundPosition: '0 0, 0 3px, 3px -3px, -3px 0px',
+                    backgroundColor: '#fff'
+                  }}
+                  title="Transparent"
+                />
                 {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
                   <button
                     key={color}

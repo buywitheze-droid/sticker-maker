@@ -147,6 +147,7 @@ export async function downloadShapePDF(
   
   // Convert hex fill color to RGB values (0-1 range)
   const hexToRgb = (hex: string) => {
+    if (hex === 'transparent') return null;
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? {
       r: parseInt(result[1], 16) / 255,
@@ -155,6 +156,7 @@ export async function downloadShapePDF(
     } : { r: 1, g: 1, b: 1 };
   };
   const fillRgb = hexToRgb(shapeSettings.fillColor);
+  const isTransparentFill = shapeSettings.fillColor === 'transparent';
   
   const cornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
   
@@ -209,30 +211,32 @@ export async function downloadShapePDF(
     }
     ctx.fill();
     
-    // Draw fill color on top (within cut line)
-    ctx.fillStyle = shapeSettings.fillColor;
-    ctx.beginPath();
-    if (shapeSettings.type === 'circle') {
-      const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2;
-      ctx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
-    } else if (shapeSettings.type === 'oval') {
-      ctx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2, shapeHeightPx / 2, 0, 0, Math.PI * 2);
-    } else if (shapeSettings.type === 'square') {
-      const size = Math.min(shapeWidthPx, shapeHeightPx);
-      const sx = shapeX + (shapeWidthPx - size) / 2;
-      const sy = shapeY + (shapeHeightPx - size) / 2;
-      ctx.rect(sx, sy, size, size);
-    } else if (shapeSettings.type === 'rounded-square') {
-      const size = Math.min(shapeWidthPx, shapeHeightPx);
-      const sx = shapeX + (shapeWidthPx - size) / 2;
-      const sy = shapeY + (shapeHeightPx - size) / 2;
-      ctx.roundRect(sx, sy, size, size, cornerRadiusPx);
-    } else if (shapeSettings.type === 'rounded-rectangle') {
-      ctx.roundRect(shapeX, shapeY, shapeWidthPx, shapeHeightPx, cornerRadiusPx);
-    } else {
-      ctx.rect(shapeX, shapeY, shapeWidthPx, shapeHeightPx);
+    // Draw fill color on top (within cut line) - skip if transparent
+    if (shapeSettings.fillColor !== 'transparent') {
+      ctx.fillStyle = shapeSettings.fillColor;
+      ctx.beginPath();
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2;
+        ctx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'oval') {
+        ctx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2, shapeHeightPx / 2, 0, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(shapeWidthPx, shapeHeightPx);
+        const sx = shapeX + (shapeWidthPx - size) / 2;
+        const sy = shapeY + (shapeHeightPx - size) / 2;
+        ctx.rect(sx, sy, size, size);
+      } else if (shapeSettings.type === 'rounded-square') {
+        const size = Math.min(shapeWidthPx, shapeHeightPx);
+        const sx = shapeX + (shapeWidthPx - size) / 2;
+        const sy = shapeY + (shapeHeightPx - size) / 2;
+        ctx.roundRect(sx, sy, size, size, cornerRadiusPx);
+      } else if (shapeSettings.type === 'rounded-rectangle') {
+        ctx.roundRect(shapeX, shapeY, shapeWidthPx, shapeHeightPx, cornerRadiusPx);
+      } else {
+        ctx.rect(shapeX, shapeY, shapeWidthPx, shapeHeightPx);
+      }
+      ctx.fill();
     }
-    ctx.fill();
     
     // Draw image clipped to cut line shape
     ctx.save();
@@ -275,57 +279,59 @@ export async function downloadShapePDF(
       height: heightPts,
     });
   } else {
-    // Solid fill background mode
-    let bgPathOps = 'q\n';
-    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
-    
-    if (shapeSettings.type === 'circle') {
-      const r = Math.min(widthPts, heightPts) / 2;
-      const k = 0.5522847498;
-      const rk = r * k;
-      bgPathOps += `${cx + r} ${cy} m\n`;
-      bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-      bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-      bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-      bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
-    } else if (shapeSettings.type === 'oval') {
-      const rx = widthPts / 2;
-      const ry = heightPts / 2;
-      const k = 0.5522847498;
-      const rxk = rx * k;
-      const ryk = ry * k;
-      bgPathOps += `${cx + rx} ${cy} m\n`;
-      bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-      bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-      bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-      bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
-    } else if (shapeSettings.type === 'square') {
-      const size = Math.min(widthPts, heightPts);
-      const sx = (widthPts - size) / 2;
-      const sy = (heightPts - size) / 2;
-      bgPathOps += `${sx} ${sy} m\n`;
-      bgPathOps += `${sx + size} ${sy} l\n`;
-      bgPathOps += `${sx + size} ${sy + size} l\n`;
-      bgPathOps += `${sx} ${sy + size} l\n`;
-    } else if (shapeSettings.type === 'rounded-square') {
-      const size = Math.min(widthPts, heightPts);
-      const sx = (widthPts - size) / 2;
-      const sy = (heightPts - size) / 2;
-      bgPathOps += getRoundedRectPath(sx, sy, size, size, cornerRadiusPts);
-    } else if (shapeSettings.type === 'rounded-rectangle') {
-      bgPathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cornerRadiusPts);
-    } else {
-      bgPathOps += `0 0 m\n`;
-      bgPathOps += `${widthPts} 0 l\n`;
-      bgPathOps += `${widthPts} ${heightPts} l\n`;
-      bgPathOps += `0 ${heightPts} l\n`;
+    // Solid fill background mode - skip if transparent
+    if (!isTransparentFill && fillRgb) {
+      let bgPathOps = 'q\n';
+      bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
+      
+      if (shapeSettings.type === 'circle') {
+        const r = Math.min(widthPts, heightPts) / 2;
+        const k = 0.5522847498;
+        const rk = r * k;
+        bgPathOps += `${cx + r} ${cy} m\n`;
+        bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
+        bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
+        bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
+        bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
+      } else if (shapeSettings.type === 'oval') {
+        const rx = widthPts / 2;
+        const ry = heightPts / 2;
+        const k = 0.5522847498;
+        const rxk = rx * k;
+        const ryk = ry * k;
+        bgPathOps += `${cx + rx} ${cy} m\n`;
+        bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
+        bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
+        bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
+        bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(widthPts, heightPts);
+        const sx = (widthPts - size) / 2;
+        const sy = (heightPts - size) / 2;
+        bgPathOps += `${sx} ${sy} m\n`;
+        bgPathOps += `${sx + size} ${sy} l\n`;
+        bgPathOps += `${sx + size} ${sy + size} l\n`;
+        bgPathOps += `${sx} ${sy + size} l\n`;
+      } else if (shapeSettings.type === 'rounded-square') {
+        const size = Math.min(widthPts, heightPts);
+        const sx = (widthPts - size) / 2;
+        const sy = (heightPts - size) / 2;
+        bgPathOps += getRoundedRectPath(sx, sy, size, size, cornerRadiusPts);
+      } else if (shapeSettings.type === 'rounded-rectangle') {
+        bgPathOps += getRoundedRectPath(0, 0, widthPts, heightPts, cornerRadiusPts);
+      } else {
+        bgPathOps += `0 0 m\n`;
+        bgPathOps += `${widthPts} 0 l\n`;
+        bgPathOps += `${widthPts} ${heightPts} l\n`;
+        bgPathOps += `0 ${heightPts} l\n`;
+      }
+      bgPathOps += 'h f\n';
+      bgPathOps += 'Q\n';
+      
+      const bgStream = context.stream(bgPathOps);
+      const bgStreamRef = context.register(bgStream);
+      page.node.set(PDFName.of('Contents'), bgStreamRef);
     }
-    bgPathOps += 'h f\n';
-    bgPathOps += 'Q\n';
-    
-    const bgStream = context.stream(bgPathOps);
-    const bgStreamRef = context.register(bgStream);
-    page.node.set(PDFName.of('Contents'), bgStreamRef);
     
     // Draw the original image on top
     const blob = await new Promise<Blob>((resolve) => {
