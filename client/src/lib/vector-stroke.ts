@@ -231,12 +231,36 @@ function traceImageToPath(imageData: ImageData, unifiedEnvelope: boolean = true)
   return paths;
 }
 
+// Check if a pixel is a valid content pixel (not a dark semi-transparent artifact)
+function isValidContentPixel(data: Uint8ClampedArray, idx: number): boolean {
+  const r = data[idx];
+  const g = data[idx + 1];
+  const b = data[idx + 2];
+  const alpha = data[idx + 3];
+  
+  // Skip fully/mostly transparent pixels
+  if (alpha <= 10) return false;
+  
+  // For semi-transparent pixels, filter out dark/grey artifacts
+  if (alpha < 200) {
+    const brightness = (r + g + b) / 3;
+    
+    // Dark semi-transparent = likely artifact from bad background removal
+    const isDarkArtifact = brightness < 80 && alpha < 150;
+    const isGreyArtifact = brightness < 120 && alpha < 100;
+    
+    if (isDarkArtifact || isGreyArtifact) return false;
+  }
+  
+  return true;
+}
+
 // Create a single unified outer envelope that wraps around ALL objects
 function traceUnifiedOuterEnvelope(data: Uint8ClampedArray, width: number, height: number): string[] {
-  // Step 1: Create binary mask from alpha channel
+  // Step 1: Create binary mask with smart artifact filtering
   const mask = new Uint8Array(width * height);
   for (let i = 0; i < mask.length; i++) {
-    mask[i] = data[i * 4 + 3] > 128 ? 1 : 0;
+    mask[i] = isValidContentPixel(data, i * 4) ? 1 : 0;
   }
   
   // Step 2: Apply morphological closing to connect all objects
@@ -844,10 +868,9 @@ function findTransparentBoundary(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const index = (y * width + x) * 4;
-      const alpha = data[index + 3];
       
-      // Check if this pixel is opaque
-      if (alpha > 128) {
+      // Check if this pixel is valid content (filters out dark semi-transparent artifacts)
+      if (isValidContentPixel(data, index)) {
         // Check surrounding pixels for transparency
         let isBoundary = false;
         
@@ -860,10 +883,9 @@ function findTransparentBoundary(
             
             if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
               const neighborIndex = (ny * width + nx) * 4;
-              const neighborAlpha = data[neighborIndex + 3];
               
-              // If any neighbor is transparent, this is a boundary pixel
-              if (neighborAlpha <= 128) {
+              // If any neighbor is not valid content, this is a boundary pixel
+              if (!isValidContentPixel(data, neighborIndex)) {
                 isBoundary = true;
                 break;
               }

@@ -222,6 +222,26 @@ function createAlphaShape(points: ContourPoint[], alpha: number): ContourPoint[]
   return result;
 }
 
+// Check if a pixel is valid content (not a dark semi-transparent artifact)
+function isValidContentPixelFromData(data: Uint8ClampedArray, idx: number): boolean {
+  const r = data[idx];
+  const g = data[idx + 1];
+  const b = data[idx + 2];
+  const alpha = data[idx + 3];
+  
+  if (alpha <= 10) return false;
+  
+  // Filter out dark/grey semi-transparent artifacts from bad background removal
+  if (alpha < 200) {
+    const brightness = (r + g + b) / 3;
+    const isDarkArtifact = brightness < 80 && alpha < 150;
+    const isGreyArtifact = brightness < 120 && alpha < 100;
+    if (isDarkArtifact || isGreyArtifact) return false;
+  }
+  
+  return true;
+}
+
 function createMorphologicalContour(
   data: Uint8ClampedArray,
   width: number,
@@ -229,10 +249,10 @@ function createMorphologicalContour(
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
   strokeSettings: StrokeSettings
 ): ContourPoint[] {
-  // Create binary mask using alpha threshold
+  // Create binary mask with smart artifact filtering
   const mask = new Uint8Array(width * height);
   for (let i = 0; i < data.length; i += 4) {
-    mask[i / 4] = data[i + 3] >= strokeSettings.alphaThreshold ? 1 : 0;
+    mask[i / 4] = isValidContentPixelFromData(data, i) ? 1 : 0;
   }
 
   // Apply morphological closing to connect nearby objects

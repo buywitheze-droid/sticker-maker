@@ -535,11 +535,41 @@ function createMaskAtResolution(image: HTMLImageElement, targetWidth: number, ta
   const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
   const data = imageData.data;
   
-  // Create binary silhouette: 1 = any visible pixel (alpha > 0), 0 = fully transparent
-  // Using a low threshold (10) to catch even semi-transparent edges
+  // Create binary silhouette with smart artifact filtering
+  // Filters out semi-transparent dark/grey pixels from bad background removal
   const mask = new Uint8Array(targetWidth * targetHeight);
   for (let i = 0; i < mask.length; i++) {
-    mask[i] = data[i * 4 + 3] > 10 ? 1 : 0;
+    const idx = i * 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    const alpha = data[idx + 3];
+    
+    // Skip fully transparent pixels
+    if (alpha <= 10) {
+      mask[i] = 0;
+      continue;
+    }
+    
+    // For semi-transparent pixels (alpha 11-200), apply artifact filtering
+    if (alpha < 200) {
+      // Calculate brightness (0-255)
+      const brightness = (r + g + b) / 3;
+      
+      // Dark semi-transparent pixels are likely artifacts from bad background removal
+      // The darker and more transparent, the more likely it's an artifact
+      // Reject if: low alpha + dark color (common in low DPI / bad cutout edges)
+      const isDarkArtifact = brightness < 80 && alpha < 150;
+      const isGreyArtifact = brightness < 120 && alpha < 100;
+      
+      if (isDarkArtifact || isGreyArtifact) {
+        mask[i] = 0;
+        continue;
+      }
+    }
+    
+    // Accept pixel as part of the silhouette
+    mask[i] = 1;
   }
   
   return mask;
