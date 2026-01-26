@@ -311,7 +311,7 @@ export default function ControlsSection({
                       <button
                         key={color}
                         onClick={() => onStrokeChange({ backgroundColor: color })}
-                        className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                        className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color && strokeSettings.backgroundColor !== 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
                         style={{ backgroundColor: color }}
                         title={color}
                       />
@@ -324,7 +324,7 @@ export default function ControlsSection({
               <div className="pt-2 border-t border-gray-200">
                 <button
                   onClick={() => onStrokeChange({ 
-                    backgroundColor: strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : 'holographic' 
+                    backgroundColor: strokeSettings.backgroundColor === 'holographic' ? 'transparent' : 'holographic' 
                   })}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
                     strokeSettings.backgroundColor === 'holographic' 
@@ -419,7 +419,7 @@ export default function ControlsSection({
                   <button
                     key={color}
                     onClick={() => onStrokeChange({ backgroundColor: color })}
-                    className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                    className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color && strokeSettings.backgroundColor !== 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
                     style={{ backgroundColor: color }}
                     title={color}
                   />
@@ -431,7 +431,7 @@ export default function ControlsSection({
           {/* Holographic Preview Toggle - Separate from fill */}
           <button
             onClick={() => onStrokeChange({ 
-              backgroundColor: strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : 'holographic' 
+              backgroundColor: strokeSettings.backgroundColor === 'holographic' ? 'transparent' : 'holographic' 
             })}
             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
               strokeSettings.backgroundColor === 'holographic' 
@@ -536,7 +536,7 @@ export default function ControlsSection({
                   <button
                     key={color}
                     onClick={() => onShapeChange({ fillColor: color })}
-                    className={`w-5 h-5 rounded border ${shapeSettings.fillColor === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                    className={`w-5 h-5 rounded border ${shapeSettings.fillColor === color && shapeSettings.fillColor !== 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
                     style={{ backgroundColor: color }}
                     title={color}
                   />
@@ -548,7 +548,7 @@ export default function ControlsSection({
           {/* Holographic Preview Toggle - Separate from fill */}
           <button
             onClick={() => onShapeChange({ 
-              fillColor: shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : 'holographic' 
+              fillColor: shapeSettings.fillColor === 'holographic' ? 'transparent' : 'holographic' 
             })}
             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
               shapeSettings.fillColor === 'holographic' 
