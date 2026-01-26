@@ -16,6 +16,7 @@ import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline"
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
 import type { ParsedPDFData } from "@/lib/pdf-parser";
+import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
@@ -159,28 +160,44 @@ export default function ImageEditor() {
     // Apply the pending image info
     setImageInfo(pendingImageInfo);
     
+    // Detect shape from image (threshold must match detectShape's internal confidenceThreshold of 0.88)
+    const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
+    const detectionResult = detectShape(pendingImageInfo.image);
+    const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
+    const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
+    
     // Reset all settings to defaults when new image is uploaded
+    // If shape detected, enable shape mode; otherwise default to contour mode
     setStrokeSettings({
       width: 0.14,
       color: "#ffffff",
-      enabled: false,
+      enabled: !shouldAutoApplyShape,
       alphaThreshold: 128,
       closeSmallGaps: false,
       closeBigGaps: false,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
     });
-    setShapeSettings({
-      enabled: false,
-      type: 'square',
+    
+    // Apply detected shape or default settings
+    const newShapeSettings: ShapeSettings = {
+      enabled: shouldAutoApplyShape,
+      type: detectedShapeType || 'square',
       offset: 0.25,
       fillColor: '#FFFFFF',
       strokeEnabled: false,
       strokeWidth: 2,
       strokeColor: '#000000',
       cornerRadius: 0.25,
-    });
-    setStrokeMode('none');
+    };
+    setShapeSettings(newShapeSettings);
+    
+    // Auto-apply shape mode if detected, otherwise default to contour for irregular shapes
+    if (shouldAutoApplyShape) {
+      setStrokeMode('shape');
+    } else {
+      setStrokeMode('contour');
+    }
     setCadCutBounds(null);
     
     // Apply the user-selected resize dimensions
@@ -197,26 +214,14 @@ export default function ImageEditor() {
     const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
     setStickerSize(fittingSize as StickerSize);
     
-    // Use the default shape settings for bounds check (not stale closure)
-    const defaultShapeSettings: ShapeSettings = {
-      enabled: false,
-      type: 'square',
-      offset: 0.25,
-      fillColor: '#FFFFFF',
-      strokeEnabled: false,
-      strokeWidth: 2,
-      strokeColor: '#000000',
-      cornerRadius: 0.25,
-    };
-    
-    // Initial bounds check
+    // Initial bounds check with the actual shape settings being applied
     const shapeDims = calculateShapeDimensions(
       widthInches,
       heightInches,
-      'square',
-      0.25
+      newShapeSettings.type,
+      newShapeSettings.offset
     );
-    updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, defaultShapeSettings);
+    updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
     
     // Close modal and clear pending state
     setShowResizeModal(false);
@@ -267,30 +272,45 @@ export default function ImageEditor() {
 
       setImageInfo(newImageInfo);
 
-      // Reset all settings to defaults when new image is uploaded
+      // Detect shape from image (same logic as handleResizeConfirm)
+      const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
+      const detectionResult = detectShape(finalImage);
+      const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
+      const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
+
+      // Reset all settings - if shape detected, enable shape mode; otherwise default to contour
       setStrokeSettings({
         width: 0.14,
         color: "#ffffff",
-        enabled: false,
+        enabled: !shouldAutoApplyShape,
         alphaThreshold: 128,
         closeSmallGaps: false,
         closeBigGaps: false,
         backgroundColor: "#ffffff",
-        useCustomBackground: true, // Default to solid background color
+        useCustomBackground: true,
       });
-      setShapeSettings({
-        enabled: false,
-        type: 'square',
+      
+      const newShapeSettings: ShapeSettings = {
+        enabled: shouldAutoApplyShape,
+        type: detectedShapeType || 'square',
         offset: 0.25,
         fillColor: '#FFFFFF',
         strokeEnabled: false,
         strokeWidth: 2,
         strokeColor: '#000000',
         cornerRadius: 0.25,
-      });
-      setStrokeMode('none');
+      };
+      setShapeSettings(newShapeSettings);
+      
+      // Auto-apply shape mode if detected, otherwise default to contour
+      if (shouldAutoApplyShape) {
+        setStrokeMode('shape');
+      } else {
+        setStrokeMode('contour');
+      }
+      
       setCadCutBounds(null);
-      setStickerSize(4); // Reset to default 4 inch
+      setStickerSize(4);
 
       setResizeSettings(prev => ({
         ...prev,
@@ -298,14 +318,14 @@ export default function ImageEditor() {
         heightInches,
       }));
       
-      // Initial bounds check using auto-sized shape dimensions
+      // Initial bounds check with actual shape settings
       const shapeDims = calculateShapeDimensions(
         widthInches,
         heightInches,
-        shapeSettings.type,
-        shapeSettings.offset
+        newShapeSettings.type,
+        newShapeSettings.offset
       );
-      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
+      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
     };
 
     if (croppedCanvas) {
@@ -313,7 +333,7 @@ export default function ImageEditor() {
     } else {
       processImage();
     }
-  }, [shapeSettings, stickerSize, updateCadCutBounds]);
+  }, [stickerSize, updateCadCutBounds]);
 
   const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
     // Close any open dropdowns
