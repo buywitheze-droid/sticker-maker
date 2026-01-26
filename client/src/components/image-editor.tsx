@@ -785,6 +785,9 @@ export default function ImageEditor() {
         onImageUpload={handleImageUpload}
         onPDFUpload={handlePDFUpload}
         showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
+        imageInfo={imageInfo}
+        resizeSettings={resizeSettings}
+        stickerSize={stickerSize}
       />
       
       <div className="relative preview-container">

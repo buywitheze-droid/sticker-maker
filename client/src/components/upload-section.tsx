@@ -1,14 +1,18 @@
 import { useCallback } from "react";
 import { Upload } from "lucide-react";
 import { parsePDF, isPDFFile, type ParsedPDFData } from "@/lib/pdf-parser";
+import type { ImageInfo, ResizeSettings } from "./image-editor";
 
 interface UploadSectionProps {
   onImageUpload: (file: File, image: HTMLImageElement) => void;
   onPDFUpload?: (file: File, pdfData: ParsedPDFData) => void;
   showCutLineInfo?: boolean;
+  imageInfo?: ImageInfo | null;
+  resizeSettings?: ResizeSettings | null;
+  stickerSize?: number;
 }
 
-export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineInfo = false }: UploadSectionProps) {
+export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineInfo = false, imageInfo, resizeSettings, stickerSize }: UploadSectionProps) {
   const handleFileUpload = useCallback(async (file: File) => {
     if (isPDFFile(file)) {
       if (onPDFUpload) {
@@ -84,11 +88,30 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
         />
       </div>
 
+      {/* Image Info */}
+      {imageInfo && resizeSettings && (
+        <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 shadow-sm space-y-1">
+          {imageInfo.file?.name && (
+            <p className="text-xs text-gray-600 truncate" title={imageInfo.file.name}>
+              {imageInfo.file.name}
+            </p>
+          )}
+          <p className="text-xs text-gray-500">
+            {resizeSettings.widthInches.toFixed(2)}" × {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
+          </p>
+          {stickerSize && (
+            <p className="text-xs text-gray-400">
+              Sticker size: {stickerSize}"
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Cut Line Info */}
       {showCutLineInfo && (
         <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 text-center shadow-sm">
           <p className="text-xs text-gray-500">
-            <span className="text-red-500 font-medium">Red outline</span> = cut line
+            <span className="text-pink-500 font-medium">Pink Outline</span> = CutContour
           </p>
         </div>
       )}
