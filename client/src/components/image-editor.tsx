@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection from "./controls-section";
+import ResizeModal from "./resize-modal";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
@@ -54,6 +55,9 @@ export default function ImageEditor() {
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRemovingBackground, setIsRemovingBackground] = useState(false);
+  const [showResizeModal, setShowResizeModal] = useState(false);
+  const [detectedDimensions, setDetectedDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -128,58 +132,13 @@ export default function ImageEditor() {
           dpi,
         };
         
-        setImageInfo(newImageInfo);
+        // Calculate detected dimensions in inches
+        const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
         
-        // Reset all settings to defaults when new image is uploaded
-        setStrokeSettings({
-          width: 0.14,
-          color: "#ffffff",
-          enabled: false,
-          alphaThreshold: 128,
-          closeSmallGaps: false,
-          closeBigGaps: false,
-          backgroundColor: "#ffffff",
-          useCustomBackground: true, // Default to solid background color
-        });
-        setShapeSettings({
-          enabled: false,
-          type: 'square',
-          offset: 0.25,
-          fillColor: '#FFFFFF',
-          strokeEnabled: false,
-          strokeWidth: 2,
-          strokeColor: '#000000',
-          cornerRadius: 0.25,
-        });
-        setStrokeMode('none');
-        setCadCutBounds(null);
-        setStickerSize(4); // Reset to default 4 inch
-        
-        // Update resize settings based on cropped image
-        let { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
-        
-        // Always resize to fit within the selected sticker size
-        const maxDimension = Math.max(widthInches, heightInches);
-        if (maxDimension > stickerSize) {
-          const scale = stickerSize / maxDimension;
-          widthInches = parseFloat((widthInches * scale).toFixed(2));
-          heightInches = parseFloat((heightInches * scale).toFixed(2));
-        }
-        
-        setResizeSettings(prev => ({
-          ...prev,
-          widthInches,
-          heightInches,
-        }));
-        
-        // Initial bounds check using auto-sized shape dimensions
-        const shapeDims = calculateShapeDimensions(
-          widthInches,
-          heightInches,
-          shapeSettings.type,
-          shapeSettings.offset
-        );
-        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
+        // Store pending info and show resize modal
+        setPendingImageInfo(newImageInfo);
+        setDetectedDimensions({ width: widthInches, height: heightInches });
+        setShowResizeModal(true);
       };
       
       croppedImage.onerror = () => {
@@ -193,6 +152,83 @@ export default function ImageEditor() {
       handleFallbackImage(file, image);
     }
   }, [shapeSettings, stickerSize, updateCadCutBounds]);
+
+  const handleResizeConfirm = useCallback((widthInches: number, heightInches: number) => {
+    if (!pendingImageInfo) return;
+    
+    // Apply the pending image info
+    setImageInfo(pendingImageInfo);
+    
+    // Reset all settings to defaults when new image is uploaded
+    setStrokeSettings({
+      width: 0.14,
+      color: "#ffffff",
+      enabled: false,
+      alphaThreshold: 128,
+      closeSmallGaps: false,
+      closeBigGaps: false,
+      backgroundColor: "#ffffff",
+      useCustomBackground: true,
+    });
+    setShapeSettings({
+      enabled: false,
+      type: 'square',
+      offset: 0.25,
+      fillColor: '#FFFFFF',
+      strokeEnabled: false,
+      strokeWidth: 2,
+      strokeColor: '#000000',
+      cornerRadius: 0.25,
+    });
+    setStrokeMode('none');
+    setCadCutBounds(null);
+    
+    // Apply the user-selected resize dimensions
+    setResizeSettings(prev => ({
+      ...prev,
+      widthInches,
+      heightInches,
+    }));
+    
+    // Update sticker size to fit the selected dimensions
+    // Find the smallest valid sticker size that fits the design
+    const maxDim = Math.max(widthInches, heightInches);
+    const validSizes: StickerSize[] = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5];
+    const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
+    setStickerSize(fittingSize as StickerSize);
+    
+    // Use the default shape settings for bounds check (not stale closure)
+    const defaultShapeSettings: ShapeSettings = {
+      enabled: false,
+      type: 'square',
+      offset: 0.25,
+      fillColor: '#FFFFFF',
+      strokeEnabled: false,
+      strokeWidth: 2,
+      strokeColor: '#000000',
+      cornerRadius: 0.25,
+    };
+    
+    // Initial bounds check
+    const shapeDims = calculateShapeDimensions(
+      widthInches,
+      heightInches,
+      'square',
+      0.25
+    );
+    updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, defaultShapeSettings);
+    
+    // Close modal and clear pending state
+    setShowResizeModal(false);
+    setPendingImageInfo(null);
+    setDetectedDimensions(null);
+  }, [pendingImageInfo, updateCadCutBounds]);
+
+  const handleResizeModalClose = useCallback(() => {
+    setShowResizeModal(false);
+    setPendingImageInfo(null);
+    setDetectedDimensions(null);
+  }, []);
 
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
@@ -791,6 +827,17 @@ export default function ImageEditor() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Resize Modal */}
+      {detectedDimensions && (
+        <ResizeModal
+          open={showResizeModal}
+          onClose={handleResizeModalClose}
+          onConfirm={handleResizeConfirm}
+          detectedWidth={detectedDimensions.width}
+          detectedHeight={detectedDimensions.height}
+        />
       )}
     </div>
   );
