@@ -125,8 +125,9 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Light Olive', rgb: { r: 170, g: 170, b: 85 }, hex: '#AAAA55', isNeutral: false },
   { name: 'Olive Drab', rgb: { r: 107, g: 142, b: 35 }, hex: '#6B8E23', isNeutral: false },
   
-  // Minimal neutrals (grouped into 3 gray levels with wide matching)
-  { name: 'Black', rgb: { r: 20, g: 20, b: 20 }, hex: '#141414', isNeutral: true, maxDistance: 35 },
+  // Minimal neutrals (grouped into 2 black levels + 3 gray levels with wide matching)
+  { name: 'Dark Black', rgb: { r: 10, g: 10, b: 10 }, hex: '#0A0A0A', isNeutral: true, maxDistance: 25 },
+  { name: 'Light Black', rgb: { r: 40, g: 40, b: 40 }, hex: '#282828', isNeutral: true, maxDistance: 25 },
   { name: 'Dark Gray', rgb: { r: 64, g: 64, b: 64 }, hex: '#404040', isNeutral: true, maxDistance: 40 },
   { name: 'Medium Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true, maxDistance: 40 },
   { name: 'Light Gray', rgb: { r: 192, g: 192, b: 192 }, hex: '#C0C0C0', isNeutral: true, maxDistance: 40 },
