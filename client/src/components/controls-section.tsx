@@ -472,18 +472,20 @@ export default function ControlsSection({
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
               <div className="flex gap-1">
-                {/* Transparent option with checkerboard pattern */}
+                {/* Transparent option with red diagonal line (none symbol) */}
                 <button
                   onClick={() => onShapeChange({ fillColor: 'transparent' })}
-                  className={`w-5 h-5 rounded border ${shapeSettings.fillColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
-                  style={{ 
-                    backgroundImage: 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)',
-                    backgroundSize: '6px 6px',
-                    backgroundPosition: '0 0, 0 3px, 3px -3px, -3px 0px',
-                    backgroundColor: '#fff'
-                  }}
-                  title="Transparent"
-                />
+                  className={`w-5 h-5 rounded border relative overflow-hidden ${shapeSettings.fillColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                  style={{ backgroundColor: '#fff' }}
+                  title="Transparent / None"
+                >
+                  <div 
+                    className="absolute inset-0" 
+                    style={{
+                      background: 'linear-gradient(to top right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
+                    }}
+                  />
+                </button>
                 {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
                   <button
                     key={color}
