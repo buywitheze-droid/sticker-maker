@@ -1016,7 +1016,13 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
   // Simplify to reduce point count with higher tolerance for smoother result
-  return douglasPeucker(fineSmoothed, 1.5);
+  let simplified = douglasPeucker(fineSmoothed, 1.5);
+  
+  // Remove nearly-collinear points to clean up straight edges
+  // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
+  simplified = removeCollinearPoints(simplified, 2.0);
+  
+  return simplified;
 }
 
 // Chaikin's corner cutting algorithm for smooth curves
@@ -1809,6 +1815,58 @@ function douglasPeucker(points: Point[], epsilon: number): Point[] {
   } else {
     return [first, last];
   }
+}
+
+// Remove nearly-collinear points on straight segments
+// This cleans up micro-curves that should be straight lines
+// Uses angle-based detection: if deviation from straight line is < threshold degrees, remove point
+function removeCollinearPoints(points: Point[], angleTolerance: number = 2.0): Point[] {
+  if (points.length < 3) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  const cosThreshold = Math.cos((angleTolerance * Math.PI) / 180); // Convert degrees to radians
+  
+  // Always keep first point
+  result.push(points[0]);
+  
+  for (let i = 1; i < n - 1; i++) {
+    const prev = result[result.length - 1]; // Use last kept point
+    const curr = points[i];
+    const next = points[i + 1];
+    
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.001 || len2 < 0.001) {
+      // Skip very short segments
+      continue;
+    }
+    
+    // Normalize and calculate dot product (cosine of angle)
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    
+    // If vectors are nearly parallel (angle close to 0 or 180 degrees), skip point
+    // dot > cosThreshold means angle is small (straight line)
+    if (dot > cosThreshold) {
+      // Nearly straight - skip this point (don't add to result)
+      continue;
+    }
+    
+    // Keep the point - it represents an actual curve
+    result.push(curr);
+  }
+  
+  // Always keep last point
+  result.push(points[n - 1]);
+  
+  return result;
 }
 
 function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
