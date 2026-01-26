@@ -585,20 +585,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
       
-      // Draw background with bleed
+      // Draw background with bleed or fill
       if (shapeSettings.bleedEnabled) {
-        // Edge bleeding mode - extend edge colors outward
-        // Calculate bleed in source image pixels using consistent scale
-        const sourceScaleX = sourceImage.width / imageWidth;
-        const sourceScaleY = sourceImage.height / imageHeight;
-        const sourceScale = Math.max(sourceScaleX, sourceScaleY);
-        const sourceBleedPixels = Math.round(bleedPixels * sourceScale);
-        
-        // Create edge-bled canvas
-        const edgeBledCanvas = createEdgeBleedCanvas(sourceImage, sourceBleedPixels);
-        
-        // Draw edge-bled image clipped to expanded shape
-        ctx.save();
+        // Solid color bleed mode - draw bleed area with bleedColor first
+        ctx.fillStyle = shapeSettings.bleedColor || '#FFFFFF';
         ctx.beginPath();
         
         if (shapeSettings.type === 'circle') {
@@ -617,14 +607,29 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         } else {
           ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
         }
+        ctx.fill();
         
-        ctx.clip();
+        // Then draw the fill color on top (within the cut line)
+        ctx.fillStyle = shapeSettings.fillColor;
+        ctx.beginPath();
         
-        // Draw the edge-bled image positioned so bleed aligns with the bleed area
-        // Use the same scale factor for consistency
-        const displayBleedPixels = sourceBleedPixels / sourceScale;
-        ctx.drawImage(edgeBledCanvas, imageX - displayBleedPixels, imageY - displayBleedPixels, imageWidth + displayBleedPixels * 2, imageHeight + displayBleedPixels * 2);
-        ctx.restore();
+        if (shapeSettings.type === 'circle') {
+          const radius = Math.min(shapeWidth, shapeHeight) / 2;
+          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
+        } else if (shapeSettings.type === 'rounded-square') {
+          const size = Math.min(shapeWidth, shapeHeight);
+          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
+        } else if (shapeSettings.type === 'rounded-rectangle') {
+          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
+        } else {
+          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
+        }
+        ctx.fill();
       } else {
         // Solid fill mode
         ctx.fillStyle = shapeSettings.fillColor;
@@ -684,33 +689,30 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.stroke();
 
-      // Draw the original image on top (clipped to cut line), only if not edge bleeding
-      // Edge bleeding already drew the full image including bleed
-      if (!shapeSettings.bleedEnabled) {
-        ctx.save();
-        ctx.beginPath();
-        
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2;
-          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'oval') {
-          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
-        } else if (shapeSettings.type === 'rounded-square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
-        } else if (shapeSettings.type === 'rounded-rectangle') {
-          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-        } else {
-          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
-        }
-        
-        ctx.clip();
-        ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
-        ctx.restore();
+      // Draw the original image on top (clipped to cut line)
+      ctx.save();
+      ctx.beginPath();
+      
+      if (shapeSettings.type === 'circle') {
+        const radius = Math.min(shapeWidth, shapeHeight) / 2;
+        ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'oval') {
+        ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
+      } else if (shapeSettings.type === 'square') {
+        const size = Math.min(shapeWidth, shapeHeight);
+        ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
+      } else if (shapeSettings.type === 'rounded-square') {
+        const size = Math.min(shapeWidth, shapeHeight);
+        ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
+      } else if (shapeSettings.type === 'rounded-rectangle') {
+        ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
+      } else {
+        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
       }
+      
+      ctx.clip();
+      ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
+      ctx.restore();
     };
 
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {

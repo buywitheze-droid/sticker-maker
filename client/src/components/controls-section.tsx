@@ -474,14 +474,37 @@ export default function ControlsSection({
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-gray-600">Add Bleed (0.2")</Label>
-            <input
-              type="checkbox"
-              checked={shapeSettings.bleedEnabled || false}
-              onChange={(e) => onShapeChange({ bleedEnabled: e.target.checked })}
-              className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
-            />
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <Label className="text-xs text-gray-600">Bleed</Label>
+              <input
+                type="checkbox"
+                checked={shapeSettings.bleedEnabled || false}
+                onChange={(e) => onShapeChange({ bleedEnabled: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+              />
+            </div>
+            {shapeSettings.bleedEnabled && (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  type="color"
+                  value={shapeSettings.bleedColor || '#FFFFFF'}
+                  onChange={(e) => onShapeChange({ bleedColor: e.target.value })}
+                  className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                />
+                <div className="flex gap-1">
+                  {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => onShapeChange({ bleedColor: color })}
+                      className={`w-5 h-5 rounded border ${(shapeSettings.bleedColor || '#FFFFFF') === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
