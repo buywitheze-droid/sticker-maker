@@ -272,12 +272,12 @@ export default function ControlsSection({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="0">None</SelectItem>
-                    <SelectItem value="0.02">1/64" - Hairline</SelectItem>
-                    <SelectItem value="0.04">1/32" - Fine</SelectItem>
-                    <SelectItem value="0.07">1/16" - Standard</SelectItem>
-                    <SelectItem value="0.14">1/8" - Medium</SelectItem>
-                    <SelectItem value="0.25">1/4" - Wide</SelectItem>
-                    <SelectItem value="0.5">1/2" - Extra Wide</SelectItem>
+                    <SelectItem value="0.02">Hairline</SelectItem>
+                    <SelectItem value="0.04">Fine</SelectItem>
+                    <SelectItem value="0.07">Standard</SelectItem>
+                    <SelectItem value="0.14">Medium</SelectItem>
+                    <SelectItem value="0.25">Wide</SelectItem>
+                    <SelectItem value="0.5">Extra Wide</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -499,10 +499,10 @@ export default function ControlsSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="0">None</SelectItem>
-                <SelectItem value="0.0625">1/16" - Minimal</SelectItem>
-                <SelectItem value="0.125">1/8" - Standard</SelectItem>
-                <SelectItem value="0.25">1/4" - Comfortable</SelectItem>
-                <SelectItem value="0.40">3/8" - Spacious</SelectItem>
+                <SelectItem value="0.0625">Minimal</SelectItem>
+                <SelectItem value="0.125">Standard</SelectItem>
+                <SelectItem value="0.25">Comfortable</SelectItem>
+                <SelectItem value="0.40">Spacious</SelectItem>
               </SelectContent>
             </Select>
           </div>
