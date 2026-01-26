@@ -802,9 +802,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const contourX = (canvasWidth - contourWidth) / 2;
         const contourY = (canvasHeight - contourHeight) / 2;
         
-        // If holographic is selected, draw rainbow gradient behind the contour
+        // If holographic is selected, we need to composite the gradient onto the contour shape
         if (strokeSettings.backgroundColor === 'holographic') {
-          const gradient = ctx.createLinearGradient(contourX, contourY, contourX + contourWidth, contourY + contourHeight);
+          // Create a temporary canvas to composite the holographic effect
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = contourCanvas.width;
+          tempCanvas.height = contourCanvas.height;
+          const tempCtx = tempCanvas.getContext('2d')!;
+          
+          // First draw the contour canvas (which has transparent background where holographic should go)
+          tempCtx.drawImage(contourCanvas, 0, 0);
+          
+          // Use destination-over to draw the gradient BEHIND the existing content
+          // This fills the transparent areas (the bleed zone) with the holographic gradient
+          tempCtx.globalCompositeOperation = 'destination-over';
+          const gradient = tempCtx.createLinearGradient(0, 0, tempCanvas.width, tempCanvas.height);
           gradient.addColorStop(0, '#ff6b6b');
           gradient.addColorStop(0.17, '#feca57');
           gradient.addColorStop(0.34, '#48dbfb');
@@ -812,11 +824,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           gradient.addColorStop(0.68, '#54a0ff');
           gradient.addColorStop(0.85, '#5f27cd');
           gradient.addColorStop(1, '#ff6b6b');
-          ctx.fillStyle = gradient;
-          ctx.fillRect(contourX, contourY, contourWidth, contourHeight);
+          tempCtx.fillStyle = gradient;
+          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+          
+          // Draw the composited result
+          ctx.drawImage(tempCanvas, contourX, contourY, contourWidth, contourHeight);
+        } else {
+          ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
         }
-        
-        ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
         let displayWidth, displayHeight;
