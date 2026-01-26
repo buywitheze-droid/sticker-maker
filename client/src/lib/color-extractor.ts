@@ -120,13 +120,26 @@ export function extractDominantColors(
   maxColors: number = 9,
   minPercentage: number = 1
 ): ExtractedColor[] {
-  const paletteCounts = new Map<string, { color: typeof COLOR_PALETTE[0]; count: number }>();
+  // Track actual RGB totals for each palette color to compute average
+  const paletteCounts = new Map<string, { 
+    color: typeof COLOR_PALETTE[0]; 
+    count: number;
+    totalR: number;
+    totalG: number;
+    totalB: number;
+  }>();
   const data = imageData.data;
   let totalOpaquePixels = 0;
 
   // Initialize all palette colors
   for (const paletteColor of COLOR_PALETTE) {
-    paletteCounts.set(paletteColor.name, { color: paletteColor, count: 0 });
+    paletteCounts.set(paletteColor.name, { 
+      color: paletteColor, 
+      count: 0,
+      totalR: 0,
+      totalG: 0,
+      totalB: 0
+    });
   }
 
   // Count pixels matching each palette color
@@ -149,23 +162,34 @@ export function extractDominantColors(
     totalOpaquePixels++;
     const entry = paletteCounts.get(closestColor.name)!;
     entry.count++;
+    // Track actual pixel colors to compute average
+    entry.totalR += r;
+    entry.totalG += g;
+    entry.totalB += b;
   }
 
   if (totalOpaquePixels === 0) return [];
 
-  // Convert to ExtractedColor array
+  // Convert to ExtractedColor array using ACTUAL average colors from image
   const allColors: Array<ExtractedColor & { isNeutral: boolean }> = Array.from(paletteCounts.values())
     .filter(entry => entry.count > 0)
-    .map(entry => ({
-      rgb: entry.color.rgb,
-      hex: entry.color.hex,
-      count: entry.count,
-      percentage: (entry.count / totalOpaquePixels) * 100,
-      spotWhite: false,
-      spotGloss: false,
-      name: entry.color.name,
-      isNeutral: entry.color.isNeutral
-    }))
+    .map(entry => {
+      // Compute actual average color from matched pixels
+      const avgR = Math.round(entry.totalR / entry.count);
+      const avgG = Math.round(entry.totalG / entry.count);
+      const avgB = Math.round(entry.totalB / entry.count);
+      
+      return {
+        rgb: { r: avgR, g: avgG, b: avgB },
+        hex: rgbToHex(avgR, avgG, avgB),
+        count: entry.count,
+        percentage: (entry.count / totalOpaquePixels) * 100,
+        spotWhite: false,
+        spotGloss: false,
+        name: entry.color.name,
+        isNeutral: entry.color.isNeutral
+      };
+    })
     .filter(c => c.percentage >= minPercentage);
 
   // Sort: chromatic colors first (by percentage), then neutrals (by percentage)
