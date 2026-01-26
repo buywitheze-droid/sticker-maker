@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
-import ControlsSection from "./controls-section";
+import ControlsSection, { SpotPreviewData } from "./controls-section";
 import ResizeModal from "./resize-modal";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
@@ -59,6 +59,7 @@ export default function ImageEditor() {
   const [showResizeModal, setShowResizeModal] = useState(false);
   const [detectedDimensions, setDetectedDimensions] = useState<{ width: number; height: number } | null>(null);
   const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
+  const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -823,6 +824,7 @@ export default function ImageEditor() {
           resizeSettings={debouncedResizeSettings}
           shapeSettings={debouncedShapeSettings}
           cadCutBounds={cadCutBounds}
+          spotPreviewData={spotPreviewData}
         />
         
       </div>
@@ -843,6 +845,7 @@ export default function ImageEditor() {
         onStepChange={() => {}}
         onRemoveBackground={handleRemoveBackground}
         isRemovingBackground={isRemovingBackground}
+        onSpotPreviewChange={setSpotPreviewData}
       />
       
       {/* Processing Modal */}

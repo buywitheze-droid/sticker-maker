@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
+import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
@@ -16,10 +17,11 @@ interface PreviewSectionProps {
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
   cadCutBounds?: CadCutBounds | null;
+  spotPreviewData?: SpotPreviewData;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -565,7 +567,69 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           drawImageWithResizePreview(ctx, canvas.width, canvas.height);
         }
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
+
+    // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
+    useEffect(() => {
+      if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
+      
+      // Get colors marked for white or gloss preview
+      const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
+      const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
+      
+      if (whiteColors.length === 0 && glossColors.length === 0) return;
+      
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      // Get current canvas image data
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      
+      // Helper to check if a pixel matches a color (within tolerance)
+      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
+        const r = parseInt(targetHex.slice(1, 3), 16);
+        const g = parseInt(targetHex.slice(3, 5), 16);
+        const b = parseInt(targetHex.slice(5, 7), 16);
+        return Math.abs(pixelR - r) <= tolerance && 
+               Math.abs(pixelG - g) <= tolerance && 
+               Math.abs(pixelB - b) <= tolerance;
+      };
+      
+      // Apply overlay colors
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        
+        if (a < 10) continue; // Skip transparent pixels
+        
+        // Check for white overlay (solid white)
+        for (const wc of whiteColors) {
+          if (colorMatches(r, g, b, wc.hex)) {
+            data[i] = 255;     // R
+            data[i + 1] = 255; // G
+            data[i + 2] = 255; // B
+            break;
+          }
+        }
+        
+        // Check for gloss overlay (silver/grey shiny look)
+        for (const gc of glossColors) {
+          if (colorMatches(r, g, b, gc.hex)) {
+            // Silver/metallic grey color for gloss preview
+            data[i] = 180;     // R
+            data[i + 1] = 180; // G
+            data[i + 2] = 190; // B - slightly blue tint for shiny effect
+            break;
+          }
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+    }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor]);
 
     useEffect(() => {
       if (!imageInfo) return;

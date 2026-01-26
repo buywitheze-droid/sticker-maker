@@ -12,7 +12,12 @@ import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
-import { Download, ChevronDown, ChevronUp, Palette } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff } from "lucide-react";
+
+export interface SpotPreviewData {
+  enabled: boolean;
+  colors: ExtractedColor[];
+}
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -30,6 +35,7 @@ interface ControlsSectionProps {
   onStepChange?: (step: number) => void;
   onRemoveBackground?: (threshold: number) => void;
   isRemovingBackground?: boolean;
+  onSpotPreviewChange?: (data: SpotPreviewData) => void;
 }
 
 export default function ControlsSection({
@@ -47,12 +53,14 @@ export default function ControlsSection({
   canvasRef,
   onStepChange,
   onRemoveBackground,
-  isRemovingBackground
+  isRemovingBackground,
+  onSpotPreviewChange
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [showContourOptions, setShowContourOptions] = useState(true);
   const [showSpotColors, setShowSpotColors] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
+  const [spotPreviewEnabled, setSpotPreviewEnabled] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
@@ -97,6 +105,11 @@ export default function ControlsSection({
       i === index ? { ...color, [field]: value } : color
     ));
   };
+
+  // Notify parent of spot preview changes
+  useEffect(() => {
+    onSpotPreviewChange?.({ enabled: spotPreviewEnabled, colors: extractedColors });
+  }, [spotPreviewEnabled, extractedColors, onSpotPreviewChange]);
 
   const handleSendDesign = async () => {
     if (!customerName.trim() || !customerEmail.trim()) {
@@ -633,7 +646,21 @@ export default function ControlsSection({
 
           {showSpotColors && (
             <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-              <div className="text-xs text-gray-600 font-medium mb-2">Design Colors</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs text-gray-600 font-medium">Design Colors</div>
+                <button
+                  onClick={() => setSpotPreviewEnabled(!spotPreviewEnabled)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    spotPreviewEnabled 
+                      ? 'bg-purple-100 text-purple-700 border border-purple-300' 
+                      : 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200'
+                  }`}
+                  title={spotPreviewEnabled ? "Hide spot preview" : "Show spot preview"}
+                >
+                  {spotPreviewEnabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  Preview
+                </button>
+              </div>
               
               {extractedColors.length === 0 ? (
                 <div className="text-xs text-gray-500 italic">No colors detected</div>
