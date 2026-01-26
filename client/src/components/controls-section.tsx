@@ -389,67 +389,6 @@ export default function ControlsSection({
         </div>
       )}
 
-      {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
-      {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
-        <>
-          <Button
-            variant="outline"
-            onClick={handleSpotColorsToggle}
-            className={`w-full border-2 ${showSpotColors ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-300 text-gray-700 hover:border-purple-400'}`}
-          >
-            <Palette className="w-4 h-4 mr-2" />
-            SPOT COLORS
-            <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
-          </Button>
-
-          {showSpotColors && (
-            <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-              <div className="text-xs text-gray-600 font-medium mb-2">Design Colors</div>
-              
-              {extractedColors.length === 0 ? (
-                <div className="text-xs text-gray-500 italic">No colors detected</div>
-              ) : (
-                <div className="space-y-2">
-                  {extractedColors.map((color, index) => (
-                    <div key={index} className="flex items-center gap-3 p-2 bg-white rounded border border-gray-200">
-                      <div 
-                        className="w-8 h-8 rounded border border-gray-300 flex-shrink-0"
-                        style={{ backgroundColor: color.hex }}
-                        title={color.hex}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-mono text-gray-700 truncate">{color.hex}</div>
-                        <div className="text-[10px] text-gray-400">{color.percentage.toFixed(1)}%</div>
-                      </div>
-                      <div className="flex gap-3">
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <Checkbox
-                            checked={color.spotWhite}
-                            onCheckedChange={(checked) => updateSpotColor(index, 'spotWhite', checked as boolean)}
-                          />
-                          <span className="text-xs text-gray-600">White</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <Checkbox
-                            checked={color.spotGloss}
-                            onCheckedChange={(checked) => updateSpotColor(index, 'spotGloss', checked as boolean)}
-                          />
-                          <span className="text-xs text-gray-600">Gloss</span>
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200">
-                White → RDG_WHITE | Gloss → RDG_GLOSS
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
       {/* Shape Options - Hidden when PDF has CutContour */}
       {shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
         <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
@@ -561,6 +500,67 @@ export default function ControlsSection({
           </div>
 
         </div>
+      )}
+
+      {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
+      {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
+        <>
+          <Button
+            variant="outline"
+            onClick={handleSpotColorsToggle}
+            className={`w-full border-2 ${showSpotColors ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-300 text-gray-700 hover:border-purple-400'}`}
+          >
+            <Palette className="w-4 h-4 mr-2" />
+            SPOT COLORS
+            <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
+          </Button>
+
+          {showSpotColors && (
+            <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="text-xs text-gray-600 font-medium mb-2">Design Colors</div>
+              
+              {extractedColors.length === 0 ? (
+                <div className="text-xs text-gray-500 italic">No colors detected</div>
+              ) : (
+                <div className="space-y-2">
+                  {extractedColors.map((color, index) => (
+                    <div key={index} className="flex items-center gap-3 p-2 bg-white rounded border border-gray-200">
+                      <div 
+                        className="w-8 h-8 rounded border border-gray-300 flex-shrink-0"
+                        style={{ backgroundColor: color.hex }}
+                        title={color.hex}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-mono text-gray-700 truncate">{color.hex}</div>
+                        <div className="text-[10px] text-gray-400">{color.percentage.toFixed(1)}%</div>
+                      </div>
+                      <div className="flex gap-3">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <Checkbox
+                            checked={color.spotWhite}
+                            onCheckedChange={(checked) => updateSpotColor(index, 'spotWhite', checked as boolean)}
+                          />
+                          <span className="text-xs text-gray-600">White</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <Checkbox
+                            checked={color.spotGloss}
+                            onCheckedChange={(checked) => updateSpotColor(index, 'spotGloss', checked as boolean)}
+                          />
+                          <span className="text-xs text-gray-600">Gloss</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200">
+                White → RDG_WHITE | Gloss → RDG_GLOSS
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Download Button */}
