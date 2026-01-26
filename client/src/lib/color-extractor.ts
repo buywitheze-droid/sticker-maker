@@ -113,13 +113,29 @@ export function extractDominantColors(
   }
 
   // Count pixels matching each palette color
+  // Filter out semi-transparent dark/grey artifacts from bad background removal
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
     const a = data[i + 3];
 
+    // Skip very transparent pixels
     if (a < 50) continue;
+    
+    // Filter out semi-transparent dark/grey artifacts
+    // These are common from low DPI images or bad background removal
+    if (a < 200) {
+      const brightness = (r + g + b) / 3;
+      
+      // Dark semi-transparent pixels are artifacts, not real design colors
+      const isDarkArtifact = brightness < 80 && a < 150;
+      // Grey semi-transparent pixels are also likely artifacts
+      const isGreyArtifact = brightness < 120 && a < 100;
+      
+      if (isDarkArtifact || isGreyArtifact) continue;
+    }
+    
     totalOpaquePixels++;
 
     const closestColor = findClosestPaletteColor(r, g, b);
