@@ -22,7 +22,8 @@ function colorDistance(c1: { r: number; g: number; b: number }, c2: { r: number;
 
 // Predefined palette of primary, secondary, and neutral colors
 // Chromatic colors first (priority), then minimal neutrals
-const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: number }; hex: string; isNeutral: boolean }> = [
+// maxDistance: custom match threshold (lower = stricter, higher = wider matching)
+const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: number }; hex: string; isNeutral: boolean; maxDistance?: number }> = [
   // Reds
   { name: 'Red', rgb: { r: 200, g: 30, b: 30 }, hex: '#C81E1E', isNeutral: false },
   { name: 'Dark Red', rgb: { r: 139, g: 0, b: 0 }, hex: '#8B0000', isNeutral: false },
@@ -48,17 +49,17 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Yellow', rgb: { r: 250, g: 210, b: 50 }, hex: '#FAD232', isNeutral: false },
   { name: 'Orange', rgb: { r: 240, g: 120, b: 20 }, hex: '#F07814', isNeutral: false },
   
-  // Purples and Lavenders
-  { name: 'Purple', rgb: { r: 140, g: 60, b: 180 }, hex: '#8C3CB4', isNeutral: false },
-  { name: 'Lavender', rgb: { r: 230, g: 190, b: 230 }, hex: '#E6BEE6', isNeutral: false },
-  { name: 'Violet', rgb: { r: 148, g: 0, b: 211 }, hex: '#9400D3', isNeutral: false },
-  { name: 'Light Purple', rgb: { r: 177, g: 156, b: 217 }, hex: '#B19CD9', isNeutral: false },
-  { name: 'Plum', rgb: { r: 142, g: 69, b: 133 }, hex: '#8E4585', isNeutral: false },
+  // Purples and Lavenders - VERY STRICT matching (maxDistance: 25)
+  { name: 'Purple', rgb: { r: 140, g: 60, b: 180 }, hex: '#8C3CB4', isNeutral: false, maxDistance: 25 },
+  { name: 'Lavender', rgb: { r: 230, g: 190, b: 230 }, hex: '#E6BEE6', isNeutral: false, maxDistance: 25 },
+  { name: 'Violet', rgb: { r: 148, g: 0, b: 211 }, hex: '#9400D3', isNeutral: false, maxDistance: 25 },
+  { name: 'Light Purple', rgb: { r: 177, g: 156, b: 217 }, hex: '#B19CD9', isNeutral: false, maxDistance: 25 },
+  { name: 'Plum', rgb: { r: 142, g: 69, b: 133 }, hex: '#8E4585', isNeutral: false, maxDistance: 25 },
   
-  // Golds
-  { name: 'Gold', rgb: { r: 255, g: 215, b: 0 }, hex: '#FFD700', isNeutral: false },
-  { name: 'Dark Gold', rgb: { r: 184, g: 134, b: 11 }, hex: '#B8860B', isNeutral: false },
-  { name: 'Light Gold', rgb: { r: 250, g: 250, b: 210 }, hex: '#FAFAD2', isNeutral: false },
+  // Golds - WIDER matching (maxDistance: 60) to catch gold-like colors
+  { name: 'Gold', rgb: { r: 255, g: 215, b: 0 }, hex: '#FFD700', isNeutral: false, maxDistance: 60 },
+  { name: 'Dark Gold', rgb: { r: 184, g: 134, b: 11 }, hex: '#B8860B', isNeutral: false, maxDistance: 60 },
+  { name: 'Light Gold', rgb: { r: 250, g: 250, b: 210 }, hex: '#FAFAD2', isNeutral: false, maxDistance: 60 },
   
   // Tertiary colors (removed Cyan to prevent navy blue mismatch)
   { name: 'Magenta', rgb: { r: 220, g: 50, b: 150 }, hex: '#DC3296', isNeutral: false },
@@ -80,30 +81,28 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   // Minimal neutrals (grouped)
   { name: 'Black', rgb: { r: 30, g: 30, b: 30 }, hex: '#1E1E1E', isNeutral: true },
   { name: 'Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true },
-  { name: 'White', rgb: { r: 245, g: 245, b: 245 }, hex: '#F5F5F5', isNeutral: true },
+  // White - WIDER matching (maxDistance: 70) to include super light cream colors
+  { name: 'White', rgb: { r: 245, g: 245, b: 245 }, hex: '#F5F5F5', isNeutral: true, maxDistance: 70 },
 ];
 
-// Maximum distance to consider a color a valid match
-// Colors farther than this from any palette color will be ignored
-// Using 45 for stricter matching to avoid false color detection
-const MAX_COLOR_DISTANCE = 45;
+// Default maximum distance to consider a color a valid match
+// Colors can override this with their own maxDistance property
+const DEFAULT_MAX_COLOR_DISTANCE = 45;
 
 function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_PALETTE[0] | null {
-  let closest = COLOR_PALETTE[0];
+  let closest: typeof COLOR_PALETTE[0] | null = null;
   let minDistance = Infinity;
   
   for (const paletteColor of COLOR_PALETTE) {
     const dist = colorDistance({ r, g, b }, paletteColor.rgb);
-    if (dist < minDistance) {
+    // Use per-color maxDistance if defined, otherwise use default
+    const maxDist = paletteColor.maxDistance ?? DEFAULT_MAX_COLOR_DISTANCE;
+    
+    // Only consider this color if within its distance threshold
+    if (dist < minDistance && dist <= maxDist) {
       minDistance = dist;
       closest = paletteColor;
     }
-  }
-  
-  // If the closest match is still too far, don't count this pixel
-  // This prevents forcing pixels to match colors they're not close to
-  if (minDistance > MAX_COLOR_DISTANCE) {
-    return null;
   }
   
   return closest;
