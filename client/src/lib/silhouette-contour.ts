@@ -1135,7 +1135,10 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   
   // Smooth large sweeping curves (like butterfly wings) by reducing intermediate wobble points
   // This makes big arcs cleaner without affecting small details
-  simplified = smoothLargeCurves(simplified, 15, 0.85);
+  simplified = smoothLargeCurves(simplified, 15, 0.85, 30);
+  
+  // Also smooth medium curves (8+ points) with tighter angle threshold for cutter-friendly paths
+  simplified = smoothLargeCurves(simplified, 8, 0.5, 15);
   
   return simplified;
 }
@@ -1988,7 +1991,8 @@ function removeCollinearPoints(points: Point[], angleTolerance: number = 2.0): P
 // Detects sequences of points that form gentle arcs and reduces them to key anchor points
 // minSpan: minimum number of consecutive points to consider as a "large curve"
 // maxAnglePerPoint: max average angle change per point (radians) for gentle curve detection
-function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoint: number = 0.12): Point[] {
+// minSpatialExtent: minimum bounding box size in pixels to qualify as a curve worth smoothing
+function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoint: number = 0.12, minSpatialExtent: number = 30): Point[] {
   if (points.length < minSpan) return points;
   
   const result: Point[] = [];
@@ -2076,8 +2080,8 @@ function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoi
     // Only simplify if:
     // 1. It's a gentle curve (monotonic, low angle change)
     // 2. Has enough points
-    // 3. Has significant spatial extent (> 30 pixels) to avoid affecting small features
-    if (isGentleCurve && curveLength >= minSpan && spatialExtent > 30) {
+    // 3. Has significant spatial extent to avoid affecting small features
+    if (isGentleCurve && curveLength >= minSpan && spatialExtent > minSpatialExtent) {
       // Keep key anchor points with geometric error checking
       const simplified: Point[] = [];
       const step = Math.max(4, Math.floor(curveLength / 5)); // ~5 points per large curve
