@@ -41,11 +41,15 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Sage', rgb: { r: 130, g: 160, b: 120 }, hex: '#82A078', isNeutral: false, maxDistance: 55 },
   { name: 'Kelly Green', rgb: { r: 76, g: 187, b: 23 }, hex: '#4CBB17', isNeutral: false, maxDistance: 55 },
   
-  // Blues (dark blues only - removed light blues that incorrectly match navy)
-  { name: 'Blue', rgb: { r: 40, g: 100, b: 220 }, hex: '#2864DC', isNeutral: false },
-  { name: 'Navy', rgb: { r: 0, g: 0, b: 128 }, hex: '#000080', isNeutral: false },
-  { name: 'Royal Blue', rgb: { r: 65, g: 105, b: 225 }, hex: '#4169E1', isNeutral: false },
-  { name: 'Cobalt', rgb: { r: 0, g: 71, b: 171 }, hex: '#0047AB', isNeutral: false },
+  // Blues - WIDER matching (maxDistance: 55) to catch various blue shades
+  { name: 'Blue', rgb: { r: 40, g: 100, b: 220 }, hex: '#2864DC', isNeutral: false, maxDistance: 55 },
+  { name: 'Navy', rgb: { r: 0, g: 0, b: 128 }, hex: '#000080', isNeutral: false, maxDistance: 55 },
+  { name: 'Royal Blue', rgb: { r: 65, g: 105, b: 225 }, hex: '#4169E1', isNeutral: false, maxDistance: 55 },
+  { name: 'Cobalt', rgb: { r: 0, g: 71, b: 171 }, hex: '#0047AB', isNeutral: false, maxDistance: 55 },
+  { name: 'Sky Blue', rgb: { r: 135, g: 206, b: 235 }, hex: '#87CEEB', isNeutral: false, maxDistance: 55 },
+  { name: 'Light Blue', rgb: { r: 173, g: 216, b: 230 }, hex: '#ADD8E6', isNeutral: false, maxDistance: 55 },
+  { name: 'Steel Blue', rgb: { r: 70, g: 130, b: 180 }, hex: '#4682B4', isNeutral: false, maxDistance: 55 },
+  { name: 'Dark Blue', rgb: { r: 0, g: 0, b: 80 }, hex: '#000050', isNeutral: false, maxDistance: 55 },
   
   // Other primary/secondary
   { name: 'Yellow', rgb: { r: 250, g: 210, b: 50 }, hex: '#FAD232', isNeutral: false },
@@ -69,8 +73,13 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Light Gold', rgb: { r: 250, g: 250, b: 210 }, hex: '#FAFAD2', isNeutral: false, maxDistance: 60 },
   
   // Tertiary colors
-  { name: 'Magenta', rgb: { r: 220, g: 50, b: 150 }, hex: '#DC3296', isNeutral: false },
-  { name: 'Pink', rgb: { r: 255, g: 150, b: 180 }, hex: '#FF96B4', isNeutral: false },
+  // Magentas and Pinks - WIDER matching (maxDistance: 55) to catch various shades
+  { name: 'Magenta', rgb: { r: 255, g: 0, b: 255 }, hex: '#FF00FF', isNeutral: false, maxDistance: 55 },
+  { name: 'Hot Pink', rgb: { r: 255, g: 105, b: 180 }, hex: '#FF69B4', isNeutral: false, maxDistance: 55 },
+  { name: 'Deep Pink', rgb: { r: 255, g: 20, b: 147 }, hex: '#FF1493', isNeutral: false, maxDistance: 55 },
+  { name: 'Fuchsia', rgb: { r: 255, g: 0, b: 128 }, hex: '#FF0080', isNeutral: false, maxDistance: 55 },
+  { name: 'Pink', rgb: { r: 255, g: 150, b: 180 }, hex: '#FF96B4', isNeutral: false, maxDistance: 55 },
+  { name: 'Rose', rgb: { r: 255, g: 0, b: 127 }, hex: '#FF007F', isNeutral: false, maxDistance: 55 },
   // Teal/Cyan - WIDER matching (maxDistance: 60) to catch various teal shades
   { name: 'Teal', rgb: { r: 30, g: 150, b: 150 }, hex: '#1E9696', isNeutral: false, maxDistance: 60 },
   { name: 'Cyan', rgb: { r: 0, g: 200, b: 200 }, hex: '#00C8C8', isNeutral: false, maxDistance: 60 },
@@ -123,7 +132,7 @@ function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_
 export function extractDominantColors(
   imageData: ImageData,
   maxColors: number = 9,
-  minPercentage: number = 1
+  minPercentage: number = 0.5
 ): ExtractedColor[] {
   // Track actual RGB totals for each palette color to compute average
   const paletteCounts = new Map<string, { 
