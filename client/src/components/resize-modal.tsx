@@ -57,35 +57,36 @@ export default function ResizeModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-xs bg-slate-800 border-slate-700">
         <DialogHeader>
-          <DialogTitle className="text-center text-xl">What size sticker?</DialogTitle>
+          <DialogTitle className="text-center text-base font-medium text-slate-200">
+            Choose size
+          </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3 py-4">
+        <div className="grid grid-cols-4 gap-2 py-2">
           {SIZES.map((size) => (
-            <Button
+            <button
               key={size.value}
-              variant="outline"
               onClick={() => handleSizeSelect(size.value)}
-              className="h-16 text-2xl font-bold hover:bg-cyan-50 hover:border-cyan-500 dark:hover:bg-cyan-900/30"
+              className="h-10 text-sm font-medium rounded-md border border-slate-600 text-slate-300 bg-slate-700/50 hover:bg-slate-600 hover:border-slate-500 hover:text-white transition-colors"
             >
               {size.label}
-            </Button>
+            </button>
           ))}
         </div>
 
-        <div className="border-t pt-3">
+        <div className="border-t border-slate-700 pt-2">
           <button
             onClick={() => setShowCustom(!showCustom)}
-            className="flex items-center justify-center w-full text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            className="flex items-center justify-center w-full text-xs text-slate-500 hover:text-slate-300 transition-colors"
           >
-            Need a different size?
-            {showCustom ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}
+            Custom
+            {showCustom ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />}
           </button>
           
           {showCustom && (
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2 mt-2">
               <Input
                 type="number"
                 step="0.5"
@@ -93,15 +94,16 @@ export default function ResizeModal({
                 max="12"
                 value={customSize}
                 onChange={(e) => setCustomSize(e.target.value)}
-                className="text-center text-lg"
+                className="text-center text-sm h-8 bg-slate-700 border-slate-600 text-slate-200"
                 placeholder="Size"
               />
-              <span className="text-gray-500">inches</span>
+              <span className="text-xs text-slate-500">in</span>
               <Button 
                 onClick={handleCustomConfirm}
-                className="bg-cyan-600 hover:bg-cyan-700"
+                size="sm"
+                className="h-8 bg-slate-600 hover:bg-slate-500 text-slate-200"
               >
-                Apply
+                Go
               </Button>
             </div>
           )}
