@@ -272,26 +272,16 @@ export default function ControlsSection({
               </div>
 
               <div>
-                <Label className="text-xs text-gray-600">Background</Label>
+                <Label className="text-xs text-gray-600">Fill</Label>
                 <div className="flex items-center gap-2 mt-1">
                   <input
                     type="color"
                     value={strokeSettings.backgroundColor}
                     onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                     className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-                    disabled={!strokeSettings.useCustomBackground}
                   />
                   <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Checkbox 
-                  id="same-color-bleed"
-                  checked={!strokeSettings.useCustomBackground}
-                  onCheckedChange={(checked) => onStrokeChange({ useCustomBackground: !(checked as boolean) })}
-                />
-                <Label htmlFor="same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
               </div>
               
               {/* Hidden for now - may add back later
@@ -320,32 +310,22 @@ export default function ControlsSection({
         </div>
       )}
 
-      {/* PDF CutContour Options - Background, Bleed, and Download */}
+      {/* PDF CutContour Options - Fill and Download */}
       {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour && (
         <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div className="text-sm font-medium text-gray-700">PDF Options</div>
           
           <div>
-            <Label className="text-xs text-gray-600">Background Color</Label>
+            <Label className="text-xs text-gray-600">Fill Color</Label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="color"
                 value={strokeSettings.backgroundColor}
                 onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-                disabled={!strokeSettings.useCustomBackground}
               />
               <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox 
-              id="pdf-same-color-bleed"
-              checked={!strokeSettings.useCustomBackground}
-              onCheckedChange={(checked) => onStrokeChange({ useCustomBackground: !(checked as boolean) })}
-            />
-            <Label htmlFor="pdf-same-color-bleed" className="text-xs text-gray-600 cursor-pointer">Same Color Bleed</Label>
           </div>
         </div>
       )}
@@ -462,15 +442,6 @@ export default function ControlsSection({
               />
               <span className="text-xs text-gray-500">{shapeSettings.fillColor}</span>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="shape-color-bleed"
-              checked={shapeSettings.bleedEnabled ?? false}
-              onCheckedChange={(checked) => onShapeChange({ bleedEnabled: checked === true })}
-            />
-            <Label htmlFor="shape-color-bleed" className="text-xs text-gray-600 cursor-pointer">Color Bleed</Label>
           </div>
 
         </div>
