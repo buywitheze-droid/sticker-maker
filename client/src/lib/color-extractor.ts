@@ -24,12 +24,15 @@ function colorDistance(c1: { r: number; g: number; b: number }, c2: { r: number;
 // Chromatic colors first (priority), then minimal neutrals
 // maxDistance: custom match threshold (lower = stricter, higher = wider matching)
 const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: number }; hex: string; isNeutral: boolean; maxDistance?: number }> = [
-  // Reds
-  { name: 'Red', rgb: { r: 200, g: 30, b: 30 }, hex: '#C81E1E', isNeutral: false },
-  { name: 'Dark Red', rgb: { r: 139, g: 0, b: 0 }, hex: '#8B0000', isNeutral: false },
-  { name: 'Crimson', rgb: { r: 220, g: 20, b: 60 }, hex: '#DC143C', isNeutral: false },
-  { name: 'Scarlet', rgb: { r: 255, g: 36, b: 0 }, hex: '#FF2400', isNeutral: false },
-  { name: 'Maroon', rgb: { r: 128, g: 0, b: 0 }, hex: '#800000', isNeutral: false },
+  // Reds - WIDER matching (maxDistance: 55) to catch various red shades
+  { name: 'Red', rgb: { r: 220, g: 30, b: 30 }, hex: '#DC1E1E', isNeutral: false, maxDistance: 55 },
+  { name: 'Dark Red', rgb: { r: 139, g: 0, b: 0 }, hex: '#8B0000', isNeutral: false, maxDistance: 55 },
+  { name: 'Crimson', rgb: { r: 220, g: 20, b: 60 }, hex: '#DC143C', isNeutral: false, maxDistance: 55 },
+  { name: 'Scarlet', rgb: { r: 255, g: 36, b: 0 }, hex: '#FF2400', isNeutral: false, maxDistance: 55 },
+  { name: 'Maroon', rgb: { r: 128, g: 0, b: 0 }, hex: '#800000', isNeutral: false, maxDistance: 55 },
+  { name: 'Cherry', rgb: { r: 222, g: 49, b: 99 }, hex: '#DE3163', isNeutral: false, maxDistance: 55 },
+  { name: 'Coral Red', rgb: { r: 255, g: 64, b: 64 }, hex: '#FF4040', isNeutral: false, maxDistance: 55 },
+  { name: 'Brick Red', rgb: { r: 203, g: 65, b: 84 }, hex: '#CB4154', isNeutral: false, maxDistance: 55 },
   
   // Greens - WIDER matching (maxDistance: 55) to catch various green shades
   { name: 'Green', rgb: { r: 50, g: 180, b: 80 }, hex: '#32B450', isNeutral: false, maxDistance: 55 },
@@ -76,13 +79,22 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Light Gold', rgb: { r: 250, g: 250, b: 210 }, hex: '#FAFAD2', isNeutral: false, maxDistance: 60 },
   
   // Tertiary colors
-  // Magentas and Pinks - WIDER matching (maxDistance: 55) to catch various shades
-  { name: 'Magenta', rgb: { r: 255, g: 0, b: 255 }, hex: '#FF00FF', isNeutral: false, maxDistance: 55 },
-  { name: 'Hot Pink', rgb: { r: 255, g: 105, b: 180 }, hex: '#FF69B4', isNeutral: false, maxDistance: 55 },
-  { name: 'Deep Pink', rgb: { r: 255, g: 20, b: 147 }, hex: '#FF1493', isNeutral: false, maxDistance: 55 },
-  { name: 'Fuchsia', rgb: { r: 255, g: 0, b: 128 }, hex: '#FF0080', isNeutral: false, maxDistance: 55 },
-  { name: 'Pink', rgb: { r: 255, g: 150, b: 180 }, hex: '#FF96B4', isNeutral: false, maxDistance: 55 },
-  { name: 'Rose', rgb: { r: 255, g: 0, b: 127 }, hex: '#FF007F', isNeutral: false, maxDistance: 55 },
+  // Magentas and Pinks - VERY WIDE matching (maxDistance: 65) to catch all shades
+  { name: 'Magenta', rgb: { r: 255, g: 0, b: 255 }, hex: '#FF00FF', isNeutral: false, maxDistance: 65 },
+  { name: 'Hot Pink', rgb: { r: 255, g: 105, b: 180 }, hex: '#FF69B4', isNeutral: false, maxDistance: 65 },
+  { name: 'Deep Pink', rgb: { r: 255, g: 20, b: 147 }, hex: '#FF1493', isNeutral: false, maxDistance: 65 },
+  { name: 'Fuchsia', rgb: { r: 255, g: 0, b: 128 }, hex: '#FF0080', isNeutral: false, maxDistance: 65 },
+  { name: 'Pink', rgb: { r: 255, g: 182, b: 193 }, hex: '#FFB6C1', isNeutral: false, maxDistance: 65 },
+  { name: 'Rose', rgb: { r: 255, g: 0, b: 127 }, hex: '#FF007F', isNeutral: false, maxDistance: 65 },
+  { name: 'Salmon', rgb: { r: 250, g: 128, b: 114 }, hex: '#FA8072', isNeutral: false, maxDistance: 65 },
+  { name: 'Coral', rgb: { r: 255, g: 127, b: 80 }, hex: '#FF7F50', isNeutral: false, maxDistance: 65 },
+  { name: 'Light Pink', rgb: { r: 255, g: 182, b: 193 }, hex: '#FFB6C1', isNeutral: false, maxDistance: 65 },
+  { name: 'Blush', rgb: { r: 222, g: 93, b: 131 }, hex: '#DE5D83', isNeutral: false, maxDistance: 65 },
+  { name: 'Raspberry', rgb: { r: 227, g: 11, b: 92 }, hex: '#E30B5C', isNeutral: false, maxDistance: 65 },
+  { name: 'Cerise', rgb: { r: 222, g: 49, b: 99 }, hex: '#DE3163', isNeutral: false, maxDistance: 65 },
+  { name: 'Ruby', rgb: { r: 224, g: 17, b: 95 }, hex: '#E0115F', isNeutral: false, maxDistance: 65 },
+  { name: 'Orchid', rgb: { r: 218, g: 112, b: 214 }, hex: '#DA70D6', isNeutral: false, maxDistance: 65 },
+  { name: 'Pale Pink', rgb: { r: 250, g: 218, b: 221 }, hex: '#FADADD', isNeutral: false, maxDistance: 65 },
   // Teal/Cyan - VERY WIDE matching (maxDistance: 80) to merge similar cyan shades
   { name: 'Cyan', rgb: { r: 35, g: 190, b: 230 }, hex: '#23BEE6', isNeutral: false, maxDistance: 80 },
   { name: 'Teal', rgb: { r: 30, g: 150, b: 150 }, hex: '#1E9696', isNeutral: false, maxDistance: 70 },
