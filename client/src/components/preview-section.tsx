@@ -435,7 +435,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           
           // Fill background color for the fallback rect area directly
           if (effectiveBackgroundColor !== "transparent") {
-            ctx.fillStyle = effectiveBackgroundColor;
+            if (effectiveBackgroundColor === "holographic") {
+              const gradient = ctx.createLinearGradient(clipX, clipY, clipX + clipW, clipY + clipH);
+              gradient.addColorStop(0, '#ff6b6b');
+              gradient.addColorStop(0.17, '#feca57');
+              gradient.addColorStop(0.34, '#48dbfb');
+              gradient.addColorStop(0.51, '#ff9ff3');
+              gradient.addColorStop(0.68, '#54a0ff');
+              gradient.addColorStop(0.85, '#5f27cd');
+              gradient.addColorStop(1, '#ff6b6b');
+              ctx.fillStyle = gradient;
+            } else {
+              ctx.fillStyle = effectiveBackgroundColor;
+            }
             ctx.fillRect(clipX, clipY, clipW, clipH);
           }
           
@@ -460,7 +472,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         // For extracted paths: fill the path, then clip for the image
         if (effectiveBackgroundColor !== "transparent") {
-          ctx.fillStyle = effectiveBackgroundColor;
+          if (effectiveBackgroundColor === "holographic") {
+            const bounds = ctx.getTransform();
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, '#ff6b6b');
+            gradient.addColorStop(0.17, '#feca57');
+            gradient.addColorStop(0.34, '#48dbfb');
+            gradient.addColorStop(0.51, '#ff9ff3');
+            gradient.addColorStop(0.68, '#54a0ff');
+            gradient.addColorStop(0.85, '#5f27cd');
+            gradient.addColorStop(1, '#ff6b6b');
+            ctx.fillStyle = gradient;
+          } else {
+            ctx.fillStyle = effectiveBackgroundColor;
+          }
           ctx.fill();
         }
         
@@ -518,7 +543,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             }
           }
         } else {
-          ctx.fillStyle = effectiveBackgroundColor;
+          if (effectiveBackgroundColor === "holographic") {
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, '#ff6b6b');
+            gradient.addColorStop(0.17, '#feca57');
+            gradient.addColorStop(0.34, '#48dbfb');
+            gradient.addColorStop(0.51, '#ff9ff3');
+            gradient.addColorStop(0.68, '#54a0ff');
+            gradient.addColorStop(0.85, '#5f27cd');
+            gradient.addColorStop(1, '#ff6b6b');
+            ctx.fillStyle = gradient;
+          } else {
+            ctx.fillStyle = effectiveBackgroundColor;
+          }
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 

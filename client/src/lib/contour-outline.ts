@@ -1646,7 +1646,7 @@ export function getContourPath(
       heightInches,
       imageOffsetX,
       imageOffsetY,
-      backgroundColor: strokeSettings.backgroundColor
+      backgroundColor: strokeSettings.backgroundColor === 'holographic' ? 'transparent' : strokeSettings.backgroundColor
     };
   } catch (error) {
     console.error('Error getting contour path:', error);

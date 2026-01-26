@@ -191,6 +191,11 @@ function processContour(
   const height = imageData.height;
   const data = imageData.data;
   
+  // Holographic is preview-only, exports as transparent
+  const effectiveBackgroundColor = strokeSettings.backgroundColor === 'holographic' 
+    ? 'transparent' 
+    : strokeSettings.backgroundColor;
+  
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
@@ -212,7 +217,7 @@ function processContour(
   const silhouetteMask = createSilhouetteMaskFromData(data, width, height, strokeSettings.alphaThreshold);
   
   if (silhouetteMask.length === 0) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, strokeSettings.backgroundColor);
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   postProgress(30);
@@ -254,7 +259,7 @@ function processContour(
   const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
   if (boundaryPath.length < 3) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, strokeSettings.backgroundColor);
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   postProgress(80);
@@ -293,7 +298,7 @@ function processContour(
     drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
   } else {
     // Custom background: use solid color bleed
-    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, strokeSettings.backgroundColor, offsetX, offsetY, effectiveDPI);
+    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
   }
   
   // Draw original image on top
@@ -318,7 +323,7 @@ function processContour(
       heightInches,
       imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
       imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
-      backgroundColor: strokeSettings.backgroundColor,
+      backgroundColor: effectiveBackgroundColor,
       useEdgeBleed: useEdgeBleed
     }
   };
