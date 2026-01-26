@@ -125,9 +125,11 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'Light Olive', rgb: { r: 170, g: 170, b: 85 }, hex: '#AAAA55', isNeutral: false },
   { name: 'Olive Drab', rgb: { r: 107, g: 142, b: 35 }, hex: '#6B8E23', isNeutral: false },
   
-  // Minimal neutrals (grouped)
-  { name: 'Black', rgb: { r: 30, g: 30, b: 30 }, hex: '#1E1E1E', isNeutral: true },
-  { name: 'Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true },
+  // Minimal neutrals (grouped into 3 gray levels with wide matching)
+  { name: 'Black', rgb: { r: 20, g: 20, b: 20 }, hex: '#141414', isNeutral: true, maxDistance: 35 },
+  { name: 'Dark Gray', rgb: { r: 64, g: 64, b: 64 }, hex: '#404040', isNeutral: true, maxDistance: 40 },
+  { name: 'Medium Gray', rgb: { r: 128, g: 128, b: 128 }, hex: '#808080', isNeutral: true, maxDistance: 40 },
+  { name: 'Light Gray', rgb: { r: 192, g: 192, b: 192 }, hex: '#C0C0C0', isNeutral: true, maxDistance: 40 },
   // White - WIDER matching (maxDistance: 70) to include super light cream colors
   { name: 'White', rgb: { r: 245, g: 245, b: 245 }, hex: '#F5F5F5', isNeutral: true, maxDistance: 70 },
 ];
