@@ -280,7 +280,17 @@ export default function ControlsSection({
                     onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                     className="w-8 h-8 rounded cursor-pointer border border-gray-300"
                   />
-                  <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
+                  <div className="flex gap-1">
+                    {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
+                      <button
+                        key={color}
+                        onClick={() => onStrokeChange({ backgroundColor: color })}
+                        className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                        style={{ backgroundColor: color }}
+                        title={color}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
               
@@ -324,7 +334,17 @@ export default function ControlsSection({
                 onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
                 className="w-8 h-8 rounded cursor-pointer border border-gray-300"
               />
-              <span className="text-xs text-gray-500">{strokeSettings.backgroundColor}</span>
+              <div className="flex gap-1">
+                {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => onStrokeChange({ backgroundColor: color })}
+                    className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                    style={{ backgroundColor: color }}
+                    title={color}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </div>
