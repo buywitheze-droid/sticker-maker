@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Loader2 } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Loader2, Smartphone, Tablet, Monitor } from "lucide-react";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
@@ -30,6 +30,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    
+    // Responsive preview state
+    const [showResponsivePreview, setShowResponsivePreview] = useState(false);
+    const [responsiveDevice, setResponsiveDevice] = useState<'phone' | 'tablet' | 'desktop'>('phone');
+    const responsiveCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [responsiveKey, setResponsiveKey] = useState(0);
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -961,7 +967,103 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 </>
               )}
+              
+              {/* Responsive preview toggle */}
+              {imageInfo && (
+                <>
+                  <div className="w-px h-4 bg-gray-600" />
+                  <button
+                    onClick={() => setShowResponsivePreview(!showResponsivePreview)}
+                    className={`text-xs px-2 py-1 rounded transition-colors ${showResponsivePreview ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    title="Responsive Preview"
+                  >
+                    <Monitor className="h-4 w-4" />
+                  </button>
+                </>
+              )}
             </div>
+            
+            {/* Responsive Preview Panel */}
+            {showResponsivePreview && imageInfo && canvasRef.current && (
+              <div className="mt-3 p-4 bg-[#222] rounded-lg border border-gray-700/60">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-sm text-gray-300 font-medium">Responsive Preview</span>
+                  <div className="flex items-center gap-1 bg-[#1a1a1a] rounded-lg p-1">
+                    <button
+                      onClick={() => setResponsiveDevice('phone')}
+                      className={`p-2 rounded transition-colors ${responsiveDevice === 'phone' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                      title="Phone (375px)"
+                    >
+                      <Smartphone className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => setResponsiveDevice('tablet')}
+                      className={`p-2 rounded transition-colors ${responsiveDevice === 'tablet' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                      title="Tablet (768px)"
+                    >
+                      <Tablet className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => setResponsiveDevice('desktop')}
+                      className={`p-2 rounded transition-colors ${responsiveDevice === 'desktop' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                      title="Desktop (1200px)"
+                    >
+                      <Monitor className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="flex justify-center gap-4">
+                  {/* Phone preview */}
+                  <div className={`flex flex-col items-center ${responsiveDevice === 'phone' ? 'opacity-100' : 'opacity-50'}`}>
+                    <div 
+                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
+                      style={{ width: '80px', height: '140px' }}
+                    >
+                      <img 
+                        src={canvasRef.current.toDataURL()} 
+                        alt="Phone preview"
+                        className="max-w-full max-h-full object-contain"
+                        style={{ maxWidth: '70px', maxHeight: '130px' }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 mt-1">Phone</span>
+                  </div>
+                  
+                  {/* Tablet preview */}
+                  <div className={`flex flex-col items-center ${responsiveDevice === 'tablet' ? 'opacity-100' : 'opacity-50'}`}>
+                    <div 
+                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
+                      style={{ width: '120px', height: '90px' }}
+                    >
+                      <img 
+                        src={canvasRef.current.toDataURL()} 
+                        alt="Tablet preview"
+                        className="max-w-full max-h-full object-contain"
+                        style={{ maxWidth: '110px', maxHeight: '80px' }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 mt-1">Tablet</span>
+                  </div>
+                  
+                  {/* Desktop preview */}
+                  <div className={`flex flex-col items-center ${responsiveDevice === 'desktop' ? 'opacity-100' : 'opacity-50'}`}>
+                    <div 
+                      className="bg-[#1a1a1a] rounded-lg border border-gray-600 overflow-hidden flex items-center justify-center"
+                      style={{ width: '160px', height: '100px' }}
+                    >
+                      <img 
+                        src={canvasRef.current.toDataURL()} 
+                        alt="Desktop preview"
+                        className="max-w-full max-h-full object-contain"
+                        style={{ maxWidth: '150px', maxHeight: '90px' }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 mt-1">Desktop</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
