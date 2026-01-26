@@ -786,7 +786,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               onTouchStart={handleTouchStart}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
-              className={`relative flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-200 ${showHighlight ? 'ring-2 ring-cyan-400' : ''}`}
+              className={`relative flex items-center justify-center rounded-lg border border-gray-700/60 ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-200 ${showHighlight ? 'ring-2 ring-cyan-400' : ''}`}
               style={{ 
                 height: '400px',
                 backgroundColor: getBackgroundColor(),
