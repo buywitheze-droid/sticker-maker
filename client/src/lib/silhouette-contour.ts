@@ -1133,6 +1133,10 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
   simplified = removeCollinearPoints(simplified, 2.0);
   
+  // Smooth large sweeping curves (like butterfly wings) by reducing intermediate wobble points
+  // This makes big arcs cleaner without affecting small details
+  simplified = smoothLargeCurves(simplified, 15, 0.85);
+  
   return simplified;
 }
 
@@ -1976,6 +1980,136 @@ function removeCollinearPoints(points: Point[], angleTolerance: number = 2.0): P
   
   // Always keep last point
   result.push(points[n - 1]);
+  
+  return result;
+}
+
+// Smooth large sweeping curves (like butterfly wings) by reducing wobble points
+// Detects sequences of points that form gentle arcs and reduces them to key anchor points
+// minSpan: minimum number of consecutive points to consider as a "large curve"
+// maxAnglePerPoint: max average angle change per point (radians) for gentle curve detection
+function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoint: number = 0.12): Point[] {
+  if (points.length < minSpan) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  let i = 0;
+  
+  while (i < n) {
+    result.push(points[i]);
+    
+    // Try to find a large gentle curve starting from this point
+    let curveEnd = i + 2; // Need at least 2 points to measure angle
+    let prevAngle: number | null = null;
+    let curveDirection: number | null = null; // Track sign of curvature (+1 or -1)
+    let isGentleCurve = true;
+    let totalAngleChange = 0;
+    let minX = points[i].x, maxX = points[i].x;
+    let minY = points[i].y, maxY = points[i].y;
+    
+    // Look ahead to find consecutive points forming a gentle monotonic curve
+    while (curveEnd < n - 1 && curveEnd - i < 50) {
+      const p1 = points[curveEnd - 1];
+      const p2 = points[curveEnd];
+      
+      // Track bounding box for spatial extent check
+      minX = Math.min(minX, p2.x);
+      maxX = Math.max(maxX, p2.x);
+      minY = Math.min(minY, p2.y);
+      maxY = Math.max(maxY, p2.y);
+      
+      // Calculate direction angle
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const segmentLen = Math.sqrt(dx * dx + dy * dy);
+      
+      if (segmentLen < 0.5) {
+        curveEnd++;
+        continue; // Skip very short segments
+      }
+      
+      const currentAngle = Math.atan2(dy, dx);
+      
+      if (prevAngle !== null) {
+        // Calculate angle change
+        let angleDiff = currentAngle - prevAngle;
+        // Normalize to -PI to PI
+        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+        
+        // Track curvature direction (must be monotonic for gentle arc)
+        if (Math.abs(angleDiff) > 0.01) { // Ignore tiny angle changes
+          const thisDirection = angleDiff > 0 ? 1 : -1;
+          
+          if (curveDirection === null) {
+            curveDirection = thisDirection;
+          } else if (curveDirection !== thisDirection) {
+            // Direction changed - curve is not monotonic, stop here
+            break;
+          }
+        }
+        
+        totalAngleChange += Math.abs(angleDiff);
+        
+        // Check if average angle change exceeds threshold
+        const avgAngleChangePerPoint = totalAngleChange / (curveEnd - i);
+        if (avgAngleChangePerPoint > maxAnglePerPoint) {
+          isGentleCurve = false;
+          break;
+        }
+        
+        // Check for sudden sharp turn (indicates end of gentle curve)
+        if (Math.abs(angleDiff) > 0.4) { // ~23 degrees sudden change
+          break;
+        }
+      }
+      
+      prevAngle = currentAngle;
+      curveEnd++;
+    }
+    
+    const curveLength = curveEnd - i;
+    const bboxWidth = maxX - minX;
+    const bboxHeight = maxY - minY;
+    const spatialExtent = Math.max(bboxWidth, bboxHeight);
+    
+    // Only simplify if:
+    // 1. It's a gentle curve (monotonic, low angle change)
+    // 2. Has enough points
+    // 3. Has significant spatial extent (> 30 pixels) to avoid affecting small features
+    if (isGentleCurve && curveLength >= minSpan && spatialExtent > 30) {
+      // Keep key anchor points with geometric error checking
+      const simplified: Point[] = [];
+      const step = Math.max(4, Math.floor(curveLength / 5)); // ~5 points per large curve
+      
+      for (let k = step; k < curveLength - 1; k += step) {
+        const idx = i + k;
+        if (idx < n && idx > i) {
+          // Check deviation from line to ensure we're not over-simplifying
+          const startPt = points[i];
+          const endPt = points[Math.min(i + curveLength - 1, n - 1)];
+          const testPt = points[idx];
+          const deviation = perpendicularDistance(testPt, startPt, endPt);
+          
+          // If this point deviates significantly from straight line, keep it
+          if (deviation > 2) {
+            simplified.push(points[idx]);
+          }
+        }
+      }
+      
+      // Add simplified points
+      for (const pt of simplified) {
+        result.push(pt);
+      }
+      
+      // Move to end of this curve
+      i = curveEnd - 1;
+    } else {
+      // Not a large curve, move to next point normally
+      i++;
+    }
+  }
   
   return result;
 }
