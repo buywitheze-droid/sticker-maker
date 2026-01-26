@@ -12,7 +12,7 @@ import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
-import { Download, ChevronDown, Palette } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Palette } from "lucide-react";
 
 interface ControlsSectionProps {
   strokeSettings: StrokeSettings;
@@ -59,6 +59,7 @@ export default function ControlsSection({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showSendForm, setShowSendForm] = useState(false);
+  const [showSizeSection, setShowSizeSection] = useState(false);
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
@@ -173,29 +174,39 @@ export default function ControlsSection({
 
   return (
     <div className="space-y-4 p-4 bg-white rounded-lg shadow-sm">
-      {/* Size Selection */}
-      <div>
-        <Label className="text-sm font-medium text-gray-700 mb-2 block">Size</Label>
-        <Select
-          value={stickerSize.toString()}
-          onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
+      {/* Size Selection - Collapsible */}
+      <div className="border-b border-gray-200 pb-3">
+        <button
+          onClick={() => setShowSizeSection(!showSizeSection)}
+          className="flex items-center justify-between w-full text-sm font-medium text-gray-700 hover:text-gray-900"
         >
-          <SelectTrigger className="w-full bg-white border-gray-300 text-gray-900">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STICKER_SIZES.map((size) => (
-              <SelectItem key={size.value} value={size.value.toString()}>
-                {size.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <span>Size: {stickerSize}"</span>
+          {showSizeSection ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
         
-        {/* Dimensions display */}
-        {imageInfo && (
-          <div className="mt-2 text-xs text-gray-400">
-            {resizeSettings.widthInches.toFixed(2)}" x {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
+        {showSizeSection && (
+          <div className="mt-2">
+            <Select
+              value={stickerSize.toString()}
+              onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
+            >
+              <SelectTrigger className="w-full bg-white border-gray-300 text-gray-900">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STICKER_SIZES.map((size) => (
+                  <SelectItem key={size.value} value={size.value.toString()}>
+                    {size.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            {imageInfo && (
+              <div className="mt-2 text-xs text-gray-400">
+                {resizeSettings.widthInches.toFixed(2)}" x {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
+              </div>
+            )}
           </div>
         )}
       </div>
