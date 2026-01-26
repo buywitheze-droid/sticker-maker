@@ -1,6 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Loader2 } from "lucide-react";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
@@ -775,60 +774,56 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="lg:col-span-1">
-        <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/90 rounded-2xl p-1 shadow-2xl shadow-black/30">
-          <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4">
-            <div className="flex items-center gap-2">
-              <div 
-                ref={containerRef}
-                onWheel={handleWheel}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseLeave}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                className={`relative rounded-xl border border-gray-700/50 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''} shadow-inner`}
+        <div className="bg-[#1a1a1a] rounded-lg">
+          <div className="flex items-center gap-2 p-3">
+            <div 
+              ref={containerRef}
+              onWheel={handleWheel}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              className={`relative flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-200 ${showHighlight ? 'ring-2 ring-cyan-400' : ''}`}
+              style={{ 
+                height: '400px',
+                backgroundColor: getBackgroundColor(),
+                overflow: 'hidden',
+                userSelect: 'none',
+                touchAction: zoom !== 1 ? 'none' : 'auto'
+              }}
+            >
+              <canvas 
+                ref={canvasRef}
+                className="relative z-10 block"
                 style={{ 
+                  width: '400px',
                   height: '400px',
-                  backgroundColor: getBackgroundColor(),
-                  overflow: 'hidden',
-                  userSelect: 'none',
-                  touchAction: zoom !== 1 ? 'none' : 'auto'
+                  transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
+                  transformOrigin: 'center'
                 }}
-              >
-                <canvas 
-                  ref={canvasRef}
-                  className="relative z-10 block"
-                  style={{ 
-                    width: '400px',
-                    height: '400px',
-                    transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
-                    transformOrigin: 'center'
-                  }}
-                />
-                
-                {!imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center px-8">
-                      <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-gray-700/50 to-gray-800/50 flex items-center justify-center border border-gray-600/30">
-                        <ImageIcon className="w-10 h-10 text-gray-400" />
-                      </div>
-                      <p className="text-gray-400 font-medium">Drop an image here</p>
-                      <p className="text-gray-500 text-sm mt-1">or use the upload button</p>
-                    </div>
+              />
+              
+              {!imageInfo && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <ImageIcon className="w-12 h-12 text-gray-500 mx-auto mb-3" />
+                    <p className="text-gray-400 text-sm">Drop image here</p>
                   </div>
-                )}
-                
-                {isProcessing && imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-20 rounded-xl">
-                    <div className="text-center bg-gray-800/80 px-6 py-4 rounded-xl border border-gray-700/50">
-                      <Loader2 className="w-8 h-8 text-cyan-400 mx-auto mb-2 animate-spin" />
-                      <p className="text-white text-sm font-medium">Processing... {processingProgress}%</p>
-                    </div>
+                </div>
+              )}
+              
+              {isProcessing && imageInfo && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-20">
+                  <div className="text-center">
+                    <Loader2 className="w-6 h-6 text-white mx-auto mb-2 animate-spin" />
+                    <p className="text-white text-xs">{processingProgress}%</p>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+            </div>
               
               {zoom !== 1 && (
                 <div className="hidden md:flex w-3 flex-col" style={{ height: '400px' }}>
@@ -865,7 +860,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 </div>
               )}
-            </div>
             
             {zoom !== 1 && (
               <div className="hidden md:flex h-3 mt-1">
@@ -904,84 +898,69 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            {/* Modern floating toolbar */}
-            <div className="mt-3">
-              <div className="flex items-center justify-between bg-gray-800/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-gray-700/50">
-                {/* Zoom controls */}
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
-                    className="h-8 w-8 p-0 hover:bg-gray-700/50 text-gray-300"
-                    title="Zoom Out (or scroll down)"
-                  >
-                    <ZoomOut className="h-4 w-4" />
-                  </Button>
-                  
-                  <span className="text-sm text-gray-300 min-w-[50px] text-center font-medium">
-                    {Math.round(zoom * 100)}%
-                  </span>
-                  
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                    className="h-8 w-8 p-0 hover:bg-gray-700/50 text-gray-300"
-                    title="Zoom In (or scroll up)"
-                  >
-                    <ZoomIn className="h-4 w-4" />
-                  </Button>
-                  
-                  <div className="w-px h-5 bg-gray-600 mx-2" />
-                  
-                  <Button 
-                    variant="ghost"
-                    size="sm"
-                    onClick={fitToView}
-                    className="h-8 px-2 hover:bg-gray-700/50 text-gray-300"
-                    title="Fit to View"
-                  >
-                    <Maximize2 className="h-3 w-3 mr-1" />
-                    Fit
-                  </Button>
-                  
-                  <Button 
-                    variant="ghost"
-                    size="sm"
-                    onClick={resetView}
-                    className="h-8 px-2 hover:bg-gray-700/50 text-gray-300"
-                    title="Reset zoom and position"
-                  >
-                    <RotateCcw className="h-3 w-3 mr-1" />
-                    Reset
-                  </Button>
-                </div>
+            {/* Simple toolbar */}
+            <div className="flex items-center justify-center gap-3 mt-3 py-2">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
+                  className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </button>
                 
-                {/* Preview background color swatches */}
-                {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-                  <>
-                    <div className="w-px h-5 bg-gray-600 mx-2" />
-                    <div className="flex items-center gap-1">
-                      <Palette className="w-3 h-3 text-gray-400 mr-1" />
-                      {[
-                        { value: 'transparent', style: 'bg-gray-600 bg-[linear-gradient(45deg,#444_25%,transparent_25%,transparent_75%,#444_75%),linear-gradient(45deg,#444_25%,transparent_25%,transparent_75%,#444_75%)] bg-[length:8px_8px] bg-[position:0_0,4px_4px]' },
-                        { value: '#ffffff', style: 'bg-white' },
-                        { value: '#000000', style: 'bg-black' },
-                        { value: '#f3f4f6', style: 'bg-gray-100' },
-                        { value: '#1f2937', style: 'bg-gray-800' },
-                      ].map((color) => (
-                        <button
-                          key={color.value}
-                          onClick={() => setBackgroundColor(color.value)}
-                          className={`w-6 h-6 rounded-md border transition-all ${color.style} ${backgroundColor === color.value ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-gray-800' : 'border-gray-600 hover:border-gray-400'}`}
-                          title={color.value === 'transparent' ? 'Transparent' : color.value}
-                        />
-                      ))}
-                    </div>
-                  </>
-                )}
+                <span className="text-xs text-gray-400 min-w-[40px] text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                
+                <button
+                  onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
+                  className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </button>
               </div>
+              
+              <div className="w-px h-4 bg-gray-600" />
+              
+              <button
+                onClick={fitToView}
+                className="text-xs text-gray-400 hover:text-white transition-colors px-2"
+                title="Fit to View"
+              >
+                Fit
+              </button>
+              
+              <button
+                onClick={resetView}
+                className="text-xs text-gray-400 hover:text-white transition-colors px-2"
+                title="Reset"
+              >
+                Reset
+              </button>
+              
+              {/* Preview background colors */}
+              {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+                <>
+                  <div className="w-px h-4 bg-gray-600" />
+                  <div className="flex items-center gap-1">
+                    {[
+                      { value: 'transparent', style: 'bg-[#333] bg-[linear-gradient(45deg,#555_25%,transparent_25%,transparent_75%,#555_75%),linear-gradient(45deg,#555_25%,transparent_25%,transparent_75%,#555_75%)] bg-[length:6px_6px] bg-[position:0_0,3px_3px]' },
+                      { value: '#ffffff', style: 'bg-white' },
+                      { value: '#000000', style: 'bg-black border-gray-500' },
+                      { value: '#1f2937', style: 'bg-gray-800' },
+                    ].map((color) => (
+                      <button
+                        key={color.value}
+                        onClick={() => setBackgroundColor(color.value)}
+                        className={`w-5 h-5 rounded border transition-all ${color.style} ${backgroundColor === color.value ? 'ring-1 ring-cyan-400' : 'border-gray-600 hover:border-gray-400'}`}
+                        title={color.value === 'transparent' ? 'Transparent' : color.value}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
