@@ -474,6 +474,16 @@ export default function ControlsSection({
             </div>
           </div>
 
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-gray-600">Add Bleed (0.2")</Label>
+            <input
+              type="checkbox"
+              checked={shapeSettings.bleedEnabled || false}
+              onChange={(e) => onShapeChange({ bleedEnabled: e.target.checked })}
+              className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+            />
+          </div>
+
         </div>
       )}
 

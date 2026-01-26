@@ -368,8 +368,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const contentOffsetX = contentBounds.x;
         const contentOffsetY = contentBounds.y;
         
-        // Bleed offset based on content scale (0.10 inches at render DPI)
-        const bleedInches = 0.10;
+        // Bleed offset based on content scale (0.20 inches at render DPI)
+        const bleedInches = 0.20;
         const renderDPI = imageInfo.pdfCutContourInfo.pageWidth ? 
           (imageInfo.image.naturalWidth / (imageInfo.pdfCutContourInfo.pageWidth / 72 * 72)) : 300;
         const bleedPixelsAtRender = bleedInches * renderDPI;
@@ -551,7 +551,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         shapeSettings.offset
       );
 
-      const bleedInches = 0.10; // 0.10" bleed around the shape
+      const bleedInches = 0.20; // 0.20" bleed around the shape
       const padding = 40;
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);
