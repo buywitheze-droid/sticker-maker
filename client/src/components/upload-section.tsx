@@ -124,7 +124,7 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
       {showCutLineInfo && (
         <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 text-center shadow-sm">
           <p className="text-xs text-gray-500">
-            <span className="text-pink-500 font-medium">Pink Outline</span> = CutContour
+            <span className="text-fuchsia-500 font-medium">Pink Outline</span> = CutContour
           </p>
         </div>
       )}
