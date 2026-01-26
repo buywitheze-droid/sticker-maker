@@ -162,168 +162,12 @@ export async function downloadShapePDF(
   const bleedRgb = shapeSettings.bleedColor ? hexToRgb(shapeSettings.bleedColor) : { r: 1, g: 1, b: 1 };
   
   if (shapeSettings.bleedEnabled && bleedPts > 0) {
-    // Solid color bleed mode - draw bleed area with bleedColor first
-    let bleedPathOps = 'q\n';
-    bleedPathOps += `${bleedRgb.r} ${bleedRgb.g} ${bleedRgb.b} rg\n`;
-    
-    if (shapeSettings.type === 'circle') {
-      const r = Math.min(widthPts, heightPts) / 2;
-      const k = 0.5522847498;
-      const rk = r * k;
-      bleedPathOps += `${cx + r} ${cy} m\n`;
-      bleedPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-      bleedPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-      bleedPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-      bleedPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
-    } else if (shapeSettings.type === 'oval') {
-      const rx = widthPts / 2;
-      const ry = heightPts / 2;
-      const k = 0.5522847498;
-      const rxk = rx * k;
-      const ryk = ry * k;
-      bleedPathOps += `${cx + rx} ${cy} m\n`;
-      bleedPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-      bleedPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-      bleedPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-      bleedPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
-    } else if (shapeSettings.type === 'square') {
-      const size = Math.min(shapeWidthPts, shapeHeightPts) + bleedPts * 2;
-      const sx = cx - size / 2;
-      const sy = cy - size / 2;
-      bleedPathOps += `${sx} ${sy} m ${sx + size} ${sy} l ${sx + size} ${sy + size} l ${sx} ${sy + size} l h\n`;
-    } else if (shapeSettings.type === 'rounded-square') {
-      const size = Math.min(shapeWidthPts, shapeHeightPts) + bleedPts * 2;
-      const sx = cx - size / 2;
-      const sy = cy - size / 2;
-      const cr = Math.min(cornerRadiusPts, size / 2);
-      const k = 0.5522847498;
-      const crk = cr * k;
-      bleedPathOps += `${sx + cr} ${sy} m\n`;
-      bleedPathOps += `${sx + size - cr} ${sy} l\n`;
-      bleedPathOps += `${sx + size - cr + crk} ${sy} ${sx + size} ${sy + cr - crk} ${sx + size} ${sy + cr} c\n`;
-      bleedPathOps += `${sx + size} ${sy + size - cr} l\n`;
-      bleedPathOps += `${sx + size} ${sy + size - cr + crk} ${sx + size - cr + crk} ${sy + size} ${sx + size - cr} ${sy + size} c\n`;
-      bleedPathOps += `${sx + cr} ${sy + size} l\n`;
-      bleedPathOps += `${sx + cr - crk} ${sy + size} ${sx} ${sy + size - cr + crk} ${sx} ${sy + size - cr} c\n`;
-      bleedPathOps += `${sx} ${sy + cr} l\n`;
-      bleedPathOps += `${sx} ${sy + cr - crk} ${sx + cr - crk} ${sy} ${sx + cr} ${sy} c\n`;
-      bleedPathOps += `h\n`;
-    } else if (shapeSettings.type === 'rounded-rectangle') {
-      const w = shapeWidthPts + bleedPts * 2;
-      const h = shapeHeightPts + bleedPts * 2;
-      const sx = bleedPts;
-      const sy = bleedPts;
-      const cr = Math.min(cornerRadiusPts, Math.min(w, h) / 2);
-      const k = 0.5522847498;
-      const crk = cr * k;
-      bleedPathOps += `${sx + cr} ${sy} m\n`;
-      bleedPathOps += `${sx + w - cr} ${sy} l\n`;
-      bleedPathOps += `${sx + w - cr + crk} ${sy} ${sx + w} ${sy + cr - crk} ${sx + w} ${sy + cr} c\n`;
-      bleedPathOps += `${sx + w} ${sy + h - cr} l\n`;
-      bleedPathOps += `${sx + w} ${sy + h - cr + crk} ${sx + w - cr + crk} ${sy + h} ${sx + w - cr} ${sy + h} c\n`;
-      bleedPathOps += `${sx + cr} ${sy + h} l\n`;
-      bleedPathOps += `${sx + cr - crk} ${sy + h} ${sx} ${sy + h - cr + crk} ${sx} ${sy + h - cr} c\n`;
-      bleedPathOps += `${sx} ${sy + cr} l\n`;
-      bleedPathOps += `${sx} ${sy + cr - crk} ${sx + cr - crk} ${sy} ${sx + cr} ${sy} c\n`;
-      bleedPathOps += `h\n`;
-    } else {
-      const w = shapeWidthPts + bleedPts * 2;
-      const h = shapeHeightPts + bleedPts * 2;
-      const sx = bleedPts;
-      const sy = bleedPts;
-      bleedPathOps += `${sx} ${sy} m ${sx + w} ${sy} l ${sx + w} ${sy + h} l ${sx} ${sy + h} l h\n`;
-    }
-    
-    bleedPathOps += 'f Q\n';
-    page.pushOperators(...pdfDoc.context.obj(bleedPathOps).toString().split('\n').filter(Boolean).map((line: string) => ({ operator: line } as any)));
-    
-    // Now draw the fill color on top (within cut line)
-    let bgPathOps = 'q\n';
-    bgPathOps += `${fillRgb.r} ${fillRgb.g} ${fillRgb.b} rg\n`;
-    
-    if (shapeSettings.type === 'circle') {
-      const r = Math.min(shapeWidthPts, shapeHeightPts) / 2;
-      const k = 0.5522847498;
-      const rk = r * k;
-      bgPathOps += `${cx + r} ${cy} m\n`;
-      bgPathOps += `${cx + r} ${cy + rk} ${cx + rk} ${cy + r} ${cx} ${cy + r} c\n`;
-      bgPathOps += `${cx - rk} ${cy + r} ${cx - r} ${cy + rk} ${cx - r} ${cy} c\n`;
-      bgPathOps += `${cx - r} ${cy - rk} ${cx - rk} ${cy - r} ${cx} ${cy - r} c\n`;
-      bgPathOps += `${cx + rk} ${cy - r} ${cx + r} ${cy - rk} ${cx + r} ${cy} c\n`;
-    } else if (shapeSettings.type === 'oval') {
-      const rx = shapeWidthPts / 2;
-      const ry = shapeHeightPts / 2;
-      const k = 0.5522847498;
-      const rxk = rx * k;
-      const ryk = ry * k;
-      bgPathOps += `${cx + rx} ${cy} m\n`;
-      bgPathOps += `${cx + rx} ${cy + ryk} ${cx + rxk} ${cy + ry} ${cx} ${cy + ry} c\n`;
-      bgPathOps += `${cx - rxk} ${cy + ry} ${cx - rx} ${cy + ryk} ${cx - rx} ${cy} c\n`;
-      bgPathOps += `${cx - rx} ${cy - ryk} ${cx - rxk} ${cy - ry} ${cx} ${cy - ry} c\n`;
-      bgPathOps += `${cx + rxk} ${cy - ry} ${cx + rx} ${cy - ryk} ${cx + rx} ${cy} c\n`;
-    } else if (shapeSettings.type === 'square') {
-      const size = Math.min(shapeWidthPts, shapeHeightPts);
-      const sx = cx - size / 2;
-      const sy = cy - size / 2;
-      bgPathOps += `${sx} ${sy} m ${sx + size} ${sy} l ${sx + size} ${sy + size} l ${sx} ${sy + size} l h\n`;
-    } else if (shapeSettings.type === 'rounded-square') {
-      const size = Math.min(shapeWidthPts, shapeHeightPts);
-      const sx = cx - size / 2;
-      const sy = cy - size / 2;
-      const cr = Math.min(cornerRadiusPts, size / 2);
-      const k = 0.5522847498;
-      const crk = cr * k;
-      bgPathOps += `${sx + cr} ${sy} m\n`;
-      bgPathOps += `${sx + size - cr} ${sy} l\n`;
-      bgPathOps += `${sx + size - cr + crk} ${sy} ${sx + size} ${sy + cr - crk} ${sx + size} ${sy + cr} c\n`;
-      bgPathOps += `${sx + size} ${sy + size - cr} l\n`;
-      bgPathOps += `${sx + size} ${sy + size - cr + crk} ${sx + size - cr + crk} ${sy + size} ${sx + size - cr} ${sy + size} c\n`;
-      bgPathOps += `${sx + cr} ${sy + size} l\n`;
-      bgPathOps += `${sx + cr - crk} ${sy + size} ${sx} ${sy + size - cr + crk} ${sx} ${sy + size - cr} c\n`;
-      bgPathOps += `${sx} ${sy + cr} l\n`;
-      bgPathOps += `${sx} ${sy + cr - crk} ${sx + cr - crk} ${sy} ${sx + cr} ${sy} c\n`;
-      bgPathOps += `h\n`;
-    } else if (shapeSettings.type === 'rounded-rectangle') {
-      const cr = Math.min(cornerRadiusPts, Math.min(shapeWidthPts, shapeHeightPts) / 2);
-      const k = 0.5522847498;
-      const crk = cr * k;
-      const sx = bleedPts;
-      const sy = bleedPts;
-      bgPathOps += `${sx + cr} ${sy} m\n`;
-      bgPathOps += `${sx + shapeWidthPts - cr} ${sy} l\n`;
-      bgPathOps += `${sx + shapeWidthPts - cr + crk} ${sy} ${sx + shapeWidthPts} ${sy + cr - crk} ${sx + shapeWidthPts} ${sy + cr} c\n`;
-      bgPathOps += `${sx + shapeWidthPts} ${sy + shapeHeightPts - cr} l\n`;
-      bgPathOps += `${sx + shapeWidthPts} ${sy + shapeHeightPts - cr + crk} ${sx + shapeWidthPts - cr + crk} ${sy + shapeHeightPts} ${sx + shapeWidthPts - cr} ${sy + shapeHeightPts} c\n`;
-      bgPathOps += `${sx + cr} ${sy + shapeHeightPts} l\n`;
-      bgPathOps += `${sx + cr - crk} ${sy + shapeHeightPts} ${sx} ${sy + shapeHeightPts - cr + crk} ${sx} ${sy + shapeHeightPts - cr} c\n`;
-      bgPathOps += `${sx} ${sy + cr} l\n`;
-      bgPathOps += `${sx} ${sy + cr - crk} ${sx + cr - crk} ${sy} ${sx + cr} ${sy} c\n`;
-      bgPathOps += `h\n`;
-    } else {
-      const sx = bleedPts;
-      const sy = bleedPts;
-      bgPathOps += `${sx} ${sy} m ${sx + shapeWidthPts} ${sy} l ${sx + shapeWidthPts} ${sy + shapeHeightPts} l ${sx} ${sy + shapeHeightPts} l h\n`;
-    }
-    
-    bgPathOps += 'f Q\n';
-    page.pushOperators(...pdfDoc.context.obj(bgPathOps).toString().split('\n').filter(Boolean).map((line: string) => ({ operator: line } as any)));
-    
-    // Embed image and draw it clipped to the cut line shape
-    const imageBlob = await new Promise<Blob>((resolve) => {
-      imageCanvas.toBlob((b) => resolve(b!), 'image/png');
-    });
-    const imagePngBytes = new Uint8Array(await imageBlob.arrayBuffer());
-    const pdfImage = await pdfDoc.embedPng(imagePngBytes);
-    
-    // Create clipped image canvas
+    // Solid color bleed mode - use canvas approach for reliable rendering
     const canvasScale = 2;
     const canvasWidthPx = Math.round(widthPts * canvasScale);
     const canvasHeightPx = Math.round(heightPts * canvasScale);
-    const clippedCanvas = document.createElement('canvas');
-    clippedCanvas.width = canvasWidthPx;
-    clippedCanvas.height = canvasHeightPx;
-    const clipCtx = clippedCanvas.getContext('2d')!;
     
+    const bleedPx = bleedPts * canvasScale;
     const shapeWidthPx = shapeWidthPts * canvasScale;
     const shapeHeightPx = shapeHeightPts * canvasScale;
     const shapeX = (canvasWidthPx - shapeWidthPx) / 2;
@@ -334,42 +178,97 @@ export async function downloadShapePDF(
     const imgY = shapeY + (shapeHeightPx - imgHeightPx) / 2;
     const cornerRadiusPx = cornerRadiusPts * canvasScale;
     
-    // Create clipping path for the shape (cut line, without bleed)
-    clipCtx.beginPath();
+    // Create canvas for the full page with bleed
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = canvasWidthPx;
+    fullCanvas.height = canvasHeightPx;
+    const ctx = fullCanvas.getContext('2d')!;
+    
+    // Draw bleed color first (expanded shape)
+    ctx.fillStyle = shapeSettings.bleedColor || '#FFFFFF';
+    ctx.beginPath();
+    if (shapeSettings.type === 'circle') {
+      const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2 + bleedPx;
+      ctx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'oval') {
+      ctx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2 + bleedPx, shapeHeightPx / 2 + bleedPx, 0, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2 - bleedPx;
+      const sy = shapeY + (shapeHeightPx - size) / 2 - bleedPx;
+      ctx.rect(sx, sy, size + bleedPx * 2, size + bleedPx * 2);
+    } else if (shapeSettings.type === 'rounded-square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2 - bleedPx;
+      const sy = shapeY + (shapeHeightPx - size) / 2 - bleedPx;
+      ctx.roundRect(sx, sy, size + bleedPx * 2, size + bleedPx * 2, cornerRadiusPx);
+    } else if (shapeSettings.type === 'rounded-rectangle') {
+      ctx.roundRect(shapeX - bleedPx, shapeY - bleedPx, shapeWidthPx + bleedPx * 2, shapeHeightPx + bleedPx * 2, cornerRadiusPx);
+    } else {
+      ctx.rect(shapeX - bleedPx, shapeY - bleedPx, shapeWidthPx + bleedPx * 2, shapeHeightPx + bleedPx * 2);
+    }
+    ctx.fill();
+    
+    // Draw fill color on top (within cut line)
+    ctx.fillStyle = shapeSettings.fillColor;
+    ctx.beginPath();
     if (shapeSettings.type === 'circle') {
       const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2;
-      clipCtx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
+      ctx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
     } else if (shapeSettings.type === 'oval') {
-      clipCtx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2, shapeHeightPx / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2, shapeHeightPx / 2, 0, 0, Math.PI * 2);
     } else if (shapeSettings.type === 'square') {
       const size = Math.min(shapeWidthPx, shapeHeightPx);
       const sx = shapeX + (shapeWidthPx - size) / 2;
       const sy = shapeY + (shapeHeightPx - size) / 2;
-      clipCtx.rect(sx, sy, size, size);
+      ctx.rect(sx, sy, size, size);
     } else if (shapeSettings.type === 'rounded-square') {
       const size = Math.min(shapeWidthPx, shapeHeightPx);
       const sx = shapeX + (shapeWidthPx - size) / 2;
       const sy = shapeY + (shapeHeightPx - size) / 2;
-      clipCtx.roundRect(sx, sy, size, size, cornerRadiusPx);
+      ctx.roundRect(sx, sy, size, size, cornerRadiusPx);
     } else if (shapeSettings.type === 'rounded-rectangle') {
-      clipCtx.roundRect(shapeX, shapeY, shapeWidthPx, shapeHeightPx, cornerRadiusPx);
+      ctx.roundRect(shapeX, shapeY, shapeWidthPx, shapeHeightPx, cornerRadiusPx);
     } else {
-      clipCtx.rect(shapeX, shapeY, shapeWidthPx, shapeHeightPx);
+      ctx.rect(shapeX, shapeY, shapeWidthPx, shapeHeightPx);
     }
-    clipCtx.clip();
+    ctx.fill();
     
-    // Draw the image
-    clipCtx.drawImage(imageCanvas, imgX, imgY, imgWidthPx, imgHeightPx);
+    // Draw image clipped to cut line shape
+    ctx.save();
+    ctx.beginPath();
+    if (shapeSettings.type === 'circle') {
+      const radius = Math.min(shapeWidthPx, shapeHeightPx) / 2;
+      ctx.arc(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, radius, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'oval') {
+      ctx.ellipse(shapeX + shapeWidthPx / 2, shapeY + shapeHeightPx / 2, shapeWidthPx / 2, shapeHeightPx / 2, 0, 0, Math.PI * 2);
+    } else if (shapeSettings.type === 'square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2;
+      const sy = shapeY + (shapeHeightPx - size) / 2;
+      ctx.rect(sx, sy, size, size);
+    } else if (shapeSettings.type === 'rounded-square') {
+      const size = Math.min(shapeWidthPx, shapeHeightPx);
+      const sx = shapeX + (shapeWidthPx - size) / 2;
+      const sy = shapeY + (shapeHeightPx - size) / 2;
+      ctx.roundRect(sx, sy, size, size, cornerRadiusPx);
+    } else if (shapeSettings.type === 'rounded-rectangle') {
+      ctx.roundRect(shapeX, shapeY, shapeWidthPx, shapeHeightPx, cornerRadiusPx);
+    } else {
+      ctx.rect(shapeX, shapeY, shapeWidthPx, shapeHeightPx);
+    }
+    ctx.clip();
+    ctx.drawImage(imageCanvas, imgX, imgY, imgWidthPx, imgHeightPx);
+    ctx.restore();
     
-    // Embed clipped canvas as PNG
-    const clippedBlob = await new Promise<Blob>((resolve) => {
-      clippedCanvas.toBlob((b) => resolve(b!), 'image/png');
+    // Embed canvas as PNG in PDF
+    const fullBlob = await new Promise<Blob>((resolve) => {
+      fullCanvas.toBlob((b) => resolve(b!), 'image/png');
     });
-    const clippedPngBytes = new Uint8Array(await clippedBlob.arrayBuffer());
-    const clippedImage = await pdfDoc.embedPng(clippedPngBytes);
+    const fullPngBytes = new Uint8Array(await fullBlob.arrayBuffer());
+    const fullImage = await pdfDoc.embedPng(fullPngBytes);
     
-    // Draw clipped image filling the page
-    page.drawImage(clippedImage, {
+    page.drawImage(fullImage, {
       x: 0,
       y: 0,
       width: widthPts,
