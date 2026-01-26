@@ -83,7 +83,12 @@ const COLOR_PALETTE: Array<{ name: string; rgb: { r: number; g: number; b: numbe
   { name: 'White', rgb: { r: 245, g: 245, b: 245 }, hex: '#F5F5F5', isNeutral: true },
 ];
 
-function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_PALETTE[0] {
+// Maximum distance to consider a color a valid match
+// Colors farther than this from any palette color will be ignored
+// Using 45 for stricter matching to avoid false color detection
+const MAX_COLOR_DISTANCE = 45;
+
+function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_PALETTE[0] | null {
   let closest = COLOR_PALETTE[0];
   let minDistance = Infinity;
   
@@ -93,6 +98,12 @@ function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_
       minDistance = dist;
       closest = paletteColor;
     }
+  }
+  
+  // If the closest match is still too far, don't count this pixel
+  // This prevents forcing pixels to match colors they're not close to
+  if (minDistance > MAX_COLOR_DISTANCE) {
+    return null;
   }
   
   return closest;
@@ -124,10 +135,12 @@ export function extractDominantColors(
     // Only count nearly-opaque pixels for spot color detection
     // This filters out ALL semi-transparent artifacts, edges, and anti-aliasing
     if (a < 220) continue;
-    
-    totalOpaquePixels++;
 
     const closestColor = findClosestPaletteColor(r, g, b);
+    // Skip if color doesn't match any palette color closely enough
+    if (!closestColor) continue;
+    
+    totalOpaquePixels++;
     const entry = paletteCounts.get(closestColor.name)!;
     entry.count++;
   }
