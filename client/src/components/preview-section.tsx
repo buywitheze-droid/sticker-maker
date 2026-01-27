@@ -336,7 +336,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!ctx) return;
 
       // Square canvas to match square container - image will be centered inside
-      const canvasSize = 430;
+      const canvasSize = 360;
       canvas.width = canvasSize;
       canvas.height = canvasSize;
 
@@ -1089,8 +1089,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchEnd={handleTouchEnd}
                 className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
-                  width: '450px',
-                  height: '450px',
+                  width: '380px',
+                  height: '380px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
                   userSelect: 'none',
@@ -1128,9 +1128,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
               
               {zoom !== 1 && (
-                <div className="hidden md:flex w-3 flex-col" style={{ height: '450px' }}>
+                <div className="hidden md:flex w-1.5 flex-col ml-1" style={{ height: '380px' }}>
                   <div 
-                    className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
+                    className="flex-1 bg-gray-200 rounded-full relative cursor-pointer"
                     onClick={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
                       const y = (e.clientY - rect.top) / rect.height;
@@ -1138,7 +1138,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     }}
                   >
                     <div 
-                      className="absolute left-0 right-0 h-8 bg-gray-400 hover:bg-gray-300 rounded-full transition-colors"
+                      className="absolute left-0 right-0 h-10 bg-gray-400 hover:bg-cyan-400 rounded-full transition-colors shadow-sm"
                       style={{ top: `${((100 - panY) / 200) * 100}%`, transform: 'translateY(-50%)' }}
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -1165,9 +1165,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
             
             {zoom !== 1 && (
-              <div className="hidden md:flex h-3 mt-1">
+              <div className="hidden md:flex h-1.5 mt-1" style={{ width: '380px' }}>
                 <div 
-                  className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
+                  className="flex-1 bg-gray-200 rounded-full relative cursor-pointer"
                   onClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const x = (e.clientX - rect.left) / rect.width;
@@ -1175,7 +1175,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   }}
                 >
                   <div 
-                    className="absolute top-0 bottom-0 w-12 bg-gray-400 hover:bg-gray-300 rounded-full transition-colors"
+                    className="absolute top-0 bottom-0 w-14 bg-gray-400 hover:bg-cyan-400 rounded-full transition-colors shadow-sm"
                     style={{ left: `${((panX + 100) / 200) * 100}%`, transform: 'translateX(-50%)' }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
