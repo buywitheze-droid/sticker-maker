@@ -622,26 +622,80 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const maskCtx = maskCanvas.getContext('2d');
       if (!maskCtx) return;
       
-      // Calculate image position using same logic as main render
-      const origW = imageInfo.image.naturalWidth || imageInfo.image.width;
-      const origH = imageInfo.image.naturalHeight || imageInfo.image.height;
-      const aspectRatio = origW / origH;
+      // Calculate image position using SAME logic as main render (matches drawShapePreview/drawImageWithResizePreview)
+      const viewPadding = 40;
+      const availableWidth = canvas.width - (viewPadding * 2);
+      const availableHeight = canvas.height - (viewPadding * 2);
       
-      // Use 85% of canvas for the image (same as main render)
-      const availableWidth = canvas.width * 0.85;
-      const availableHeight = canvas.height * 0.85;
+      let imgW: number, imgH: number, imgX: number, imgY: number;
       
-      let imgW, imgH;
-      if (aspectRatio > availableWidth / availableHeight) {
-        imgW = availableWidth;
-        imgH = availableWidth / aspectRatio;
+      if (shapeSettings.enabled) {
+        // Match drawShapePreview positioning
+        const shapeDims = calculateShapeDimensions(
+          resizeSettings.widthInches,
+          resizeSettings.heightInches,
+          shapeSettings.type,
+          shapeSettings.offset
+        );
+        const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
+        
+        let shapeWidth: number, shapeHeight: number;
+        if (shapeAspect > (availableWidth / availableHeight)) {
+          shapeWidth = availableWidth;
+          shapeHeight = availableWidth / shapeAspect;
+        } else {
+          shapeHeight = availableHeight;
+          shapeWidth = availableHeight * shapeAspect;
+        }
+        
+        const shapeX = (canvas.width - shapeWidth) / 2;
+        const shapeY = (canvas.height - shapeHeight) / 2;
+        const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
+        
+        imgW = resizeSettings.widthInches * shapePixelsPerInch;
+        imgH = resizeSettings.heightInches * shapePixelsPerInch;
+        
+        // Scale for circle/oval to fit inside inscribed area
+        if (shapeSettings.type === 'circle') {
+          const diameter = Math.min(shapeWidth, shapeHeight);
+          const diagonal = Math.sqrt(imgW * imgW + imgH * imgH);
+          if (diagonal > diameter) {
+            const scale = diameter / diagonal;
+            imgW *= scale;
+            imgH *= scale;
+          }
+        } else if (shapeSettings.type === 'oval') {
+          const a = shapeWidth / 2;
+          const b = shapeHeight / 2;
+          const halfW = imgW / 2;
+          const halfH = imgH / 2;
+          const ellipseCheck = (halfW / a) ** 2 + (halfH / b) ** 2;
+          if (ellipseCheck > 1) {
+            const scale = 1 / Math.sqrt(ellipseCheck);
+            imgW *= scale;
+            imgH *= scale;
+          }
+        }
+        
+        imgX = shapeX + (shapeWidth - imgW) / 2;
+        imgY = shapeY + (shapeHeight - imgH) / 2;
       } else {
-        imgH = availableHeight;
-        imgW = availableHeight * aspectRatio;
+        // Match drawImageWithResizePreview positioning
+        const origW = imageInfo.image.naturalWidth || imageInfo.image.width;
+        const origH = imageInfo.image.naturalHeight || imageInfo.image.height;
+        const aspectRatio = origW / origH;
+        
+        if (aspectRatio > (availableWidth / availableHeight)) {
+          imgW = availableWidth;
+          imgH = availableWidth / aspectRatio;
+        } else {
+          imgH = availableHeight;
+          imgW = availableHeight * aspectRatio;
+        }
+        
+        imgX = (canvas.width - imgW) / 2;
+        imgY = (canvas.height - imgH) / 2;
       }
-      
-      const imgX = (canvas.width - imgW) / 2 + (resizeSettings.positionX || 0);
-      const imgY = (canvas.height - imgH) / 2 + (resizeSettings.positionY || 0);
       
       // Draw just the original image to mask canvas (no background, no shapes)
       console.log('[SpotPreview] Drawing image at:', imgX.toFixed(1), imgY.toFixed(1), 'size:', imgW.toFixed(1), imgH.toFixed(1));
