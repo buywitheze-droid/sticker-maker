@@ -82,8 +82,8 @@ function removeCollinearPoints(points: Array<{x: number, y: number}>, angleThres
 function simplifyPathForPDF(points: Array<{x: number, y: number}>, tolerance: number): Array<{x: number, y: number}> {
   if (points.length < 4) return points;
   
-  // First pass: remove near-collinear points (angle > 175°)
-  let simplified = removeCollinearPoints(points, 175);
+  // First pass: remove near-collinear points (angle > 170°) - catches more straight segments
+  let simplified = removeCollinearPoints(points, 170);
   
   if (simplified.length < 4) return simplified;
   
@@ -2177,8 +2177,8 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Simplify path with RDP - 0.01" tolerance flattens straight segments
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.01);
+    // Simplify path with RDP - 0.02" tolerance flattens straight segments and smooths curves
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.02);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';
@@ -2189,14 +2189,46 @@ export async function downloadContourPDF(
     const startY = simplifiedPath[0].y * 72;
     pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
     
-    // Use straight lines - RDP already removed unnecessary curve points
-    for (let i = 1; i < simplifiedPath.length; i++) {
-      const endX = simplifiedPath[i].x * 72;
-      const endY = simplifiedPath[i].y * 72;
-      pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
+    // Use Catmull-Rom splines for smooth curves, with tension=0 for straight-ish segments
+    const n = simplifiedPath.length;
+    for (let i = 0; i < n; i++) {
+      const p0 = simplifiedPath[(i - 1 + n) % n];
+      const p1 = simplifiedPath[i];
+      const p2 = simplifiedPath[(i + 1) % n];
+      const p3 = simplifiedPath[(i + 2) % n];
+      
+      // Check if segment p1->p2 is relatively straight by looking at angle deviation
+      const v1x = p1.x - p0.x, v1y = p1.y - p0.y;
+      const v2x = p2.x - p1.x, v2y = p2.y - p1.y;
+      const v3x = p3.x - p2.x, v3y = p3.y - p2.y;
+      
+      const len1 = Math.sqrt(v1x*v1x + v1y*v1y) || 0.0001;
+      const len2 = Math.sqrt(v2x*v2x + v2y*v2y) || 0.0001;
+      const len3 = Math.sqrt(v3x*v3x + v3y*v3y) || 0.0001;
+      
+      // Dot products to check collinearity
+      const dot1 = (v1x*v2x + v1y*v2y) / (len1*len2);
+      const dot2 = (v2x*v3x + v2y*v3y) / (len2*len3);
+      
+      // If both angles are nearly straight (dot > 0.98 = ~11°), use line
+      if (dot1 > 0.98 && dot2 > 0.98) {
+        const endX = p2.x * 72;
+        const endY = p2.y * 72;
+        pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
+      } else {
+        // Use Catmull-Rom spline for smooth curve
+        const tension = 0.4;
+        const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+        const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+        const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+        const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+        const endX = p2.x * 72;
+        const endY = p2.y * 72;
+        pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+      }
     }
     
-    pathOps += 'h S\n';
+    pathOps += 'S\n';
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2732,8 +2764,8 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Simplify path with RDP - 0.01" tolerance flattens straight segments
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.01);
+    // Simplify path with RDP - 0.02" tolerance flattens straight segments and smooths curves
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.02);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';
@@ -2744,14 +2776,46 @@ export async function generateContourPDFBase64(
     const startY = simplifiedPath[0].y * 72;
     pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
     
-    // Use straight lines - RDP already removed unnecessary curve points
-    for (let i = 1; i < simplifiedPath.length; i++) {
-      const endX = simplifiedPath[i].x * 72;
-      const endY = simplifiedPath[i].y * 72;
-      pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
+    // Use Catmull-Rom splines for smooth curves, with tension=0 for straight-ish segments
+    const n = simplifiedPath.length;
+    for (let i = 0; i < n; i++) {
+      const p0 = simplifiedPath[(i - 1 + n) % n];
+      const p1 = simplifiedPath[i];
+      const p2 = simplifiedPath[(i + 1) % n];
+      const p3 = simplifiedPath[(i + 2) % n];
+      
+      // Check if segment p1->p2 is relatively straight by looking at angle deviation
+      const v1x = p1.x - p0.x, v1y = p1.y - p0.y;
+      const v2x = p2.x - p1.x, v2y = p2.y - p1.y;
+      const v3x = p3.x - p2.x, v3y = p3.y - p2.y;
+      
+      const len1 = Math.sqrt(v1x*v1x + v1y*v1y) || 0.0001;
+      const len2 = Math.sqrt(v2x*v2x + v2y*v2y) || 0.0001;
+      const len3 = Math.sqrt(v3x*v3x + v3y*v3y) || 0.0001;
+      
+      // Dot products to check collinearity
+      const dot1 = (v1x*v2x + v1y*v2y) / (len1*len2);
+      const dot2 = (v2x*v3x + v2y*v3y) / (len2*len3);
+      
+      // If both angles are nearly straight (dot > 0.98 = ~11°), use line
+      if (dot1 > 0.98 && dot2 > 0.98) {
+        const endX = p2.x * 72;
+        const endY = p2.y * 72;
+        pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
+      } else {
+        // Use Catmull-Rom spline for smooth curve
+        const tension = 0.4;
+        const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+        const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+        const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+        const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+        const endX = p2.x * 72;
+        const endY = p2.y * 72;
+        pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+      }
     }
     
-    pathOps += 'h S\n';
+    pathOps += 'S\n';
     
     const existingContents = page.node.Contents();
     if (existingContents) {
