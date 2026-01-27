@@ -10,6 +10,7 @@ import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
+import { convertPolygonToCurves } from "@/lib/clipper-path";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -502,7 +503,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         ctx.restore();
         
-        // Draw the CutContour path indicator (magenta dashed line)
+        // Draw the CutContour path indicator (magenta dashed line) with curve detection
         if (hasExtractedPaths) {
           ctx.save();
           ctx.strokeStyle = '#FF00FF';
@@ -512,10 +513,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           for (const path of cutContourInfo.cutContourPoints) {
             if (path.length < 2) continue;
             ctx.beginPath();
-            ctx.moveTo(offsetX + path[0].x * scale, offsetY + path[0].y * scale);
-            for (let i = 1; i < path.length; i++) {
-              ctx.lineTo(offsetX + path[i].x * scale, offsetY + path[i].y * scale);
+            
+            // Convert path to curves for smooth rendering (60+ point curves)
+            const segments = convertPolygonToCurves(path, 60);
+            
+            for (const seg of segments) {
+              if (seg.type === 'move' && seg.point) {
+                ctx.moveTo(offsetX + seg.point.x * scale, offsetY + seg.point.y * scale);
+              } else if (seg.type === 'line' && seg.point) {
+                ctx.lineTo(offsetX + seg.point.x * scale, offsetY + seg.point.y * scale);
+              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+                ctx.bezierCurveTo(
+                  offsetX + seg.cp1.x * scale, offsetY + seg.cp1.y * scale,
+                  offsetX + seg.cp2.x * scale, offsetY + seg.cp2.y * scale,
+                  offsetX + seg.end.x * scale, offsetY + seg.end.y * scale
+                );
+              }
             }
+            
+            ctx.closePath();
             ctx.stroke();
           }
           
