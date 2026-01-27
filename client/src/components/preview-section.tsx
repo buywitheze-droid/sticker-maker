@@ -1076,27 +1076,28 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            <div className="flex items-center justify-center gap-2">
-              <div 
-                ref={containerRef}
-                onWheel={handleWheel}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseLeave}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
-                style={{ 
-                  width: '380px',
-                  height: '380px',
-                  backgroundColor: getBackgroundColor(),
-                  overflow: 'hidden',
-                  userSelect: 'none',
-                  touchAction: zoom !== 1 ? 'none' : 'auto'
-                }}
-              >
+            <div className="flex flex-col items-start">
+              <div className="flex">
+                <div 
+                  ref={containerRef}
+                  onWheel={handleWheel}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseLeave}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                  style={{ 
+                    width: '380px',
+                    height: '380px',
+                    backgroundColor: getBackgroundColor(),
+                    overflow: 'hidden',
+                    userSelect: 'none',
+                    touchAction: zoom !== 1 ? 'none' : 'auto'
+                  }}
+                >
                 <canvas 
                   ref={canvasRef}
                   className="relative z-10 block transition-all duration-200"
@@ -1125,81 +1126,84 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     </div>
                   </div>
                 )}
+                </div>
+                
+                {zoom !== 1 && (
+                  <div className="hidden md:flex w-2 flex-col ml-1" style={{ height: '380px' }}>
+                    <div 
+                      className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const y = (e.clientY - rect.top) / rect.height;
+                        setPanY(100 - (y * 200));
+                      }}
+                    >
+                      <div 
+                        className="absolute left-0 right-0 h-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
+                        style={{ top: `${((100 - panY) / 200) * 100}%`, transform: 'translateY(-50%)' }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const startY = e.clientY;
+                          const startPan = panY;
+                          const parent = e.currentTarget.parentElement!;
+                          const height = parent.getBoundingClientRect().height;
+                          
+                          const onMove = (ev: MouseEvent) => {
+                            const delta = (ev.clientY - startY) / height * 200;
+                            setPanY(Math.max(-100, Math.min(100, startPan - delta)));
+                          };
+                          const onUp = () => {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                          };
+                          document.addEventListener('mousemove', onMove);
+                          document.addEventListener('mouseup', onUp);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               
-              {zoom !== 1 && (
-                <div className="hidden md:flex w-1.5 flex-col ml-1" style={{ height: '380px' }}>
-                  <div 
-                    className="flex-1 bg-gray-200 rounded-full relative cursor-pointer"
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const y = (e.clientY - rect.top) / rect.height;
-                      setPanY(100 - (y * 200));
-                    }}
-                  >
+              <div className="flex">
+                {zoom !== 1 && (
+                  <div className="hidden md:flex h-2 mt-1" style={{ width: '380px' }}>
                     <div 
-                      className="absolute left-0 right-0 h-10 bg-gray-400 hover:bg-cyan-400 rounded-full transition-colors shadow-sm"
-                      style={{ top: `${((100 - panY) / 200) * 100}%`, transform: 'translateY(-50%)' }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        const startY = e.clientY;
-                        const startPan = panY;
-                        const parent = e.currentTarget.parentElement!;
-                        const height = parent.getBoundingClientRect().height;
-                        
-                        const onMove = (ev: MouseEvent) => {
-                          const delta = (ev.clientY - startY) / height * 200;
-                          setPanY(Math.max(-100, Math.min(100, startPan - delta)));
-                        };
-                        const onUp = () => {
-                          document.removeEventListener('mousemove', onMove);
-                          document.removeEventListener('mouseup', onUp);
-                        };
-                        document.addEventListener('mousemove', onMove);
-                        document.addEventListener('mouseup', onUp);
+                      className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) / rect.width;
+                        setPanX((x * 200) - 100);
                       }}
-                    />
+                    >
+                      <div 
+                        className="absolute top-0 bottom-0 w-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
+                        style={{ left: `${((panX + 100) / 200) * 100}%`, transform: 'translateX(-50%)' }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const startX = e.clientX;
+                          const startPan = panX;
+                          const parent = e.currentTarget.parentElement!;
+                          const width = parent.getBoundingClientRect().width;
+                          
+                          const onMove = (ev: MouseEvent) => {
+                            const delta = (ev.clientX - startX) / width * 200;
+                            setPanX(Math.max(-100, Math.min(100, startPan + delta)));
+                          };
+                          const onUp = () => {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                          };
+                          document.addEventListener('mousemove', onMove);
+                          document.addEventListener('mouseup', onUp);
+                        }}
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-            
-            {zoom !== 1 && (
-              <div className="hidden md:flex h-1.5 mt-1" style={{ width: '380px' }}>
-                <div 
-                  className="flex-1 bg-gray-200 rounded-full relative cursor-pointer"
-                  onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = (e.clientX - rect.left) / rect.width;
-                    setPanX((x * 200) - 100);
-                  }}
-                >
-                  <div 
-                    className="absolute top-0 bottom-0 w-14 bg-gray-400 hover:bg-cyan-400 rounded-full transition-colors shadow-sm"
-                    style={{ left: `${((panX + 100) / 200) * 100}%`, transform: 'translateX(-50%)' }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      const startX = e.clientX;
-                      const startPan = panX;
-                      const parent = e.currentTarget.parentElement!;
-                      const width = parent.getBoundingClientRect().width;
-                      
-                      const onMove = (ev: MouseEvent) => {
-                        const delta = (ev.clientX - startX) / width * 200;
-                        setPanX(Math.max(-100, Math.min(100, startPan + delta)));
-                      };
-                      const onUp = () => {
-                        document.removeEventListener('mousemove', onMove);
-                        document.removeEventListener('mouseup', onUp);
-                      };
-                      document.addEventListener('mousemove', onMove);
-                      document.addEventListener('mouseup', onUp);
-                    }}
-                  />
-                </div>
-                <div className="w-3" />
+                )}
+                {zoom !== 1 && <div className="hidden md:block w-2 h-2 mt-1 ml-1" />}
               </div>
-            )}
+            </div>
 
             <div className="mt-4">
               <div className="flex items-center justify-center gap-1.5 bg-gray-50/50 rounded-lg p-1.5 border border-gray-100">
