@@ -608,10 +608,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const data = imageData.data;
       
       // Helper to check if a pixel matches a color (within tolerance)
-      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
+      // Uses tighter tolerance for near-white/near-gray colors to avoid matching anti-aliased edges
+      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
         const g = parseInt(targetHex.slice(3, 5), 16);
         const b = parseInt(targetHex.slice(5, 7), 16);
+        
+        // Determine if target color is near-white or near-gray
+        const isNearWhite = r > 220 && g > 220 && b > 220;
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+        const isNearGray = maxDiff <= 20 && r > 170;
+        
+        // Use tighter tolerance for near-white/near-gray to avoid anti-aliased edge matching
+        const tolerance = (isNearWhite || isNearGray) ? 15 : 40;
+        
         return Math.abs(pixelR - r) <= tolerance && 
                Math.abs(pixelG - g) <= tolerance && 
                Math.abs(pixelB - b) <= tolerance;
@@ -654,18 +664,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         if (a < 10) continue; // Skip transparent pixels
         
-        // Skip background/holographic colors
-        if (isBackgroundColor(r, g, b)) continue;
+        let matched = false;
         
-        // Check for white overlay (solid white)
+        // Check for white overlay (solid white) - check selected colors FIRST
         for (const wc of whiteColors) {
           if (colorMatches(r, g, b, wc.hex)) {
             data[i] = 255;     // R
             data[i + 1] = 255; // G
             data[i + 2] = 255; // B
+            matched = true;
             break;
           }
         }
+        
+        if (matched) continue;
         
         // Check for gloss overlay (silver/grey shiny look)
         for (const gc of glossColors) {
@@ -674,9 +686,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             data[i] = 180;     // R
             data[i + 1] = 180; // G
             data[i + 2] = 190; // B - slightly blue tint for shiny effect
+            matched = true;
             break;
           }
         }
+        
+        // Note: Background color exclusion removed - was causing issues with 
+        // near-white spot colors like F9F6F5 not previewing correctly.
+        // The color matching tolerance (40) should be sufficient to avoid
+        // matching unintended anti-aliased edge pixels.
       }
       
       ctx.putImageData(imageData, 0, 0);
