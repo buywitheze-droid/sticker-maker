@@ -589,7 +589,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
     // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
-    // This simpler approach matches colors directly on the canvas but only within design area
+    // Only applies to actual design pixels, not the canvas background pattern
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -602,6 +602,27 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      
+      // Create alpha mask from original image to identify design pixels
+      // This prevents matching the checkered transparency pattern
+      const maskCanvas = document.createElement('canvas');
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) return;
+      
+      // Calculate scale and position to match the preview canvas
+      const dpi = resizeSettings.outputDPI;
+      const targetWidth = resizeSettings.widthInches * dpi;
+      const targetHeight = resizeSettings.heightInches * dpi;
+      const scale = Math.min(canvas.width / targetWidth, canvas.height / targetHeight) * 0.85;
+      const scaledWidth = targetWidth * scale;
+      const scaledHeight = targetHeight * scale;
+      const offsetX = (canvas.width - scaledWidth) / 2;
+      const offsetY = (canvas.height - scaledHeight) / 2;
+      
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+      maskCtx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
+      const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height);
       
       // Get current canvas image data
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -655,18 +676,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         return false;
       };
       
-      // Apply overlay colors
+      // Apply overlay colors - only to pixels that are part of the design (have alpha in original image)
       for (let i = 0; i < data.length; i += 4) {
+        // Check if this pixel is part of the design using the mask
+        const maskAlpha = maskData.data[i + 3];
+        if (maskAlpha < 10) continue; // Skip pixels outside the design area
+        
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const a = data[i + 3];
-        
-        if (a < 10) continue; // Skip transparent pixels
         
         let matched = false;
         
-        // Check for white overlay (solid white) - check selected colors FIRST
+        // Check for white overlay (solid white)
         for (const wc of whiteColors) {
           if (colorMatches(r, g, b, wc.hex)) {
             data[i] = 255;     // R
@@ -686,15 +708,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             data[i] = 180;     // R
             data[i + 1] = 180; // G
             data[i + 2] = 190; // B - slightly blue tint for shiny effect
-            matched = true;
             break;
           }
         }
-        
-        // Note: Background color exclusion removed - was causing issues with 
-        // near-white spot colors like F9F6F5 not previewing correctly.
-        // The color matching tolerance (40) should be sufficient to avoid
-        // matching unintended anti-aliased edge pixels.
       }
       
       ctx.putImageData(imageData, 0, 0);
