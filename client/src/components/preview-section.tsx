@@ -590,42 +590,34 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
-    // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
-    // Draw a NEW overlay canvas on top instead of modifying pixels - this guarantees alignment
-    useEffect(() => {
-      if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
+    // Helper function to create spot color overlay canvas from original image
+    const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {
+      if (!imageInfo || !spotPreviewData?.enabled) return null;
       
-      // Get colors marked for white or gloss preview
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
       const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
       
-      if (whiteColors.length === 0 && glossColors.length === 0) return;
+      if (whiteColors.length === 0 && glossColors.length === 0) return null;
       
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      
-      // Step 1: Create a mask from the ORIGINAL image showing which pixels match spot colors
+      // Create canvas with original image data
       const srcCanvas = document.createElement('canvas');
       const srcCtx = srcCanvas.getContext('2d');
-      if (!srcCtx) return;
+      if (!srcCtx) return null;
       
       srcCanvas.width = imageInfo.image.width;
       srcCanvas.height = imageInfo.image.height;
       srcCtx.drawImage(imageInfo.image, 0, 0);
       const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
-      // Create overlay canvas same size as original image
+      // Create overlay canvas
       const overlayCanvas = document.createElement('canvas');
       overlayCanvas.width = srcCanvas.width;
       overlayCanvas.height = srcCanvas.height;
       const overlayCtx = overlayCanvas.getContext('2d');
-      if (!overlayCtx) return;
+      if (!overlayCtx) return null;
       
-      // Make overlay transparent initially
       const overlayData = overlayCtx.createImageData(srcCanvas.width, srcCanvas.height);
       
-      // Helper to check if a pixel matches a color (within tolerance)
       const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 30) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
         const g = parseInt(targetHex.slice(3, 5), 16);
@@ -635,7 +627,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Scan original image and create overlay pixels
       for (let y = 0; y < srcCanvas.height; y++) {
         for (let x = 0; x < srcCanvas.width; x++) {
           const idx = (y * srcCanvas.width + x) * 4;
@@ -644,28 +635,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const b = srcData.data[idx + 2];
           const a = srcData.data[idx + 3];
           
-          // Skip transparent pixels
           if (a < 128) continue;
           
-          // Check white colors
           for (const wc of whiteColors) {
             if (colorMatches(r, g, b, wc.hex)) {
-              overlayData.data[idx] = 255;     // R
-              overlayData.data[idx + 1] = 255; // G
-              overlayData.data[idx + 2] = 255; // B
-              overlayData.data[idx + 3] = 255; // A (fully opaque)
+              overlayData.data[idx] = 255;
+              overlayData.data[idx + 1] = 255;
+              overlayData.data[idx + 2] = 255;
+              overlayData.data[idx + 3] = 255;
               break;
             }
           }
           
-          // Check gloss colors (if not already matched as white)
           if (overlayData.data[idx + 3] === 0) {
             for (const gc of glossColors) {
               if (colorMatches(r, g, b, gc.hex)) {
-                overlayData.data[idx] = 180;     // R
-                overlayData.data[idx + 1] = 180; // G
-                overlayData.data[idx + 2] = 190; // B
-                overlayData.data[idx + 3] = 255; // A (fully opaque)
+                overlayData.data[idx] = 180;
+                overlayData.data[idx + 1] = 180;
+                overlayData.data[idx + 2] = 190;
+                overlayData.data[idx + 3] = 255;
                 break;
               }
             }
@@ -674,14 +662,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       
       overlayCtx.putImageData(overlayData, 0, 0);
-      
-      // Step 2: Draw overlay using the stored image render position (set during main render)
-      // This guarantees perfect alignment since we use the exact same coordinates
-      if (lastImageRenderRef.current) {
-        const { x, y, width, height } = lastImageRenderRef.current;
-        ctx.drawImage(overlayCanvas, x, y, width, height);
-      }
-    }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor, isProcessing]);
+      return overlayCanvas;
+    };
 
     useEffect(() => {
       if (!imageInfo) return;
@@ -1002,23 +984,29 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
         }
         
-        // Store image position within contour for spot overlay alignment
-        // Image is at padding offset within contour canvas
-        const effectiveDPI = 100;
-        const baseOffsetPixels = Math.round(0.015 * effectiveDPI);
-        const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
-        const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
-        const padding = totalOffsetPixels + 10;
-        
-        const scaleX = contourWidth / contourCanvas.width;
-        const scaleY = contourHeight / contourCanvas.height;
-        
-        lastImageRenderRef.current = {
-          x: contourX + (padding * scaleX),
-          y: contourY + (padding * scaleY),
-          width: imageInfo.image.width * scaleX,
-          height: imageInfo.image.height * scaleY
-        };
+        // Draw spot color overlay at exact image position within contour
+        const spotOverlay = createSpotOverlayCanvas();
+        if (spotOverlay) {
+          // Calculate effectiveDPI same way as contour-outline.ts
+          const effectiveDPI = resizeSettings 
+            ? imageInfo.image.width / resizeSettings.widthInches
+            : imageInfo.image.width / 5;
+          
+          const baseOffsetPixels = Math.round(0.015 * effectiveDPI);
+          const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+          const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+          const padding = totalOffsetPixels + 10;
+          
+          const scaleX = contourWidth / contourCanvas.width;
+          const scaleY = contourHeight / contourCanvas.height;
+          
+          const spotX = contourX + (padding * scaleX);
+          const spotY = contourY + (padding * scaleY);
+          const spotWidth = imageInfo.image.width * scaleX;
+          const spotHeight = imageInfo.image.height * scaleY;
+          
+          ctx.drawImage(spotOverlay, spotX, spotY, spotWidth, spotHeight);
+        }
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
         let displayWidth, displayHeight;
@@ -1035,13 +1023,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         ctx.drawImage(imageInfo.image, displayX, displayY, displayWidth, displayHeight);
         
-        // Store image position for spot overlay alignment
-        lastImageRenderRef.current = {
-          x: displayX,
-          y: displayY,
-          width: displayWidth,
-          height: displayHeight
-        };
+        // Draw spot color overlay at exact same position
+        const spotOverlay = createSpotOverlayCanvas();
+        if (spotOverlay) {
+          ctx.drawImage(spotOverlay, displayX, displayY, displayWidth, displayHeight);
+        }
       }
     };
 
