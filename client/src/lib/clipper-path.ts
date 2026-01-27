@@ -496,3 +496,36 @@ function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | n
   
   return null;
 }
+
+export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: number; y2: number}>): Point[][] {
+  if (rectangles.length === 0) return [];
+  
+  const clipper = new ClipperLib.Clipper();
+  
+  for (const rect of rectangles) {
+    const rectPath: ClipperLib.Path = [
+      { X: Math.round(rect.x1 * CLIPPER_SCALE), Y: Math.round(rect.y1 * CLIPPER_SCALE) },
+      { X: Math.round(rect.x2 * CLIPPER_SCALE), Y: Math.round(rect.y1 * CLIPPER_SCALE) },
+      { X: Math.round(rect.x2 * CLIPPER_SCALE), Y: Math.round(rect.y2 * CLIPPER_SCALE) },
+      { X: Math.round(rect.x1 * CLIPPER_SCALE), Y: Math.round(rect.y2 * CLIPPER_SCALE) }
+    ];
+    clipper.AddPath(rectPath, ClipperLib.PolyType.ptSubject, true);
+  }
+  
+  const solution: ClipperLib.Path[] = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (solution.length === 0) return [];
+  
+  const result: Point[][] = solution.map(path => {
+    const simplified = ClipperLib.Clipper.CleanPolygon(path, 1.0 * CLIPPER_SCALE);
+    return (simplified && simplified.length >= 3 ? simplified : path).map((p: { X: number; Y: number }) => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+  });
+  
+  console.log(`[unionRectangles] United ${rectangles.length} rectangles into ${result.length} polygons`);
+  
+  return result;
+}

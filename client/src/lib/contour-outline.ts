@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles } from "@/lib/clipper-path";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -2340,25 +2340,42 @@ export async function downloadContourPDF(
             regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
           }
           
-          // Step 3: Build a single compound path with subpaths
-          // Use moveto/lineto/close for each rectangle, then fill all at once
+          // Step 3: Union all rectangles into unified polygon paths
+          // This creates clean, merged outlines instead of many separate rectangles
+          const rectInputs = regions.map(r => ({
+            x1: r.x1,
+            y1: r.y1,
+            x2: r.x2,
+            y2: r.y2 + 1
+          }));
+          
+          const unifiedPolygons = unionRectangles(rectInputs);
+          console.log(`[PDF] United ${regions.length} regions into ${unifiedPolygons.length} polygon(s) for ${colorName}`);
+          
           let spotOps = `q /${colorName} cs 1 scn\n`;
           
-          // Draw all regions as a single compound path
-          for (const r of regions) {
-            const px1 = toX(r.x1);
-            const px2 = toX(r.x2);
-            const py1 = toY(r.y1);
-            const py2 = toY(r.y2 + 1);
+          // Draw each unified polygon
+          for (const polygon of unifiedPolygons) {
+            if (polygon.length < 3) continue;
             
-            // Each rectangle as a subpath
-            spotOps += `${px1.toFixed(2)} ${py1.toFixed(2)} m `;
-            spotOps += `${px2.toFixed(2)} ${py1.toFixed(2)} l `;
-            spotOps += `${px2.toFixed(2)} ${py2.toFixed(2)} l `;
-            spotOps += `${px1.toFixed(2)} ${py2.toFixed(2)} l h\n`;
+            // Start the path
+            const firstPt = polygon[0];
+            const startX = toX(firstPt.x);
+            const startY = toY(firstPt.y);
+            spotOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m `;
+            
+            // Line to each subsequent point
+            for (let i = 1; i < polygon.length; i++) {
+              const pt = polygon[i];
+              const px = toX(pt.x);
+              const py = toY(pt.y);
+              spotOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
+            }
+            
+            spotOps += 'h\n';
           }
           
-          // Single fill command for entire compound path
+          // Single fill command for all polygons
           spotOps += 'f\nQ\n';
           
           // Add content stream to page
