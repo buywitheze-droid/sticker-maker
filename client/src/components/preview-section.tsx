@@ -670,28 +670,81 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const viewPadding = 40;
       const availableWidth = canvas.width - (viewPadding * 2);
       const availableHeight = canvas.height - (viewPadding * 2);
-      const aspectRatio = srcCanvas.width / srcCanvas.height;
       
-      let displayWidth, displayHeight;
-      if (aspectRatio > (availableWidth / availableHeight)) {
-        displayWidth = availableWidth;
-        displayHeight = availableWidth / aspectRatio;
+      // CRITICAL: Match the exact render path - check if contour mode is active
+      // When contour is enabled, the render uses contourCanvas dimensions (which includes stroke)
+      // We need to calculate where the IMAGE sits within that contour canvas
+      const contourCanvas = contourCacheRef.current?.canvas;
+      const useContourMode = strokeSettings.enabled && contourCanvas && !isProcessing;
+      
+      let displayWidth, displayHeight, offsetX, offsetY;
+      let imageInContourX = 0, imageInContourY = 0;
+      let imageInContourWidth = srcCanvas.width, imageInContourHeight = srcCanvas.height;
+      
+      if (useContourMode) {
+        // When contour mode is active, the contour canvas is what gets displayed
+        const contourAspectRatio = contourCanvas.width / contourCanvas.height;
+        
+        if (contourAspectRatio > (availableWidth / availableHeight)) {
+          displayWidth = availableWidth;
+          displayHeight = availableWidth / contourAspectRatio;
+        } else {
+          displayHeight = availableHeight;
+          displayWidth = availableHeight * contourAspectRatio;
+        }
+        
+        offsetX = (canvas.width - displayWidth) / 2;
+        offsetY = (canvas.height - displayHeight) / 2;
+        
+        // The original image is embedded inside the contour canvas with margins
+        // We need to figure out where the image is positioned within the contour
+        const margin = strokeSettings.width * 2; // Same margin used when creating contour
+        imageInContourX = margin;
+        imageInContourY = margin;
+        imageInContourWidth = contourCanvas.width - (margin * 2);
+        imageInContourHeight = contourCanvas.height - (margin * 2);
       } else {
-        displayHeight = availableHeight;
-        displayWidth = availableHeight * aspectRatio;
+        // Regular mode - original image is displayed directly
+        const aspectRatio = srcCanvas.width / srcCanvas.height;
+        
+        if (aspectRatio > (availableWidth / availableHeight)) {
+          displayWidth = availableWidth;
+          displayHeight = availableWidth / aspectRatio;
+        } else {
+          displayHeight = availableHeight;
+          displayWidth = availableHeight * aspectRatio;
+        }
+        
+        offsetX = (canvas.width - displayWidth) / 2;
+        offsetY = (canvas.height - displayHeight) / 2;
       }
-      
-      const offsetX = (canvas.width - displayWidth) / 2;
-      const offsetY = (canvas.height - displayHeight) / 2;
       
       // Apply overlay - iterate over canvas pixels within the image bounds
       for (let canvasY = Math.floor(offsetY); canvasY < Math.ceil(offsetY + displayHeight); canvasY++) {
         for (let canvasX = Math.floor(offsetX); canvasX < Math.ceil(offsetX + displayWidth); canvasX++) {
           if (canvasX < 0 || canvasX >= canvas.width || canvasY < 0 || canvasY >= canvas.height) continue;
           
-          // Map canvas position to original image position
-          const srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
-          const srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
+          let srcX, srcY;
+          
+          if (useContourMode) {
+            // Map canvas position to contour canvas position, then to original image position
+            const contourX = (canvasX - offsetX) / displayWidth * contourCanvas.width;
+            const contourY = (canvasY - offsetY) / displayHeight * contourCanvas.height;
+            
+            // Check if within the image area inside the contour
+            if (contourX < imageInContourX || contourX >= imageInContourX + imageInContourWidth ||
+                contourY < imageInContourY || contourY >= imageInContourY + imageInContourHeight) {
+              continue; // Outside the image area (in the stroke area)
+            }
+            
+            // Map from contour image position to original image position
+            srcX = Math.floor((contourX - imageInContourX) / imageInContourWidth * srcCanvas.width);
+            srcY = Math.floor((contourY - imageInContourY) / imageInContourHeight * srcCanvas.height);
+          } else {
+            // Direct mapping from canvas to original image
+            srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
+            srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
+          }
           
           if (srcX < 0 || srcX >= srcCanvas.width || srcY < 0 || srcY >= srcCanvas.height) continue;
           
