@@ -253,7 +253,7 @@ function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b:
 
 export function extractDominantColors(
   imageData: ImageData,
-  maxColors: number = 12,
+  maxColors: number = 18,
   minPercentage: number = 0.5
 ): ExtractedColor[] {
   // Detect background color from corners
@@ -351,7 +351,7 @@ export function extractDominantColors(
   return sortedColors.slice(0, maxColors).map(({ isNeutral, ...color }) => color);
 }
 
-export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 12): ExtractedColor[] {
+export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 18): ExtractedColor[] {
   const ctx = canvas.getContext('2d');
   if (!ctx) return [];
   
@@ -371,7 +371,7 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
   return extractDominantColors(imageData, maxColors);
 }
 
-export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 12): ExtractedColor[] {
+export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 18): ExtractedColor[] {
   if (!image.complete || image.width === 0 || image.height === 0) return [];
   
   // Use full image resolution for better color detection
