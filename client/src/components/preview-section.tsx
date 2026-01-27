@@ -987,21 +987,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // Draw spot color overlay at exact image position within contour
         const spotOverlay = createSpotOverlayCanvas();
         if (spotOverlay) {
-          // Calculate effectiveDPI same way as contour-outline.ts
-          const effectiveDPI = resizeSettings 
-            ? imageInfo.image.width / resizeSettings.widthInches
-            : imageInfo.image.width / 5;
-          
-          const baseOffsetPixels = Math.round(0.015 * effectiveDPI);
-          const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
-          const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
-          const padding = totalOffsetPixels + 10;
+          // Calculate padding directly from actual canvas dimensions (most reliable)
+          // contourCanvas.width = image.width + (padding * 2)
+          // So: padding = (contourCanvas.width - image.width) / 2
+          const paddingX = (contourCanvas.width - imageInfo.image.width) / 2;
+          const paddingY = (contourCanvas.height - imageInfo.image.height) / 2;
           
           const scaleX = contourWidth / contourCanvas.width;
           const scaleY = contourHeight / contourCanvas.height;
           
-          const spotX = contourX + (padding * scaleX);
-          const spotY = contourY + (padding * scaleY);
+          const spotX = contourX + (paddingX * scaleX);
+          const spotY = contourY + (paddingY * scaleY);
           const spotWidth = imageInfo.image.width * scaleX;
           const spotHeight = imageInfo.image.height * scaleY;
           
