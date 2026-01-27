@@ -336,7 +336,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!ctx) return;
 
       // Square canvas to match square container - image will be centered inside
-      const canvasSize = 400;
+      const canvasSize = 430;
       canvas.width = canvasSize;
       canvas.height = canvasSize;
 
@@ -1076,7 +1076,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center gap-2">
               <div 
                 ref={containerRef}
                 onWheel={handleWheel}
@@ -1089,8 +1089,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchEnd={handleTouchEnd}
                 className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
-                  width: '420px',
-                  height: '420px',
+                  width: '450px',
+                  height: '450px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
                   userSelect: 'none',
@@ -1128,7 +1128,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
               
               {zoom !== 1 && (
-                <div className="hidden md:flex w-3 flex-col" style={{ height: '400px' }}>
+                <div className="hidden md:flex w-3 flex-col" style={{ height: '450px' }}>
                   <div 
                     className="flex-1 bg-gray-700/50 rounded-full relative cursor-pointer"
                     onClick={(e) => {
@@ -1253,31 +1253,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             </div>
 
-            {/* Image Info - moved to bottom of preview */}
-            {imageInfo && resizeSettings && (
-              <div className="mt-3 flex items-center justify-between gap-4 px-1">
-                <div className="flex items-center gap-3">
-                  {imageInfo.file?.name && (
-                    <span className="text-xs text-gray-500 truncate max-w-[120px]" title={imageInfo.file.name}>
-                      {imageInfo.file.name}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-1.5 text-gray-600">
-                    <span className="text-sm font-medium text-gray-700">{resizeSettings.widthInches.toFixed(1)}"</span>
-                    <span className="text-gray-300">×</span>
-                    <span className="text-sm font-medium text-gray-700">{resizeSettings.heightInches.toFixed(1)}"</span>
-                  </div>
-                  <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
-                </div>
-                
-                {/* Pink Outline Info */}
-                {showCutLineInfo && (
-                  <span className="text-xs text-fuchsia-500 font-medium">
-                    Pink = CutContour
-                  </span>
-                )}
-              </div>
-            )}
           </CardContent>
         </Card>
       </div>
