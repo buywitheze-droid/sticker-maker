@@ -28,7 +28,7 @@ interface ControlsSectionProps {
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
   onStickerSizeChange: (size: StickerSize) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean}>) => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>) => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
@@ -836,60 +836,22 @@ export default function ControlsSection({
         )}
       </Button>
 
-      {/* Send Form */}
+      {/* Download 1 PDF - Single artboard with all layers */}
       {canDownload && imageInfo && (
-        <>
-          {!showSendForm ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowSendForm(true)}
-              className="w-full border-gray-300 text-gray-600 hover:bg-gray-50"
-            >
-              Send to Print Shop
-            </Button>
-          ) : (
-            <div className="space-y-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
-              <Input
-                placeholder="Your Name"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                className="bg-white border-gray-300 text-gray-900 text-sm"
-              />
-              <Input
-                placeholder="Email"
-                type="email"
-                value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)}
-                className="bg-white border-gray-300 text-gray-900 text-sm"
-              />
-              <Input
-                placeholder="Notes (optional)"
-                value={customerNotes}
-                onChange={(e) => setCustomerNotes(e.target.value)}
-                className="bg-white border-gray-300 text-gray-900 text-sm"
-              />
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSendDesign}
-                  disabled={isSending}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                >
-                  {isSending ? 'Sending...' : 'Send'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowSendForm(false)}
-                  className="text-gray-500"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+            ...c,
+            spotWhiteName,
+            spotGlossName
+          })))}
+          disabled={isProcessing}
+          className="w-full border-cyan-400 text-cyan-700 hover:bg-cyan-50"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          Download 1 PDF
+        </Button>
       )}
 
       {/* Confirm Dialog */}

@@ -1670,6 +1670,8 @@ export interface SpotColorInput {
   rgb: { r: number; g: number; b: number };
   spotWhite: boolean;
   spotGloss: boolean;
+  spotWhiteName?: string;
+  spotGlossName?: string;
 }
 
 // Detect if design is "solid" (few internal gaps) or has many gaps
@@ -2377,27 +2379,31 @@ export async function downloadContourPDF(
           console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} solid regions`);
         };
         
-        // Create additional pages for White and Gloss spot colors
-        // Page 2: White spot color layer only
+        // Get custom spot color names from first marked color (all should have same name)
+        const whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+        const glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+        
+        // Add White and Gloss spot color layers on the SAME page (same artboard, different layers)
         if (hasWhite) {
-          const whitePage = pdfDoc.addPage([widthPts, heightPts]);
           const whiteColors = spotColors.filter(c => c.spotWhite);
-          await createSpotColorLayer('RDG_WHITE', whiteColors, [0, 0, 0, 1], whitePage);
+          await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], page);
         }
         
-        // Page 3: Gloss spot color layer only
         if (hasGloss) {
-          const glossPage = pdfDoc.addPage([widthPts, heightPts]);
           const glossColors = spotColors.filter(c => c.spotGloss);
-          await createSpotColorLayer('RDG_GLOSS', glossColors, [1, 0, 1, 0], glossPage);
+          await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], page);
         }
       }
     }
   }
   
+  // Get custom names for metadata
+  const whiteName = spotColors?.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+  const glossName = spotColors?.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+  
   pdfDoc.setTitle('Sticker with CutContour and Spot Colors');
-  pdfDoc.setSubject('Page 1: Raster + CutContour, Page 2: RDG_WHITE, Page 3: RDG_GLOSS');
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'RDG_WHITE', 'RDG_GLOSS']);
+  pdfDoc.setSubject(`Single artboard with Design + CutContour + ${whiteName} + ${glossName}`);
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', whiteName, glossName]);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
