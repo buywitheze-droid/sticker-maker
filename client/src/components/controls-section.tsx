@@ -81,7 +81,7 @@ export default function ControlsSection({
   // Reset extracted colors when image changes to prevent stale colors from showing
   useEffect(() => {
     if (imageInfo?.image) {
-      const colors = extractColorsFromImage(imageInfo.image, 9);
+      const colors = extractColorsFromImage(imageInfo.image, 18);
       setExtractedColors(colors);
     } else {
       setExtractedColors([]);
