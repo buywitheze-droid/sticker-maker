@@ -497,7 +497,7 @@ function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | n
   return null;
 }
 
-// Detect curved segments (60+ points) and convert to Bezier curves
+// Detect curved segments where start-to-end DISTANCE is 60+ pts and convert to single Bezier curves
 // Returns an array of path segments: either {type: 'line', point} or {type: 'curve', cp1, cp2, end}
 export interface PathSegment {
   type: 'move' | 'line' | 'curve';
@@ -507,116 +507,154 @@ export interface PathSegment {
   end?: Point;
 }
 
-function getAngle(p1: Point, p2: Point): number {
-  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+function pointDistance(p1: Point, p2: Point): number {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
-function angleDifference(a1: number, a2: number): number {
-  let diff = a2 - a1;
-  while (diff > Math.PI) diff -= 2 * Math.PI;
-  while (diff < -Math.PI) diff += 2 * Math.PI;
-  return diff;
+// Check if points form a curve (deviate from straight line)
+function isCurvedPath(points: Point[], minDeviation: number = 3): boolean {
+  if (points.length < 3) return false;
+  
+  const start = points[0];
+  const end = points[points.length - 1];
+  
+  // Find maximum deviation from straight line
+  let maxDeviation = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const dev = perpendicularDistance(points[i], start, end);
+    if (dev > maxDeviation) maxDeviation = dev;
+  }
+  
+  // Also check if angle changes are consistent (one direction)
+  let positiveChanges = 0;
+  let negativeChanges = 0;
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const angle1 = Math.atan2(points[i].y - points[i-1].y, points[i].x - points[i-1].x);
+    const angle2 = Math.atan2(points[i+1].y - points[i].y, points[i+1].x - points[i].x);
+    let diff = angle2 - angle1;
+    while (diff > Math.PI) diff -= 2 * Math.PI;
+    while (diff < -Math.PI) diff += 2 * Math.PI;
+    
+    if (diff > 0.005) positiveChanges++;
+    else if (diff < -0.005) negativeChanges++;
+  }
+  
+  const total = positiveChanges + negativeChanges;
+  const isConsistentDirection = total > 0 && Math.max(positiveChanges, negativeChanges) / total > 0.6;
+  
+  return maxDeviation >= minDeviation && isConsistentDirection;
 }
 
-// Fit a cubic Bezier curve to a set of points
-function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point } {
+// Fit a cubic Bezier curve to a set of points (2 anchor points + 2 control points)
+function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point } | null {
   if (points.length < 2) {
-    return { cp1: points[0], cp2: points[0], end: points[0] };
+    return null;
   }
   
   const start = points[0];
   const end = points[points.length - 1];
   
-  // Use 1/3 and 2/3 points along the curve for control point estimation
-  const t1 = Math.floor(points.length / 3);
-  const t2 = Math.floor((2 * points.length) / 3);
-  const p1 = points[t1];
-  const p2 = points[t2];
+  // Guard against zero distance (coincident points)
+  const dist = pointDistance(start, end);
+  if (dist < 0.001) {
+    return null;
+  }
   
-  // Estimate control points using de Casteljau's algorithm inverse
-  // CP1 = P1 * 3 - start * 2 - end * 0.5 (simplified approximation)
-  // CP2 = P2 * 3 - start * 0.5 - end * 2
+  // Find the point of maximum deviation - this guides control point placement
+  let maxDev = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const dev = perpendicularDistance(points[i], start, end);
+    if (dev > maxDev) {
+      maxDev = dev;
+    }
+  }
+  
+  // Use points at 1/3 and 2/3 of the path for control point estimation
+  const t1Idx = Math.max(1, Math.floor(points.length / 3));
+  const t2Idx = Math.min(points.length - 2, Math.floor((2 * points.length) / 3));
+  const p1 = points[t1Idx];
+  const p2 = points[t2Idx];
+  
+  // Control points extend outward from the curve path
+  // Scale factor based on deviation ratio - more deviation = more control point offset
+  const deviationRatio = Math.min(maxDev / dist, 1.0); // Cap at 1.0 to prevent extreme scaling
+  const scaleFactor = 1.5 + deviationRatio * 0.5;
+  
   const cp1: Point = {
-    x: start.x + (p1.x - start.x) * 1.5,
-    y: start.y + (p1.y - start.y) * 1.5
+    x: start.x + (p1.x - start.x) * scaleFactor,
+    y: start.y + (p1.y - start.y) * scaleFactor
   };
   
   const cp2: Point = {
-    x: end.x + (p2.x - end.x) * 1.5,
-    y: end.y + (p2.y - end.y) * 1.5
+    x: end.x + (p2.x - end.x) * scaleFactor,
+    y: end.y + (p2.y - end.y) * scaleFactor
   };
   
   return { cp1, cp2, end };
 }
 
-// Detect if a sequence of points forms a curve (consistent angle change direction)
-function isCurvedSegment(points: Point[]): boolean {
-  if (points.length < 10) return false;
-  
-  let positiveChanges = 0;
-  let negativeChanges = 0;
-  
-  for (let i = 1; i < points.length - 1; i++) {
-    const angle1 = getAngle(points[i - 1], points[i]);
-    const angle2 = getAngle(points[i], points[i + 1]);
-    const diff = angleDifference(angle1, angle2);
-    
-    if (diff > 0.01) positiveChanges++;
-    else if (diff < -0.01) negativeChanges++;
-  }
-  
-  // A curve has mostly consistent direction changes
-  const total = positiveChanges + negativeChanges;
-  if (total === 0) return false;
-  
-  const dominantRatio = Math.max(positiveChanges, negativeChanges) / total;
-  return dominantRatio > 0.7;
-}
-
-export function convertPolygonToCurves(polygon: Point[], minCurvePoints: number = 60): PathSegment[] {
+// minDistance is the minimum distance (in pixels/points) between curve start and end
+export function convertPolygonToCurves(polygon: Point[], minDistance: number = 60): PathSegment[] {
   if (polygon.length < 3) return [];
   
   const segments: PathSegment[] = [];
   segments.push({ type: 'move', point: polygon[0] });
   
+  // Minimum deviation ratio (deviation / distance) to consider it a curve
+  const minDeviationRatio = 0.05; // 5% of chord length
+  
   let i = 1;
   while (i < polygon.length) {
-    // Look ahead to find curved segments of minCurvePoints or more
-    let curveEnd = i;
+    let foundCurve = false;
     
-    // Check if starting a curve
-    if (i + minCurvePoints <= polygon.length) {
-      const testSegment = polygon.slice(i - 1, i + minCurvePoints);
-      if (isCurvedSegment(testSegment)) {
-        // Extend the curve as far as it continues
-        curveEnd = i + minCurvePoints;
-        while (curveEnd < polygon.length) {
-          const extendedSegment = polygon.slice(curveEnd - 10, curveEnd + 1);
-          if (isCurvedSegment(extendedSegment)) {
-            curveEnd++;
-          } else {
+    // Search FORWARD to find the first qualifying curve segment (not longest)
+    // This prevents over-collapsing multiple curves into one
+    for (let j = i + 3; j < polygon.length && j < i + 200; j++) {
+      const startPt = polygon[i - 1];
+      const endPt = polygon[j];
+      const dist = pointDistance(startPt, endPt);
+      
+      // Only consider if distance is >= minDistance
+      if (dist >= minDistance) {
+        const segment = polygon.slice(i - 1, j + 1);
+        
+        // Find max deviation for this segment
+        let maxDev = 0;
+        for (let k = 1; k < segment.length - 1; k++) {
+          const dev = perpendicularDistance(segment[k], startPt, endPt);
+          if (dev > maxDev) maxDev = dev;
+        }
+        
+        // Check if deviation ratio is significant enough to be a curve (not a straight line)
+        const deviationRatio = maxDev / dist;
+        
+        if (deviationRatio >= minDeviationRatio && isCurvedPath(segment, 5)) {
+          // Fit a single Bezier curve to this segment
+          const bezier = fitBezierCurve(segment);
+          if (bezier) {
+            segments.push({
+              type: 'curve',
+              cp1: bezier.cp1,
+              cp2: bezier.cp2,
+              end: bezier.end
+            });
+            
+            i = j + 1;
+            foundCurve = true;
             break;
           }
         }
-        
-        // Fit a Bezier curve to this segment
-        const curvePoints = polygon.slice(i - 1, curveEnd);
-        const bezier = fitBezierCurve(curvePoints);
-        segments.push({
-          type: 'curve',
-          cp1: bezier.cp1,
-          cp2: bezier.cp2,
-          end: bezier.end
-        });
-        
-        i = curveEnd;
-        continue;
       }
     }
     
-    // Not a curve, add as line segment
-    segments.push({ type: 'line', point: polygon[i] });
-    i++;
+    if (!foundCurve) {
+      // Not part of a curve, add as line segment
+      segments.push({ type: 'line', point: polygon[i] });
+      i++;
+    }
   }
   
   return segments;
