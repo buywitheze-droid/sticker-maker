@@ -715,6 +715,10 @@ export default function ControlsSection({
                         onChange={(e) => setTempWhiteName(e.target.value)}
                         className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
                         autoFocus
+                        onBlur={() => {
+                          setSpotWhiteName(tempWhiteName || "RDG_WHITE");
+                          setEditingWhiteName(false);
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             setSpotWhiteName(tempWhiteName || "RDG_WHITE");
@@ -768,6 +772,10 @@ export default function ControlsSection({
                         onChange={(e) => setTempGlossName(e.target.value)}
                         className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
                         autoFocus
+                        onBlur={() => {
+                          setSpotGlossName(tempGlossName || "RDG_GLOSS");
+                          setEditingGlossName(false);
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             setSpotGlossName(tempGlossName || "RDG_GLOSS");
@@ -819,7 +827,11 @@ export default function ControlsSection({
 
       {/* Download Button */}
       <Button
-        onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss))}
+        onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+          ...c,
+          spotWhiteName,
+          spotGlossName
+        })))}
         disabled={isProcessing || !canDownload || !imageInfo}
         className="w-full bg-cyan-600 hover:bg-cyan-700 text-white"
       >
