@@ -627,6 +627,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           { r: 232, g: 208, b: 240 }, // #E8D0F0
           { r: 176, g: 200, b: 224 }, // #B0C8E0
           { r: 192, g: 176, b: 216 }, // #C0B0D8
+          { r: 210, g: 210, b: 206 }, // #D2D2CE - common light gray
         ];
         
         for (const hc of holoColors) {
@@ -637,7 +638,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         // Also exclude pure white backgrounds and common fill colors
         if (r > 240 && g > 240 && b > 240) return true; // Near white
-        if (r === g && g === b && r > 200) return true; // Light grays (canvas bg)
+        
+        // Exclude near-gray colors (where R, G, B are within 15 of each other and light)
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+        if (maxDiff <= 15 && r > 180) return true; // Light near-grays like D2D2CE
         
         return false;
       };
