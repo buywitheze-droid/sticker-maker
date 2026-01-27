@@ -728,7 +728,7 @@ function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
 }
 
 // minDistance is the minimum distance (in pixels/points) between curve start and end
-export function convertPolygonToCurves(polygon: Point[], minDistance: number = 40): PathSegment[] {
+export function convertPolygonToCurves(polygon: Point[], minDistance: number = 70): PathSegment[] {
   if (polygon.length < 3) return [];
   
   const segments: PathSegment[] = [];

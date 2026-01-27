@@ -518,7 +518,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             const smoothedPath = gaussianSmoothContour(path, 2);
             
             // Convert path to curves for smooth rendering (60+ point curves)
-            const segments = convertPolygonToCurves(smoothedPath, 60);
+            const segments = convertPolygonToCurves(smoothedPath, 70);
             
             for (const seg of segments) {
               if (seg.type === 'move' && seg.point) {

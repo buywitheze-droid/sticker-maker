@@ -2367,7 +2367,7 @@ export async function downloadContourPDF(
             const smoothedPolygon = gaussianSmoothContour(polygon, 2);
             
             // Convert polygon to path segments with curve detection (60+ point curves)
-            const pathSegments = convertPolygonToCurves(smoothedPolygon, 60);
+            const pathSegments = convertPolygonToCurves(smoothedPolygon, 70);
             
             for (const seg of pathSegments) {
               if (seg.type === 'move' && seg.point) {
