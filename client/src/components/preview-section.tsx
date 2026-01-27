@@ -589,7 +589,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
     // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
-    // Only applies to actual design pixels, not the canvas background pattern
+    // Uses ORIGINAL IMAGE data to match colors, avoiding canvas background pattern issues
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -603,112 +603,112 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       
-      // Create alpha mask from original image to identify design pixels
-      // This prevents matching the checkered transparency pattern
-      const maskCanvas = document.createElement('canvas');
-      const maskCtx = maskCanvas.getContext('2d');
-      if (!maskCtx) return;
+      // Step 1: Extract pixel data from the ORIGINAL image (not the canvas)
+      const srcCanvas = document.createElement('canvas');
+      const srcCtx = srcCanvas.getContext('2d');
+      if (!srcCtx) return;
       
-      // Calculate scale and position to match the preview canvas
-      const dpi = resizeSettings.outputDPI;
-      const targetWidth = resizeSettings.widthInches * dpi;
-      const targetHeight = resizeSettings.heightInches * dpi;
-      const scale = Math.min(canvas.width / targetWidth, canvas.height / targetHeight) * 0.85;
-      const scaledWidth = targetWidth * scale;
-      const scaledHeight = targetHeight * scale;
-      const offsetX = (canvas.width - scaledWidth) / 2;
-      const offsetY = (canvas.height - scaledHeight) / 2;
+      srcCanvas.width = imageInfo.image.width;
+      srcCanvas.height = imageInfo.image.height;
+      srcCtx.drawImage(imageInfo.image, 0, 0);
+      const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
-      maskCanvas.width = canvas.width;
-      maskCanvas.height = canvas.height;
-      maskCtx.drawImage(imageInfo.image, offsetX, offsetY, scaledWidth, scaledHeight);
-      const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height);
-      
-      // Get current canvas image data
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
+      // Step 2: Build a mask in original image space (which pixels match which spot color)
+      // 0 = no match, 1 = white, 2 = gloss
+      const maskArray = new Uint8Array(srcCanvas.width * srcCanvas.height);
       
       // Helper to check if a pixel matches a color (within tolerance)
-      // Uses tighter tolerance for near-white/near-gray colors to avoid matching anti-aliased edges
-      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string) => {
+      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 30) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
         const g = parseInt(targetHex.slice(3, 5), 16);
         const b = parseInt(targetHex.slice(5, 7), 16);
-        
-        // Determine if target color is near-white or near-gray
-        const isNearWhite = r > 220 && g > 220 && b > 220;
-        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
-        const isNearGray = maxDiff <= 20 && r > 170;
-        
-        // Use tighter tolerance for near-white/near-gray to avoid anti-aliased edge matching
-        const tolerance = (isNearWhite || isNearGray) ? 15 : 40;
-        
         return Math.abs(pixelR - r) <= tolerance && 
                Math.abs(pixelG - g) <= tolerance && 
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Helper to check if a color is a holographic/background color (should be excluded)
-      const isBackgroundColor = (r: number, g: number, b: number) => {
-        // Near-white colors (very light - any channel > 235 and all > 220)
-        if (r > 220 && g > 220 && b > 220) return true; // Catches F9F6F5, white, off-whites
-        
-        // Near-gray colors (where R, G, B are similar and light)
-        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
-        if (maxDiff <= 20 && r > 170) return true; // Light near-grays like D2D2CE (210,210,206)
-        
-        // Holographic gradient colors (silver rainbow palette)
-        const holoColors = [
-          { r: 200, g: 200, b: 208 }, // #C8C8D0
-          { r: 232, g: 184, b: 184 }, // #E8B8B8
-          { r: 184, g: 216, b: 232 }, // #B8D8E8
-          { r: 232, g: 208, b: 240 }, // #E8D0F0
-          { r: 176, g: 200, b: 224 }, // #B0C8E0
-          { r: 192, g: 176, b: 216 }, // #C0B0D8
-        ];
-        
-        for (const hc of holoColors) {
-          if (Math.abs(r - hc.r) <= 25 && Math.abs(g - hc.g) <= 25 && Math.abs(b - hc.b) <= 25) {
-            return true;
+      // Scan original image and mark matching pixels
+      for (let y = 0; y < srcCanvas.height; y++) {
+        for (let x = 0; x < srcCanvas.width; x++) {
+          const idx = (y * srcCanvas.width + x) * 4;
+          const r = srcData.data[idx];
+          const g = srcData.data[idx + 1];
+          const b = srcData.data[idx + 2];
+          const a = srcData.data[idx + 3];
+          
+          // Skip transparent pixels (only match opaque pixels from original)
+          if (a < 128) continue;
+          
+          const maskIdx = y * srcCanvas.width + x;
+          
+          // Check white colors
+          for (const wc of whiteColors) {
+            if (colorMatches(r, g, b, wc.hex)) {
+              maskArray[maskIdx] = 1; // White
+              break;
+            }
+          }
+          
+          // Check gloss colors (if not already matched as white)
+          if (maskArray[maskIdx] === 0) {
+            for (const gc of glossColors) {
+              if (colorMatches(r, g, b, gc.hex)) {
+                maskArray[maskIdx] = 2; // Gloss
+                break;
+              }
+            }
           }
         }
-        
-        return false;
-      };
+      }
       
-      // Apply overlay colors - only to pixels that are part of the design (have alpha in original image)
-      for (let i = 0; i < data.length; i += 4) {
-        // Check if this pixel is part of the design using the mask
-        const maskAlpha = maskData.data[i + 3];
-        if (maskAlpha < 10) continue; // Skip pixels outside the design area
-        
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        
-        let matched = false;
-        
-        // Check for white overlay (solid white)
-        for (const wc of whiteColors) {
-          if (colorMatches(r, g, b, wc.hex)) {
-            data[i] = 255;     // R
-            data[i + 1] = 255; // G
-            data[i + 2] = 255; // B
-            matched = true;
-            break;
-          }
-        }
-        
-        if (matched) continue;
-        
-        // Check for gloss overlay (silver/grey shiny look)
-        for (const gc of glossColors) {
-          if (colorMatches(r, g, b, gc.hex)) {
-            // Silver/metallic grey color for gloss preview
-            data[i] = 180;     // R
-            data[i + 1] = 180; // G
-            data[i + 2] = 190; // B - slightly blue tint for shiny effect
-            break;
+      // Step 3: Calculate the mapping using the SAME transform as drawImageWithResizePreview
+      const viewPadding = 40;
+      const availableWidth = canvas.width - (viewPadding * 2);
+      const availableHeight = canvas.height - (viewPadding * 2);
+      const aspectRatio = srcCanvas.width / srcCanvas.height;
+      
+      let displayWidth, displayHeight;
+      if (aspectRatio > (availableWidth / availableHeight)) {
+        displayWidth = availableWidth;
+        displayHeight = availableWidth / aspectRatio;
+      } else {
+        displayHeight = availableHeight;
+        displayWidth = availableHeight * aspectRatio;
+      }
+      
+      const offsetX = (canvas.width - displayWidth) / 2;
+      const offsetY = (canvas.height - displayHeight) / 2;
+      
+      // Step 4: Apply overlay to canvas using the mask
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      
+      for (let canvasY = 0; canvasY < canvas.height; canvasY++) {
+        for (let canvasX = 0; canvasX < canvas.width; canvasX++) {
+          // Map canvas coordinates to original image coordinates
+          const srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
+          const srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
+          
+          // Check if within image bounds
+          if (srcX < 0 || srcX >= srcCanvas.width || srcY < 0 || srcY >= srcCanvas.height) continue;
+          
+          const maskIdx = srcY * srcCanvas.width + srcX;
+          const maskValue = maskArray[maskIdx];
+          
+          if (maskValue === 0) continue; // No match
+          
+          const canvasIdx = (canvasY * canvas.width + canvasX) * 4;
+          
+          if (maskValue === 1) {
+            // White overlay
+            data[canvasIdx] = 255;     // R
+            data[canvasIdx + 1] = 255; // G
+            data[canvasIdx + 2] = 255; // B
+          } else if (maskValue === 2) {
+            // Gloss overlay (silver/grey)
+            data[canvasIdx] = 180;     // R
+            data[canvasIdx + 1] = 180; // G
+            data[canvasIdx + 2] = 190; // B
           }
         }
       }
