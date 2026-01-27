@@ -158,11 +158,80 @@ function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_
   return closest;
 }
 
+// Detect background color by sampling image corners
+function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b: number } | null {
+  const { width, height, data } = imageData;
+  const sampleSize = Math.min(10, Math.floor(Math.min(width, height) / 10)); // Sample corner pixels
+  const corners: Array<{ r: number; g: number; b: number; a: number }> = [];
+  
+  // Sample from all 4 corners
+  const cornerPositions = [
+    { startX: 0, startY: 0 },                          // top-left
+    { startX: width - sampleSize, startY: 0 },          // top-right
+    { startX: 0, startY: height - sampleSize },         // bottom-left
+    { startX: width - sampleSize, startY: height - sampleSize } // bottom-right
+  ];
+  
+  for (const corner of cornerPositions) {
+    for (let dy = 0; dy < sampleSize; dy++) {
+      for (let dx = 0; dx < sampleSize; dx++) {
+        const x = corner.startX + dx;
+        const y = corner.startY + dy;
+        const i = (y * width + x) * 4;
+        if (data[i + 3] >= 250) { // Only opaque pixels
+          corners.push({ r: data[i], g: data[i + 1], b: data[i + 2], a: data[i + 3] });
+        }
+      }
+    }
+  }
+  
+  if (corners.length < 20) return null; // Not enough corner samples
+  
+  // Find the most common color among corner pixels
+  const colorCounts = new Map<string, { count: number; r: number; g: number; b: number }>();
+  for (const c of corners) {
+    // Quantize to reduce noise (group similar colors)
+    const qr = Math.round(c.r / 16) * 16;
+    const qg = Math.round(c.g / 16) * 16;
+    const qb = Math.round(c.b / 16) * 16;
+    const key = `${qr},${qg},${qb}`;
+    const existing = colorCounts.get(key);
+    if (existing) {
+      existing.count++;
+      existing.r = (existing.r * (existing.count - 1) + c.r) / existing.count;
+      existing.g = (existing.g * (existing.count - 1) + c.g) / existing.count;
+      existing.b = (existing.b * (existing.count - 1) + c.b) / existing.count;
+    } else {
+      colorCounts.set(key, { count: 1, r: c.r, g: c.g, b: c.b });
+    }
+  }
+  
+  // Find the dominant corner color
+  const entries = Array.from(colorCounts.values());
+  const bestEntry = entries.reduce<{ count: number; r: number; g: number; b: number } | null>(
+    (best, entry) => (!best || entry.count > best.count) ? entry : best,
+    null
+  );
+  
+  // Only consider it a background if it's in at least 50% of corner samples
+  if (bestEntry && bestEntry.count >= corners.length * 0.5) {
+    const bgColor = { r: Math.round(bestEntry.r), g: Math.round(bestEntry.g), b: Math.round(bestEntry.b) };
+    console.log(`[ColorExtractor] Detected background color: rgb(${bgColor.r}, ${bgColor.g}, ${bgColor.b})`);
+    return bgColor;
+  }
+  
+  return null;
+}
+
 export function extractDominantColors(
   imageData: ImageData,
   maxColors: number = 12,
   minPercentage: number = 0.5
 ): ExtractedColor[] {
+  // Detect background color from corners
+  const bgColor = detectBackgroundColor(imageData);
+  const bgColorTolerance = 30; // Distance threshold to consider a pixel as background
+  
   // Track actual RGB totals for each palette color to compute average
   const paletteCounts = new Map<string, { 
     color: typeof COLOR_PALETTE[0]; 
@@ -198,6 +267,14 @@ export function extractDominantColors(
     // Only count truly opaque pixels for spot color detection
     // This filters out ALL semi-transparent artifacts, edges, anti-aliasing, and background noise
     if (a < 250) continue;
+    
+    // Skip pixels that match the detected background color
+    if (bgColor) {
+      const bgDist = Math.sqrt(
+        (r - bgColor.r) ** 2 + (g - bgColor.g) ** 2 + (b - bgColor.b) ** 2
+      );
+      if (bgDist <= bgColorTolerance) continue;
+    }
 
     const closestColor = findClosestPaletteColor(r, g, b);
     // Skip if color doesn't match any palette color closely enough
