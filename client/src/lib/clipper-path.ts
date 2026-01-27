@@ -596,66 +596,116 @@ function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point }
   return { cp1, cp2, end };
 }
 
+// Check if a segment is a valid arc with consistent curvature
+function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
+  if (points.length < 5) return false;
+  
+  const start = points[0];
+  const end = points[points.length - 1];
+  const chordDist = pointDistance(start, end);
+  if (chordDist < 10) return false; // Minimum chord length
+  
+  // Find max deviation from chord
+  let maxDev = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const dev = perpendicularDistance(points[i], start, end);
+    if (dev > maxDev) maxDev = dev;
+  }
+  
+  // Must have significant deviation (not a straight line)
+  const devRatio = maxDev / chordDist;
+  if (devRatio < minDevRatio) return false;
+  
+  // Check curvature sign consistency (all angles should bend the same way)
+  let positiveCount = 0;
+  let negativeCount = 0;
+  let straightCount = 0;
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    
+    // Cross product gives curvature sign
+    const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x);
+    
+    if (Math.abs(cross) < 0.5) straightCount++;
+    else if (cross > 0) positiveCount++;
+    else negativeCount++;
+  }
+  
+  const total = positiveCount + negativeCount + straightCount;
+  if (total === 0) return false;
+  
+  // At least 70% of angle changes should be in the same direction for a valid arc
+  const dominantCount = Math.max(positiveCount, negativeCount);
+  const consistency = dominantCount / (positiveCount + negativeCount + 0.001);
+  
+  return consistency > 0.65;
+}
+
 // minDistance is the minimum distance (in pixels/points) between curve start and end
-export function convertPolygonToCurves(polygon: Point[], minDistance: number = 60): PathSegment[] {
+export function convertPolygonToCurves(polygon: Point[], minDistance: number = 40): PathSegment[] {
   if (polygon.length < 3) return [];
   
   const segments: PathSegment[] = [];
   segments.push({ type: 'move', point: polygon[0] });
   
-  // Minimum deviation ratio (deviation / distance) to consider it a curve
-  const minDeviationRatio = 0.05; // 5% of chord length
+  let curveCount = 0;
+  let lineCount = 0;
+  
+  // Maximum arc span limit to prevent merging unrelated edges
+  const maxArcSpan = 300;
   
   let i = 1;
   while (i < polygon.length) {
-    let foundCurve = false;
+    // Search for the LONGEST valid arc segment starting from current position
+    let bestEnd = -1;
+    let bestSegment: Point[] | null = null;
     
-    // Search FORWARD to find the first qualifying curve segment (not longest)
-    // This prevents over-collapsing multiple curves into one
-    for (let j = i + 3; j < polygon.length && j < i + 200; j++) {
-      const startPt = polygon[i - 1];
+    const startPt = polygon[i - 1];
+    const maxWindow = Math.min(polygon.length, i + maxArcSpan);
+    
+    // Start from farthest (within limit) and work backwards to find longest valid arc
+    for (let j = maxWindow - 1; j >= i + 4; j--) {
       const endPt = polygon[j];
       const dist = pointDistance(startPt, endPt);
       
-      // Only consider if distance is >= minDistance
       if (dist >= minDistance) {
         const segment = polygon.slice(i - 1, j + 1);
         
-        // Find max deviation for this segment
-        let maxDev = 0;
-        for (let k = 1; k < segment.length - 1; k++) {
-          const dev = perpendicularDistance(segment[k], startPt, endPt);
-          if (dev > maxDev) maxDev = dev;
-        }
-        
-        // Check if deviation ratio is significant enough to be a curve (not a straight line)
-        const deviationRatio = maxDev / dist;
-        
-        if (deviationRatio >= minDeviationRatio && isCurvedPath(segment, 5)) {
-          // Fit a single Bezier curve to this segment
-          const bezier = fitBezierCurve(segment);
-          if (bezier) {
-            segments.push({
-              type: 'curve',
-              cp1: bezier.cp1,
-              cp2: bezier.cp2,
-              end: bezier.end
-            });
-            
-            i = j + 1;
-            foundCurve = true;
-            break;
-          }
+        if (isValidArc(segment, 0.03)) {
+          bestEnd = j;
+          bestSegment = segment;
+          break; // Found longest valid arc, use it
         }
       }
     }
     
-    if (!foundCurve) {
-      // Not part of a curve, add as line segment
-      segments.push({ type: 'line', point: polygon[i] });
-      i++;
+    if (bestEnd > 0 && bestSegment) {
+      // Fit a single Bezier curve to the entire arc
+      const bezier = fitBezierCurve(bestSegment);
+      if (bezier) {
+        segments.push({
+          type: 'curve',
+          cp1: bezier.cp1,
+          cp2: bezier.cp2,
+          end: bezier.end
+        });
+        
+        curveCount++;
+        i = bestEnd + 1;
+        continue;
+      }
     }
+    
+    // No valid arc found, add as line segment
+    segments.push({ type: 'line', point: polygon[i] });
+    lineCount++;
+    i++;
   }
+  
+  console.log(`[CurveDetection] Polygon ${polygon.length} pts -> ${curveCount} curves, ${lineCount} lines`);
   
   return segments;
 }
