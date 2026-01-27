@@ -37,6 +37,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Store the last rendered image position for spot overlay alignment
+    const lastImageRenderRef = useRef<{x: number; y: number; width: number; height: number} | null>(null);
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -673,69 +675,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       overlayCtx.putImageData(overlayData, 0, 0);
       
-      // Step 2: Draw this overlay onto the main canvas at the SAME position as the image
-      // Calculate where to draw (same logic as drawImageWithResizePreview)
-      const viewPadding = 40;
-      const availableWidth = canvas.width - (viewPadding * 2);
-      const availableHeight = canvas.height - (viewPadding * 2);
-      
-      const contourCanvas = contourCacheRef.current?.canvas;
-      const useContourMode = strokeSettings.enabled && contourCanvas && !isProcessing;
-      
-      if (useContourMode) {
-        // In contour mode, the image is inside the contour canvas at a specific position
-        // Calculate the contour display dimensions
-        const contourAspectRatio = contourCanvas.width / contourCanvas.height;
-        
-        let contourDisplayWidth, contourDisplayHeight;
-        if (contourAspectRatio > (availableWidth / availableHeight)) {
-          contourDisplayWidth = availableWidth;
-          contourDisplayHeight = availableWidth / contourAspectRatio;
-        } else {
-          contourDisplayHeight = availableHeight;
-          contourDisplayWidth = availableHeight * contourAspectRatio;
-        }
-        
-        const contourX = (canvas.width - contourDisplayWidth) / 2;
-        const contourY = (canvas.height - contourDisplayHeight) / 2;
-        
-        // Calculate where image sits within contour canvas
-        const effectiveDPI = 100;
-        const baseOffsetPixels = Math.round(0.015 * effectiveDPI);
-        const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
-        const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
-        const padding = totalOffsetPixels + 10;
-        
-        // Scale factor from contour canvas to display
-        const scaleX = contourDisplayWidth / contourCanvas.width;
-        const scaleY = contourDisplayHeight / contourCanvas.height;
-        
-        // Image position and size on the display canvas
-        const imageDisplayX = contourX + (padding * scaleX);
-        const imageDisplayY = contourY + (padding * scaleY);
-        const imageDisplayWidth = srcCanvas.width * scaleX;
-        const imageDisplayHeight = srcCanvas.height * scaleY;
-        
-        // Draw overlay at same position as image
-        ctx.drawImage(overlayCanvas, imageDisplayX, imageDisplayY, imageDisplayWidth, imageDisplayHeight);
-      } else {
-        // Regular mode - draw overlay at same position as original image
-        const aspectRatio = srcCanvas.width / srcCanvas.height;
-        
-        let displayWidth, displayHeight;
-        if (aspectRatio > (availableWidth / availableHeight)) {
-          displayWidth = availableWidth;
-          displayHeight = availableWidth / aspectRatio;
-        } else {
-          displayHeight = availableHeight;
-          displayWidth = availableHeight * aspectRatio;
-        }
-        
-        const offsetX = (canvas.width - displayWidth) / 2;
-        const offsetY = (canvas.height - displayHeight) / 2;
-        
-        // Draw overlay at same position as image
-        ctx.drawImage(overlayCanvas, offsetX, offsetY, displayWidth, displayHeight);
+      // Step 2: Draw overlay using the stored image render position (set during main render)
+      // This guarantees perfect alignment since we use the exact same coordinates
+      if (lastImageRenderRef.current) {
+        const { x, y, width, height } = lastImageRenderRef.current;
+        ctx.drawImage(overlayCanvas, x, y, width, height);
       }
     }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor, isProcessing]);
 
@@ -1057,6 +1001,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         } else {
           ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
         }
+        
+        // Store image position within contour for spot overlay alignment
+        // Image is at padding offset within contour canvas
+        const effectiveDPI = 100;
+        const baseOffsetPixels = Math.round(0.015 * effectiveDPI);
+        const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+        const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+        const padding = totalOffsetPixels + 10;
+        
+        const scaleX = contourWidth / contourCanvas.width;
+        const scaleY = contourHeight / contourCanvas.height;
+        
+        lastImageRenderRef.current = {
+          x: contourX + (padding * scaleX),
+          y: contourY + (padding * scaleY),
+          width: imageInfo.image.width * scaleX,
+          height: imageInfo.image.height * scaleY
+        };
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
         let displayWidth, displayHeight;
@@ -1072,6 +1034,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const displayY = (canvasHeight - displayHeight) / 2;
         
         ctx.drawImage(imageInfo.image, displayX, displayY, displayWidth, displayHeight);
+        
+        // Store image position for spot overlay alignment
+        lastImageRenderRef.current = {
+          x: displayX,
+          y: displayY,
+          width: displayWidth,
+          height: displayHeight
+        };
       }
     };
 
