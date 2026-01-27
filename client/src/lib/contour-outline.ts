@@ -2083,48 +2083,52 @@ export async function downloadContourPDF(
     // Smooth the contour to reduce jagged edges from alpha tracing
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(smoothedPath, 0.005);
-    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
-    
-    let pathOps = '';
-    pathOps += '/CutContour CS 1 SCN\n';
-    pathOps += '0.5 w\n';
-    
-    const startX = simplifiedPath[0].x * 72;
-    const startY = simplifiedPath[0].y * 72;
-    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
-    
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
+    // Guard for empty/degenerate paths
+    if (smoothedPath.length < 3) {
+      console.log('[PDF] Path too short, skipping CutContour');
+    } else {
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
       
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
+      let pathOps = '';
+      pathOps += '/CutContour CS 1 SCN\n';
+      pathOps += '0.5 w\n';
       
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
-    }
-    
-    pathOps += 'h S\n';
-    
-    const existingContents = page.node.Contents();
-    if (existingContents) {
-      const contentStream = context.stream(pathOps);
-      const contentStreamRef = context.register(contentStream);
+      // Use same curve detection as preview for consistency
+      const pathSegments = convertPolygonToCurves(smoothedPath, 70);
       
-      if (existingContents instanceof PDFArray) {
-        existingContents.push(contentStreamRef);
-      } else {
-        const newContents = context.obj([existingContents, contentStreamRef]);
-        page.node.set(PDFName.of('Contents'), newContents);
+      for (const seg of pathSegments) {
+        if (seg.type === 'move' && seg.point) {
+          const px = seg.point.x * 72;
+          const py = seg.point.y * 72;
+          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
+        } else if (seg.type === 'line' && seg.point) {
+          const px = seg.point.x * 72;
+          const py = seg.point.y * 72;
+          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
+        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+          const cp1x = seg.cp1.x * 72;
+          const cp1y = seg.cp1.y * 72;
+          const cp2x = seg.cp2.x * 72;
+          const cp2y = seg.cp2.y * 72;
+          const endx = seg.end.x * 72;
+          const endy = seg.end.y * 72;
+          pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
+        }
+      }
+      
+      pathOps += 'h S\n';
+      
+      const existingContents = page.node.Contents();
+      if (existingContents) {
+        const contentStream = context.stream(pathOps);
+        const contentStreamRef = context.register(contentStream);
+        
+        if (existingContents instanceof PDFArray) {
+          existingContents.push(contentStreamRef);
+        } else {
+          const newContents = context.obj([existingContents, contentStreamRef]);
+          page.node.set(PDFName.of('Contents'), newContents);
+        }
       }
     }
   }
@@ -2671,48 +2675,52 @@ export async function generateContourPDFBase64(
     // Smooth the contour to reduce jagged edges from alpha tracing
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(smoothedPath, 0.005);
-    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
-    
-    let pathOps = '';
-    pathOps += '/CutContour CS 1 SCN\n';
-    pathOps += '0.5 w\n';
-    
-    const startX = simplifiedPath[0].x * 72;
-    const startY = simplifiedPath[0].y * 72;
-    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
-    
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
+    // Guard for empty/degenerate paths
+    if (smoothedPath.length < 3) {
+      console.log('[PDF] Path too short, skipping CutContour');
+    } else {
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
       
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
+      let pathOps = '';
+      pathOps += '/CutContour CS 1 SCN\n';
+      pathOps += '0.5 w\n';
       
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
-    }
-    
-    pathOps += 'h S\n';
-    
-    const existingContents = page.node.Contents();
-    if (existingContents) {
-      const contentStream = context.stream(pathOps);
-      const contentStreamRef = context.register(contentStream);
+      // Use same curve detection as preview for consistency
+      const pathSegments = convertPolygonToCurves(smoothedPath, 70);
       
-      if (existingContents instanceof PDFArray) {
-        existingContents.push(contentStreamRef);
-      } else {
-        const newContents = context.obj([existingContents, contentStreamRef]);
-        page.node.set(PDFName.of('Contents'), newContents);
+      for (const seg of pathSegments) {
+        if (seg.type === 'move' && seg.point) {
+          const px = seg.point.x * 72;
+          const py = seg.point.y * 72;
+          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
+        } else if (seg.type === 'line' && seg.point) {
+          const px = seg.point.x * 72;
+          const py = seg.point.y * 72;
+          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
+        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+          const cp1x = seg.cp1.x * 72;
+          const cp1y = seg.cp1.y * 72;
+          const cp2x = seg.cp2.x * 72;
+          const cp2y = seg.cp2.y * 72;
+          const endx = seg.end.x * 72;
+          const endy = seg.end.y * 72;
+          pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
+        }
+      }
+      
+      pathOps += 'h S\n';
+      
+      const existingContents = page.node.Contents();
+      if (existingContents) {
+        const contentStream = context.stream(pathOps);
+        const contentStreamRef = context.register(contentStream);
+        
+        if (existingContents instanceof PDFArray) {
+          existingContents.push(contentStreamRef);
+        } else {
+          const newContents = context.obj([existingContents, contentStreamRef]);
+          page.node.set(PDFName.of('Contents'), newContents);
+        }
       }
     }
   }
