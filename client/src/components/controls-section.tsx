@@ -836,7 +836,7 @@ export default function ControlsSection({
         )}
       </Button>
 
-      {/* Download 1 PDF - Single artboard with all layers */}
+      {/* Download All as 1 PDF - Single artboard with all layers */}
       {canDownload && imageInfo && (
         <Button
           variant="outline"
@@ -850,7 +850,7 @@ export default function ControlsSection({
           className="w-full border-cyan-400 text-cyan-700 hover:bg-cyan-50"
         >
           <Download className="w-4 h-4 mr-2" />
-          Download 1 PDF
+          Download All as 1 PDF
         </Button>
       )}
 
