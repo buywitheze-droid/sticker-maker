@@ -336,8 +336,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!ctx) return;
 
       // Dynamic canvas sizing based on design aspect ratio
-      const maxSize = 400;
-      const minSize = 280;
+      const maxSize = 420;
+      const minSize = 120;
       
       // Determine the source dimensions for aspect ratio
       let sourceWidth = imageInfo.image.width;
@@ -382,7 +382,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (hasPdfCutContour && imageInfo.pdfCutContourInfo) {
         const cutContourInfo = imageInfo.pdfCutContourInfo;
         const hasExtractedPaths = cutContourInfo.cutContourPoints && cutContourInfo.cutContourPoints.length > 0;
-        const viewPadding = 12;
+        const viewPadding = 6;
         const availableWidth = canvas.width - (viewPadding * 2);
         const availableHeight = canvas.height - (viewPadding * 2);
         
@@ -719,7 +719,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       );
 
       const bleedInches = 0.10; // 0.10" bleed around the shape
-      const padding = 12;
+      const padding = 6;
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);
       const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
@@ -941,7 +941,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      const viewPadding = 12;
+      const viewPadding = 6;
       const availableWidth = canvasWidth - (viewPadding * 2);
       const availableHeight = canvasHeight - (viewPadding * 2);
       
