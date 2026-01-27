@@ -231,23 +231,16 @@ export default function ControlsSection({
           )}
         </div>
 
-        {/* Remove White Background - Testing Phase */}
+        {/* Remove White Background */}
         {onRemoveBackground && (
           <div className="px-4 py-3 border-b border-gray-100">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Label className="text-sm font-medium text-gray-700">Remove White Background</Label>
-                <span className="text-[10px] font-medium px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full">Testing Phase</span>
-              </div>
-              <button
-                onClick={() => onRemoveBackground(85)}
-                disabled={isRemovingBackground}
-                className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg shadow-md shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isRemovingBackground ? 'Removing...' : 'Remove'}
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">Removes white from edges only, keeps white inside the design</p>
+            <button
+              onClick={() => onRemoveBackground(85)}
+              disabled={isRemovingBackground}
+              className="w-full py-2.5 text-sm font-medium bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg shadow-md shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRemovingBackground ? 'Removing...' : 'Remove White Background'}
+            </button>
           </div>
         )}
 
