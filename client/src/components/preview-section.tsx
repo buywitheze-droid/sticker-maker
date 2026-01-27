@@ -335,40 +335,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      // Dynamic canvas sizing based on design aspect ratio
-      const maxSize = 420;
-      const minSize = 120;
-      
-      // Determine the source dimensions for aspect ratio
-      let sourceWidth = imageInfo.image.width;
-      let sourceHeight = imageInfo.image.height;
-      
-      // If contour mode is active, use contour canvas dimensions
-      if (strokeSettings.enabled && contourCacheRef.current?.canvas) {
-        sourceWidth = contourCacheRef.current.canvas.width;
-        sourceHeight = contourCacheRef.current.canvas.height;
-      }
-      
-      // Calculate aspect ratio and set canvas dimensions
-      const aspectRatio = sourceWidth / sourceHeight;
-      let canvasWidth, canvasHeight;
-      
-      if (aspectRatio > 1) {
-        // Landscape - width is larger
-        canvasWidth = maxSize;
-        canvasHeight = Math.max(minSize, Math.round(maxSize / aspectRatio));
-      } else if (aspectRatio < 1) {
-        // Portrait - height is larger
-        canvasHeight = maxSize;
-        canvasWidth = Math.max(minSize, Math.round(maxSize * aspectRatio));
-      } else {
-        // Square
-        canvasWidth = maxSize;
-        canvasHeight = maxSize;
-      }
-      
-      canvas.width = canvasWidth;
-      canvas.height = canvasHeight;
+      // Square canvas to match square container - image will be centered inside
+      const canvasSize = 400;
+      canvas.width = canvasSize;
+      canvas.height = canvasSize;
 
       // Determine which background color to use:
       // - For PDFs with CutContour, use strokeSettings.backgroundColor
@@ -1117,8 +1087,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
-                className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
+                  width: '420px',
                   height: '420px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
