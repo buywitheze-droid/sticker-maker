@@ -90,7 +90,7 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
             <Upload className="w-4 h-4 text-white" />
           )}
           <p className={`font-medium ${isEmptyState ? 'text-gray-700 text-lg mb-2' : 'text-white text-sm'}`}>
-            {isEmptyState ? 'Drop your image here' : 'Change'}
+            {isEmptyState ? 'Drop your image here' : 'Change Image'}
           </p>
           {isEmptyState && (
             <p className="text-sm text-gray-400">
