@@ -2351,59 +2351,21 @@ export async function downloadContourPDF(
             regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
           }
           
-          // Step 3: Union all rectangles into unified polygon paths
-          // This creates clean, merged outlines instead of many separate rectangles
-          const rectInputs = regions.map(r => ({
-            x1: r.x1,
-            y1: r.y1,
-            x2: r.x2,
-            y2: r.y2 + 1
-          }));
-          
-          const unifiedPolygons = unionRectangles(rectInputs);
-          console.log(`[PDF] United ${regions.length} regions into ${unifiedPolygons.length} polygon(s) for ${colorName}`);
-          
+          // Step 3: Draw individual rectangles (simpler and more accurate than unified polygons)
           let spotOps = `q /${colorName} cs 1 scn\n`;
-          let curveCount = 0;
-          let lineCount = 0;
           
-          // Draw each unified polygon with curve detection
-          for (const polygon of unifiedPolygons) {
-            if (polygon.length < 3) continue;
-            
-            // Smooth the contour first to reduce jagged edges from alpha tracing
-            const smoothedPolygon = gaussianSmoothContour(polygon, 2);
-            
-            // Convert polygon to path segments with curve detection (60+ point curves)
-            const pathSegments = convertPolygonToCurves(smoothedPolygon, 70);
-            
-            for (const seg of pathSegments) {
-              if (seg.type === 'move' && seg.point) {
-                const px = toX(seg.point.x);
-                const py = toY(seg.point.y);
-                spotOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
-              } else if (seg.type === 'line' && seg.point) {
-                const px = toX(seg.point.x);
-                const py = toY(seg.point.y);
-                spotOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
-                lineCount++;
-              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-                // PDF cubic Bezier curve: x1 y1 x2 y2 x3 y3 c
-                const cp1x = toX(seg.cp1.x);
-                const cp1y = toY(seg.cp1.y);
-                const cp2x = toX(seg.cp2.x);
-                const cp2y = toY(seg.cp2.y);
-                const endx = toX(seg.end.x);
-                const endy = toY(seg.end.y);
-                spotOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
-                curveCount++;
-              }
-            }
-            
-            spotOps += 'h\n';
+          // Draw each region as a simple filled rectangle
+          for (const r of regions) {
+            const x1 = toX(r.x1);
+            const y1 = toY(r.y2 + 1); // PDF Y is inverted
+            const x2 = toX(r.x2);
+            const y2 = toY(r.y1);
+            const w = x2 - x1;
+            const h = y2 - y1;
+            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re\n`;
           }
           
-          console.log(`[PDF] ${colorName}: ${curveCount} curves, ${lineCount} lines`);
+          console.log(`[PDF] ${colorName}: ${regions.length} rectangles`);
           
           // Single fill command for all polygons
           spotOps += 'f\nQ\n';
