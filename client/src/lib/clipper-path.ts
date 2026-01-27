@@ -517,9 +517,9 @@ export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: n
   
   if (solution.length === 0) return [];
   
+  // Return the union result directly without aggressive simplification to preserve shape accuracy
   const result: Point[][] = solution.map(path => {
-    const simplified = ClipperLib.Clipper.CleanPolygon(path, 1.0 * CLIPPER_SCALE);
-    return (simplified && simplified.length >= 3 ? simplified : path).map((p: { X: number; Y: number }) => ({
+    return path.map((p: { X: number; Y: number }) => ({
       x: p.X / CLIPPER_SCALE,
       y: p.Y / CLIPPER_SCALE
     }));
