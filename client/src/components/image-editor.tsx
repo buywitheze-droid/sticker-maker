@@ -774,7 +774,9 @@ export default function ImageEditor() {
             imageInfo.image,
             shapeSettings,
             resizeSettings,
-            filename
+            filename,
+            spotColors,
+            singleArtboard
           );
         } else {
           // No mode selected - just download the image
