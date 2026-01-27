@@ -607,14 +607,22 @@ function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
   
   // Find max deviation from chord
   let maxDev = 0;
+  let maxDevIdx = 0;
   for (let i = 1; i < points.length - 1; i++) {
     const dev = perpendicularDistance(points[i], start, end);
-    if (dev > maxDev) maxDev = dev;
+    if (dev > maxDev) {
+      maxDev = dev;
+      maxDevIdx = i;
+    }
   }
   
   // Must have significant deviation (not a straight line)
   const devRatio = maxDev / chordDist;
   if (devRatio < minDevRatio) return false;
+  
+  // For large arcs (high deviation), be more lenient with consistency
+  // Half circles have deviation ~= 0.5 * chord length
+  const isLargeArc = devRatio > 0.25;
   
   // Check curvature sign consistency (all angles should bend the same way)
   let positiveCount = 0;
@@ -637,11 +645,17 @@ function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
   const total = positiveCount + negativeCount + straightCount;
   if (total === 0) return false;
   
-  // At least 70% of angle changes should be in the same direction for a valid arc
+  // For large arcs (half circles), use lower consistency threshold (50%)
+  // For smaller arcs, use stricter threshold (60%)
   const dominantCount = Math.max(positiveCount, negativeCount);
   const consistency = dominantCount / (positiveCount + negativeCount + 0.001);
+  const threshold = isLargeArc ? 0.50 : 0.60;
   
-  return consistency > 0.65;
+  // Also check that the max deviation is roughly in the middle (arc-like shape)
+  const relPeakPos = maxDevIdx / (points.length - 1);
+  const peakInMiddle = relPeakPos > 0.15 && relPeakPos < 0.85;
+  
+  return consistency > threshold && peakInMiddle;
 }
 
 // minDistance is the minimum distance (in pixels/points) between curve start and end
@@ -654,8 +668,8 @@ export function convertPolygonToCurves(polygon: Point[], minDistance: number = 4
   let curveCount = 0;
   let lineCount = 0;
   
-  // Maximum arc span limit to prevent merging unrelated edges
-  const maxArcSpan = 300;
+  // Maximum arc span limit - increased to 400 to capture half-circles on larger shapes
+  const maxArcSpan = 400;
   
   let i = 1;
   while (i < polygon.length) {
