@@ -2081,6 +2081,7 @@ export async function downloadContourPDF(
     }
     
     // Smooth the contour to reduce jagged edges from alpha tracing
+    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
     // Guard for empty/degenerate paths
@@ -2094,7 +2095,10 @@ export async function downloadContourPDF(
       pathOps += '0.5 w\n';
       
       // Use same curve detection as preview for consistency
-      const pathSegments = convertPolygonToCurves(smoothedPath, 70);
+      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      const minDistanceInches = 70 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2673,6 +2677,7 @@ export async function generateContourPDFBase64(
     }
     
     // Smooth the contour to reduce jagged edges from alpha tracing
+    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
     // Guard for empty/degenerate paths
@@ -2686,7 +2691,10 @@ export async function generateContourPDFBase64(
       pathOps += '0.5 w\n';
       
       // Use same curve detection as preview for consistency
-      const pathSegments = convertPolygonToCurves(smoothedPath, 70);
+      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      const minDistanceInches = 70 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
