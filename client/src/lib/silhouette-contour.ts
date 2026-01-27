@@ -1096,8 +1096,8 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 6: Apply Chaikin's corner cutting for ultra-smooth curves
-  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 2);
+  // Step 6: Apply Chaikin's corner cutting for smooth curves (reduced from 2 to 1 iteration for sharper corners)
+  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
   
   // Step 7: Remove any remaining intersections
   chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
@@ -1126,19 +1126,18 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Simplify to reduce point count with higher tolerance for smoother result
-  let simplified = douglasPeucker(fineSmoothed, 1.5);
+  // Simplify to reduce point count (increased tolerance from 1.5 to 2.5 for sharper/less curvy result)
+  let simplified = douglasPeucker(fineSmoothed, 2.5);
   
   // Remove nearly-collinear points to clean up straight edges
   // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
   simplified = removeCollinearPoints(simplified, 2.0);
   
-  // Smooth large sweeping curves (like butterfly wings) by reducing intermediate wobble points
-  // This makes big arcs cleaner without affecting small details
-  simplified = smoothLargeCurves(simplified, 15, 0.85, 30);
+  // Smooth large sweeping curves (reduced smoothing factor from 0.85 to 0.6 for less curve merging)
+  simplified = smoothLargeCurves(simplified, 15, 0.6, 25);
   
-  // Also smooth medium curves (8+ points) with tighter angle threshold for cutter-friendly paths
-  simplified = smoothLargeCurves(simplified, 8, 0.5, 15);
+  // Also smooth medium curves (reduced from 0.5 to 0.3 for sharper corners)
+  simplified = smoothLargeCurves(simplified, 8, 0.3, 12);
   
   return simplified;
 }
