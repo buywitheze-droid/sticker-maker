@@ -497,6 +497,59 @@ function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | n
   return null;
 }
 
+function simplifyClosedPolygon(points: Point[], epsilon: number = 1.0): Point[] {
+  if (points.length < 4) return points;
+  
+  const n = points.length;
+  
+  let maxDist = 0;
+  let splitIdx = 0;
+  for (let i = 0; i < n; i++) {
+    const dist = perpendicularDistance(points[i], points[0], points[Math.floor(n / 2)]);
+    if (dist > maxDist) {
+      maxDist = dist;
+      splitIdx = i;
+    }
+  }
+  
+  const keep: boolean[] = new Array(n).fill(false);
+  keep[0] = true;
+  keep[splitIdx] = true;
+  
+  const rdpRecurse = (start: number, end: number) => {
+    const segLen = (end - start + n) % n;
+    if (segLen <= 1) return;
+    
+    let maxD = 0;
+    let maxI = start;
+    
+    for (let k = 1; k < segLen; k++) {
+      const i = (start + k) % n;
+      const dist = perpendicularDistance(points[i], points[start], points[end]);
+      if (dist > maxD) {
+        maxD = dist;
+        maxI = i;
+      }
+    }
+    
+    if (maxD > epsilon) {
+      keep[maxI] = true;
+      rdpRecurse(start, maxI);
+      rdpRecurse(maxI, end);
+    }
+  };
+  
+  rdpRecurse(0, splitIdx);
+  rdpRecurse(splitIdx, 0);
+  
+  const result: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    if (keep[i]) result.push(points[i]);
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
 export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: number; y2: number}>): Point[][] {
   if (rectangles.length === 0) return [];
   
@@ -517,15 +570,17 @@ export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: n
   
   if (solution.length === 0) return [];
   
-  // Return the union result directly without aggressive simplification to preserve shape accuracy
   const result: Point[][] = solution.map(path => {
-    return path.map((p: { X: number; Y: number }) => ({
+    const rawPoints = path.map((p: { X: number; Y: number }) => ({
       x: p.X / CLIPPER_SCALE,
       y: p.Y / CLIPPER_SCALE
     }));
+    return simplifyClosedPolygon(rawPoints, 1.0);
   });
   
-  console.log(`[unionRectangles] United ${rectangles.length} rectangles into ${result.length} polygons`);
+  const totalOriginal = solution.reduce((sum, p) => sum + p.length, 0);
+  const totalSimplified = result.reduce((sum, p) => sum + p.length, 0);
+  console.log(`[unionRectangles] United ${rectangles.length} rects into ${result.length} polys, simplified ${totalOriginal} -> ${totalSimplified} points`);
   
   return result;
 }
