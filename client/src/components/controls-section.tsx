@@ -12,7 +12,7 @@ import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
-import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X } from "lucide-react";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -68,6 +68,12 @@ export default function ControlsSection({
   const [isSending, setIsSending] = useState(false);
   const [showSendForm, setShowSendForm] = useState(false);
   const [showSizeSection, setShowSizeSection] = useState(false);
+  const [spotWhiteName, setSpotWhiteName] = useState("RDG_WHITE");
+  const [spotGlossName, setSpotGlossName] = useState("RDG_GLOSS");
+  const [editingWhiteName, setEditingWhiteName] = useState(false);
+  const [editingGlossName, setEditingGlossName] = useState(false);
+  const [tempWhiteName, setTempWhiteName] = useState("");
+  const [tempGlossName, setTempGlossName] = useState("");
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
@@ -698,8 +704,113 @@ export default function ControlsSection({
                 </div>
               )}
 
-              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200">
-                White → RDG_WHITE | Gloss → RDG_GLOSS
+              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
+                <div className="flex items-center gap-1">
+                  <span>White →</span>
+                  {editingWhiteName ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={tempWhiteName}
+                        onChange={(e) => setTempWhiteName(e.target.value)}
+                        className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setSpotWhiteName(tempWhiteName || "RDG_WHITE");
+                            setEditingWhiteName(false);
+                          } else if (e.key === 'Escape') {
+                            setEditingWhiteName(false);
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          setSpotWhiteName(tempWhiteName || "RDG_WHITE");
+                          setEditingWhiteName(false);
+                        }}
+                        className="p-0.5 hover:bg-green-100 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3 h-3 text-green-600" />
+                      </button>
+                      <button
+                        onClick={() => setEditingWhiteName(false)}
+                        className="p-0.5 hover:bg-red-100 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3 h-3 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium text-gray-600">{spotWhiteName}</span>
+                      <button
+                        onClick={() => {
+                          setTempWhiteName(spotWhiteName);
+                          setEditingWhiteName(true);
+                        }}
+                        className="p-0.5 hover:bg-gray-200 rounded"
+                        title="Edit name"
+                      >
+                        <Pencil className="w-3 h-3 text-gray-500" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span>Gloss →</span>
+                  {editingGlossName ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={tempGlossName}
+                        onChange={(e) => setTempGlossName(e.target.value)}
+                        className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setSpotGlossName(tempGlossName || "RDG_GLOSS");
+                            setEditingGlossName(false);
+                          } else if (e.key === 'Escape') {
+                            setEditingGlossName(false);
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          setSpotGlossName(tempGlossName || "RDG_GLOSS");
+                          setEditingGlossName(false);
+                        }}
+                        className="p-0.5 hover:bg-green-100 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3 h-3 text-green-600" />
+                      </button>
+                      <button
+                        onClick={() => setEditingGlossName(false)}
+                        className="p-0.5 hover:bg-red-100 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3 h-3 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium text-gray-600">{spotGlossName}</span>
+                      <button
+                        onClick={() => {
+                          setTempGlossName(spotGlossName);
+                          setEditingGlossName(true);
+                        }}
+                        className="p-0.5 hover:bg-gray-200 rounded"
+                        title="Edit name"
+                      >
+                        <Pencil className="w-3 h-3 text-gray-500" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
