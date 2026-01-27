@@ -596,6 +596,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
       const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
       
+      console.log('[SpotPreview] White colors:', whiteColors.map(c => c.hex), 'Gloss colors:', glossColors.map(c => c.hex));
+      
       if (whiteColors.length === 0 && glossColors.length === 0) return;
       
       const canvas = canvasRef.current;
@@ -620,27 +622,29 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const maskCtx = maskCanvas.getContext('2d');
       if (!maskCtx) return;
       
-      // Calculate image position (same logic as main render)
-      const shapeDims = calculateShapeDimensions(
-        resizeSettings.widthInches,
-        resizeSettings.heightInches,
-        shapeSettings,
-        strokeSettings
-      );
-      const shapeWidthPx = shapeDims.outerWidth * 72;
-      const shapeHeightPx = shapeDims.outerHeight * 72;
-      const scale = Math.min(canvas.width / shapeWidthPx, canvas.height / shapeHeightPx) * 0.85;
-      
+      // Calculate image position using same logic as main render
       const origW = imageInfo.image.naturalWidth || imageInfo.image.width;
       const origH = imageInfo.image.naturalHeight || imageInfo.image.height;
-      const designWidthPx = shapeDims.designWidth * 72;
-      const designHeightPx = shapeDims.designHeight * 72;
-      const imgW = designWidthPx * scale;
-      const imgH = designHeightPx * scale;
+      const aspectRatio = origW / origH;
+      
+      // Use 85% of canvas for the image (same as main render)
+      const availableWidth = canvas.width * 0.85;
+      const availableHeight = canvas.height * 0.85;
+      
+      let imgW, imgH;
+      if (aspectRatio > availableWidth / availableHeight) {
+        imgW = availableWidth;
+        imgH = availableWidth / aspectRatio;
+      } else {
+        imgH = availableHeight;
+        imgW = availableHeight * aspectRatio;
+      }
+      
       const imgX = (canvas.width - imgW) / 2 + (resizeSettings.positionX || 0);
       const imgY = (canvas.height - imgH) / 2 + (resizeSettings.positionY || 0);
       
       // Draw just the original image to mask canvas (no background, no shapes)
+      console.log('[SpotPreview] Drawing image at:', imgX.toFixed(1), imgY.toFixed(1), 'size:', imgW.toFixed(1), imgH.toFixed(1));
       maskCtx.drawImage(imageInfo.image, imgX, imgY, imgW, imgH);
       const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
       
@@ -648,6 +652,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const previewData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const pData = previewData.data;
       
+      let matchCount = 0;
       // For each pixel, check if the mask pixel matches a spot color
       for (let i = 0; i < maskData.data.length; i += 4) {
         const r = maskData.data[i];
@@ -678,6 +683,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // Only apply overlay if preview pixel is also visible
         if (pData[i + 3] < 10) continue;
         
+        matchCount++;
         if (spotType === 1) {
           pData[i] = 255;
           pData[i + 1] = 255;
@@ -689,6 +695,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
       
+      console.log('[SpotPreview] Matched and modified', matchCount, 'pixels');
       ctx.putImageData(previewData, 0, 0);
     }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor]);
 
