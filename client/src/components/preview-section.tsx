@@ -619,6 +619,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       // Helper to check if a color is a holographic/background color (should be excluded)
       const isBackgroundColor = (r: number, g: number, b: number) => {
+        // Near-white colors (very light - any channel > 235 and all > 220)
+        if (r > 220 && g > 220 && b > 220) return true; // Catches F9F6F5, white, off-whites
+        
+        // Near-gray colors (where R, G, B are similar and light)
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+        if (maxDiff <= 20 && r > 170) return true; // Light near-grays like D2D2CE (210,210,206)
+        
         // Holographic gradient colors (silver rainbow palette)
         const holoColors = [
           { r: 200, g: 200, b: 208 }, // #C8C8D0
@@ -627,21 +634,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           { r: 232, g: 208, b: 240 }, // #E8D0F0
           { r: 176, g: 200, b: 224 }, // #B0C8E0
           { r: 192, g: 176, b: 216 }, // #C0B0D8
-          { r: 210, g: 210, b: 206 }, // #D2D2CE - common light gray
         ];
         
         for (const hc of holoColors) {
-          if (Math.abs(r - hc.r) <= 20 && Math.abs(g - hc.g) <= 20 && Math.abs(b - hc.b) <= 20) {
+          if (Math.abs(r - hc.r) <= 25 && Math.abs(g - hc.g) <= 25 && Math.abs(b - hc.b) <= 25) {
             return true;
           }
         }
-        
-        // Also exclude pure white backgrounds and common fill colors
-        if (r > 240 && g > 240 && b > 240) return true; // Near white
-        
-        // Exclude near-gray colors (where R, G, B are within 15 of each other and light)
-        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
-        if (maxDiff <= 15 && r > 180) return true; // Light near-grays like D2D2CE
         
         return false;
       };
