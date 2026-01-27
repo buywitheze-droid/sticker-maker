@@ -1199,18 +1199,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             )}
 
             <div className="mt-4">
-              <div className="flex items-center justify-center gap-2 bg-gray-50 rounded-xl p-2">
+              <div className="flex items-center justify-center gap-1.5 bg-gray-50/50 rounded-lg p-1.5 border border-gray-100">
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
-                  className="h-8 w-8 p-0 hover:bg-gray-200 rounded-lg"
+                  className="h-7 w-7 p-0 hover:bg-gray-100 rounded-md"
                   title="Zoom Out"
                 >
-                  <ZoomOut className="h-4 w-4 text-gray-600" />
+                  <ZoomOut className="h-3.5 w-3.5 text-gray-500" />
                 </Button>
                 
-                <span className="text-sm text-gray-600 min-w-[50px] text-center font-medium">
+                <span className="text-xs text-gray-500 min-w-[42px] text-center font-medium">
                   {Math.round(zoom * 100)}%
                 </span>
                 
@@ -1218,19 +1218,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="h-8 w-8 p-0 hover:bg-gray-200 rounded-lg"
+                  className="h-7 w-7 p-0 hover:bg-gray-100 rounded-md"
                   title="Zoom In"
                 >
-                  <ZoomIn className="h-4 w-4 text-gray-600" />
+                  <ZoomIn className="h-3.5 w-3.5 text-gray-500" />
                 </Button>
                 
-                <div className="w-px h-5 bg-gray-300 mx-1" />
+                <div className="w-px h-4 bg-gray-200 mx-0.5" />
                 
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={fitToView}
-                  className="h-8 px-3 hover:bg-gray-200 rounded-lg text-gray-600"
+                  className="h-7 px-2 hover:bg-gray-100 rounded-md text-gray-500 text-xs"
                   title="Fit to View"
                 >
                   <Maximize2 className="h-3 w-3 mr-1" />
@@ -1241,7 +1241,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-8 px-3 hover:bg-gray-200 rounded-lg text-gray-600"
+                  className="h-7 px-2 hover:bg-gray-100 rounded-md text-gray-500 text-xs"
                   title="Reset"
                 >
                   <RotateCcw className="h-3 w-3 mr-1" />
