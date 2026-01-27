@@ -242,7 +242,7 @@ export default function ControlsSection({
               <button
                 onClick={() => onRemoveBackground(95)}
                 disabled={isRemovingBackground}
-                className="px-3 py-1.5 text-xs font-medium bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg shadow-md shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isRemovingBackground ? 'Removing...' : 'Remove'}
               </button>
