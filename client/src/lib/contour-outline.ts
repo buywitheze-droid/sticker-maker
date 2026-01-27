@@ -23,6 +23,87 @@ interface Point {
   y: number;
 }
 
+// Trace contour outlines from a binary mask using edge-following algorithm
+// Returns multiple contours (for holes and separate regions)
+function traceContourFromMask(mask: boolean[][], w: number, h: number): Point[][] {
+  const contours: Point[][] = [];
+  const visited = new Set<string>();
+  
+  // Direction vectors for 8-connected neighbors (clockwise from right)
+  const dx = [1, 1, 0, -1, -1, -1, 0, 1];
+  const dy = [0, 1, 1, 1, 0, -1, -1, -1];
+  
+  // Find edge pixels (filled pixels adjacent to empty/boundary)
+  const isEdge = (x: number, y: number): boolean => {
+    if (x < 0 || x >= w || y < 0 || y >= h) return false;
+    if (!mask[y][x]) return false;
+    // Check if any neighbor is empty or boundary
+    for (let d = 0; d < 8; d += 2) { // Check 4-connected only for edge detection
+      const nx = x + dx[d];
+      const ny = y + dy[d];
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h || !mask[ny][nx]) {
+        return true;
+      }
+    }
+    return false;
+  };
+  
+  // Trace a single contour starting from an edge pixel
+  const traceContour = (startX: number, startY: number): Point[] => {
+    const contour: Point[] = [];
+    let x = startX;
+    let y = startY;
+    let dir = 0; // Start looking right
+    
+    do {
+      const key = `${x},${y}`;
+      if (!visited.has(key)) {
+        contour.push({ x: x + 0.5, y: y + 0.5 }); // Center of pixel
+        visited.add(key);
+      }
+      
+      // Find next edge pixel by rotating search direction
+      let found = false;
+      for (let i = 0; i < 8; i++) {
+        const searchDir = (dir + 6 + i) % 8; // Start from left of current direction
+        const nx = x + dx[searchDir];
+        const ny = y + dy[searchDir];
+        
+        if (isEdge(nx, ny)) {
+          x = nx;
+          y = ny;
+          dir = searchDir;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) break;
+      
+      // Prevent infinite loops
+      if (contour.length > w * h) break;
+      
+    } while (x !== startX || y !== startY);
+    
+    return contour;
+  };
+  
+  // Find all contours by scanning for unvisited edge pixels
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const key = `${x},${y}`;
+      if (isEdge(x, y) && !visited.has(key)) {
+        const contour = traceContour(x, y);
+        if (contour.length >= 3) {
+          contours.push(contour);
+        }
+      }
+    }
+  }
+  
+  return contours;
+}
+
 function getPolygonSignedAreaInches(path: Array<{ x: number; y: number }>): number {
   let area = 0;
   const n = path.length;
@@ -2351,21 +2432,41 @@ export async function downloadContourPDF(
             regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
           }
           
-          // Step 3: Draw individual rectangles (simpler and more accurate than unified polygons)
-          let spotOps = `q /${colorName} cs 1 scn\n`;
+          // Step 3: Trace contour outline of the binary mask (like Illustrator's Unite)
+          // This traces the actual edge of the filled region for cleaner paths
+          const contours = traceContourFromMask(binaryMask, w, h);
+          console.log(`[PDF] ${colorName}: Traced ${contours.length} contour(s)`);
           
-          // Draw each region as a simple filled rectangle
-          for (const r of regions) {
-            const x1 = toX(r.x1);
-            const y1 = toY(r.y2 + 1); // PDF Y is inverted
-            const x2 = toX(r.x2);
-            const y2 = toY(r.y1);
-            const w = x2 - x1;
-            const h = y2 - y1;
-            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re\n`;
+          let spotOps = `q /${colorName} cs 1 scn\n`;
+          let curveCount = 0;
+          let lineCount = 0;
+          
+          for (const contour of contours) {
+            if (contour.length < 3) continue;
+            
+            // Smooth the contour to reduce jagged pixel edges
+            const smoothed = gaussianSmoothContour(contour, 2);
+            
+            // Convert to curves for smooth rendering
+            const segments = convertPolygonToCurves(smoothed, 70);
+            
+            for (const seg of segments) {
+              if (seg.type === 'move' && seg.point) {
+                spotOps += `${toX(seg.point.x).toFixed(2)} ${toY(seg.point.y).toFixed(2)} m `;
+              } else if (seg.type === 'line' && seg.point) {
+                spotOps += `${toX(seg.point.x).toFixed(2)} ${toY(seg.point.y).toFixed(2)} l `;
+                lineCount++;
+              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+                spotOps += `${toX(seg.cp1.x).toFixed(2)} ${toY(seg.cp1.y).toFixed(2)} `;
+                spotOps += `${toX(seg.cp2.x).toFixed(2)} ${toY(seg.cp2.y).toFixed(2)} `;
+                spotOps += `${toX(seg.end.x).toFixed(2)} ${toY(seg.end.y).toFixed(2)} c `;
+                curveCount++;
+              }
+            }
+            spotOps += 'h\n';
           }
           
-          console.log(`[PDF] ${colorName}: ${regions.length} rectangles`);
+          console.log(`[PDF] ${colorName}: ${curveCount} curves, ${lineCount} lines`);
           
           // Single fill command for all polygons
           spotOps += 'f\nQ\n';
