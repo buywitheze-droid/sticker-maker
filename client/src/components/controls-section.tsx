@@ -193,91 +193,93 @@ export default function ControlsSection({
 
   return (
     <div className="space-y-4">
-      {/* Size Selection Card */}
+      {/* All Design Options Card */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <button
-          onClick={() => setShowSizeSection(!showSizeSection)}
-          className="flex items-center justify-between w-full p-4 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-cyan-50 flex items-center justify-center">
-              <span className="text-cyan-600 font-bold text-xs">{stickerSize}"</span>
-            </div>
-            <span>Sticker Size</span>
-          </div>
-          {showSizeSection ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
-        </button>
-        
-        {showSizeSection && (
-          <div className="px-4 pb-4 pt-0 border-t border-gray-100">
-            <Select
-              value={stickerSize.toString()}
-              onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
-            >
-              <SelectTrigger className="w-full bg-white border-gray-200 text-gray-900 mt-3">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STICKER_SIZES.map((size) => (
-                  <SelectItem key={size.value} value={size.value.toString()}>
-                    {size.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-
-      {/* Outline Type Card */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-        <Label className="text-sm font-medium text-gray-700 mb-3 block">Outline Type</Label>
-        
-        {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
-          <div className="p-3 bg-green-50 border border-green-100 rounded-xl">
-            <p className="text-sm font-medium text-green-700">Cutline already in file</p>
-            <p className="text-xs text-green-600 mt-1">CutContour detected</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => onStrokeChange({ enabled: true })}
-              className={`py-3 px-4 rounded-xl text-center transition-all font-medium text-sm ${
-                strokeSettings.enabled 
-                  ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20' 
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              Contour
-            </button>
-            
-            <button
-              onClick={() => onShapeChange({ enabled: true })}
-              className={`py-3 px-4 rounded-xl text-center transition-all font-medium text-sm ${
-                shapeSettings.enabled 
-                  ? 'bg-green-500 text-white shadow-md shadow-green-500/20' 
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              Shape
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Contour Options - Hidden when PDF has CutContour */}
-      {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <button 
-            onClick={handleContourOptionsToggle}
-            className="flex items-center justify-between w-full p-4 text-left hover:bg-gray-50 transition-colors"
+        {/* Size Selection - Collapsible */}
+        <div className="border-b border-gray-100">
+          <button
+            onClick={() => setShowSizeSection(!showSizeSection)}
+            className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
           >
-            <span className="text-sm font-medium text-gray-700">Contour Settings</span>
-            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showContourOptions ? 'rotate-180' : ''}`} />
+            <div className="flex items-center gap-3">
+              <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center">
+                <span className="text-cyan-600 font-bold text-xs">{stickerSize}"</span>
+              </div>
+              <span>Sticker Size</span>
+            </div>
+            {showSizeSection ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
           </button>
           
-          {showContourOptions && (
-            <div className="space-y-4 px-4 pb-4 border-t border-gray-100 pt-4">
+          {showSizeSection && (
+            <div className="px-4 pb-3">
+              <Select
+                value={stickerSize.toString()}
+                onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
+              >
+                <SelectTrigger className="w-full bg-gray-50 border-gray-200 text-gray-900">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STICKER_SIZES.map((size) => (
+                    <SelectItem key={size.value} value={size.value.toString()}>
+                      {size.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+
+        {/* Outline Type Section */}
+        <div className="px-4 py-3 border-b border-gray-100">
+          <Label className="text-sm font-medium text-gray-700 mb-2 block">Outline Type</Label>
+          
+          {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
+            <div className="p-2.5 bg-green-50 border border-green-100 rounded-lg">
+              <p className="text-sm font-medium text-green-700">Cutline already in file</p>
+              <p className="text-xs text-green-600 mt-0.5">CutContour detected</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onStrokeChange({ enabled: true })}
+                className={`py-2.5 px-3 rounded-lg text-center transition-all font-medium text-sm ${
+                  strokeSettings.enabled 
+                    ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20' 
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Contour
+              </button>
+              
+              <button
+                onClick={() => onShapeChange({ enabled: true })}
+                className={`py-2.5 px-3 rounded-lg text-center transition-all font-medium text-sm ${
+                  shapeSettings.enabled 
+                    ? 'bg-green-500 text-white shadow-md shadow-green-500/20' 
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Shape
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Contour Options - Collapsible, Hidden when PDF has CutContour */}
+        {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+          <div className="border-b border-gray-100">
+            <button 
+              onClick={handleContourOptionsToggle}
+              className="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+            >
+              <span className="text-sm font-medium text-gray-700">Contour Settings</span>
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showContourOptions ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {showContourOptions && (
+              <div className="space-y-3 px-4 pb-3">
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Contour Margin</Label>
                 <Select
@@ -396,14 +398,14 @@ export default function ControlsSection({
                 </div>
               </div>
               */}
-            </div>
-          )}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        )}
 
-      {/* PDF CutContour Options - Fill and Download */}
-      {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour && (
-        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        {/* PDF CutContour Options - Fill and Download */}
+        {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour && (
+          <div className="px-4 py-3 border-b border-gray-100 space-y-3">
           <div className="text-sm font-medium text-gray-700">PDF Options</div>
           
           <div>
@@ -478,14 +480,14 @@ export default function ControlsSection({
             </div>
           </button>
           {strokeSettings.backgroundColor === 'holographic' && (
-            <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
+            <p className="mt-1 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
           )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Shape Options - Hidden when PDF has CutContour */}
-      {shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        {/* Shape Options - Hidden when PDF has CutContour */}
+        {shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+          <div className="px-4 py-3 border-b border-gray-100 space-y-3">
           <div>
             <Label className="text-xs text-gray-600">Shape</Label>
             <Select
@@ -631,24 +633,25 @@ export default function ControlsSection({
             )}
           </div>
 
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
-      {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
-        <>
-          <Button
-            variant="outline"
-            onClick={handleSpotColorsToggle}
-            className={`w-full border-2 ${showSpotColors ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-300 text-gray-700 hover:border-purple-400'}`}
-          >
-            <Palette className="w-4 h-4 mr-2" />
-            SPOT COLORS
-            <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
-          </Button>
+        {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
+        {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
+          <div className="border-b border-gray-100">
+            <button
+              onClick={handleSpotColorsToggle}
+              className={`flex items-center justify-between w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors ${showSpotColors ? 'bg-purple-50' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <Palette className="w-4 h-4 text-purple-500" />
+                <span className="text-sm font-medium text-gray-700">Spot Colors</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
+            </button>
 
-          {showSpotColors && (
-            <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            {showSpotColors && (
+              <div className="px-4 pb-3 space-y-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs text-gray-600 font-medium">Design Colors</div>
                 <button
@@ -816,51 +819,52 @@ export default function ControlsSection({
                     </div>
                   )}
                 </div>
+                </div>
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </div>
+        )}
 
-      {/* Download Buttons */}
-      <div className="space-y-2 pt-2">
-        <Button
-          onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
-            ...c,
-            spotWhiteName,
-            spotGlossName
-          })))}
-          disabled={isProcessing || !canDownload || !imageInfo}
-          className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl shadow-lg shadow-cyan-500/25 font-medium"
-        >
-          {isProcessing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-              Processing...
-            </>
-          ) : (
-            <>
-              <Download className="w-5 h-5 mr-2" />
-              Download PDF
-            </>
-          )}
-        </Button>
-
-        {canDownload && imageInfo && (
+        {/* Download Buttons */}
+        <div className="px-4 py-3 space-y-2">
           <Button
-            variant="outline"
             onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
               ...c,
               spotWhiteName,
               spotGlossName
-            })), true)}
-            disabled={isProcessing}
-            className="w-full h-10 border-gray-200 text-gray-600 hover:bg-gray-50 rounded-xl"
+            })))}
+            disabled={isProcessing || !canDownload || !imageInfo}
+            className="w-full h-11 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-lg shadow-lg shadow-cyan-500/25 font-medium"
           >
-            <Download className="w-4 h-4 mr-2" />
-            All Layers in 1 PDF
+            {isProcessing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5 mr-2" />
+                Download PDF
+              </>
+            )}
           </Button>
-        )}
+
+          {canDownload && imageInfo && (
+            <Button
+              variant="outline"
+              onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+                ...c,
+                spotWhiteName,
+                spotGlossName
+              })), true)}
+              disabled={isProcessing}
+              className="w-full h-9 border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg text-sm"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              All Layers in 1 PDF
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Confirm Dialog */}
