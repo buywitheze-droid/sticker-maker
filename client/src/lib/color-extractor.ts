@@ -186,17 +186,18 @@ export function extractDominantColors(
   }
 
   // Count pixels matching each palette color
-  // Only count fully opaque pixels (alpha >= 220) to get accurate spot colors
+  // Only count fully opaque pixels (alpha >= 250) to get accurate spot colors
   // Semi-transparent pixels (anti-aliasing, edges, artifacts) can produce false color matches
+  // Using 250 instead of 220 to be stricter and avoid picking up background artifacts
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
     const a = data[i + 3];
 
-    // Only count nearly-opaque pixels for spot color detection
-    // This filters out ALL semi-transparent artifacts, edges, and anti-aliasing
-    if (a < 220) continue;
+    // Only count truly opaque pixels for spot color detection
+    // This filters out ALL semi-transparent artifacts, edges, anti-aliasing, and background noise
+    if (a < 250) continue;
 
     const closestColor = findClosestPaletteColor(r, g, b);
     // Skip if color doesn't match any palette color closely enough

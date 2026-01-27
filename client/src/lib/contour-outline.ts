@@ -2171,7 +2171,7 @@ export async function downloadContourPDF(
           // This ensures each pixel belongs to only one spot color (the dominant visible one)
           const binaryMask: boolean[][] = [];
           const colorTolerance = 60; // Maximum distance to consider a match
-          const alphaThreshold = 180; // Require fairly opaque pixels to avoid blended areas
+          const alphaThreshold = 240; // Require fully opaque pixels to avoid background artifacts and blended areas
           
           // Build set of marked color hex values for quick lookup
           const markedHexSet = new Set(markedColors.map(mc => mc.hex));
