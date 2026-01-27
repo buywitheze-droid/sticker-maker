@@ -661,65 +661,27 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
       
-      // Step 3: Calculate the mapping - MUST match the actual render path
+      // Step 3: Calculate the mapping - simplified approach
+      // Always use original image dimensions for the spot preview
+      // This works for regular mode and provides reasonable results in contour mode
       const viewPadding = 40;
       const availableWidth = canvas.width - (viewPadding * 2);
       const availableHeight = canvas.height - (viewPadding * 2);
       
-      // Determine which dimensions to use based on render mode
-      // When contour mode is enabled and cached, the render uses contourCanvas dimensions
-      // Otherwise it uses the original image dimensions
-      let renderWidth: number, renderHeight: number;
-      
-      if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
-        // Contour mode - use contour canvas dimensions for display calculation
-        renderWidth = contourCacheRef.current.canvas.width;
-        renderHeight = contourCacheRef.current.canvas.height;
-      } else {
-        // Regular mode - use original image dimensions
-        renderWidth = imageInfo.image.width;
-        renderHeight = imageInfo.image.height;
-      }
-      
-      const renderAspectRatio = renderWidth / renderHeight;
+      // Always use original image aspect ratio
+      const aspectRatio = srcCanvas.width / srcCanvas.height;
       
       let displayWidth, displayHeight;
-      if (renderAspectRatio > (availableWidth / availableHeight)) {
+      if (aspectRatio > (availableWidth / availableHeight)) {
         displayWidth = availableWidth;
-        displayHeight = availableWidth / renderAspectRatio;
+        displayHeight = availableWidth / aspectRatio;
       } else {
         displayHeight = availableHeight;
-        displayWidth = availableHeight * renderAspectRatio;
+        displayWidth = availableHeight * aspectRatio;
       }
       
       const offsetX = (canvas.width - displayWidth) / 2;
       const offsetY = (canvas.height - displayHeight) / 2;
-      
-      // For contour mode, we need to map from contour canvas space to original image space
-      // The contour canvas has the image centered with stroke around it
-      // We need to calculate where the original image is within the contour canvas
-      let contourToImageScaleX = 1;
-      let contourToImageScaleY = 1;
-      let contourImageOffsetX = 0;
-      let contourImageOffsetY = 0;
-      
-      if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
-        // The contour canvas includes stroke offset around the image
-        // The original image is centered within a larger canvas that includes the stroke
-        const strokeWidthPixels = strokeSettings.width * resizeSettings.outputDPI;
-        const contourCanvas = contourCacheRef.current.canvas;
-        
-        // The image in the contour canvas is offset by the stroke width
-        contourImageOffsetX = strokeWidthPixels;
-        contourImageOffsetY = strokeWidthPixels;
-        
-        // Scale from contour canvas to original image
-        const imageInContourWidth = contourCanvas.width - (strokeWidthPixels * 2);
-        const imageInContourHeight = contourCanvas.height - (strokeWidthPixels * 2);
-        
-        contourToImageScaleX = srcCanvas.width / imageInContourWidth;
-        contourToImageScaleY = srcCanvas.height / imageInContourHeight;
-      }
       
       // Step 4: Apply overlay to canvas using the mask
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -727,21 +689,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       for (let canvasY = 0; canvasY < canvas.height; canvasY++) {
         for (let canvasX = 0; canvasX < canvas.width; canvasX++) {
-          // Map canvas coordinates to render space (contour or image)
-          const renderX = (canvasX - offsetX) / displayWidth * renderWidth;
-          const renderY = (canvasY - offsetY) / displayHeight * renderHeight;
-          
-          // Map render space to original image space
-          let srcX: number, srcY: number;
-          if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
-            // Contour mode - account for stroke offset
-            srcX = Math.floor((renderX - contourImageOffsetX) * contourToImageScaleX);
-            srcY = Math.floor((renderY - contourImageOffsetY) * contourToImageScaleY);
-          } else {
-            // Regular mode - direct mapping
-            srcX = Math.floor(renderX);
-            srcY = Math.floor(renderY);
-          }
+          // Direct mapping from canvas to original image space
+          const srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
+          const srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
           
           // Check if within image bounds
           if (srcX < 0 || srcX >= srcCanvas.width || srcY < 0 || srcY >= srcCanvas.height) continue;
