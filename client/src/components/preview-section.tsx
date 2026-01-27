@@ -622,6 +622,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const maskCtx = maskCanvas.getContext('2d');
       if (!maskCtx) return;
       
+      // Use same cropped source as main render
+      const croppedCanvas = cropImageToContent(imageInfo.image);
+      const sourceImage: HTMLImageElement | HTMLCanvasElement = croppedCanvas ? croppedCanvas : imageInfo.image;
+      const sourceW = sourceImage.width;
+      const sourceH = sourceImage.height;
+      
       // Calculate image position using SAME logic as main render (matches drawShapePreview/drawImageWithResizePreview)
       const viewPadding = 40;
       const availableWidth = canvas.width - (viewPadding * 2);
@@ -681,9 +687,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         imgY = shapeY + (shapeHeight - imgH) / 2;
       } else {
         // Match drawImageWithResizePreview positioning
-        const origW = imageInfo.image.naturalWidth || imageInfo.image.width;
-        const origH = imageInfo.image.naturalHeight || imageInfo.image.height;
-        const aspectRatio = origW / origH;
+        const aspectRatio = sourceW / sourceH;
         
         if (aspectRatio > (availableWidth / availableHeight)) {
           imgW = availableWidth;
@@ -697,9 +701,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         imgY = (canvas.height - imgH) / 2;
       }
       
-      // Draw just the original image to mask canvas (no background, no shapes)
-      console.log('[SpotPreview] Drawing image at:', imgX.toFixed(1), imgY.toFixed(1), 'size:', imgW.toFixed(1), imgH.toFixed(1));
-      maskCtx.drawImage(imageInfo.image, imgX, imgY, imgW, imgH);
+      // Draw the cropped/source image to mask canvas (same as main render)
+      console.log('[SpotPreview] Drawing source at:', imgX.toFixed(1), imgY.toFixed(1), 'size:', imgW.toFixed(1), imgH.toFixed(1), 'cropped:', !!croppedCanvas);
+      maskCtx.drawImage(sourceImage, imgX, imgY, imgW, imgH);
       const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
       
       // Get preview canvas data
@@ -835,6 +839,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
+      
+      console.log('[MainRender] Image at:', imageX.toFixed(1), imageY.toFixed(1), 'size:', imageWidth.toFixed(1), imageHeight.toFixed(1));
       
       // Draw background with bleed or fill
       if (shapeSettings.bleedEnabled) {
