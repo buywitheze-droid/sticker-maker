@@ -588,7 +588,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
-    // Apply spot preview overlay (white/gloss visualization) based on ORIGINAL IMAGE colors only
+    // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
+    // This simpler approach matches colors directly on the canvas but only within design area
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -596,13 +597,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
       const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
       
-      console.log('[SpotPreview] White colors:', whiteColors.map(c => c.hex), 'Gloss colors:', glossColors.map(c => c.hex));
-      
       if (whiteColors.length === 0 && glossColors.length === 0) return;
       
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      
+      // Get current canvas image data
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
       
       // Helper to check if a pixel matches a color (within tolerance)
       const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
@@ -614,147 +617,66 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Create a mask canvas at the same size as preview canvas
-      // Render ONLY the original image (no background/shapes) at the same position as the preview
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = canvas.width;
-      maskCanvas.height = canvas.height;
-      const maskCtx = maskCanvas.getContext('2d');
-      if (!maskCtx) return;
-      
-      // Use same cropped source as main render
-      const croppedCanvas = cropImageToContent(imageInfo.image);
-      const sourceImage: HTMLImageElement | HTMLCanvasElement = croppedCanvas ? croppedCanvas : imageInfo.image;
-      const sourceW = sourceImage.width;
-      const sourceH = sourceImage.height;
-      
-      // Calculate image position using SAME logic as main render (matches drawShapePreview/drawImageWithResizePreview)
-      const viewPadding = 40;
-      const availableWidth = canvas.width - (viewPadding * 2);
-      const availableHeight = canvas.height - (viewPadding * 2);
-      
-      let imgW: number, imgH: number, imgX: number, imgY: number;
-      
-      if (shapeSettings.enabled) {
-        // Match drawShapePreview positioning
-        const shapeDims = calculateShapeDimensions(
-          resizeSettings.widthInches,
-          resizeSettings.heightInches,
-          shapeSettings.type,
-          shapeSettings.offset
-        );
-        const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
+      // Helper to check if a color is a holographic/background color (should be excluded)
+      const isBackgroundColor = (r: number, g: number, b: number) => {
+        // Holographic gradient colors (silver rainbow palette)
+        const holoColors = [
+          { r: 200, g: 200, b: 208 }, // #C8C8D0
+          { r: 232, g: 184, b: 184 }, // #E8B8B8
+          { r: 184, g: 216, b: 232 }, // #B8D8E8
+          { r: 232, g: 208, b: 240 }, // #E8D0F0
+          { r: 176, g: 200, b: 224 }, // #B0C8E0
+          { r: 192, g: 176, b: 216 }, // #C0B0D8
+        ];
         
-        let shapeWidth: number, shapeHeight: number;
-        if (shapeAspect > (availableWidth / availableHeight)) {
-          shapeWidth = availableWidth;
-          shapeHeight = availableWidth / shapeAspect;
-        } else {
-          shapeHeight = availableHeight;
-          shapeWidth = availableHeight * shapeAspect;
-        }
-        
-        const shapeX = (canvas.width - shapeWidth) / 2;
-        const shapeY = (canvas.height - shapeHeight) / 2;
-        const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
-        
-        imgW = resizeSettings.widthInches * shapePixelsPerInch;
-        imgH = resizeSettings.heightInches * shapePixelsPerInch;
-        
-        // Scale for circle/oval to fit inside inscribed area
-        if (shapeSettings.type === 'circle') {
-          const diameter = Math.min(shapeWidth, shapeHeight);
-          const diagonal = Math.sqrt(imgW * imgW + imgH * imgH);
-          if (diagonal > diameter) {
-            const scale = diameter / diagonal;
-            imgW *= scale;
-            imgH *= scale;
-          }
-        } else if (shapeSettings.type === 'oval') {
-          const a = shapeWidth / 2;
-          const b = shapeHeight / 2;
-          const halfW = imgW / 2;
-          const halfH = imgH / 2;
-          const ellipseCheck = (halfW / a) ** 2 + (halfH / b) ** 2;
-          if (ellipseCheck > 1) {
-            const scale = 1 / Math.sqrt(ellipseCheck);
-            imgW *= scale;
-            imgH *= scale;
+        for (const hc of holoColors) {
+          if (Math.abs(r - hc.r) <= 20 && Math.abs(g - hc.g) <= 20 && Math.abs(b - hc.b) <= 20) {
+            return true;
           }
         }
         
-        imgX = shapeX + (shapeWidth - imgW) / 2;
-        imgY = shapeY + (shapeHeight - imgH) / 2;
-      } else {
-        // Match drawImageWithResizePreview positioning
-        const aspectRatio = sourceW / sourceH;
+        // Also exclude pure white backgrounds and common fill colors
+        if (r > 240 && g > 240 && b > 240) return true; // Near white
+        if (r === g && g === b && r > 200) return true; // Light grays (canvas bg)
         
-        if (aspectRatio > (availableWidth / availableHeight)) {
-          imgW = availableWidth;
-          imgH = availableWidth / aspectRatio;
-        } else {
-          imgH = availableHeight;
-          imgW = availableHeight * aspectRatio;
-        }
-        
-        imgX = (canvas.width - imgW) / 2;
-        imgY = (canvas.height - imgH) / 2;
-      }
+        return false;
+      };
       
-      // Draw the cropped/source image to mask canvas (same as main render)
-      console.log('[SpotPreview] Drawing source at:', imgX.toFixed(1), imgY.toFixed(1), 'size:', imgW.toFixed(1), imgH.toFixed(1), 'cropped:', !!croppedCanvas);
-      maskCtx.drawImage(sourceImage, imgX, imgY, imgW, imgH);
-      const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-      
-      // Get preview canvas data
-      const previewData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const pData = previewData.data;
-      
-      let matchCount = 0;
-      // For each pixel, check if the mask pixel matches a spot color
-      for (let i = 0; i < maskData.data.length; i += 4) {
-        const r = maskData.data[i];
-        const g = maskData.data[i + 1];
-        const b = maskData.data[i + 2];
-        const a = maskData.data[i + 3];
+      // Apply overlay colors
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
         
-        if (a < 200) continue; // Skip transparent/semi-transparent pixels
+        if (a < 10) continue; // Skip transparent pixels
         
-        let spotType = 0;
+        // Skip background/holographic colors
+        if (isBackgroundColor(r, g, b)) continue;
+        
+        // Check for white overlay (solid white)
         for (const wc of whiteColors) {
           if (colorMatches(r, g, b, wc.hex)) {
-            spotType = 1;
+            data[i] = 255;     // R
+            data[i + 1] = 255; // G
+            data[i + 2] = 255; // B
             break;
           }
         }
-        if (spotType === 0) {
-          for (const gc of glossColors) {
-            if (colorMatches(r, g, b, gc.hex)) {
-              spotType = 2;
-              break;
-            }
+        
+        // Check for gloss overlay (silver/grey shiny look)
+        for (const gc of glossColors) {
+          if (colorMatches(r, g, b, gc.hex)) {
+            // Silver/metallic grey color for gloss preview
+            data[i] = 180;     // R
+            data[i + 1] = 180; // G
+            data[i + 2] = 190; // B - slightly blue tint for shiny effect
+            break;
           }
-        }
-        
-        if (spotType === 0) continue;
-        
-        // Only apply overlay if preview pixel is also visible
-        if (pData[i + 3] < 10) continue;
-        
-        matchCount++;
-        if (spotType === 1) {
-          pData[i] = 255;
-          pData[i + 1] = 255;
-          pData[i + 2] = 255;
-        } else if (spotType === 2) {
-          pData[i] = 180;
-          pData[i + 1] = 180;
-          pData[i + 2] = 190;
         }
       }
       
-      console.log('[SpotPreview] Matched and modified', matchCount, 'pixels');
-      ctx.putImageData(previewData, 0, 0);
+      ctx.putImageData(imageData, 0, 0);
     }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor]);
 
     useEffect(() => {
