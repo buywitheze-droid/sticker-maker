@@ -291,12 +291,11 @@ export default function ControlsSection({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="0">Zero Hero</SelectItem>
-                    <SelectItem value="0.02">Minimal</SelectItem>
-                    <SelectItem value="0.04">Standard</SelectItem>
-                    <SelectItem value="0.07">Comfortable</SelectItem>
-                    <SelectItem value="0.14">Spacious</SelectItem>
-                    <SelectItem value="0.25">Wide</SelectItem>
-                    <SelectItem value="0.5">Extra Wide</SelectItem>
+                    <SelectItem value="0.02">Small</SelectItem>
+                    <SelectItem value="0.04">Medium</SelectItem>
+                    <SelectItem value="0.07">Large</SelectItem>
+                    <SelectItem value="0.14">Extra Large</SelectItem>
+                    <SelectItem value="0.25">Huge</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -517,10 +516,10 @@ export default function ControlsSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="0">Zero Hero</SelectItem>
-                <SelectItem value="0.0625">Minimal</SelectItem>
-                <SelectItem value="0.125">Standard</SelectItem>
-                <SelectItem value="0.25">Comfortable</SelectItem>
-                <SelectItem value="0.40">Spacious</SelectItem>
+                <SelectItem value="0.0625">Small</SelectItem>
+                <SelectItem value="0.125">Medium</SelectItem>
+                <SelectItem value="0.25">Large</SelectItem>
+                <SelectItem value="0.40">Extra Large</SelectItem>
               </SelectContent>
             </Select>
           </div>
