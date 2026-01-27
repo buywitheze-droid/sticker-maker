@@ -63,21 +63,47 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
     }
   }, [handleFileUpload]);
 
+  const isEmptyState = !imageInfo;
+
   return (
-    <div className="lg:col-span-1">
+    <div className="w-full">
       {/* Drag and Drop Zone */}
       <div 
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
-        className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-white hover:border-cyan-500 hover:bg-cyan-50 transition-all cursor-pointer shadow-sm"
+        className={`
+          border-2 border-dashed rounded-2xl text-center transition-all duration-200 cursor-pointer
+          ${isEmptyState 
+            ? 'border-gray-300 hover:border-cyan-400 bg-gradient-to-br from-white to-gray-50 p-12 hover:shadow-lg hover:shadow-cyan-500/10' 
+            : 'border-gray-200 hover:border-cyan-400 bg-white p-4 hover:bg-gray-50'
+          }
+        `}
       >
         <div className="flex flex-col items-center">
-          <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-3">
-            <Upload className="w-6 h-6 text-gray-500" />
+          <div className={`
+            rounded-2xl flex items-center justify-center mb-4 transition-all
+            ${isEmptyState 
+              ? 'w-20 h-20 bg-gradient-to-br from-cyan-50 to-blue-50 shadow-inner' 
+              : 'w-10 h-10 bg-gray-100'
+            }
+          `}>
+            <Upload className={`
+              transition-all
+              ${isEmptyState ? 'w-10 h-10 text-cyan-500' : 'w-5 h-5 text-gray-400'}
+            `} />
           </div>
-          <p className="text-gray-700 text-sm mb-1">Drop image or PDF to upload</p>
-          <p className="text-xs text-gray-400">PNG, JPEG, or PDF with CutContour</p>
+          <p className={`
+            font-medium transition-all
+            ${isEmptyState ? 'text-gray-700 text-lg mb-2' : 'text-gray-600 text-sm mb-1'}
+          `}>
+            {isEmptyState ? 'Drop your image here' : 'Change image'}
+          </p>
+          {isEmptyState && (
+            <p className="text-sm text-gray-400">
+              PNG, JPEG, or PDF with CutContour
+            </p>
+          )}
         </div>
         <input 
           type="file" 
@@ -90,41 +116,30 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
 
       {/* Image Info */}
       {imageInfo && resizeSettings && (
-        <div className="mt-3 p-4 bg-gradient-to-br from-slate-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+        <div className="mt-3 p-4 bg-white rounded-xl border border-gray-100 shadow-sm">
           {imageInfo.file?.name && (
-            <p className="text-sm font-semibold text-gray-700 truncate mb-2" title={imageInfo.file.name}>
+            <p className="text-sm font-medium text-gray-700 truncate mb-3" title={imageInfo.file.name}>
               {imageInfo.file.name}
             </p>
           )}
-          <div className="flex items-center gap-3 text-gray-600">
-            <div className="text-center">
-              <p className="text-lg font-bold text-cyan-600">{resizeSettings.widthInches.toFixed(1)}"</p>
-              <p className="text-[10px] uppercase tracking-wide text-gray-400">width</p>
+          <div className="flex items-center gap-4 text-gray-600">
+            <div className="flex items-center gap-2">
+              <span className="text-xl font-semibold text-gray-800">{resizeSettings.widthInches.toFixed(1)}"</span>
+              <span className="text-gray-300">×</span>
+              <span className="text-xl font-semibold text-gray-800">{resizeSettings.heightInches.toFixed(1)}"</span>
             </div>
-            <span className="text-gray-300 text-lg">×</span>
-            <div className="text-center">
-              <p className="text-lg font-bold text-cyan-600">{resizeSettings.heightInches.toFixed(1)}"</p>
-              <p className="text-[10px] uppercase tracking-wide text-gray-400">height</p>
-            </div>
-            <div className="ml-auto text-right">
-              <p className="text-sm font-medium text-gray-500">{resizeSettings.outputDPI} DPI</p>
+            <div className="ml-auto">
+              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">{resizeSettings.outputDPI} DPI</span>
             </div>
           </div>
-          {stickerSize && (
-            <div className="mt-3 pt-2 border-t border-gray-200">
-              <p className="text-xs text-gray-500">
-                Sticker: <span className="font-semibold text-gray-700">{stickerSize}"</span> <span className="italic">(longest side)</span>
-              </p>
-            </div>
-          )}
         </div>
       )}
 
       {/* Cut Line Info */}
       {showCutLineInfo && (
-        <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 text-center shadow-sm">
-          <p className="text-xs text-gray-500">
-            <span className="text-fuchsia-500 font-medium">Pink Outline</span> = CutContour
+        <div className="mt-3 p-3 bg-fuchsia-50 rounded-xl border border-fuchsia-100 text-center">
+          <p className="text-xs text-fuchsia-600 font-medium">
+            Pink Outline = CutContour
           </p>
         </div>
       )}

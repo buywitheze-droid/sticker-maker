@@ -806,48 +806,72 @@ export default function ImageEditor() {
     }
   }, [imageInfo, strokeSettings, resizeSettings, shapeSettings]);
 
+  // Empty state - no image uploaded
+  if (!imageInfo) {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center">
+        <div className="w-full max-w-xl mx-auto transition-all duration-300">
+          <UploadSection 
+            onImageUpload={handleImageUpload}
+            onPDFUpload={handlePDFUpload}
+            showCutLineInfo={false}
+            imageInfo={null}
+            resizeSettings={resizeSettings}
+            stickerSize={stickerSize}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Loaded state - image uploaded
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      <UploadSection 
-        onImageUpload={handleImageUpload}
-        onPDFUpload={handlePDFUpload}
-        showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
-        imageInfo={imageInfo}
-        resizeSettings={resizeSettings}
-        stickerSize={stickerSize}
-      />
-      
-      <div className="relative preview-container">
-        <PreviewSection
-          ref={canvasRef}
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
+      {/* Left sidebar - Upload & Controls */}
+      <div className="lg:col-span-4 xl:col-span-3 space-y-4">
+        <UploadSection 
+          onImageUpload={handleImageUpload}
+          onPDFUpload={handlePDFUpload}
+          showCutLineInfo={strokeSettings.enabled || shapeSettings.enabled}
           imageInfo={imageInfo}
-          strokeSettings={debouncedStrokeSettings}
-          resizeSettings={debouncedResizeSettings}
-          shapeSettings={debouncedShapeSettings}
-          cadCutBounds={cadCutBounds}
-          spotPreviewData={spotPreviewData}
+          resizeSettings={resizeSettings}
+          stickerSize={stickerSize}
         />
         
+        <ControlsSection
+          strokeSettings={strokeSettings}
+          resizeSettings={resizeSettings}
+          shapeSettings={shapeSettings}
+          stickerSize={stickerSize}
+          onStrokeChange={handleStrokeChange}
+          onResizeChange={handleResizeChange}
+          onShapeChange={handleShapeChange}
+          onStickerSizeChange={handleStickerSizeChange}
+          onDownload={handleDownload}
+          isProcessing={isProcessing}
+          imageInfo={imageInfo}
+          canvasRef={canvasRef}
+          onStepChange={() => {}}
+          onRemoveBackground={handleRemoveBackground}
+          isRemovingBackground={isRemovingBackground}
+          onSpotPreviewChange={setSpotPreviewData}
+        />
       </div>
       
-      <ControlsSection
-        strokeSettings={strokeSettings}
-        resizeSettings={resizeSettings}
-        shapeSettings={shapeSettings}
-        stickerSize={stickerSize}
-        onStrokeChange={handleStrokeChange}
-        onResizeChange={handleResizeChange}
-        onShapeChange={handleShapeChange}
-        onStickerSizeChange={handleStickerSizeChange}
-        onDownload={handleDownload}
-        isProcessing={isProcessing}
-        imageInfo={imageInfo}
-        canvasRef={canvasRef}
-        onStepChange={() => {}}
-        onRemoveBackground={handleRemoveBackground}
-        isRemovingBackground={isRemovingBackground}
-        onSpotPreviewChange={setSpotPreviewData}
-      />
+      {/* Main area - Preview */}
+      <div className="lg:col-span-8 xl:col-span-9">
+        <div className="sticky top-4">
+          <PreviewSection
+            ref={canvasRef}
+            imageInfo={imageInfo}
+            strokeSettings={debouncedStrokeSettings}
+            resizeSettings={debouncedResizeSettings}
+            shapeSettings={debouncedShapeSettings}
+            cadCutBounds={cadCutBounds}
+            spotPreviewData={spotPreviewData}
+          />
+        </div>
+      </div>
       
       {/* Processing Modal */}
       {isProcessing && (

@@ -1036,16 +1036,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     return (
-      <div className="lg:col-span-1">
-        <Card className="shadow-xl shadow-black/20 border-gray-700/50">
-          <CardContent className="p-6">
+      <div className="w-full">
+        <Card className="bg-white border-gray-100 shadow-sm rounded-2xl overflow-hidden">
+          <CardContent className="p-4">
             {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
             {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-              <div className="mb-4 flex items-center space-x-3">
-                <Palette className="w-4 h-4 text-gray-600" />
-                <span className="text-sm text-gray-600">Preview Color:</span>
+              <div className="mb-4 flex items-center space-x-3 bg-gray-50 p-3 rounded-xl">
+                <Palette className="w-4 h-4 text-gray-500" />
+                <span className="text-sm text-gray-600">Preview:</span>
                 <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger className="w-28 h-8 text-sm bg-white border-gray-200 rounded-lg">
                     <SelectValue>{getColorName(backgroundColor)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -1073,9 +1073,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
-                className={`relative rounded-lg border flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
-                  height: '400px',
+                  height: '450px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
                   userSelect: 'none',
@@ -1186,39 +1186,39 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               </div>
             )}
 
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-center gap-1">
+            <div className="mt-4">
+              <div className="flex items-center justify-center gap-2 bg-gray-50 rounded-xl p-2">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
-                  className="h-8 w-8 p-0"
-                  title="Zoom Out (or scroll down)"
+                  className="h-8 w-8 p-0 hover:bg-gray-200 rounded-lg"
+                  title="Zoom Out"
                 >
-                  <ZoomOut className="h-4 w-4" />
+                  <ZoomOut className="h-4 w-4 text-gray-600" />
                 </Button>
                 
-                <span className="text-sm text-gray-400 min-w-[50px] text-center font-medium">
+                <span className="text-sm text-gray-600 min-w-[50px] text-center font-medium">
                   {Math.round(zoom * 100)}%
                 </span>
                 
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="h-8 w-8 p-0"
-                  title="Zoom In (or scroll up)"
+                  className="h-8 w-8 p-0 hover:bg-gray-200 rounded-lg"
+                  title="Zoom In"
                 >
-                  <ZoomIn className="h-4 w-4" />
+                  <ZoomIn className="h-4 w-4 text-gray-600" />
                 </Button>
                 
-                <div className="w-px h-6 bg-gray-600 mx-2" />
+                <div className="w-px h-5 bg-gray-300 mx-1" />
                 
                 <Button 
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={fitToView}
-                  className="h-8 px-2"
+                  className="h-8 px-3 hover:bg-gray-200 rounded-lg text-gray-600"
                   title="Fit to View"
                 >
                   <Maximize2 className="h-3 w-3 mr-1" />
@@ -1226,11 +1226,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </Button>
                 
                 <Button 
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-8 px-2"
-                  title="Reset zoom and position"
+                  className="h-8 px-3 hover:bg-gray-200 rounded-lg text-gray-600"
+                  title="Reset"
                 >
                   <RotateCcw className="h-3 w-3 mr-1" />
                   Reset

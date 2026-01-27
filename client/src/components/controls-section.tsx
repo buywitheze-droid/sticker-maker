@@ -192,24 +192,29 @@ export default function ControlsSection({
   };
 
   return (
-    <div className="space-y-4 p-4 bg-white rounded-lg shadow-sm">
-      {/* Size Selection - Collapsible */}
-      <div className="border-b border-gray-200 pb-3">
+    <div className="space-y-4">
+      {/* Size Selection Card */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <button
           onClick={() => setShowSizeSection(!showSizeSection)}
-          className="flex items-center justify-between w-full text-sm font-medium text-gray-700 hover:text-gray-900"
+          className="flex items-center justify-between w-full p-4 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
         >
-          <span>Size: {stickerSize}"</span>
-          {showSizeSection ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-cyan-50 flex items-center justify-center">
+              <span className="text-cyan-600 font-bold text-xs">{stickerSize}"</span>
+            </div>
+            <span>Sticker Size</span>
+          </div>
+          {showSizeSection ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
         </button>
         
         {showSizeSection && (
-          <div className="mt-2">
+          <div className="px-4 pb-4 pt-0 border-t border-gray-100">
             <Select
               value={stickerSize.toString()}
               onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
             >
-              <SelectTrigger className="w-full bg-white border-gray-300 text-gray-900">
+              <SelectTrigger className="w-full bg-white border-gray-200 text-gray-900 mt-3">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -220,34 +225,27 @@ export default function ControlsSection({
                 ))}
               </SelectContent>
             </Select>
-            
-            {imageInfo && (
-              <div className="mt-2 text-xs text-gray-400">
-                {resizeSettings.widthInches.toFixed(2)}" x {resizeSettings.heightInches.toFixed(2)}" @ {resizeSettings.outputDPI} DPI
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      {/* Outline Type */}
-      <div className="space-y-2">
-        <Label className="text-sm font-medium text-gray-700">Outline Type</Label>
+      {/* Outline Type Card */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+        <Label className="text-sm font-medium text-gray-700 mb-3 block">Outline Type</Label>
         
-        {/* Show message if PDF has CutContour */}
         {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
-          <div className="p-3 bg-green-50 border border-green-200 rounded-lg space-y-2">
+          <div className="p-3 bg-green-50 border border-green-100 rounded-xl">
             <p className="text-sm font-medium text-green-700">Cutline already in file</p>
-            <p className="text-xs text-green-600">CutContour spot color detected - contour options disabled</p>
+            <p className="text-xs text-green-600 mt-1">CutContour detected</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => onStrokeChange({ enabled: true })}
-              className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
+              className={`py-3 px-4 rounded-xl text-center transition-all font-medium text-sm ${
                 strokeSettings.enabled 
-                  ? 'bg-cyan-600 text-white shadow-sm' 
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                  ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20' 
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
               }`}
             >
               Contour
@@ -255,10 +253,10 @@ export default function ControlsSection({
             
             <button
               onClick={() => onShapeChange({ enabled: true })}
-              className={`py-2 px-4 rounded-md text-center transition-all font-medium text-sm ${
+              className={`py-3 px-4 rounded-xl text-center transition-all font-medium text-sm ${
                 shapeSettings.enabled 
-                  ? 'bg-green-600 text-white shadow-sm' 
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                  ? 'bg-green-500 text-white shadow-md shadow-green-500/20' 
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
               }`}
             >
               Shape
@@ -269,24 +267,24 @@ export default function ControlsSection({
 
       {/* Contour Options - Hidden when PDF has CutContour */}
       {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-        <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <button 
             onClick={handleContourOptionsToggle}
-            className="flex items-center justify-between w-full text-left"
+            className="flex items-center justify-between w-full p-4 text-left hover:bg-gray-50 transition-colors"
           >
             <span className="text-sm font-medium text-gray-700">Contour Settings</span>
-            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showContourOptions ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showContourOptions ? 'rotate-180' : ''}`} />
           </button>
           
           {showContourOptions && (
-            <div className="space-y-3">
+            <div className="space-y-4 px-4 pb-4 border-t border-gray-100 pt-4">
               <div>
-                <Label className="text-xs text-gray-600">Contour Margin</Label>
+                <Label className="text-xs text-gray-500 font-medium">Contour Margin</Label>
                 <Select
                   value={strokeSettings.width.toString()}
                   onValueChange={(value) => onStrokeChange({ width: parseFloat(value) })}
                 >
-                  <SelectTrigger className="mt-1 bg-white border-gray-300 text-gray-900 text-sm">
+                  <SelectTrigger className="mt-2 bg-gray-50 border-gray-200 text-gray-900 text-sm rounded-lg">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -302,22 +300,21 @@ export default function ControlsSection({
               </div>
 
               <div>
-                <Label className="text-xs text-gray-600">Fill Color</Label>
-                <div className="flex items-center gap-2 mt-1">
+                <Label className="text-xs text-gray-500 font-medium">Fill Color</Label>
+                <div className="flex items-center gap-3 mt-2">
                   <input
                     type="color"
                     value={strokeSettings.backgroundColor === 'transparent' || strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : strokeSettings.backgroundColor}
                     onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                    className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200"
                     disabled={strokeSettings.backgroundColor === 'holographic'}
                   />
-                  <div className="flex gap-1 flex-wrap">
-                    {/* Transparent option with red diagonal line (none symbol) */}
+                  <div className="flex gap-1.5 flex-wrap">
                     <button
                       onClick={() => onStrokeChange({ backgroundColor: 'transparent' })}
-                      className={`w-5 h-5 rounded border relative overflow-hidden ${strokeSettings.backgroundColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                      className={`w-6 h-6 rounded-lg border relative overflow-hidden transition-all ${strokeSettings.backgroundColor === 'transparent' ? 'ring-2 ring-cyan-500 ring-offset-1' : 'border-gray-200 hover:border-gray-300'}`}
                       style={{ backgroundColor: '#fff' }}
-                      title="Transparent / None"
+                      title="Transparent"
                     >
                       <div 
                         className="absolute inset-0" 
@@ -330,7 +327,7 @@ export default function ControlsSection({
                       <button
                         key={color}
                         onClick={() => onStrokeChange({ backgroundColor: color })}
-                        className={`w-5 h-5 rounded border ${strokeSettings.backgroundColor === color && strokeSettings.backgroundColor !== 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
+                        className={`w-6 h-6 rounded-lg border transition-all ${strokeSettings.backgroundColor === color && strokeSettings.backgroundColor !== 'holographic' ? 'ring-2 ring-cyan-500 ring-offset-1' : 'border-gray-200 hover:border-gray-300'}`}
                         style={{ backgroundColor: color }}
                         title={color}
                       />
@@ -825,46 +822,46 @@ export default function ControlsSection({
         </>
       )}
 
-      {/* Download Button */}
-      <Button
-        onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
-          ...c,
-          spotWhiteName,
-          spotGlossName
-        })))}
-        disabled={isProcessing || !canDownload || !imageInfo}
-        className="w-full bg-cyan-600 hover:bg-cyan-700 text-white"
-      >
-        {isProcessing ? (
-          <>
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-            Processing...
-          </>
-        ) : (
-          <>
-            <Download className="w-4 h-4 mr-2" />
-            Download
-          </>
-        )}
-      </Button>
-
-      {/* Download All as 1 PDF - Single artboard with all layers */}
-      {canDownload && imageInfo && (
+      {/* Download Buttons */}
+      <div className="space-y-2 pt-2">
         <Button
-          variant="outline"
-          size="sm"
           onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
             ...c,
             spotWhiteName,
             spotGlossName
-          })), true)}
-          disabled={isProcessing}
-          className="w-full border-cyan-400 text-cyan-700 hover:bg-cyan-50"
+          })))}
+          disabled={isProcessing || !canDownload || !imageInfo}
+          className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl shadow-lg shadow-cyan-500/25 font-medium"
         >
-          <Download className="w-4 h-4 mr-2" />
-          Download All as 1 PDF
+          {isProcessing ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+              Processing...
+            </>
+          ) : (
+            <>
+              <Download className="w-5 h-5 mr-2" />
+              Download PDF
+            </>
+          )}
         </Button>
-      )}
+
+        {canDownload && imageInfo && (
+          <Button
+            variant="outline"
+            onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+              ...c,
+              spotWhiteName,
+              spotGlossName
+            })), true)}
+            disabled={isProcessing}
+            className="w-full h-10 border-gray-200 text-gray-600 hover:bg-gray-50 rounded-xl"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            All Layers in 1 PDF
+          </Button>
+        )}
+      </div>
 
       {/* Confirm Dialog */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
