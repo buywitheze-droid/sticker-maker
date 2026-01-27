@@ -168,8 +168,13 @@ export function removeWhiteBackground(
   // Calculate threshold value (0-255 scale)
   const thresholdValue = (opts.threshold / 100) * 255;
   
+  console.log(`[BackgroundRemoval] Starting with threshold ${opts.threshold}% (value: ${thresholdValue.toFixed(1)})`);
+  console.log(`[BackgroundRemoval] Image size: ${canvas.width}x${canvas.height}`);
+  
   // Find all white pixels connected to edges using flood fill
   const pixelsToRemove = floodFillFromEdges(data, canvas.width, canvas.height, thresholdValue);
+  
+  console.log(`[BackgroundRemoval] Found ${pixelsToRemove.size} pixels to remove`);
   
   // Make the marked pixels transparent
   const pixelArray = Array.from(pixelsToRemove);

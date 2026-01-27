@@ -17,11 +17,13 @@ import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
 import type { ParsedPDFData } from "@/lib/pdf-parser";
 import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
+import { useToast } from "@/hooks/use-toast";
 
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 
 export default function ImageEditor() {
+  const { toast } = useToast();
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
@@ -531,9 +533,23 @@ export default function ImageEditor() {
       // Reset CadCut bounds
       setCadCutBounds(null);
       
+      // Log the change
+      console.log(`[BackgroundRemoval] Complete! Original: ${imageInfo.originalWidth}x${imageInfo.originalHeight}, New: ${newWidth}x${newHeight}`);
+      
       setImageInfo(newImageInfo);
+      
+      // Show success toast
+      toast({
+        title: "Background Removed",
+        description: "White background removed from edges. Select Contour to see the new outline.",
+      });
     } catch (error) {
       console.error('Error removing background:', error);
+      toast({
+        title: "Error",
+        description: "Failed to remove background. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsRemovingBackground(false);
     }
