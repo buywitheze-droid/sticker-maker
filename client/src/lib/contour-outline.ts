@@ -2,11 +2,108 @@ import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles } from "@/lib/clipper-path";
 
-// Path simplification placeholder - disabled for maximum cut accuracy
-// Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
-function simplifyPathForPDF(points: Array<{x: number, y: number}>, _tolerance: number): Array<{x: number, y: number}> {
-  // Return original path unchanged to guarantee die-cut accuracy
-  return points;
+// Calculate perpendicular distance from point to line segment
+function perpendicularDist(point: {x: number, y: number}, lineStart: {x: number, y: number}, lineEnd: {x: number, y: number}): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  
+  if (len < 0.0001) {
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  // Use cross product for perpendicular distance
+  const cross = Math.abs((point.y - lineStart.y) * dx - (point.x - lineStart.x) * dy);
+  return cross / len;
+}
+
+// Standard RDP for open polyline
+function rdpSimplifyOpen(points: Array<{x: number, y: number}>, tolerance: number, start: number, end: number, keep: boolean[]): void {
+  if (end <= start + 1) return;
+  
+  let maxDist = 0;
+  let maxIdx = start;
+  
+  for (let i = start + 1; i < end; i++) {
+    const dist = perpendicularDist(points[i], points[start], points[end]);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
+    }
+  }
+  
+  if (maxDist > tolerance) {
+    keep[maxIdx] = true;
+    rdpSimplifyOpen(points, tolerance, start, maxIdx, keep);
+    rdpSimplifyOpen(points, tolerance, maxIdx, end, keep);
+  }
+}
+
+// Remove near-collinear points based on angle - for points where angle > threshold degrees
+function removeCollinearPoints(points: Array<{x: number, y: number}>, angleThreshold: number = 175): Array<{x: number, y: number}> {
+  if (points.length < 4) return points;
+  
+  const result: Array<{x: number, y: number}> = [];
+  const n = points.length;
+  const cosThreshold = Math.cos(angleThreshold * Math.PI / 180); // e.g., 175° → cos ≈ -0.996
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Vectors from curr to prev and curr to next
+    const v1x = prev.x - curr.x;
+    const v1y = prev.y - curr.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.0001 || len2 < 0.0001) {
+      continue; // Skip nearly duplicate points
+    }
+    
+    // Dot product gives cos(angle)
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    
+    // If angle is less than threshold (cos is less than cosThreshold), keep the point
+    // For 175°, we keep points where angle < 175° (dot > -0.996)
+    if (dot > cosThreshold) {
+      result.push(curr);
+    }
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Simplify closed polygon using RDP - duplicate first point, run open RDP, drop duplicate
+function simplifyPathForPDF(points: Array<{x: number, y: number}>, tolerance: number): Array<{x: number, y: number}> {
+  if (points.length < 4) return points;
+  
+  // First pass: remove near-collinear points (angle > 175°)
+  let simplified = removeCollinearPoints(points, 175);
+  
+  if (simplified.length < 4) return simplified;
+  
+  // Create open polyline by duplicating first point at end
+  const open = [...simplified, simplified[0]];
+  const n = open.length;
+  
+  const keep: boolean[] = new Array(n).fill(false);
+  keep[0] = true;
+  keep[n - 1] = true;
+  
+  rdpSimplifyOpen(open, tolerance, 0, n - 1, keep);
+  
+  // Collect kept points, excluding the duplicated last point
+  const result: Array<{x: number, y: number}> = [];
+  for (let i = 0; i < n - 1; i++) {
+    if (keep[i]) result.push(open[i]);
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 export interface ContourPathResult {
@@ -2080,8 +2177,8 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    // Simplify path with RDP - 0.01" tolerance flattens straight segments
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.01);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';
@@ -2092,22 +2189,11 @@ export async function downloadContourPDF(
     const startY = simplifiedPath[0].y * 72;
     pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
     
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
-      
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+    // Use straight lines - RDP already removed unnecessary curve points
+    for (let i = 1; i < simplifiedPath.length; i++) {
+      const endX = simplifiedPath[i].x * 72;
+      const endY = simplifiedPath[i].y * 72;
+      pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
     }
     
     pathOps += 'h S\n';
@@ -2646,8 +2732,8 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    // Simplify path with RDP - 0.01" tolerance flattens straight segments
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.01);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';
@@ -2658,22 +2744,11 @@ export async function generateContourPDFBase64(
     const startY = simplifiedPath[0].y * 72;
     pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
     
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
-      
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+    // Use straight lines - RDP already removed unnecessary curve points
+    for (let i = 1; i < simplifiedPath.length; i++) {
+      const endX = simplifiedPath[i].x * 72;
+      const endY = simplifiedPath[i].y * 72;
+      pathOps += `${endX.toFixed(2)} ${endY.toFixed(2)} l\n`;
     }
     
     pathOps += 'h S\n';
