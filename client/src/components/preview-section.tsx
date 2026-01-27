@@ -554,7 +554,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       } else {
         // Regular image rendering (non-PDF or no CutContour)
-        if (effectiveBackgroundColor === "transparent") {
+        
+        // For shape mode, always use a solid light background to show cut area
+        if (shapeSettings.enabled) {
+          ctx.fillStyle = '#f0f0f0';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          drawShapePreview(ctx, canvas.width, canvas.height);
+        } else if (effectiveBackgroundColor === "transparent") {
           // Draw transparency grid pattern (light grey checkerboard)
           const gridSize = 10;
           const lightColor = '#e8e8e8';
@@ -567,6 +573,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               ctx.fillRect(x, y, gridSize, gridSize);
             }
           }
+          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
         } else {
           if (effectiveBackgroundColor === "holographic") {
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
@@ -582,13 +589,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             ctx.fillStyle = effectiveBackgroundColor;
           }
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        if (shapeSettings.enabled) {
-          drawShapePreview(ctx, canvas.width, canvas.height);
-        } else {
           drawImageWithResizePreview(ctx, canvas.width, canvas.height);
         }
+
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
