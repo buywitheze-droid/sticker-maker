@@ -73,31 +73,24 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
         onDragOver={handleDragOver}
         onClick={() => document.getElementById('imageInput')?.click()}
         className={`
-          border-2 border-dashed rounded-2xl text-center transition-all duration-200 cursor-pointer
+          rounded-xl text-center transition-all duration-200 cursor-pointer
           ${isEmptyState 
-            ? 'border-gray-300 hover:border-cyan-400 bg-gradient-to-br from-white to-gray-50 p-12 hover:shadow-lg hover:shadow-cyan-500/10' 
-            : 'border-gray-200 hover:border-cyan-400 bg-white p-4 hover:bg-gray-50'
+            ? 'border-2 border-dashed border-gray-300 hover:border-cyan-400 bg-gradient-to-br from-white to-gray-50 p-12 hover:shadow-lg hover:shadow-cyan-500/10' 
+            : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 px-4 py-2 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/40'
           }
         `}
       >
-        <div className="flex flex-col items-center">
-          <div className={`
-            rounded-2xl flex items-center justify-center mb-4 transition-all
-            ${isEmptyState 
-              ? 'w-20 h-20 bg-gradient-to-br from-cyan-50 to-blue-50 shadow-inner' 
-              : 'w-10 h-10 bg-gray-100'
-            }
-          `}>
-            <Upload className={`
-              transition-all
-              ${isEmptyState ? 'w-10 h-10 text-cyan-500' : 'w-5 h-5 text-gray-400'}
-            `} />
-          </div>
-          <p className={`
-            font-medium transition-all
-            ${isEmptyState ? 'text-gray-700 text-lg mb-2' : 'text-gray-600 text-sm mb-1'}
-          `}>
-            {isEmptyState ? 'Drop your image here' : 'Change image'}
+        <div className={`flex items-center ${isEmptyState ? 'flex-col' : 'gap-2'}`}>
+          {isEmptyState && (
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-cyan-50 to-blue-50 shadow-inner flex items-center justify-center mb-4">
+              <Upload className="w-10 h-10 text-cyan-500" />
+            </div>
+          )}
+          {!isEmptyState && (
+            <Upload className="w-4 h-4 text-white" />
+          )}
+          <p className={`font-medium ${isEmptyState ? 'text-gray-700 text-lg mb-2' : 'text-white text-sm'}`}>
+            {isEmptyState ? 'Drop your image here' : 'Change'}
           </p>
           {isEmptyState && (
             <p className="text-sm text-gray-400">

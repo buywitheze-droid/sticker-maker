@@ -863,42 +863,41 @@ export default function ImageEditor() {
       {/* Right area - Upload, Info, and Preview */}
       <div className="lg:col-span-8 xl:col-span-9">
         <div className="sticky top-4 space-y-3">
-          {/* Top row: Change Image and Image Info side by side */}
-          <div className="flex gap-3">
-            {/* Change Image - compact */}
-            <div className="flex-shrink-0">
-              <UploadSection 
-                onImageUpload={handleImageUpload}
-                onPDFUpload={handlePDFUpload}
-                showCutLineInfo={false}
-                imageInfo={imageInfo}
-                resizeSettings={resizeSettings}
-                stickerSize={stickerSize}
-              />
+          {/* Top row: Change Image and Image Info - compact bar */}
+          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 shadow-sm px-3 py-2">
+            {/* Change Image - glowing button */}
+            <UploadSection 
+              onImageUpload={handleImageUpload}
+              onPDFUpload={handlePDFUpload}
+              showCutLineInfo={false}
+              imageInfo={imageInfo}
+              resizeSettings={resizeSettings}
+              stickerSize={stickerSize}
+            />
+            
+            <div className="w-px h-6 bg-gray-200"></div>
+            
+            {/* Image Info - inline */}
+            <div className="flex items-center gap-3 flex-1">
+              {imageInfo?.file?.name && (
+                <p className="text-xs text-gray-500 truncate max-w-[140px]" title={imageInfo.file.name}>
+                  {imageInfo.file.name}
+                </p>
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold text-gray-700">{resizeSettings.widthInches.toFixed(1)}"</span>
+                <span className="text-gray-300">×</span>
+                <span className="text-sm font-semibold text-gray-700">{resizeSettings.heightInches.toFixed(1)}"</span>
+              </div>
+              <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
             </div>
             
-            {/* Image Info */}
-            <div className="flex-1 bg-white rounded-xl border border-gray-100 shadow-sm p-3 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                {imageInfo?.file?.name && (
-                  <p className="text-sm font-medium text-gray-700 truncate max-w-[200px]" title={imageInfo.file.name}>
-                    {imageInfo.file.name}
-                  </p>
-                )}
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="text-lg font-semibold text-gray-800">{resizeSettings.widthInches.toFixed(1)}"</span>
-                  <span className="text-gray-300">×</span>
-                  <span className="text-lg font-semibold text-gray-800">{resizeSettings.heightInches.toFixed(1)}"</span>
-                </div>
-                <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">{resizeSettings.outputDPI} DPI</span>
+            {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100">
+                <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
+                <span className="text-[10px] text-fuchsia-600 font-medium">CutContour</span>
               </div>
-              {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
-                <div className="flex items-center gap-2 px-2 py-1 bg-fuchsia-50 rounded-lg border border-fuchsia-100">
-                  <div className="w-3 h-3 rounded-full bg-fuchsia-500"></div>
-                  <span className="text-xs text-fuchsia-600 font-medium">CutContour</span>
-                </div>
-              )}
-            </div>
+            )}
           </div>
           
           {/* Preview - Square */}
