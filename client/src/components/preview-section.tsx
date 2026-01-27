@@ -588,7 +588,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
-    // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
+    // Apply spot preview overlay (white/gloss visualization) based on ORIGINAL IMAGE colors only
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -602,9 +602,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       
-      // Get current canvas image data
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
+      // Create a mask from the ORIGINAL IMAGE to identify which pixels should be highlighted
+      // This prevents highlighting background/holographic/shape colors
+      const origCanvas = document.createElement('canvas');
+      origCanvas.width = imageInfo.image.naturalWidth || imageInfo.image.width;
+      origCanvas.height = imageInfo.image.naturalHeight || imageInfo.image.height;
+      const origCtx = origCanvas.getContext('2d');
+      if (!origCtx) return;
+      origCtx.drawImage(imageInfo.image, 0, 0);
+      const origData = origCtx.getImageData(0, 0, origCanvas.width, origCanvas.height);
       
       // Helper to check if a pixel matches a color (within tolerance)
       const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
@@ -616,38 +622,92 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Apply overlay colors
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const a = data[i + 3];
+      // Build a mask from original image: mark pixels that match spot colors
+      const origW = origCanvas.width;
+      const origH = origCanvas.height;
+      const spotMask = new Uint8Array(origW * origH); // 0 = no spot, 1 = white, 2 = gloss
+      
+      for (let i = 0; i < origData.data.length; i += 4) {
+        const r = origData.data[i];
+        const g = origData.data[i + 1];
+        const b = origData.data[i + 2];
+        const a = origData.data[i + 3];
         
-        if (a < 10) continue; // Skip transparent pixels
+        if (a < 240) continue; // Only check opaque pixels from original
         
-        // Check for white overlay (solid white)
+        const pixelIdx = i / 4;
+        
         for (const wc of whiteColors) {
           if (colorMatches(r, g, b, wc.hex)) {
-            data[i] = 255;     // R
-            data[i + 1] = 255; // G
-            data[i + 2] = 255; // B
+            spotMask[pixelIdx] = 1;
             break;
           }
         }
-        
-        // Check for gloss overlay (silver/grey shiny look)
-        for (const gc of glossColors) {
-          if (colorMatches(r, g, b, gc.hex)) {
-            // Silver/metallic grey color for gloss preview
-            data[i] = 180;     // R
-            data[i + 1] = 180; // G
-            data[i + 2] = 190; // B - slightly blue tint for shiny effect
-            break;
+        if (spotMask[pixelIdx] === 0) {
+          for (const gc of glossColors) {
+            if (colorMatches(r, g, b, gc.hex)) {
+              spotMask[pixelIdx] = 2;
+              break;
+            }
           }
         }
       }
       
-      ctx.putImageData(imageData, 0, 0);
+      // Now apply the mask to the preview canvas
+      // Calculate where the image is positioned on the canvas
+      const previewData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pData = previewData.data;
+      
+      // Get image position on canvas (center positioned, scaled)
+      const shapeDims = calculateShapeDimensions(
+        resizeSettings.widthInches,
+        resizeSettings.heightInches,
+        shapeSettings,
+        strokeSettings
+      );
+      const shapeWidthPx = shapeDims.outerWidth * 72;
+      const shapeHeightPx = shapeDims.outerHeight * 72;
+      const scale = Math.min(canvas.width / shapeWidthPx, canvas.height / shapeHeightPx) * 0.85;
+      
+      // Scaled image dimensions on canvas
+      const imgW = origW * scale * (shapeDims.designWidth / (origW / 300));
+      const imgH = origH * scale * (shapeDims.designHeight / (origH / 300));
+      const imgX = (canvas.width - imgW) / 2 + (resizeSettings.positionX || 0);
+      const imgY = (canvas.height - imgH) / 2 + (resizeSettings.positionY || 0);
+      
+      // Iterate over preview canvas and apply spot colors where mask indicates
+      for (let py = 0; py < canvas.height; py++) {
+        for (let px = 0; px < canvas.width; px++) {
+          // Map preview pixel to original image pixel
+          const relX = (px - imgX) / imgW;
+          const relY = (py - imgY) / imgH;
+          
+          if (relX < 0 || relX >= 1 || relY < 0 || relY >= 1) continue;
+          
+          const origX = Math.floor(relX * origW);
+          const origY = Math.floor(relY * origH);
+          const maskIdx = origY * origW + origX;
+          
+          if (spotMask[maskIdx] === 0) continue;
+          
+          const pIdx = (py * canvas.width + px) * 4;
+          if (pData[pIdx + 3] < 10) continue; // Skip transparent preview pixels
+          
+          if (spotMask[maskIdx] === 1) {
+            // White overlay
+            pData[pIdx] = 255;
+            pData[pIdx + 1] = 255;
+            pData[pIdx + 2] = 255;
+          } else if (spotMask[maskIdx] === 2) {
+            // Gloss overlay (silver/metallic)
+            pData[pIdx] = 180;
+            pData[pIdx + 1] = 180;
+            pData[pIdx + 2] = 190;
+          }
+        }
+      }
+      
+      ctx.putImageData(previewData, 0, 0);
     }, [imageInfo, spotPreviewData, strokeSettings, resizeSettings, shapeSettings, backgroundColor]);
 
     useEffect(() => {
