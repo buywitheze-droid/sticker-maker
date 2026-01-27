@@ -2062,7 +2062,7 @@ function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoi
         }
         
         // Check for sudden sharp turn (indicates end of gentle curve)
-        if (Math.abs(angleDiff) > 0.4) { // ~23 degrees sudden change
+        if (Math.abs(angleDiff) > 0.5) { // ~29 degrees sudden change
           break;
         }
       }
