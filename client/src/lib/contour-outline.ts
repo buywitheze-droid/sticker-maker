@@ -2432,41 +2432,20 @@ export async function downloadContourPDF(
             regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
           }
           
-          // Step 3: Trace contour outline of the binary mask (like Illustrator's Unite)
-          // This traces the actual edge of the filled region for cleaner paths
-          const contours = traceContourFromMask(binaryMask, w, h);
-          console.log(`[PDF] ${colorName}: Traced ${contours.length} contour(s)`);
-          
+          // Step 3: Draw merged rectangular regions (fast and accurate)
           let spotOps = `q /${colorName} cs 1 scn\n`;
-          let curveCount = 0;
-          let lineCount = 0;
           
-          for (const contour of contours) {
-            if (contour.length < 3) continue;
-            
-            // Smooth the contour to reduce jagged pixel edges
-            const smoothed = gaussianSmoothContour(contour, 2);
-            
-            // Convert to curves for smooth rendering
-            const segments = convertPolygonToCurves(smoothed, 70);
-            
-            for (const seg of segments) {
-              if (seg.type === 'move' && seg.point) {
-                spotOps += `${toX(seg.point.x).toFixed(2)} ${toY(seg.point.y).toFixed(2)} m `;
-              } else if (seg.type === 'line' && seg.point) {
-                spotOps += `${toX(seg.point.x).toFixed(2)} ${toY(seg.point.y).toFixed(2)} l `;
-                lineCount++;
-              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-                spotOps += `${toX(seg.cp1.x).toFixed(2)} ${toY(seg.cp1.y).toFixed(2)} `;
-                spotOps += `${toX(seg.cp2.x).toFixed(2)} ${toY(seg.cp2.y).toFixed(2)} `;
-                spotOps += `${toX(seg.end.x).toFixed(2)} ${toY(seg.end.y).toFixed(2)} c `;
-                curveCount++;
-              }
-            }
-            spotOps += 'h\n';
+          for (const r of regions) {
+            const x1 = toX(r.x1);
+            const y1 = toY(r.y2 + 1);
+            const x2 = toX(r.x2);
+            const y2 = toY(r.y1);
+            const rw = x2 - x1;
+            const rh = y2 - y1;
+            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${rw.toFixed(2)} ${rh.toFixed(2)} re\n`;
           }
           
-          console.log(`[PDF] ${colorName}: ${curveCount} curves, ${lineCount} lines`);
+          console.log(`[PDF] ${colorName}: ${regions.length} rectangles`);
           
           // Single fill command for all polygons
           spotOps += 'f\nQ\n';
