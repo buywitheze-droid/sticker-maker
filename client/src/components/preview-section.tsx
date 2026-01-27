@@ -382,7 +382,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (hasPdfCutContour && imageInfo.pdfCutContourInfo) {
         const cutContourInfo = imageInfo.pdfCutContourInfo;
         const hasExtractedPaths = cutContourInfo.cutContourPoints && cutContourInfo.cutContourPoints.length > 0;
-        const viewPadding = 40;
+        const viewPadding = 12;
         const availableWidth = canvas.width - (viewPadding * 2);
         const availableHeight = canvas.height - (viewPadding * 2);
         
@@ -719,7 +719,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       );
 
       const bleedInches = 0.10; // 0.10" bleed around the shape
-      const padding = 40;
+      const padding = 12;
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);
       const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
@@ -941,7 +941,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      const viewPadding = 40;
+      const viewPadding = 12;
       const availableWidth = canvasWidth - (viewPadding * 2);
       const availableHeight = canvasHeight - (viewPadding * 2);
       
@@ -1119,7 +1119,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 onTouchEnd={handleTouchEnd}
                 className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} flex-1 transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                 style={{ 
-                  height: '450px',
+                  height: '420px',
                   backgroundColor: getBackgroundColor(),
                   overflow: 'hidden',
                   userSelect: 'none',
@@ -1130,8 +1130,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   ref={canvasRef}
                   className="relative z-10 block transition-all duration-200"
                   style={{ 
-                    maxWidth: '400px',
-                    maxHeight: '400px',
+                    maxWidth: '98%',
+                    maxHeight: '98%',
                     transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
                     transformOrigin: 'center'
                   }}
