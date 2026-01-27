@@ -585,7 +585,7 @@ export default function ImageEditor() {
 
 
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>) => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>, singleArtboard: boolean = false) => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
@@ -764,7 +764,8 @@ export default function ImageEditor() {
             resizeSettings,
             filename,
             cachedData,
-            spotColors
+            spotColors,
+            singleArtboard
           );
         } else if (shapeSettings.enabled) {
           // Shape background mode: Download PDF with shape + CutContour spot color

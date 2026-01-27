@@ -1840,7 +1840,8 @@ export async function downloadContourPDF(
   resizeSettings: ResizeSettings,
   filename: string,
   cachedContourData?: CachedContourData,
-  spotColors?: SpotColorInput[]
+  spotColors?: SpotColorInput[],
+  singleArtboard: boolean = false
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -2383,15 +2384,30 @@ export async function downloadContourPDF(
         const whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
         const glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
         
-        // Add White and Gloss spot color layers on the SAME page (same artboard, different layers)
-        if (hasWhite) {
-          const whiteColors = spotColors.filter(c => c.spotWhite);
-          await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], page);
-        }
-        
-        if (hasGloss) {
-          const glossColors = spotColors.filter(c => c.spotGloss);
-          await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], page);
+        if (singleArtboard) {
+          // Add White and Gloss spot color layers on the SAME page (same artboard, different layers)
+          if (hasWhite) {
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], page);
+          }
+          
+          if (hasGloss) {
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], page);
+          }
+        } else {
+          // Create SEPARATE pages for White and Gloss spot colors (original behavior)
+          if (hasWhite) {
+            const whitePage = pdfDoc.addPage([widthPts, heightPts]);
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], whitePage);
+          }
+          
+          if (hasGloss) {
+            const glossPage = pdfDoc.addPage([widthPts, heightPts]);
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], glossPage);
+          }
         }
       }
     }
@@ -2402,7 +2418,9 @@ export async function downloadContourPDF(
   const glossName = spotColors?.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
   
   pdfDoc.setTitle('Sticker with CutContour and Spot Colors');
-  pdfDoc.setSubject(`Single artboard with Design + CutContour + ${whiteName} + ${glossName}`);
+  pdfDoc.setSubject(singleArtboard 
+    ? `Single artboard with Design + CutContour + ${whiteName} + ${glossName}`
+    : `Page 1: Raster + CutContour, Page 2: ${whiteName}, Page 3: ${glossName}`);
   pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', whiteName, glossName]);
   
   const pdfBytes = await pdfDoc.save();

@@ -28,7 +28,7 @@ interface ControlsSectionProps {
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
   onStickerSizeChange: (size: StickerSize) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>) => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>, singleArtboard?: boolean) => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
@@ -845,7 +845,7 @@ export default function ControlsSection({
             ...c,
             spotWhiteName,
             spotGlossName
-          })))}
+          })), true)}
           disabled={isProcessing}
           className="w-full border-cyan-400 text-cyan-700 hover:bg-cyan-50"
         >
