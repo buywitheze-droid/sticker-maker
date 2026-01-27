@@ -334,9 +334,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const baseSize = 400;
-      canvas.width = baseSize;
-      canvas.height = baseSize;
+      // Dynamic canvas sizing based on design aspect ratio
+      const maxSize = 400;
+      const minSize = 280;
+      
+      // Determine the source dimensions for aspect ratio
+      let sourceWidth = imageInfo.image.width;
+      let sourceHeight = imageInfo.image.height;
+      
+      // If contour mode is active, use contour canvas dimensions
+      if (strokeSettings.enabled && contourCacheRef.current?.canvas) {
+        sourceWidth = contourCacheRef.current.canvas.width;
+        sourceHeight = contourCacheRef.current.canvas.height;
+      }
+      
+      // Calculate aspect ratio and set canvas dimensions
+      const aspectRatio = sourceWidth / sourceHeight;
+      let canvasWidth, canvasHeight;
+      
+      if (aspectRatio > 1) {
+        // Landscape - width is larger
+        canvasWidth = maxSize;
+        canvasHeight = Math.max(minSize, Math.round(maxSize / aspectRatio));
+      } else if (aspectRatio < 1) {
+        // Portrait - height is larger
+        canvasHeight = maxSize;
+        canvasWidth = Math.max(minSize, Math.round(maxSize * aspectRatio));
+      } else {
+        // Square
+        canvasWidth = maxSize;
+        canvasHeight = maxSize;
+      }
+      
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
 
       // Determine which background color to use:
       // - For PDFs with CutContour, use strokeSettings.backgroundColor
@@ -1096,10 +1127,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               >
                 <canvas 
                   ref={canvasRef}
-                  className="relative z-10 block"
+                  className="relative z-10 block transition-all duration-200"
                   style={{ 
-                    width: '400px',
-                    height: '400px',
+                    maxWidth: '400px',
+                    maxHeight: '400px',
                     transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
                     transformOrigin: 'center'
                   }}
