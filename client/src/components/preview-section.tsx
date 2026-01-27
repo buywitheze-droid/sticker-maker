@@ -589,7 +589,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
     // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
-    // HYBRID APPROACH: Match colors from ORIGINAL image (correct filtering) but apply to CANVAS (correct alignment)
+    // SIMPLE APPROACH: Match colors directly on the rendered canvas, use original image only for validation
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -603,7 +603,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       
-      // Step 1: Extract pixel data from the ORIGINAL image for correct color matching
+      // Build a set of valid colors from the ORIGINAL image (to exclude background colors)
       const srcCanvas = document.createElement('canvas');
       const srcCtx = srcCanvas.getContext('2d');
       if (!srcCtx) return;
@@ -613,12 +613,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       srcCtx.drawImage(imageInfo.image, 0, 0);
       const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
-      // Step 2: Build a mask from the ORIGINAL image (which pixels match which spot color)
-      // 0 = no match, 1 = white, 2 = gloss
-      const maskArray = new Uint8Array(srcCanvas.width * srcCanvas.height);
+      // Collect all unique colors from original image (with alpha > 128)
+      const validColors = new Set<string>();
+      for (let i = 0; i < srcData.data.length; i += 4) {
+        if (srcData.data[i + 3] > 128) {
+          // Round colors to reduce variations (tolerance of ~10)
+          const r = Math.round(srcData.data[i] / 10) * 10;
+          const g = Math.round(srcData.data[i + 1] / 10) * 10;
+          const b = Math.round(srcData.data[i + 2] / 10) * 10;
+          validColors.add(`${r},${g},${b}`);
+        }
+      }
       
-      // Helper to check if a pixel matches a color (within tolerance)
-      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 30) => {
+      // Get current canvas image data (already rendered, perfect alignment)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      
+      // Helper to check if a pixel matches a target color (within tolerance)
+      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
         const g = parseInt(targetHex.slice(3, 5), 16);
         const b = parseInt(targetHex.slice(5, 7), 16);
@@ -627,153 +639,44 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Scan original image and mark matching pixels
-      for (let y = 0; y < srcCanvas.height; y++) {
-        for (let x = 0; x < srcCanvas.width; x++) {
-          const idx = (y * srcCanvas.width + x) * 4;
-          const r = srcData.data[idx];
-          const g = srcData.data[idx + 1];
-          const b = srcData.data[idx + 2];
-          const a = srcData.data[idx + 3];
-          
-          // Skip transparent pixels (only match opaque pixels from original)
-          if (a < 128) continue;
-          
-          const maskIdx = y * srcCanvas.width + x;
-          
-          // Check white colors
-          for (const wc of whiteColors) {
-            if (colorMatches(r, g, b, wc.hex)) {
-              maskArray[maskIdx] = 1; // White
-              break;
-            }
-          }
-          
-          // Check gloss colors (if not already matched as white)
-          if (maskArray[maskIdx] === 0) {
-            for (const gc of glossColors) {
-              if (colorMatches(r, g, b, gc.hex)) {
-                maskArray[maskIdx] = 2; // Gloss
-                break;
-              }
-            }
+      // Helper to check if a canvas pixel color exists in original image
+      const isValidImageColor = (r: number, g: number, b: number) => {
+        // Round to same precision as validColors set
+        const rr = Math.round(r / 10) * 10;
+        const gg = Math.round(g / 10) * 10;
+        const bb = Math.round(b / 10) * 10;
+        return validColors.has(`${rr},${gg},${bb}`);
+      };
+      
+      // Apply overlay colors directly on the canvas
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        
+        if (a < 10) continue; // Skip transparent pixels
+        
+        // Only process if this color exists in the original image (excludes background pattern)
+        if (!isValidImageColor(r, g, b)) continue;
+        
+        // Check for white overlay
+        for (const wc of whiteColors) {
+          if (colorMatches(r, g, b, wc.hex)) {
+            data[i] = 255;     // R
+            data[i + 1] = 255; // G
+            data[i + 2] = 255; // B
+            break;
           }
         }
-      }
-      
-      // Step 3: Get current canvas data and apply overlay based on CANVAS positions
-      // but only where the ORIGINAL image mask says there's a match
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-      
-      // Calculate where the image is rendered on the canvas (same as drawImageWithResizePreview)
-      const viewPadding = 40;
-      const availableWidth = canvas.width - (viewPadding * 2);
-      const availableHeight = canvas.height - (viewPadding * 2);
-      
-      // CRITICAL: Match the exact render path - check if contour mode is active
-      // When contour is enabled, the render uses contourCanvas dimensions (which includes stroke)
-      // We need to calculate where the IMAGE sits within that contour canvas
-      const contourCanvas = contourCacheRef.current?.canvas;
-      const useContourMode = strokeSettings.enabled && contourCanvas && !isProcessing;
-      
-      let displayWidth, displayHeight, offsetX, offsetY;
-      let imageInContourX = 0, imageInContourY = 0;
-      let imageInContourWidth = srcCanvas.width, imageInContourHeight = srcCanvas.height;
-      
-      if (useContourMode) {
-        // When contour mode is active, the contour canvas is what gets displayed
-        const contourAspectRatio = contourCanvas.width / contourCanvas.height;
         
-        if (contourAspectRatio > (availableWidth / availableHeight)) {
-          displayWidth = availableWidth;
-          displayHeight = availableWidth / contourAspectRatio;
-        } else {
-          displayHeight = availableHeight;
-          displayWidth = availableHeight * contourAspectRatio;
-        }
-        
-        offsetX = (canvas.width - displayWidth) / 2;
-        offsetY = (canvas.height - displayHeight) / 2;
-        
-        // The original image is embedded inside the contour canvas with padding
-        // Match the exact formula from contour-outline.ts:
-        // effectiveDPI = 100 (preview), baseOffsetPixels = 0.015 * 100 = 2
-        // userOffsetPixels = strokeSettings.width * 100
-        // totalOffsetPixels = baseOffsetPixels + userOffsetPixels
-        // padding = totalOffsetPixels + 10
-        const effectiveDPI = 100;
-        const baseOffsetPixels = Math.round(0.015 * effectiveDPI); // = 2
-        const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
-        const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
-        const padding = totalOffsetPixels + 10;
-        
-        imageInContourX = padding;
-        imageInContourY = padding;
-        imageInContourWidth = srcCanvas.width; // Original image width
-        imageInContourHeight = srcCanvas.height; // Original image height
-      } else {
-        // Regular mode - original image is displayed directly
-        const aspectRatio = srcCanvas.width / srcCanvas.height;
-        
-        if (aspectRatio > (availableWidth / availableHeight)) {
-          displayWidth = availableWidth;
-          displayHeight = availableWidth / aspectRatio;
-        } else {
-          displayHeight = availableHeight;
-          displayWidth = availableHeight * aspectRatio;
-        }
-        
-        offsetX = (canvas.width - displayWidth) / 2;
-        offsetY = (canvas.height - displayHeight) / 2;
-      }
-      
-      // Apply overlay - iterate over canvas pixels within the image bounds
-      for (let canvasY = Math.floor(offsetY); canvasY < Math.ceil(offsetY + displayHeight); canvasY++) {
-        for (let canvasX = Math.floor(offsetX); canvasX < Math.ceil(offsetX + displayWidth); canvasX++) {
-          if (canvasX < 0 || canvasX >= canvas.width || canvasY < 0 || canvasY >= canvas.height) continue;
-          
-          let srcX, srcY;
-          
-          if (useContourMode) {
-            // Map canvas position to contour canvas position, then to original image position
-            const contourX = (canvasX - offsetX) / displayWidth * contourCanvas.width;
-            const contourY = (canvasY - offsetY) / displayHeight * contourCanvas.height;
-            
-            // Check if within the image area inside the contour
-            if (contourX < imageInContourX || contourX >= imageInContourX + imageInContourWidth ||
-                contourY < imageInContourY || contourY >= imageInContourY + imageInContourHeight) {
-              continue; // Outside the image area (in the stroke area)
-            }
-            
-            // Map from contour image position to original image position
-            srcX = Math.floor((contourX - imageInContourX) / imageInContourWidth * srcCanvas.width);
-            srcY = Math.floor((contourY - imageInContourY) / imageInContourHeight * srcCanvas.height);
-          } else {
-            // Direct mapping from canvas to original image
-            srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
-            srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
-          }
-          
-          if (srcX < 0 || srcX >= srcCanvas.width || srcY < 0 || srcY >= srcCanvas.height) continue;
-          
-          const maskIdx = srcY * srcCanvas.width + srcX;
-          const maskValue = maskArray[maskIdx];
-          
-          if (maskValue === 0) continue; // No match in original image
-          
-          const canvasIdx = (canvasY * canvas.width + canvasX) * 4;
-          
-          if (maskValue === 1) {
-            // White overlay
-            data[canvasIdx] = 255;     // R
-            data[canvasIdx + 1] = 255; // G
-            data[canvasIdx + 2] = 255; // B
-          } else if (maskValue === 2) {
-            // Gloss overlay (silver/grey)
-            data[canvasIdx] = 180;     // R
-            data[canvasIdx + 1] = 180; // G
-            data[canvasIdx + 2] = 190; // B
+        // Check for gloss overlay
+        for (const gc of glossColors) {
+          if (colorMatches(r, g, b, gc.hex)) {
+            data[i] = 180;     // R
+            data[i + 1] = 180; // G
+            data[i + 2] = 190; // B
+            break;
           }
         }
       }
