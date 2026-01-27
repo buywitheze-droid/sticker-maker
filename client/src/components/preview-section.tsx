@@ -696,13 +696,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         offsetX = (canvas.width - displayWidth) / 2;
         offsetY = (canvas.height - displayHeight) / 2;
         
-        // The original image is embedded inside the contour canvas with margins
-        // We need to figure out where the image is positioned within the contour
-        const margin = strokeSettings.width * 2; // Same margin used when creating contour
-        imageInContourX = margin;
-        imageInContourY = margin;
-        imageInContourWidth = contourCanvas.width - (margin * 2);
-        imageInContourHeight = contourCanvas.height - (margin * 2);
+        // The original image is embedded inside the contour canvas with padding
+        // Match the exact formula from contour-outline.ts:
+        // effectiveDPI = 100 (preview), baseOffsetPixels = 0.015 * 100 = 2
+        // userOffsetPixels = strokeSettings.width * 100
+        // totalOffsetPixels = baseOffsetPixels + userOffsetPixels
+        // padding = totalOffsetPixels + 10
+        const effectiveDPI = 100;
+        const baseOffsetPixels = Math.round(0.015 * effectiveDPI); // = 2
+        const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+        const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+        const padding = totalOffsetPixels + 10;
+        
+        imageInContourX = padding;
+        imageInContourY = padding;
+        imageInContourWidth = srcCanvas.width; // Original image width
+        imageInContourHeight = srcCanvas.height; // Original image height
       } else {
         // Regular mode - original image is displayed directly
         const aspectRatio = srcCanvas.width / srcCanvas.height;
