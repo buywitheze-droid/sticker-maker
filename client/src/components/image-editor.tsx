@@ -820,6 +820,17 @@ export default function ImageEditor() {
             stickerSize={stickerSize}
           />
         </div>
+        
+        {/* Resize Modal - must be here for initial upload */}
+        {detectedDimensions && (
+          <ResizeModal
+            open={showResizeModal}
+            onClose={handleResizeModalClose}
+            onConfirm={handleResizeConfirm}
+            detectedWidth={detectedDimensions.width}
+            detectedHeight={detectedDimensions.height}
+          />
+        )}
       </div>
     );
   }
