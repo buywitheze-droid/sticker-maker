@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, type PathSegment } from "@/lib/clipper-path";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -2353,27 +2353,43 @@ export async function downloadContourPDF(
           console.log(`[PDF] United ${regions.length} regions into ${unifiedPolygons.length} polygon(s) for ${colorName}`);
           
           let spotOps = `q /${colorName} cs 1 scn\n`;
+          let curveCount = 0;
+          let lineCount = 0;
           
-          // Draw each unified polygon
+          // Draw each unified polygon with curve detection
           for (const polygon of unifiedPolygons) {
             if (polygon.length < 3) continue;
             
-            // Start the path
-            const firstPt = polygon[0];
-            const startX = toX(firstPt.x);
-            const startY = toY(firstPt.y);
-            spotOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m `;
+            // Convert polygon to path segments with curve detection (60+ point curves)
+            const pathSegments = convertPolygonToCurves(polygon, 60);
             
-            // Line to each subsequent point
-            for (let i = 1; i < polygon.length; i++) {
-              const pt = polygon[i];
-              const px = toX(pt.x);
-              const py = toY(pt.y);
-              spotOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
+            for (const seg of pathSegments) {
+              if (seg.type === 'move' && seg.point) {
+                const px = toX(seg.point.x);
+                const py = toY(seg.point.y);
+                spotOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
+              } else if (seg.type === 'line' && seg.point) {
+                const px = toX(seg.point.x);
+                const py = toY(seg.point.y);
+                spotOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
+                lineCount++;
+              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+                // PDF cubic Bezier curve: x1 y1 x2 y2 x3 y3 c
+                const cp1x = toX(seg.cp1.x);
+                const cp1y = toY(seg.cp1.y);
+                const cp2x = toX(seg.cp2.x);
+                const cp2y = toY(seg.cp2.y);
+                const endx = toX(seg.end.x);
+                const endy = toY(seg.end.y);
+                spotOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
+                curveCount++;
+              }
             }
             
             spotOps += 'h\n';
           }
+          
+          console.log(`[PDF] ${colorName}: ${curveCount} curves, ${lineCount} lines`);
           
           // Single fill command for all polygons
           spotOps += 'f\nQ\n';

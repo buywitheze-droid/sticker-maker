@@ -497,6 +497,131 @@ function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | n
   return null;
 }
 
+// Detect curved segments (60+ points) and convert to Bezier curves
+// Returns an array of path segments: either {type: 'line', point} or {type: 'curve', cp1, cp2, end}
+export interface PathSegment {
+  type: 'move' | 'line' | 'curve';
+  point?: Point;
+  cp1?: Point;
+  cp2?: Point;
+  end?: Point;
+}
+
+function getAngle(p1: Point, p2: Point): number {
+  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+}
+
+function angleDifference(a1: number, a2: number): number {
+  let diff = a2 - a1;
+  while (diff > Math.PI) diff -= 2 * Math.PI;
+  while (diff < -Math.PI) diff += 2 * Math.PI;
+  return diff;
+}
+
+// Fit a cubic Bezier curve to a set of points
+function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point } {
+  if (points.length < 2) {
+    return { cp1: points[0], cp2: points[0], end: points[0] };
+  }
+  
+  const start = points[0];
+  const end = points[points.length - 1];
+  
+  // Use 1/3 and 2/3 points along the curve for control point estimation
+  const t1 = Math.floor(points.length / 3);
+  const t2 = Math.floor((2 * points.length) / 3);
+  const p1 = points[t1];
+  const p2 = points[t2];
+  
+  // Estimate control points using de Casteljau's algorithm inverse
+  // CP1 = P1 * 3 - start * 2 - end * 0.5 (simplified approximation)
+  // CP2 = P2 * 3 - start * 0.5 - end * 2
+  const cp1: Point = {
+    x: start.x + (p1.x - start.x) * 1.5,
+    y: start.y + (p1.y - start.y) * 1.5
+  };
+  
+  const cp2: Point = {
+    x: end.x + (p2.x - end.x) * 1.5,
+    y: end.y + (p2.y - end.y) * 1.5
+  };
+  
+  return { cp1, cp2, end };
+}
+
+// Detect if a sequence of points forms a curve (consistent angle change direction)
+function isCurvedSegment(points: Point[]): boolean {
+  if (points.length < 10) return false;
+  
+  let positiveChanges = 0;
+  let negativeChanges = 0;
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const angle1 = getAngle(points[i - 1], points[i]);
+    const angle2 = getAngle(points[i], points[i + 1]);
+    const diff = angleDifference(angle1, angle2);
+    
+    if (diff > 0.01) positiveChanges++;
+    else if (diff < -0.01) negativeChanges++;
+  }
+  
+  // A curve has mostly consistent direction changes
+  const total = positiveChanges + negativeChanges;
+  if (total === 0) return false;
+  
+  const dominantRatio = Math.max(positiveChanges, negativeChanges) / total;
+  return dominantRatio > 0.7;
+}
+
+export function convertPolygonToCurves(polygon: Point[], minCurvePoints: number = 60): PathSegment[] {
+  if (polygon.length < 3) return [];
+  
+  const segments: PathSegment[] = [];
+  segments.push({ type: 'move', point: polygon[0] });
+  
+  let i = 1;
+  while (i < polygon.length) {
+    // Look ahead to find curved segments of minCurvePoints or more
+    let curveEnd = i;
+    
+    // Check if starting a curve
+    if (i + minCurvePoints <= polygon.length) {
+      const testSegment = polygon.slice(i - 1, i + minCurvePoints);
+      if (isCurvedSegment(testSegment)) {
+        // Extend the curve as far as it continues
+        curveEnd = i + minCurvePoints;
+        while (curveEnd < polygon.length) {
+          const extendedSegment = polygon.slice(curveEnd - 10, curveEnd + 1);
+          if (isCurvedSegment(extendedSegment)) {
+            curveEnd++;
+          } else {
+            break;
+          }
+        }
+        
+        // Fit a Bezier curve to this segment
+        const curvePoints = polygon.slice(i - 1, curveEnd);
+        const bezier = fitBezierCurve(curvePoints);
+        segments.push({
+          type: 'curve',
+          cp1: bezier.cp1,
+          cp2: bezier.cp2,
+          end: bezier.end
+        });
+        
+        i = curveEnd;
+        continue;
+      }
+    }
+    
+    // Not a curve, add as line segment
+    segments.push({ type: 'line', point: polygon[i] });
+    i++;
+  }
+  
+  return segments;
+}
+
 export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: number; y2: number}>): Point[][] {
   if (rectangles.length === 0) return [];
   
