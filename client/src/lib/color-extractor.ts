@@ -341,12 +341,8 @@ export function extractDominantColors(
     })
     .filter(c => c.percentage >= minPercentage);
 
-  // Sort: chromatic colors first (by percentage), then neutrals (by percentage)
-  const chromaticColors = allColors.filter(c => !c.isNeutral).sort((a, b) => b.percentage - a.percentage);
-  const neutralColors = allColors.filter(c => c.isNeutral).sort((a, b) => b.percentage - a.percentage);
-  
-  // Combine: all chromatic first, then neutrals
-  const sortedColors = [...chromaticColors, ...neutralColors];
+  // Sort all colors by percentage (highest first) - include neutrals like black/gray/white
+  const sortedColors = allColors.sort((a, b) => b.percentage - a.percentage);
 
   return sortedColors.slice(0, maxColors).map(({ isNeutral, ...color }) => color);
 }
