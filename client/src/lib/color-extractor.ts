@@ -158,18 +158,18 @@ function findClosestPaletteColor(r: number, g: number, b: number): typeof COLOR_
   return closest;
 }
 
-// Detect background color by sampling image corners
+// Detect background color by sampling image corners and edges
 function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b: number } | null {
   const { width, height, data } = imageData;
-  const sampleSize = Math.min(10, Math.floor(Math.min(width, height) / 10)); // Sample corner pixels
-  const corners: Array<{ r: number; g: number; b: number; a: number }> = [];
+  const sampleSize = Math.min(10, Math.floor(Math.min(width, height) / 10));
+  const edgeSamples: Array<{ r: number; g: number; b: number }> = [];
   
   // Sample from all 4 corners
   const cornerPositions = [
-    { startX: 0, startY: 0 },                          // top-left
-    { startX: width - sampleSize, startY: 0 },          // top-right
-    { startX: 0, startY: height - sampleSize },         // bottom-left
-    { startX: width - sampleSize, startY: height - sampleSize } // bottom-right
+    { startX: 0, startY: 0 },
+    { startX: width - sampleSize, startY: 0 },
+    { startX: 0, startY: height - sampleSize },
+    { startX: width - sampleSize, startY: height - sampleSize }
   ];
   
   for (const corner of cornerPositions) {
@@ -178,18 +178,46 @@ function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b:
         const x = corner.startX + dx;
         const y = corner.startY + dy;
         const i = (y * width + x) * 4;
-        if (data[i + 3] >= 250) { // Only opaque pixels
-          corners.push({ r: data[i], g: data[i + 1], b: data[i + 2], a: data[i + 3] });
+        if (data[i + 3] >= 250) {
+          edgeSamples.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
         }
       }
     }
   }
   
-  if (corners.length < 20) return null; // Not enough corner samples
+  // If corners are mostly transparent, sample along all 4 edges
+  if (edgeSamples.length < 20) {
+    // Sample top and bottom edges
+    for (let x = 0; x < width; x += Math.max(1, Math.floor(width / 50))) {
+      for (const y of [0, 1, 2, height - 3, height - 2, height - 1]) {
+        if (y >= 0 && y < height) {
+          const i = (y * width + x) * 4;
+          if (data[i + 3] >= 250) {
+            edgeSamples.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
+          }
+        }
+      }
+    }
+    // Sample left and right edges
+    for (let y = 0; y < height; y += Math.max(1, Math.floor(height / 50))) {
+      for (const x of [0, 1, 2, width - 3, width - 2, width - 1]) {
+        if (x >= 0 && x < width) {
+          const i = (y * width + x) * 4;
+          if (data[i + 3] >= 250) {
+            edgeSamples.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
+          }
+        }
+      }
+    }
+  }
   
-  // Find the most common color among corner pixels
+  console.log(`[ColorExtractor] Edge samples collected: ${edgeSamples.length}`);
+  
+  if (edgeSamples.length < 20) return null; // Not enough edge samples
+  
+  // Find the most common color among edge/corner pixels
   const colorCounts = new Map<string, { count: number; r: number; g: number; b: number }>();
-  for (const c of corners) {
+  for (const c of edgeSamples) {
     // Quantize to reduce noise (group similar colors)
     const qr = Math.round(c.r / 16) * 16;
     const qg = Math.round(c.g / 16) * 16;
@@ -213,8 +241,8 @@ function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b:
     null
   );
   
-  // Only consider it a background if it's in at least 50% of corner samples
-  if (bestEntry && bestEntry.count >= corners.length * 0.5) {
+  // Only consider it a background if it's in at least 50% of edge samples
+  if (bestEntry && bestEntry.count >= edgeSamples.length * 0.5) {
     const bgColor = { r: Math.round(bestEntry.r), g: Math.round(bestEntry.g), b: Math.round(bestEntry.b) };
     console.log(`[ColorExtractor] Detected background color: rgb(${bgColor.r}, ${bgColor.g}, ${bgColor.b})`);
     return bgColor;
