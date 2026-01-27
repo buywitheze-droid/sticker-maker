@@ -355,7 +355,7 @@ export default function ControlsSection({
                     <div 
                       className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                       style={{
-                        background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
+                        background: 'linear-gradient(135deg, #C8C8D0 0%, #E8B8B8 17%, #B8D8E8 34%, #E8D0F0 51%, #B0C8E0 68%, #C0B0D8 85%, #C8C8D0 100%)'
                       }}
                     />
                     <span className="text-sm font-semibold">Holographic Preview</span>
@@ -462,7 +462,7 @@ export default function ControlsSection({
               <div 
                 className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                 style={{
-                  background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
+                  background: 'linear-gradient(135deg, #C8C8D0 0%, #E8B8B8 17%, #B8D8E8 34%, #E8D0F0 51%, #B0C8E0 68%, #C0B0D8 85%, #C8C8D0 100%)'
                 }}
               />
               <span className="text-sm font-semibold">Holographic Preview</span>
@@ -579,7 +579,7 @@ export default function ControlsSection({
               <div 
                 className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
                 style={{
-                  background: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 17%, #48dbfb 34%, #ff9ff3 51%, #54a0ff 68%, #5f27cd 85%, #ff6b6b 100%)'
+                  background: 'linear-gradient(135deg, #C8C8D0 0%, #E8B8B8 17%, #B8D8E8 34%, #E8D0F0 51%, #B0C8E0 68%, #C0B0D8 85%, #C8C8D0 100%)'
                 }}
               />
               <span className="text-sm font-semibold">Holographic Preview</span>

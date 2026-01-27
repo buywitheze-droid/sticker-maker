@@ -440,13 +440,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           if (effectiveBackgroundColor !== "transparent") {
             if (effectiveBackgroundColor === "holographic") {
               const gradient = ctx.createLinearGradient(clipX, clipY, clipX + clipW, clipY + clipH);
-              gradient.addColorStop(0, '#ff6b6b');
-              gradient.addColorStop(0.17, '#feca57');
-              gradient.addColorStop(0.34, '#48dbfb');
-              gradient.addColorStop(0.51, '#ff9ff3');
-              gradient.addColorStop(0.68, '#54a0ff');
-              gradient.addColorStop(0.85, '#5f27cd');
-              gradient.addColorStop(1, '#ff6b6b');
+              gradient.addColorStop(0, '#C8C8D0');
+              gradient.addColorStop(0.17, '#E8B8B8');
+              gradient.addColorStop(0.34, '#B8D8E8');
+              gradient.addColorStop(0.51, '#E8D0F0');
+              gradient.addColorStop(0.68, '#B0C8E0');
+              gradient.addColorStop(0.85, '#C0B0D8');
+              gradient.addColorStop(1, '#C8C8D0');
               ctx.fillStyle = gradient;
             } else {
               ctx.fillStyle = effectiveBackgroundColor;
@@ -478,13 +478,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           if (effectiveBackgroundColor === "holographic") {
             const bounds = ctx.getTransform();
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#ff6b6b');
-            gradient.addColorStop(0.17, '#feca57');
-            gradient.addColorStop(0.34, '#48dbfb');
-            gradient.addColorStop(0.51, '#ff9ff3');
-            gradient.addColorStop(0.68, '#54a0ff');
-            gradient.addColorStop(0.85, '#5f27cd');
-            gradient.addColorStop(1, '#ff6b6b');
+            gradient.addColorStop(0, '#C8C8D0');
+            gradient.addColorStop(0.17, '#E8B8B8');
+            gradient.addColorStop(0.34, '#B8D8E8');
+            gradient.addColorStop(0.51, '#E8D0F0');
+            gradient.addColorStop(0.68, '#B0C8E0');
+            gradient.addColorStop(0.85, '#C0B0D8');
+            gradient.addColorStop(1, '#C8C8D0');
             ctx.fillStyle = gradient;
           } else {
             ctx.fillStyle = effectiveBackgroundColor;
@@ -566,13 +566,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         } else {
           if (effectiveBackgroundColor === "holographic") {
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#ff6b6b');
-            gradient.addColorStop(0.17, '#feca57');
-            gradient.addColorStop(0.34, '#48dbfb');
-            gradient.addColorStop(0.51, '#ff9ff3');
-            gradient.addColorStop(0.68, '#54a0ff');
-            gradient.addColorStop(0.85, '#5f27cd');
-            gradient.addColorStop(1, '#ff6b6b');
+            gradient.addColorStop(0, '#C8C8D0');
+            gradient.addColorStop(0.17, '#E8B8B8');
+            gradient.addColorStop(0.34, '#B8D8E8');
+            gradient.addColorStop(0.51, '#E8D0F0');
+            gradient.addColorStop(0.68, '#B0C8E0');
+            gradient.addColorStop(0.85, '#C0B0D8');
+            gradient.addColorStop(1, '#C8C8D0');
             ctx.fillStyle = gradient;
           } else {
             ctx.fillStyle = effectiveBackgroundColor;
@@ -761,13 +761,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // Handle holographic fill with animated rainbow gradient for preview
         if (shapeSettings.fillColor === 'holographic') {
           const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
-          gradient.addColorStop(0, '#ff6b6b');
-          gradient.addColorStop(0.17, '#feca57');
-          gradient.addColorStop(0.34, '#48dbfb');
-          gradient.addColorStop(0.51, '#ff9ff3');
-          gradient.addColorStop(0.68, '#54a0ff');
-          gradient.addColorStop(0.85, '#5f27cd');
-          gradient.addColorStop(1, '#ff6b6b');
+          gradient.addColorStop(0, '#C8C8D0');
+          gradient.addColorStop(0.17, '#E8B8B8');
+          gradient.addColorStop(0.34, '#B8D8E8');
+          gradient.addColorStop(0.51, '#E8D0F0');
+          gradient.addColorStop(0.68, '#B0C8E0');
+          gradient.addColorStop(0.85, '#C0B0D8');
+          gradient.addColorStop(1, '#C8C8D0');
           ctx.fillStyle = gradient;
         } else {
           ctx.fillStyle = shapeSettings.fillColor;
@@ -796,13 +796,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // Handle holographic fill with rainbow gradient for preview
         if (shapeSettings.fillColor === 'holographic') {
           const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
-          gradient.addColorStop(0, '#ff6b6b');
-          gradient.addColorStop(0.17, '#feca57');
-          gradient.addColorStop(0.34, '#48dbfb');
-          gradient.addColorStop(0.51, '#ff9ff3');
-          gradient.addColorStop(0.68, '#54a0ff');
-          gradient.addColorStop(0.85, '#5f27cd');
-          gradient.addColorStop(1, '#ff6b6b');
+          gradient.addColorStop(0, '#C8C8D0');
+          gradient.addColorStop(0.17, '#E8B8B8');
+          gradient.addColorStop(0.34, '#B8D8E8');
+          gradient.addColorStop(0.51, '#E8D0F0');
+          gradient.addColorStop(0.68, '#B0C8E0');
+          gradient.addColorStop(0.85, '#C0B0D8');
+          gradient.addColorStop(1, '#C8C8D0');
           ctx.fillStyle = gradient;
         } else {
           ctx.fillStyle = shapeSettings.fillColor;
@@ -934,13 +934,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           gradientCanvas.height = tempCanvas.height;
           const gradCtx = gradientCanvas.getContext('2d')!;
           const gradient = gradCtx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
-          gradient.addColorStop(0, '#ff6b6b');
-          gradient.addColorStop(0.17, '#feca57');
-          gradient.addColorStop(0.34, '#48dbfb');
-          gradient.addColorStop(0.51, '#ff9ff3');
-          gradient.addColorStop(0.68, '#54a0ff');
-          gradient.addColorStop(0.85, '#5f27cd');
-          gradient.addColorStop(1, '#ff6b6b');
+          gradient.addColorStop(0, '#C8C8D0');
+          gradient.addColorStop(0.17, '#E8B8B8');
+          gradient.addColorStop(0.34, '#B8D8E8');
+          gradient.addColorStop(0.51, '#E8D0F0');
+          gradient.addColorStop(0.68, '#B0C8E0');
+          gradient.addColorStop(0.85, '#C0B0D8');
+          gradient.addColorStop(1, '#C8C8D0');
           gradCtx.fillStyle = gradient;
           gradCtx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
           const gradientData = gradCtx.getImageData(0, 0, gradientCanvas.width, gradientCanvas.height);
