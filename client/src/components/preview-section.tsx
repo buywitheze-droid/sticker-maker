@@ -602,16 +602,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       
-      // Create a mask from the ORIGINAL IMAGE to identify which pixels should be highlighted
-      // This prevents highlighting background/holographic/shape colors
-      const origCanvas = document.createElement('canvas');
-      origCanvas.width = imageInfo.image.naturalWidth || imageInfo.image.width;
-      origCanvas.height = imageInfo.image.naturalHeight || imageInfo.image.height;
-      const origCtx = origCanvas.getContext('2d');
-      if (!origCtx) return;
-      origCtx.drawImage(imageInfo.image, 0, 0);
-      const origData = origCtx.getImageData(0, 0, origCanvas.width, origCanvas.height);
-      
       // Helper to check if a pixel matches a color (within tolerance)
       const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
@@ -622,43 +612,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Build a mask from original image: mark pixels that match spot colors
-      const origW = origCanvas.width;
-      const origH = origCanvas.height;
-      const spotMask = new Uint8Array(origW * origH); // 0 = no spot, 1 = white, 2 = gloss
+      // Create a mask canvas at the same size as preview canvas
+      // Render ONLY the original image (no background/shapes) at the same position as the preview
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) return;
       
-      for (let i = 0; i < origData.data.length; i += 4) {
-        const r = origData.data[i];
-        const g = origData.data[i + 1];
-        const b = origData.data[i + 2];
-        const a = origData.data[i + 3];
-        
-        if (a < 240) continue; // Only check opaque pixels from original
-        
-        const pixelIdx = i / 4;
-        
-        for (const wc of whiteColors) {
-          if (colorMatches(r, g, b, wc.hex)) {
-            spotMask[pixelIdx] = 1;
-            break;
-          }
-        }
-        if (spotMask[pixelIdx] === 0) {
-          for (const gc of glossColors) {
-            if (colorMatches(r, g, b, gc.hex)) {
-              spotMask[pixelIdx] = 2;
-              break;
-            }
-          }
-        }
-      }
-      
-      // Now apply the mask to the preview canvas
-      // Calculate where the image is positioned on the canvas
-      const previewData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const pData = previewData.data;
-      
-      // Get image position on canvas (center positioned, scaled)
+      // Calculate image position (same logic as main render)
       const shapeDims = calculateShapeDimensions(
         resizeSettings.widthInches,
         resizeSettings.heightInches,
@@ -669,41 +631,61 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const shapeHeightPx = shapeDims.outerHeight * 72;
       const scale = Math.min(canvas.width / shapeWidthPx, canvas.height / shapeHeightPx) * 0.85;
       
-      // Scaled image dimensions on canvas
-      const imgW = origW * scale * (shapeDims.designWidth / (origW / 300));
-      const imgH = origH * scale * (shapeDims.designHeight / (origH / 300));
+      const origW = imageInfo.image.naturalWidth || imageInfo.image.width;
+      const origH = imageInfo.image.naturalHeight || imageInfo.image.height;
+      const designWidthPx = shapeDims.designWidth * 72;
+      const designHeightPx = shapeDims.designHeight * 72;
+      const imgW = designWidthPx * scale;
+      const imgH = designHeightPx * scale;
       const imgX = (canvas.width - imgW) / 2 + (resizeSettings.positionX || 0);
       const imgY = (canvas.height - imgH) / 2 + (resizeSettings.positionY || 0);
       
-      // Iterate over preview canvas and apply spot colors where mask indicates
-      for (let py = 0; py < canvas.height; py++) {
-        for (let px = 0; px < canvas.width; px++) {
-          // Map preview pixel to original image pixel
-          const relX = (px - imgX) / imgW;
-          const relY = (py - imgY) / imgH;
-          
-          if (relX < 0 || relX >= 1 || relY < 0 || relY >= 1) continue;
-          
-          const origX = Math.floor(relX * origW);
-          const origY = Math.floor(relY * origH);
-          const maskIdx = origY * origW + origX;
-          
-          if (spotMask[maskIdx] === 0) continue;
-          
-          const pIdx = (py * canvas.width + px) * 4;
-          if (pData[pIdx + 3] < 10) continue; // Skip transparent preview pixels
-          
-          if (spotMask[maskIdx] === 1) {
-            // White overlay
-            pData[pIdx] = 255;
-            pData[pIdx + 1] = 255;
-            pData[pIdx + 2] = 255;
-          } else if (spotMask[maskIdx] === 2) {
-            // Gloss overlay (silver/metallic)
-            pData[pIdx] = 180;
-            pData[pIdx + 1] = 180;
-            pData[pIdx + 2] = 190;
+      // Draw just the original image to mask canvas (no background, no shapes)
+      maskCtx.drawImage(imageInfo.image, imgX, imgY, imgW, imgH);
+      const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+      
+      // Get preview canvas data
+      const previewData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pData = previewData.data;
+      
+      // For each pixel, check if the mask pixel matches a spot color
+      for (let i = 0; i < maskData.data.length; i += 4) {
+        const r = maskData.data[i];
+        const g = maskData.data[i + 1];
+        const b = maskData.data[i + 2];
+        const a = maskData.data[i + 3];
+        
+        if (a < 200) continue; // Skip transparent/semi-transparent pixels
+        
+        let spotType = 0;
+        for (const wc of whiteColors) {
+          if (colorMatches(r, g, b, wc.hex)) {
+            spotType = 1;
+            break;
           }
+        }
+        if (spotType === 0) {
+          for (const gc of glossColors) {
+            if (colorMatches(r, g, b, gc.hex)) {
+              spotType = 2;
+              break;
+            }
+          }
+        }
+        
+        if (spotType === 0) continue;
+        
+        // Only apply overlay if preview pixel is also visible
+        if (pData[i + 3] < 10) continue;
+        
+        if (spotType === 1) {
+          pData[i] = 255;
+          pData[i + 1] = 255;
+          pData[i + 2] = 255;
+        } else if (spotType === 2) {
+          pData[i] = 180;
+          pData[i + 1] = 180;
+          pData[i + 2] = 190;
         }
       }
       
