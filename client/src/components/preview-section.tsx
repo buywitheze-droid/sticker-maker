@@ -905,6 +905,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       ctx.clip();
       ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
+      
+      // Draw spot color overlay on top of the image (still clipped to shape)
+      const spotOverlay = createSpotOverlayCanvas();
+      if (spotOverlay) {
+        ctx.drawImage(spotOverlay, imageX, imageY, imageWidth, imageHeight);
+      }
+      
       ctx.restore();
     };
 
