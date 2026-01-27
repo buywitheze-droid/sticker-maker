@@ -589,7 +589,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
     // Apply spot preview overlay (white/gloss visualization) on top of the rendered canvas
-    // Uses ORIGINAL IMAGE data to match colors, avoiding canvas background pattern issues
+    // This approach matches colors directly on the canvas - simple and always aligned
     useEffect(() => {
       if (!canvasRef.current || !imageInfo || !spotPreviewData?.enabled) return;
       
@@ -603,22 +603,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       
-      // Step 1: Extract pixel data from the ORIGINAL image (not the canvas)
-      const srcCanvas = document.createElement('canvas');
-      const srcCtx = srcCanvas.getContext('2d');
-      if (!srcCtx) return;
-      
-      srcCanvas.width = imageInfo.image.width;
-      srcCanvas.height = imageInfo.image.height;
-      srcCtx.drawImage(imageInfo.image, 0, 0);
-      const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
-      
-      // Step 2: Build a mask in original image space (which pixels match which spot color)
-      // 0 = no match, 1 = white, 2 = gloss
-      const maskArray = new Uint8Array(srcCanvas.width * srcCanvas.height);
+      // Get current canvas image data (already rendered, so always aligned)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
       
       // Helper to check if a pixel matches a color (within tolerance)
-      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 30) => {
+      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 40) => {
         const r = parseInt(targetHex.slice(1, 3), 16);
         const g = parseInt(targetHex.slice(3, 5), 16);
         const b = parseInt(targetHex.slice(5, 7), 16);
@@ -627,92 +617,76 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                Math.abs(pixelB - b) <= tolerance;
       };
       
-      // Scan original image and mark matching pixels
-      for (let y = 0; y < srcCanvas.height; y++) {
-        for (let x = 0; x < srcCanvas.width; x++) {
-          const idx = (y * srcCanvas.width + x) * 4;
-          const r = srcData.data[idx];
-          const g = srcData.data[idx + 1];
-          const b = srcData.data[idx + 2];
-          const a = srcData.data[idx + 3];
-          
-          // Skip transparent pixels (only match opaque pixels from original)
-          if (a < 128) continue;
-          
-          const maskIdx = y * srcCanvas.width + x;
-          
-          // Check white colors
-          for (const wc of whiteColors) {
-            if (colorMatches(r, g, b, wc.hex)) {
-              maskArray[maskIdx] = 1; // White
-              break;
-            }
-          }
-          
-          // Check gloss colors (if not already matched as white)
-          if (maskArray[maskIdx] === 0) {
-            for (const gc of glossColors) {
-              if (colorMatches(r, g, b, gc.hex)) {
-                maskArray[maskIdx] = 2; // Gloss
-                break;
-              }
-            }
+      // Helper to check if a color is part of the checkered background pattern
+      // The checkerboard uses specific gray values that we can detect
+      const isCheckerboardColor = (r: number, g: number, b: number) => {
+        // Checkerboard pattern uses white (#FFFFFF) and light gray (#CCCCCC or similar)
+        // Check for exact checkerboard colors
+        if (r === 255 && g === 255 && b === 255) return true; // Pure white
+        if (r === 204 && g === 204 && b === 204) return true; // Standard checker gray
+        if (r === 238 && g === 238 && b === 238) return true; // Alternative checker gray
+        
+        // Also check for near-gray where all channels are very similar and light
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+        if (maxDiff <= 3 && r >= 200) return true; // Very uniform light gray
+        
+        return false;
+      };
+      
+      // Helper to check if a color is a holographic/background color (should be excluded)
+      const isBackgroundColor = (r: number, g: number, b: number) => {
+        // First check for checkerboard pattern
+        if (isCheckerboardColor(r, g, b)) return true;
+        
+        // Holographic gradient colors (silver rainbow palette)
+        const holoColors = [
+          { r: 200, g: 200, b: 208 }, // #C8C8D0
+          { r: 232, g: 184, b: 184 }, // #E8B8B8
+          { r: 184, g: 216, b: 232 }, // #B8D8E8
+          { r: 232, g: 208, b: 240 }, // #E8D0F0
+          { r: 176, g: 200, b: 224 }, // #B0C8E0
+          { r: 192, g: 176, b: 216 }, // #C0B0D8
+        ];
+        
+        for (const hc of holoColors) {
+          if (Math.abs(r - hc.r) <= 20 && Math.abs(g - hc.g) <= 20 && Math.abs(b - hc.b) <= 20) {
+            return true;
           }
         }
-      }
+        
+        return false;
+      };
       
-      // Step 3: Calculate the mapping - simplified approach
-      // Always use original image dimensions for the spot preview
-      // This works for regular mode and provides reasonable results in contour mode
-      const viewPadding = 40;
-      const availableWidth = canvas.width - (viewPadding * 2);
-      const availableHeight = canvas.height - (viewPadding * 2);
-      
-      // Always use original image aspect ratio
-      const aspectRatio = srcCanvas.width / srcCanvas.height;
-      
-      let displayWidth, displayHeight;
-      if (aspectRatio > (availableWidth / availableHeight)) {
-        displayWidth = availableWidth;
-        displayHeight = availableWidth / aspectRatio;
-      } else {
-        displayHeight = availableHeight;
-        displayWidth = availableHeight * aspectRatio;
-      }
-      
-      const offsetX = (canvas.width - displayWidth) / 2;
-      const offsetY = (canvas.height - displayHeight) / 2;
-      
-      // Step 4: Apply overlay to canvas using the mask
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-      
-      for (let canvasY = 0; canvasY < canvas.height; canvasY++) {
-        for (let canvasX = 0; canvasX < canvas.width; canvasX++) {
-          // Direct mapping from canvas to original image space
-          const srcX = Math.floor((canvasX - offsetX) / displayWidth * srcCanvas.width);
-          const srcY = Math.floor((canvasY - offsetY) / displayHeight * srcCanvas.height);
-          
-          // Check if within image bounds
-          if (srcX < 0 || srcX >= srcCanvas.width || srcY < 0 || srcY >= srcCanvas.height) continue;
-          
-          const maskIdx = srcY * srcCanvas.width + srcX;
-          const maskValue = maskArray[maskIdx];
-          
-          if (maskValue === 0) continue; // No match
-          
-          const canvasIdx = (canvasY * canvas.width + canvasX) * 4;
-          
-          if (maskValue === 1) {
-            // White overlay
-            data[canvasIdx] = 255;     // R
-            data[canvasIdx + 1] = 255; // G
-            data[canvasIdx + 2] = 255; // B
-          } else if (maskValue === 2) {
-            // Gloss overlay (silver/grey)
-            data[canvasIdx] = 180;     // R
-            data[canvasIdx + 1] = 180; // G
-            data[canvasIdx + 2] = 190; // B
+      // Apply overlay colors
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        
+        if (a < 10) continue; // Skip transparent pixels
+        
+        // Skip background/holographic/checkerboard colors
+        if (isBackgroundColor(r, g, b)) continue;
+        
+        // Check for white overlay (solid white)
+        for (const wc of whiteColors) {
+          if (colorMatches(r, g, b, wc.hex)) {
+            data[i] = 255;     // R
+            data[i + 1] = 255; // G
+            data[i + 2] = 255; // B
+            break;
+          }
+        }
+        
+        // Check for gloss overlay (silver/grey shiny look)
+        for (const gc of glossColors) {
+          if (colorMatches(r, g, b, gc.hex)) {
+            // Silver/metallic grey color for gloss preview
+            data[i] = 180;     // R
+            data[i + 1] = 180; // G
+            data[i + 2] = 190; // B - slightly blue tint for shiny effect
+            break;
           }
         }
       }
