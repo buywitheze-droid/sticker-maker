@@ -1,17 +1,16 @@
 /**
- * Magic Eraser style background removal
- * Uses flood-fill from edges to remove only contiguous white background
+ * Clean white background removal
+ * Uses flood-fill from edges to remove only contiguous white/light background
  * White areas inside the design are preserved
+ * Produces clean, hard edges with no semi-transparent pixels
  */
 
 export interface BackgroundRemovalOptions {
-  threshold: number; // 0-100, how close to white a pixel needs to be to be removed (default 95)
-  featherEdge: boolean; // Whether to smooth edges
+  threshold: number; // 0-100, how close to white a pixel needs to be to be removed (default 85)
 }
 
 const defaultOptions: BackgroundRemovalOptions = {
-  threshold: 95,
-  featherEdge: true,
+  threshold: 85,
 };
 
 /**
@@ -142,8 +141,128 @@ function floodFillFromEdges(
 }
 
 /**
- * Removes white background from edges only (Magic Eraser style)
+ * Clean up semi-transparent edge pixels adjacent to removed areas
+ * Either makes them fully transparent or fully opaque based on threshold
+ */
+function cleanupEdgePixels(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  removedPixels: Set<number>
+): void {
+  const getIndex = (x: number, y: number) => (y * width + x) * 4;
+  
+  // Find all pixels adjacent to removed pixels
+  const edgePixels = new Set<number>();
+  const removedArray = Array.from(removedPixels);
+  
+  for (const removedIndex of removedArray) {
+    const pixelPos = removedIndex / 4;
+    const x = pixelPos % width;
+    const y = Math.floor(pixelPos / width);
+    
+    // Check 8-connected neighbors
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        
+        const neighborIndex = getIndex(nx, ny);
+        if (!removedPixels.has(neighborIndex)) {
+          edgePixels.add(neighborIndex);
+        }
+      }
+    }
+  }
+  
+  // For edge pixels: clamp any semi-transparent pixel to fully transparent or fully opaque
+  // This eliminates all anti-aliasing artifacts at the edge of the removal
+  const edgeArray = Array.from(edgePixels);
+  for (const index of edgeArray) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const a = data[index + 3];
+    
+    // If pixel is very light (close to white), make it fully transparent
+    const brightness = (r + g + b) / 3;
+    if (brightness > 220 && a > 0) {
+      data[index + 3] = 0;
+      continue;
+    }
+    
+    // Clamp any semi-transparent pixels to either fully transparent or fully opaque
+    // This removes anti-aliasing artifacts (the "fringe" pixels)
+    if (a > 0 && a < 255) {
+      // If alpha is low (<128), make it transparent; otherwise make it opaque
+      data[index + 3] = a < 128 ? 0 : 255;
+    }
+  }
+}
+
+/**
+ * Second pass: Remove any remaining semi-transparent pixels across the entire image
+ * that are adjacent to fully transparent pixels. This catches any stray fringe pixels.
+ */
+function cleanupAllSemiTransparentEdges(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): void {
+  const getIndex = (x: number, y: number) => (y * width + x) * 4;
+  
+  // Find all pixels adjacent to transparent pixels and clamp their alpha
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = getIndex(x, y);
+      const a = data[index + 3];
+      
+      // Skip fully transparent or fully opaque pixels
+      if (a === 0 || a === 255) continue;
+      
+      // Check if any neighbor is transparent
+      let hasTransparentNeighbor = false;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          
+          const neighborIndex = getIndex(nx, ny);
+          if (data[neighborIndex + 3] === 0) {
+            hasTransparentNeighbor = true;
+            break;
+          }
+        }
+        if (hasTransparentNeighbor) break;
+      }
+      
+      // If adjacent to transparent pixel, clamp this semi-transparent pixel
+      if (hasTransparentNeighbor) {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        const brightness = (r + g + b) / 3;
+        
+        // Light semi-transparent pixels next to transparency -> make transparent
+        if (brightness > 180 || a < 128) {
+          data[index + 3] = 0;
+        } else {
+          // Darker semi-transparent pixels -> make opaque
+          data[index + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Removes white background from edges only
  * Returns a new canvas with transparent background where white was connected to edges
+ * Produces clean, hard edges with no semi-transparent artifacts
  */
 export function removeWhiteBackground(
   image: HTMLImageElement,
@@ -176,32 +295,22 @@ export function removeWhiteBackground(
   
   console.log(`[BackgroundRemoval] Found ${pixelsToRemove.size} pixels to remove`);
   
-  // Make the marked pixels transparent
+  // Make the marked pixels fully transparent (hard edge, no feathering)
   const pixelArray = Array.from(pixelsToRemove);
-  for (let i = 0; i < pixelArray.length; i++) {
-    const index = pixelArray[i];
-    if (opts.featherEdge) {
-      const r = data[index];
-      const g = data[index + 1];
-      const b = data[index + 2];
-      const minChannel = Math.min(r, g, b);
-      
-      // Calculate how close to white (for soft edges)
-      const whiteness = minChannel / 255;
-      const fadeStart = opts.threshold / 100;
-      if (whiteness >= fadeStart) {
-        // Fade alpha based on whiteness
-        const fadeAmount = (whiteness - fadeStart) / (1 - fadeStart);
-        data[index + 3] = Math.round(255 * (1 - fadeAmount));
-      }
-    } else {
-      // Hard edge - fully transparent
-      data[index + 3] = 0;
-    }
+  for (const index of pixelArray) {
+    data[index + 3] = 0; // Set alpha to 0 (fully transparent)
   }
+  
+  // Clean up any semi-transparent or very light pixels at the edges
+  cleanupEdgePixels(data, canvas.width, canvas.height, pixelsToRemove);
+  
+  // Second pass: catch any remaining semi-transparent pixels adjacent to transparency
+  cleanupAllSemiTransparentEdges(data, canvas.width, canvas.height);
   
   // Put processed data back
   ctx.putImageData(imageData, 0, 0);
+  
+  console.log(`[BackgroundRemoval] Complete - clean edges applied`);
   
   return canvas;
 }
@@ -220,12 +329,13 @@ export async function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImag
 
 /**
  * Removes background and returns a new image element
- * Uses Magic Eraser style - only removes white connected to edges
+ * Uses flood-fill style - only removes white connected to edges
+ * Produces clean, hard edges with no semi-transparent artifacts
  */
 export async function removeBackgroundFromImage(
   image: HTMLImageElement,
-  threshold: number = 95
+  threshold: number = 85
 ): Promise<HTMLImageElement> {
-  const canvas = removeWhiteBackground(image, { threshold, featherEdge: true });
+  const canvas = removeWhiteBackground(image, { threshold });
   return canvasToImage(canvas);
 }
