@@ -114,35 +114,6 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
         />
       </div>
 
-      {/* Image Info */}
-      {imageInfo && resizeSettings && (
-        <div className="mt-3 p-4 bg-white rounded-xl border border-gray-100 shadow-sm">
-          {imageInfo.file?.name && (
-            <p className="text-sm font-medium text-gray-700 truncate mb-3" title={imageInfo.file.name}>
-              {imageInfo.file.name}
-            </p>
-          )}
-          <div className="flex items-center gap-4 text-gray-600">
-            <div className="flex items-center gap-2">
-              <span className="text-xl font-semibold text-gray-800">{resizeSettings.widthInches.toFixed(1)}"</span>
-              <span className="text-gray-300">×</span>
-              <span className="text-xl font-semibold text-gray-800">{resizeSettings.heightInches.toFixed(1)}"</span>
-            </div>
-            <div className="ml-auto">
-              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">{resizeSettings.outputDPI} DPI</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cut Line Info */}
-      {showCutLineInfo && (
-        <div className="mt-3 p-3 bg-fuchsia-50 rounded-xl border border-fuchsia-100 text-center">
-          <p className="text-xs text-fuchsia-600 font-medium">
-            Pink Outline = CutContour
-          </p>
-        </div>
-      )}
     </div>
   );
 }

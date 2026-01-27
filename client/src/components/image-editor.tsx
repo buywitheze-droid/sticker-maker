@@ -880,6 +880,7 @@ export default function ImageEditor() {
             shapeSettings={debouncedShapeSettings}
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
+            showCutLineInfo={imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour}
           />
         </div>
       </div>
