@@ -826,7 +826,7 @@ export default function ImageEditor() {
 
   // Loaded state - image uploaded
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left sidebar - Upload & Controls */}
       <div className="lg:col-span-4 xl:col-span-3 space-y-4">
         <UploadSection 
