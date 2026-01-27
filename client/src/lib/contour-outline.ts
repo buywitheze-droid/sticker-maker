@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, type PathSegment } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -2080,8 +2080,11 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
+    // Smooth the contour to reduce jagged edges from alpha tracing
+    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    
     // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    const simplifiedPath = simplifyPathForPDF(smoothedPath, 0.005);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';
@@ -2360,8 +2363,11 @@ export async function downloadContourPDF(
           for (const polygon of unifiedPolygons) {
             if (polygon.length < 3) continue;
             
+            // Smooth the contour first to reduce jagged edges from alpha tracing
+            const smoothedPolygon = gaussianSmoothContour(polygon, 2);
+            
             // Convert polygon to path segments with curve detection (60+ point curves)
-            const pathSegments = convertPolygonToCurves(polygon, 60);
+            const pathSegments = convertPolygonToCurves(smoothedPolygon, 60);
             
             for (const seg of pathSegments) {
               if (seg.type === 'move' && seg.point) {
@@ -2662,8 +2668,11 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
+    // Smooth the contour to reduce jagged edges from alpha tracing
+    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    
     // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    const simplifiedPath = simplifyPathForPDF(smoothedPath, 0.005);
     console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
     let pathOps = '';

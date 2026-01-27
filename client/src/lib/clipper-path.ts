@@ -7,6 +7,75 @@ interface Point {
 
 const CLIPPER_SCALE = 100000;
 
+// Moving average smoothing to reduce jagged edges from alpha tracing
+export function smoothContourPoints(points: Point[], windowSize: number = 5): Point[] {
+  if (points.length < windowSize * 2) return points;
+  
+  const halfWindow = Math.floor(windowSize / 2);
+  const smoothed: Point[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    
+    // Circular window for closed contour
+    for (let j = -halfWindow; j <= halfWindow; j++) {
+      const idx = (i + j + points.length) % points.length;
+      sumX += points[idx].x;
+      sumY += points[idx].y;
+      count++;
+    }
+    
+    smoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
+  }
+  
+  return smoothed;
+}
+
+// Gaussian-weighted smoothing for even smoother curves
+export function gaussianSmoothContour(points: Point[], sigma: number = 2): Point[] {
+  if (points.length < 5) return points;
+  
+  // Calculate kernel size based on sigma (3-sigma rule)
+  const kernelRadius = Math.ceil(sigma * 3);
+  const kernelSize = kernelRadius * 2 + 1;
+  
+  // Generate Gaussian kernel
+  const kernel: number[] = [];
+  let kernelSum = 0;
+  for (let i = -kernelRadius; i <= kernelRadius; i++) {
+    const weight = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel.push(weight);
+    kernelSum += weight;
+  }
+  // Normalize kernel
+  for (let i = 0; i < kernel.length; i++) {
+    kernel[i] /= kernelSum;
+  }
+  
+  const smoothed: Point[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    let sumX = 0;
+    let sumY = 0;
+    
+    for (let k = 0; k < kernelSize; k++) {
+      const offset = k - kernelRadius;
+      const idx = (i + offset + points.length) % points.length;
+      sumX += points[idx].x * kernel[k];
+      sumY += points[idx].y * kernel[k];
+    }
+    
+    smoothed.push({ x: sumX, y: sumY });
+  }
+  
+  return smoothed;
+}
+
 function pointsToClipperPath(points: Point[]): ClipperLib.Path {
   return points.map(p => ({
     X: Math.round(p.x * CLIPPER_SCALE),

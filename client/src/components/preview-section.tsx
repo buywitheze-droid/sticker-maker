@@ -10,7 +10,7 @@ import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
-import { convertPolygonToCurves } from "@/lib/clipper-path";
+import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -514,8 +514,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             if (path.length < 2) continue;
             ctx.beginPath();
             
+            // Smooth the contour first to reduce jagged edges from alpha tracing
+            const smoothedPath = gaussianSmoothContour(path, 2);
+            
             // Convert path to curves for smooth rendering (60+ point curves)
-            const segments = convertPolygonToCurves(path, 60);
+            const segments = convertPolygonToCurves(smoothedPath, 60);
             
             for (const seg of segments) {
               if (seg.type === 'move' && seg.point) {
