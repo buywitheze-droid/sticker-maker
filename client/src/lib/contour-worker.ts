@@ -266,7 +266,7 @@ function processContour(
   
   postProgress(80);
   
-  let smoothedPath: Point[] = smoothPath(boundaryPath, 2);
+  let smoothedPath = smoothPath(boundaryPath, 2);
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -555,44 +555,6 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
       x: sumX / (windowSize * 2 + 1),
       y: sumY / (windowSize * 2 + 1)
     });
-  }
-  
-  return result;
-}
-
-// Simple spike removal without aggressive smoothing
-function removeSpikesSimple(points: Point[], threshold: number): Point[] {
-  if (points.length < 10) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.1 || len2 < 0.1) {
-      result.push(curr);
-      continue;
-    }
-    
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    
-    // Only remove extreme spikes (very sharp reversals)
-    if (dot < -0.8 && Math.max(len1, len2) < threshold) {
-      continue;
-    }
-    
-    result.push(curr);
   }
   
   return result;
@@ -1848,8 +1810,7 @@ function createOutputWithImage(
       heightInches,
       imageOffsetX: padding / effectiveDPI,
       imageOffsetY: padding / effectiveDPI,
-      backgroundColor,
-      useEdgeBleed: false
+      backgroundColor
     }
   };
 }

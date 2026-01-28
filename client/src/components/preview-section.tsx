@@ -35,7 +35,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
-    const [contourVersion, setContourVersion] = useState(0); // Force re-render when contour is invalidated
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -265,13 +264,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 7;
+    const CONTOUR_CACHE_VERSION = 6;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      // Include resize dimensions with more precision to catch small changes
-      const widthKey = resizeSettings.widthInches.toFixed(3);
-      const heightKey = resizeSettings.heightInches.toFixed(3);
-      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${widthKey}-${heightKey}`;
+      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
@@ -287,13 +283,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const cacheKey = generateContourCacheKey();
-      
       if (contourCacheRef.current?.key === cacheKey) return;
-      
-      // Clear old contour cache immediately when settings change
-      // This prevents showing stale contour while new one is being generated
-      contourCacheRef.current = null;
-      setContourVersion(v => v + 1); // Force re-render to show raw image while processing
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {
@@ -321,7 +311,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ).then((contourCanvas) => {
           if (processingIdRef.current === currentId) {
             contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
-            setContourVersion(v => v + 1); // Force canvas redraw with new contour
             setIsProcessing(false);
           }
         }).catch((error) => {
@@ -330,7 +319,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             setIsProcessing(false);
           }
         });
-      }, 150); // 150ms debounce for smoother resize/slider interaction
+      }, 100); // 100ms debounce for smoother slider interaction
       
       return () => {
         if (contourDebounceRef.current) {
@@ -604,7 +593,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, contourVersion]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
 
     // Helper function to create spot color overlay canvas from original image
     const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {

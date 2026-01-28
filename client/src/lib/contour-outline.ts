@@ -1,5 +1,4 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
-import { calculateEffectiveDesignSize } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
 
@@ -191,34 +190,11 @@ export function createSilhouetteContour(
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  // Use the shared helper for calculating effective design size
-  const selectedWidth = resizeSettings?.widthInches || 5;
-  const selectedHeight = resizeSettings?.heightInches || 5;
-  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
-    calculateEffectiveDesignSize(selectedWidth, selectedHeight, strokeSettings.width, true);
+  const effectiveDPI = resizeSettings 
+    ? image.width / resizeSettings.widthInches
+    : image.width / 5;
   
-  // Calculate target pixel dimensions from resize settings
-  // This ensures the contour is traced on the correctly-sized image
-  const previewDPI = resizeSettings?.outputDPI || 100;
-  const targetWidth = Math.round(effectiveDesignWidth * previewDPI);
-  const targetHeight = Math.round(effectiveDesignHeight * previewDPI);
-  
-  // Create a resized image canvas for alpha tracing
-  const resizedCanvas = document.createElement('canvas');
-  resizedCanvas.width = targetWidth;
-  resizedCanvas.height = targetHeight;
-  const resizedCtx = resizedCanvas.getContext('2d');
-  if (!resizedCtx) return canvas;
-  resizedCtx.drawImage(image, 0, 0, targetWidth, targetHeight);
-  
-  // Use the resized dimensions for DPI calculation
-  // Since we've resized to targetWidth = effectiveDesignWidth * previewDPI,
-  // the effective DPI is now the previewDPI
-  const effectiveDPI = previewDPI;
-  
-  // Base offset (0.015") is included in the shared helper calculation
   const baseOffsetInches = 0.015;
-  
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
   const autoBridgeInches = 0.02;
@@ -236,54 +212,53 @@ export function createSilhouetteContour(
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   const padding = totalOffsetPixels + 10;
-  canvas.width = targetWidth + (padding * 2);
-  canvas.height = targetHeight + (padding * 2);
+  canvas.width = image.width + (padding * 2);
+  canvas.height = image.height + (padding * 2);
   
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   try {
-    // Use the resized canvas for silhouette mask creation
-    const silhouetteMask = createSilhouetteMaskFromCanvas(resizedCanvas);
+    const silhouetteMask = createSilhouetteMask(image);
     if (silhouetteMask.length === 0) {
-      ctx.drawImage(resizedCanvas, padding, padding);
+      ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
     let autoBridgedMask = silhouetteMask;
     if (autoBridgePixels > 0) {
       const halfAutoBridge = Math.round(autoBridgePixels / 2);
-      const dilatedAuto = dilateSilhouette(silhouetteMask, targetWidth, targetHeight, halfAutoBridge);
-      const dilatedAutoWidth = targetWidth + halfAutoBridge * 2;
-      const dilatedAutoHeight = targetHeight + halfAutoBridge * 2;
+      const dilatedAuto = dilateSilhouette(silhouetteMask, image.width, image.height, halfAutoBridge);
+      const dilatedAutoWidth = image.width + halfAutoBridge * 2;
+      const dilatedAutoHeight = image.height + halfAutoBridge * 2;
       const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
       
-      autoBridgedMask = new Uint8Array(targetWidth * targetHeight);
-      for (let y = 0; y < targetHeight; y++) {
-        for (let x = 0; x < targetWidth; x++) {
-          autoBridgedMask[y * targetWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+      autoBridgedMask = new Uint8Array(image.width * image.height);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          autoBridgedMask[y * image.width + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
         }
       }
     }
     
     let bridgedMask = autoBridgedMask;
-    let bridgedWidth = targetWidth;
-    let bridgedHeight = targetHeight;
+    let bridgedWidth = image.width;
+    let bridgedHeight = image.height;
     
     if (gapClosePixels > 0) {
       const halfGapPixels = Math.round(gapClosePixels / 2);
       
-      const dilatedMask = dilateSilhouette(autoBridgedMask, targetWidth, targetHeight, halfGapPixels);
-      const dilatedWidth = targetWidth + halfGapPixels * 2;
-      const dilatedHeight = targetHeight + halfGapPixels * 2;
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
       
       const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
       
-      bridgedMask = new Uint8Array(targetWidth * targetHeight);
+      bridgedMask = new Uint8Array(image.width * image.height);
       bridgedMask.set(autoBridgedMask);
       
-      for (let y = 1; y < targetHeight - 1; y++) {
-        for (let x = 1; x < targetWidth - 1; x++) {
-          if (autoBridgedMask[y * targetWidth + x] === 0) {
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
             const srcX = x + halfGapPixels;
             const srcY = y + halfGapPixels;
             if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
@@ -291,20 +266,20 @@ export function createSilhouetteContour(
               let hasContentLeft = false, hasContentRight = false;
               
               for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
-                if (y - d >= 0 && autoBridgedMask[(y - d) * targetWidth + x] === 1) hasContentTop = true;
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
               }
               for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
-                if (y + d < targetHeight && autoBridgedMask[(y + d) * targetWidth + x] === 1) hasContentBottom = true;
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
               }
               for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
-                if (x - d >= 0 && autoBridgedMask[y * targetWidth + (x - d)] === 1) hasContentLeft = true;
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
               }
               for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
-                if (x + d < targetWidth && autoBridgedMask[y * targetWidth + (x + d)] === 1) hasContentRight = true;
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
               }
               
               if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
-                bridgedMask[y * targetWidth + x] = 1;
+                bridgedMask[y * image.width + x] = 1;
               }
             }
           }
@@ -313,57 +288,57 @@ export function createSilhouetteContour(
       
       const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
       if (smoothBridgePixels > 0) {
-        const distanceMap = new Float32Array(targetWidth * targetHeight);
+        const distanceMap = new Float32Array(image.width * image.height);
         distanceMap.fill(Infinity);
         
-        for (let y = 0; y < targetHeight; y++) {
-          for (let x = 0; x < targetWidth; x++) {
-            if (bridgedMask[y * targetWidth + x] === 1) {
-              distanceMap[y * targetWidth + x] = 0;
+        for (let y = 0; y < image.height; y++) {
+          for (let x = 0; x < image.width; x++) {
+            if (bridgedMask[y * image.width + x] === 1) {
+              distanceMap[y * image.width + x] = 0;
             }
           }
         }
         
-        for (let y = 1; y < targetHeight; y++) {
-          for (let x = 1; x < targetWidth - 1; x++) {
-            const idx = y * targetWidth + x;
-            const topLeft = distanceMap[(y - 1) * targetWidth + (x - 1)] + 1.414;
-            const top = distanceMap[(y - 1) * targetWidth + x] + 1;
-            const topRight = distanceMap[(y - 1) * targetWidth + (x + 1)] + 1.414;
-            const left = distanceMap[y * targetWidth + (x - 1)] + 1;
+        for (let y = 1; y < image.height; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            const idx = y * image.width + x;
+            const topLeft = distanceMap[(y - 1) * image.width + (x - 1)] + 1.414;
+            const top = distanceMap[(y - 1) * image.width + x] + 1;
+            const topRight = distanceMap[(y - 1) * image.width + (x + 1)] + 1.414;
+            const left = distanceMap[y * image.width + (x - 1)] + 1;
             distanceMap[idx] = Math.min(distanceMap[idx], topLeft, top, topRight, left);
           }
         }
         
-        for (let y = targetHeight - 2; y >= 0; y--) {
-          for (let x = targetWidth - 2; x >= 1; x--) {
-            const idx = y * targetWidth + x;
-            const bottomLeft = distanceMap[(y + 1) * targetWidth + (x - 1)] + 1.414;
-            const bottom = distanceMap[(y + 1) * targetWidth + x] + 1;
-            const bottomRight = distanceMap[(y + 1) * targetWidth + (x + 1)] + 1.414;
-            const right = distanceMap[y * targetWidth + (x + 1)] + 1;
+        for (let y = image.height - 2; y >= 0; y--) {
+          for (let x = image.width - 2; x >= 1; x--) {
+            const idx = y * image.width + x;
+            const bottomLeft = distanceMap[(y + 1) * image.width + (x - 1)] + 1.414;
+            const bottom = distanceMap[(y + 1) * image.width + x] + 1;
+            const bottomRight = distanceMap[(y + 1) * image.width + (x + 1)] + 1.414;
+            const right = distanceMap[y * image.width + (x + 1)] + 1;
             distanceMap[idx] = Math.min(distanceMap[idx], bottomLeft, bottom, bottomRight, right);
           }
         }
         
-        for (let y = 1; y < targetHeight - 1; y++) {
-          for (let x = 1; x < targetWidth - 1; x++) {
-            const idx = y * targetWidth + x;
+        for (let y = 1; y < image.height - 1; y++) {
+          for (let x = 1; x < image.width - 1; x++) {
+            const idx = y * image.width + x;
             if (bridgedMask[idx] === 0 && distanceMap[idx] <= smoothBridgePixels) {
               let hasContentTop = false, hasContentBottom = false;
               let hasContentLeft = false, hasContentRight = false;
               
               for (let d = 1; d <= smoothBridgePixels && !hasContentTop; d++) {
-                if (y - d >= 0 && bridgedMask[(y - d) * targetWidth + x] === 1) hasContentTop = true;
+                if (y - d >= 0 && bridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
               }
               for (let d = 1; d <= smoothBridgePixels && !hasContentBottom; d++) {
-                if (y + d < targetHeight && bridgedMask[(y + d) * targetWidth + x] === 1) hasContentBottom = true;
+                if (y + d < image.height && bridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
               }
               for (let d = 1; d <= smoothBridgePixels && !hasContentLeft; d++) {
-                if (x - d >= 0 && bridgedMask[y * targetWidth + (x - d)] === 1) hasContentLeft = true;
+                if (x - d >= 0 && bridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
               }
               for (let d = 1; d <= smoothBridgePixels && !hasContentRight; d++) {
-                if (x + d < targetWidth && bridgedMask[y * targetWidth + (x + d)] === 1) hasContentRight = true;
+                if (x + d < image.width && bridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
               }
               
               if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
@@ -374,8 +349,8 @@ export function createSilhouetteContour(
         }
       }
       
-      bridgedWidth = targetWidth;
-      bridgedHeight = targetHeight;
+      bridgedWidth = image.width;
+      bridgedHeight = image.height;
     }
     
     const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
@@ -393,7 +368,7 @@ export function createSilhouetteContour(
     const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) {
-      ctx.drawImage(resizedCanvas, padding, padding);
+      ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
@@ -417,11 +392,11 @@ export function createSilhouetteContour(
     const offsetY = padding - totalOffsetPixels;
     drawSmoothContour(ctx, smoothedPath, strokeSettings.color || '#FFFFFF', offsetX, offsetY);
     
-    ctx.drawImage(resizedCanvas, padding, padding);
+    ctx.drawImage(image, padding, padding);
     
   } catch (error) {
     console.error('Silhouette contour error:', error);
-    ctx.drawImage(resizedCanvas, padding, padding);
+    ctx.drawImage(image, padding, padding);
   }
   
   return canvas;
@@ -616,21 +591,6 @@ function createSilhouetteMask(image: HTMLImageElement): Uint8Array {
   const data = imageData.data;
   
   const mask = new Uint8Array(image.width * image.height);
-  for (let i = 0; i < mask.length; i++) {
-    mask[i] = data[i * 4 + 3] > 10 ? 1 : 0;
-  }
-  
-  return mask;
-}
-
-function createSilhouetteMaskFromCanvas(canvas: HTMLCanvasElement): Uint8Array {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return new Uint8Array(0);
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
-  
-  const mask = new Uint8Array(canvas.width * canvas.height);
   for (let i = 0; i < mask.length; i++) {
     mask[i] = data[i * 4 + 3] > 10 ? 1 : 0;
   }
@@ -2037,9 +1997,7 @@ export async function downloadContourPDF(
     // For edge bleed mode, create edge-extended canvas; for custom background, use solid color
     let edgeExtendedCanvas: HTMLCanvasElement | null = null;
     if (useEdgeBleed && !isTransparentBackground) {
-      // Design size = page size - 2*offset, use this for DPI calculation
-      const designWidthInches = widthInches - 2 * imageOffsetX;
-      const imageDPI = image.width / designWidthInches;
+      const imageDPI = image.width / resizeSettings.widthInches;
       const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
       edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
     }
@@ -2161,21 +2119,10 @@ export async function downloadContourPDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // Image position and size derived from contour dimensions
-  // The design size = page size - 2*offset (contour wraps around the design)
   const imageXPts = imageOffsetX * 72;
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
-  const imageWidthPts = (widthInches - 2 * imageOffsetX) * 72;
-  const imageHeightPts = (heightInches - 2 * imageOffsetY) * 72;
-  
-  console.log('[PDF] Image placement:', {
-    x: imageXPts.toFixed(2),
-    y: imageYPts.toFixed(2),
-    width: imageWidthPts.toFixed(2),
-    height: imageHeightPts.toFixed(2),
-    pageWidth: widthPts.toFixed(2),
-    pageHeight: heightPts.toFixed(2)
-  });
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -2407,11 +2354,8 @@ export async function downloadContourPDF(
           (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
           
           // Convert pixel coordinates to PDF points
-          // Use the same image dimensions as the design placement (page size - 2*offset)
-          const designWidthPts = (widthInches - 2 * imageOffsetX) * 72;
-          const designHeightPts = (heightInches - 2 * imageOffsetY) * 72;
-          const scaleX = designWidthPts / w;
-          const scaleY = designHeightPts / h;
+          const scaleX = (resizeSettings.widthInches * 72) / w;
+          const scaleY = (resizeSettings.heightInches * 72) / h;
           const offsetX = imageOffsetX * 72;
           const offsetY = imageOffsetY * 72;
           
@@ -2732,12 +2676,10 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // Image position and size derived from contour dimensions
-  // The design size = page size - 2*offset (contour wraps around the design)
   const imageXPts = imageOffsetX * 72;
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
-  const imageWidthPts = (widthInches - 2 * imageOffsetX) * 72;
-  const imageHeightPts = (heightInches - 2 * imageOffsetY) * 72;
   
   page.drawImage(pngImage, {
     x: imageXPts,

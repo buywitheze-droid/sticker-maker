@@ -1,7 +1,6 @@
 import { StrokeSettings, ResizeSettings, ShapeSettings } from "@/components/image-editor";
 import { PDFDocument, PDFPage, rgb, PDFName, PDFArray, PDFDict, PDFStream, PDFRef } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
-import { calculateEffectiveDesignSize } from './types';
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>; // Points in inches
@@ -20,17 +19,10 @@ export function createSilhouetteContour(
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  // Use the shared helper for calculating effective design size
-  const selectedWidth = resizeSettings?.widthInches || 5;
-  const selectedHeight = resizeSettings?.heightInches || 5;
-  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
-    calculateEffectiveDesignSize(selectedWidth, selectedHeight, strokeSettings.width, true);
-  
-  // DPI is calculated based on the EFFECTIVE design size (smaller)
-  // Use min to handle aspect ratio properly
-  const dpiFromWidth = image.width / effectiveDesignWidth;
-  const dpiFromHeight = image.height / effectiveDesignHeight;
-  const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
+  // Calculate effective DPI based on actual image dimensions and target inches
+  const effectiveDPI = resizeSettings 
+    ? image.width / resizeSettings.widthInches
+    : image.width / 5; // Default assumption: image represents ~5 inches
   
   // Base offset (0.015") to create unified silhouette for multi-object images
   const baseOffsetInches = 0.015;
@@ -231,11 +223,6 @@ export function createSilhouetteContour(
     const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI));
     const unifiedMask = unifyDisconnectedObjects(bridgedMask, bridgedWidth, bridgedHeight, unifyRadius);
     
-    // PRE-DILATION: Trace boundary and detect corners BEFORE dilation rounds them
-    const preDilationBoundary = traceBoundary(unifiedMask, bridgedWidth, bridgedHeight);
-    const preDilationCorners = detectSharpCorners(preDilationBoundary, 150);
-    console.log(`[PreDilation] Found ${preDilationCorners.length} corners BEFORE dilation`);
-    
     // Step 4: Dilate by base offset to create unified silhouette
     const baseDilatedMask = dilateSilhouette(unifiedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
     const baseWidth = bridgedWidth + baseOffsetPixels * 2;
@@ -255,42 +242,17 @@ export function createSilhouetteContour(
     const bridgedFinalMask = bridgeTouchingContours(finalDilatedMask, dilatedWidth, dilatedHeight, effectiveDPI);
     
     // Step 6: Trace the boundary of the final dilated silhouette
-    let boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
-    
-    // Calculate total dilation offset for corner projection
-    const totalDilationOffset = baseOffsetPixels + combinedUserOffset;
-    
-    // If we detected corners pre-dilation, restore them in the dilated path
-    if (preDilationCorners.length >= 3) {
-      console.log(`[CornerRestoration] Restoring ${preDilationCorners.length} sharp corners after dilation`);
-      boundaryPath = restoreSharpCornersAfterDilation(
-        boundaryPath, 
-        preDilationCorners, 
-        preDilationBoundary,
-        totalDilationOffset,
-        baseOffsetPixels  // Offset from pre-dilation coordinate space
-      );
-    }
+    const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) {
       ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
-    // Step 6: Check if this is a geometric polygon (straight-line shape)
-    const geometricResult = detectGeometricPolygon(boundaryPath);
-    
-    let smoothedPath: Point[];
-    
-    if (geometricResult.isPolygon) {
-      // Use sharp-corner geometric contour for polygon shapes
-      console.log('[Contour] Using geometric polygon mode with sharp corners');
-      smoothedPath = createGeometricContour(geometricResult.vertices);
-    } else {
-      // Apply normal smoothing for organic/curved shapes
-      const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
-      smoothedPath = smoothPath(boundaryPath, smoothingWindow);
-    }
+    // Step 6: Smooth and simplify the path
+    // Apply extra smoothing for text/small shapes (window size 4 vs 2 for normal)
+    const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
+    let smoothedPath = smoothPath(boundaryPath, smoothingWindow);
     
     // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -1082,821 +1044,81 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return boundary;
 }
 
-// Detect if a contour represents a geometric polygon (straight-line shape with few corners)
-// Returns the number of vertices if it's a polygon (3-12), or 0 if it's organic/curved
-function detectGeometricPolygon(points: Point[]): { isPolygon: boolean; vertices: Point[] } {
-  if (points.length < 10) return { isPolygon: false, vertices: [] };
-  
-  // Calculate bounding box for scale-aware thresholds
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  const bbox = Math.max(maxX - minX, maxY - minY);
-  
-  // Scale-aware tolerance: 1.5% of bounding box for Douglas-Peucker
-  const dpTolerance = Math.max(bbox * 0.015, 2);
-  
-  // Step 1: Use Douglas-Peucker to find key vertices
-  const simplified = douglasPeucker(points, dpTolerance);
-  
-  // Step 2: Check if we have a reasonable number of vertices for a polygon (3-12)
-  if (simplified.length < 3 || simplified.length > 12) {
-    console.log(`[GeometricDetection] Rejected: ${simplified.length} vertices (need 3-12)`);
-    return { isPolygon: false, vertices: [] };
-  }
-  
-  // Step 3: Check corner angles - corners must be in sharp range (30-150 degrees)
-  // This rejects both rounded shapes (near 180°) and over-acute spikes
-  let allCornersSharp = true;
-  const cornerAngles: number[] = [];
-  
-  for (let i = 0; i < simplified.length; i++) {
-    const prev = simplified[(i - 1 + simplified.length) % simplified.length];
-    const curr = simplified[i];
-    const next = simplified[(i + 1) % simplified.length];
-    
-    // Calculate vectors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.001 || len2 < 0.001) continue;
-    
-    // Calculate angle between vectors (this is the exterior angle / turn angle)
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-    const angleDegrees = angle * 180 / Math.PI;
-    cornerAngles.push(angleDegrees);
-    
-    // Reject if angle is too close to 180° (nearly straight - not a real corner)
-    // or if angle is too acute (< 30°) which suggests a spike, not a polygon
-    if (angleDegrees > 165 || angleDegrees < 25) {
-      allCornersSharp = false;
-      break;
-    }
-  }
-  
-  if (!allCornersSharp) {
-    console.log(`[GeometricDetection] Rejected: corners not in valid range (30-150°)`);
-    return { isPolygon: false, vertices: [] };
-  }
-  
-  // Step 4: Per-edge straightness test using segment projection bounds
-  const maxDeviationThreshold = Math.max(bbox * 0.012, 1.5); // 1.2% of bbox
-  let allEdgesStraight = true;
-  
-  for (let i = 0; i < simplified.length; i++) {
-    const start = simplified[i];
-    const end = simplified[(i + 1) % simplified.length];
-    
-    // Calculate edge vector and length
-    const edgeX = end.x - start.x;
-    const edgeY = end.y - start.y;
-    const edgeLen = Math.sqrt(edgeX * edgeX + edgeY * edgeY);
-    if (edgeLen < 1) continue;
-    
-    // Check points that project onto this segment (not beyond endpoints)
-    let maxDeviation = 0;
-    for (const pt of points) {
-      // Project point onto edge line
-      const ptX = pt.x - start.x;
-      const ptY = pt.y - start.y;
-      const t = (ptX * edgeX + ptY * edgeY) / (edgeLen * edgeLen);
-      
-      // Only consider points that project within segment bounds (0 < t < 1)
-      if (t > 0.05 && t < 0.95) {
-        const dist = perpendicularDistance(pt, start, end);
-        maxDeviation = Math.max(maxDeviation, dist);
-      }
-    }
-    
-    if (maxDeviation > maxDeviationThreshold) {
-      allEdgesStraight = false;
-      break;
-    }
-  }
-  
-  if (!allEdgesStraight) {
-    console.log(`[GeometricDetection] Rejected: has curved edges (max deviation > ${maxDeviationThreshold.toFixed(1)}px)`);
-    return { isPolygon: false, vertices: [] };
-  }
-  
-  console.log(`[GeometricDetection] ACCEPTED: ${simplified.length}-vertex polygon with sharp corners (${cornerAngles.map(a => a.toFixed(0)).join('°, ')}°) and straight edges`);
-  
-  return { isPolygon: true, vertices: simplified };
-}
-
-// Create a sharp-corner contour for geometric polygons
-// Uses exact vertices with no smoothing - perfect sharp corners, minimal lines
-function createGeometricContour(vertices: Point[]): Point[] {
-  if (vertices.length < 3) return vertices;
-  
-  // For geometric shapes, return ONLY the exact vertices for fewest possible lines
-  // No interpolation - just the pure polygon vertices
-  console.log(`[GeometricContour] Created ${vertices.length}-vertex polygon (sharp corners, minimal lines)`);
-  
-  return vertices;
-}
-
-// Create a path with forced sharp corners at all major direction changes
-// This is used when the "Sharp Corners" toggle is enabled
-function createSharpCornersPath(points: Point[], effectiveDPI: number): Point[] {
-  if (points.length < 20) return points;
-  
-  console.log(`[SharpCorners] Processing ${points.length} points for sharp corner detection`);
-  
-  // Step 1: Clean up the raw boundary (remove noise, self-intersections)
-  let cleaned = removeSelfIntersections(points);
-  cleaned = removeSpikes(cleaned, 6, 0.3);
-  
-  // Step 2: Detect ALL significant direction changes (corners)
-  // Use a more aggressive angle threshold to catch more corners
-  const corners = detectMajorTurns(cleaned, 160); // 160° threshold catches more turns
-  
-  console.log(`[SharpCorners] Found ${corners.length} major turns`);
-  
-  if (corners.length < 3) {
-    // Not enough corners detected, fall back to standard smoothing
-    console.log(`[SharpCorners] Too few corners, using standard smoothing`);
-    return smoothPath(points, 2);
-  }
-  
-  // Step 3: Create a polygon from just the corner points
-  // This gives us perfect sharp corners with straight lines between them
-  const cornerPoints = corners.map(c => ({
-    x: cleaned[c.index].x,
-    y: cleaned[c.index].y
-  }));
-  
-  // Step 4: Add intermediate points on long edges to preserve curved sections
-  // Only add points where the original path deviates significantly from the straight edge
-  const result: Point[] = [];
-  const deviationThreshold = effectiveDPI * 0.03; // 0.03" deviation threshold
-  
-  for (let i = 0; i < cornerPoints.length; i++) {
-    const start = cornerPoints[i];
-    const end = cornerPoints[(i + 1) % cornerPoints.length];
-    const startIdx = corners[i].index;
-    const endIdx = corners[(i + 1) % corners.length].index;
-    
-    // Add the sharp corner point
-    result.push({ x: start.x, y: start.y });
-    
-    // Check if there's significant curvature between these corners
-    // If so, add intermediate points to preserve it
-    const segmentPoints: Point[] = [];
-    let idx = startIdx;
-    while (idx !== endIdx) {
-      segmentPoints.push(cleaned[idx]);
-      idx = (idx + 1) % cleaned.length;
-    }
-    
-    if (segmentPoints.length > 10) {
-      // Calculate edge line
-      const edgeX = end.x - start.x;
-      const edgeY = end.y - start.y;
-      const edgeLen = Math.sqrt(edgeX * edgeX + edgeY * edgeY);
-      
-      if (edgeLen > 5) {
-        // Find points that deviate significantly from the straight line
-        let maxDeviation = 0;
-        let maxDeviationIdx = -1;
-        
-        for (let j = Math.floor(segmentPoints.length * 0.1); j < segmentPoints.length * 0.9; j++) {
-          const pt = segmentPoints[j];
-          const ptX = pt.x - start.x;
-          const ptY = pt.y - start.y;
-          const t = (ptX * edgeX + ptY * edgeY) / (edgeLen * edgeLen);
-          
-          if (t > 0.15 && t < 0.85) {
-            // Calculate perpendicular distance
-            const projX = start.x + t * edgeX;
-            const projY = start.y + t * edgeY;
-            const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
-            
-            if (dist > maxDeviation) {
-              maxDeviation = dist;
-              maxDeviationIdx = j;
-            }
-          }
-        }
-        
-        // Only add intermediate point if deviation is significant
-        // This preserves curves but keeps straight edges clean
-        if (maxDeviation > deviationThreshold && maxDeviationIdx >= 0) {
-          // Add a few intermediate points for curved sections
-          const numIntermediates = Math.min(3, Math.floor(maxDeviation / deviationThreshold));
-          const step = Math.floor(segmentPoints.length / (numIntermediates + 1));
-          
-          for (let k = 1; k <= numIntermediates; k++) {
-            const interIdx = k * step;
-            if (interIdx < segmentPoints.length) {
-              result.push(segmentPoints[interIdx]);
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  console.log(`[SharpCorners] Created path with ${result.length} points (${corners.length} sharp corners)`);
-  
-  return result;
-}
-
-// Detect major direction changes (turns) in a path
-// More aggressive than detectSharpCorners - designed for "Sharp Corners" mode
-function detectMajorTurns(points: Point[], angleThreshold: number = 160): CornerPoint[] {
-  const corners: CornerPoint[] = [];
-  if (points.length < 20) return corners;
-  
-  // Use a larger window to detect major structural turns, not minor wiggles
-  const windowSize = Math.max(5, Math.floor(points.length / 50));
-  
-  for (let i = 0; i < points.length; i++) {
-    const prevIdx = (i - windowSize + points.length) % points.length;
-    const nextIdx = (i + windowSize) % points.length;
-    
-    const prev = points[prevIdx];
-    const curr = points[i];
-    const next = points[nextIdx];
-    
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 2 || len2 < 2) continue;
-    
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-    const angleDegrees = angle * 180 / Math.PI;
-    
-    // Deviation from straight (180°) 
-    const deviation = 180 - angleDegrees;
-    
-    // If there's significant deviation (> 20°), this is a turn
-    if (deviation > (180 - angleThreshold)) {
-      corners.push({
-        index: i,
-        x: curr.x,
-        y: curr.y,
-        angle: angleDegrees
-      });
-    }
-  }
-  
-  // Merge nearby corners, keeping the sharpest
-  const merged: CornerPoint[] = [];
-  const minSpacing = Math.max(windowSize * 3, points.length / 30);
-  
-  for (const corner of corners) {
-    const existing = merged.find(c => Math.abs(c.index - corner.index) < minSpacing);
-    if (existing) {
-      if (corner.angle < existing.angle) {
-        existing.index = corner.index;
-        existing.x = corner.x;
-        existing.y = corner.y;
-        existing.angle = corner.angle;
-      }
-    } else {
-      merged.push({ ...corner });
-    }
-  }
-  
-  // Sort by index for proper path ordering
-  merged.sort((a, b) => a.index - b.index);
-  
-  console.log(`[MajorTurns] Detected ${merged.length} major turns: ${merged.map(c => `${(180 - c.angle).toFixed(0)}° deviation`).join(', ')}`);
-  
-  return merged;
-}
-
-// Detect sharp corners in a contour - returns array of corner points with their coordinates
-// Uses adaptive window size based on average point spacing
-interface CornerPoint {
-  index: number;
-  x: number;
-  y: number;
-  angle: number;
-}
-
-function detectSharpCorners(points: Point[], angleThreshold: number = 150): CornerPoint[] {
-  const corners: CornerPoint[] = [];
-  if (points.length < 10) return corners;
-  
-  // Calculate average point spacing for adaptive window
-  let totalDist = 0;
-  for (let i = 0; i < points.length; i++) {
-    const next = points[(i + 1) % points.length];
-    const dx = next.x - points[i].x;
-    const dy = next.y - points[i].y;
-    totalDist += Math.sqrt(dx * dx + dy * dy);
-  }
-  const avgSpacing = totalDist / points.length;
-  
-  // Adaptive window: aim for ~15 pixels worth of samples (smaller for tighter corner detection)
-  const windowSize = Math.max(2, Math.min(10, Math.round(15 / avgSpacing)));
-  
-  console.log(`[SharpCornerDetection] Analyzing ${points.length} points, avgSpacing: ${avgSpacing.toFixed(2)}, window: ${windowSize}`);
-  
-  for (let i = 0; i < points.length; i++) {
-    const prevIdx = (i - windowSize + points.length) % points.length;
-    const nextIdx = (i + windowSize) % points.length;
-    
-    const prev = points[prevIdx];
-    const curr = points[i];
-    const next = points[nextIdx];
-    
-    // Calculate vectors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 1 || len2 < 1) continue;
-    
-    // Calculate angle between vectors
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-    const angleDegrees = angle * 180 / Math.PI;
-    
-    // If angle is sharp (less than threshold), this is a corner
-    // Use higher threshold (150) to catch more corners
-    if (angleDegrees < angleThreshold) {
-      corners.push({
-        index: i,
-        x: curr.x,
-        y: curr.y,
-        angle: angleDegrees
-      });
-    }
-  }
-  
-  // Merge nearby corners (keep the sharpest one in each cluster)
-  const mergedCorners: CornerPoint[] = [];
-  const minCornerSpacing = Math.max(8, windowSize * 2);
-  
-  for (const corner of corners) {
-    const existing = mergedCorners.find(c => 
-      Math.abs(c.index - corner.index) < minCornerSpacing ||
-      (Math.abs(c.x - corner.x) < 8 && Math.abs(c.y - corner.y) < 8)
-    );
-    
-    if (existing) {
-      // Keep the sharper corner
-      if (corner.angle < existing.angle) {
-        existing.index = corner.index;
-        existing.x = corner.x;
-        existing.y = corner.y;
-        existing.angle = corner.angle;
-      }
-    } else {
-      mergedCorners.push({ ...corner });
-    }
-  }
-  
-  // Log detected corners
-  if (mergedCorners.length > 0) {
-    console.log(`[SharpCornerDetection] Found ${mergedCorners.length} corners: ${mergedCorners.map(c => `${c.angle.toFixed(0)}° at (${c.x.toFixed(0)},${c.y.toFixed(0)})`).join(', ')}`);
-  }
-  
-  return mergedCorners;
-}
-
-// Restore sharp corners that were rounded by dilation
-// Projects each corner outward along its bisector direction by the dilation amount
-function restoreSharpCornersAfterDilation(
-  dilatedPath: Point[],
-  originalCorners: CornerPoint[],
-  originalBoundary: Point[],
-  totalDilationOffset: number,
-  coordinateOffset: number  // Offset added to coordinate space by dilation
-): Point[] {
-  if (originalCorners.length === 0 || dilatedPath.length < 10) return dilatedPath;
-  
-  console.log(`[CornerRestoration] Processing ${originalCorners.length} corners with offset ${totalDilationOffset}px`);
-  
-  // For each original corner, calculate where it should be after dilation
-  const projectedCorners: { x: number; y: number; originalIdx: number; angle: number }[] = [];
-  
-  for (const corner of originalCorners) {
-    // Get points before and after the corner to calculate edge directions
-    const idx = corner.index;
-    const windowSize = Math.max(5, Math.min(20, Math.floor(originalBoundary.length / 20)));
-    
-    const prevIdx = (idx - windowSize + originalBoundary.length) % originalBoundary.length;
-    const nextIdx = (idx + windowSize) % originalBoundary.length;
-    
-    const prev = originalBoundary[prevIdx];
-    const curr = originalBoundary[idx];
-    const next = originalBoundary[nextIdx];
-    
-    // Calculate incoming and outgoing edge vectors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.1 || len2 < 0.1) continue;
-    
-    // Normalize vectors
-    const n1x = v1x / len1;
-    const n1y = v1y / len1;
-    const n2x = v2x / len2;
-    const n2y = v2y / len2;
-    
-    // Calculate outward normal for each edge (perpendicular, pointing outward)
-    // For a CCW path, outward is to the left of the edge direction
-    const out1x = -n1y;
-    const out1y = n1x;
-    const out2x = -n2y;
-    const out2y = n2x;
-    
-    // Average the two outward normals to get the corner bisector direction
-    let bisectX = out1x + out2x;
-    let bisectY = out1y + out2y;
-    const bisectLen = Math.sqrt(bisectX * bisectX + bisectY * bisectY);
-    
-    if (bisectLen < 0.1) {
-      // Edges are parallel, use the normal directly
-      bisectX = out1x;
-      bisectY = out1y;
-    } else {
-      bisectX /= bisectLen;
-      bisectY /= bisectLen;
-    }
-    
-    // For sharp corners (< 90°), project further out to maintain the sharp point
-    // The sharper the corner, the further we need to project
-    const cornerAngleRad = (corner.angle * Math.PI) / 180;
-    const halfAngle = cornerAngleRad / 2;
-    const projectionMultiplier = halfAngle > 0.1 ? 1 / Math.sin(halfAngle) : 2;
-    
-    // Project the corner outward
-    const projectedX = curr.x + coordinateOffset + bisectX * totalDilationOffset * projectionMultiplier;
-    const projectedY = curr.y + coordinateOffset + bisectY * totalDilationOffset * projectionMultiplier;
-    
-    projectedCorners.push({
-      x: projectedX,
-      y: projectedY,
-      originalIdx: idx,
-      angle: corner.angle
-    });
-    
-    console.log(`[CornerRestoration] Corner ${corner.angle.toFixed(0)}° at (${curr.x.toFixed(0)},${curr.y.toFixed(0)}) -> projected to (${projectedX.toFixed(0)},${projectedY.toFixed(0)})`);
-  }
-  
-  if (projectedCorners.length === 0) return dilatedPath;
-  
-  // Now find the closest points in the dilated path to each projected corner
-  // and replace the rounded region with a sharp corner
-  const result: Point[] = [];
-  const cornerReplacements: { pathIdx: number; newPoint: Point; radius: number }[] = [];
-  
-  for (const projected of projectedCorners) {
-    // Find the closest point in the dilated path
-    let closestIdx = 0;
-    let closestDist = Infinity;
-    
-    for (let i = 0; i < dilatedPath.length; i++) {
-      const dx = dilatedPath[i].x - projected.x;
-      const dy = dilatedPath[i].y - projected.y;
-      const dist = dx * dx + dy * dy;
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestIdx = i;
-      }
-    }
-    
-    // The replacement radius depends on the dilation amount and corner sharpness
-    const replacementRadius = Math.max(3, Math.min(totalDilationOffset * 1.5, dilatedPath.length / 10));
-    
-    cornerReplacements.push({
-      pathIdx: closestIdx,
-      newPoint: { x: projected.x, y: projected.y },
-      radius: replacementRadius
-    });
-  }
-  
-  // Sort replacements by path index
-  cornerReplacements.sort((a, b) => a.pathIdx - b.pathIdx);
-  
-  // Build the new path, replacing rounded sections with sharp corners
-  let currentIdx = 0;
-  
-  for (const replacement of cornerReplacements) {
-    const startSkip = Math.max(0, replacement.pathIdx - Math.floor(replacement.radius));
-    const endSkip = Math.min(dilatedPath.length - 1, replacement.pathIdx + Math.floor(replacement.radius));
-    
-    // Add points from current position up to the start of replacement zone
-    while (currentIdx < startSkip && currentIdx < dilatedPath.length) {
-      result.push(dilatedPath[currentIdx]);
-      currentIdx++;
-    }
-    
-    // Add the sharp corner point
-    result.push(replacement.newPoint);
-    
-    // Skip past the rounded section
-    currentIdx = endSkip + 1;
-  }
-  
-  // Add remaining points
-  while (currentIdx < dilatedPath.length) {
-    result.push(dilatedPath[currentIdx]);
-    currentIdx++;
-  }
-  
-  console.log(`[CornerRestoration] Result: ${dilatedPath.length} -> ${result.length} points with ${projectedCorners.length} sharp corners`);
-  
-  return result;
-}
-
-// Find the nearest point in the current path to an original corner position
-function findNearestPointToCorner(points: Point[], corner: CornerPoint): number {
-  let nearestIdx = 0;
-  let nearestDist = Infinity;
-  
-  for (let i = 0; i < points.length; i++) {
-    const dx = points[i].x - corner.x;
-    const dy = points[i].y - corner.y;
-    const dist = dx * dx + dy * dy;
-    if (dist < nearestDist) {
-      nearestDist = dist;
-      nearestIdx = i;
-    }
-  }
-  
-  return nearestIdx;
-}
-
-// True segment-based smoothing: split contour at corners, smooth each segment independently
-function smoothBySegments(
-  points: Point[], 
-  corners: CornerPoint[], 
-  windowSize: number
-): Point[] {
-  if (corners.length === 0) {
-    // No corners - smooth everything
-    return applyMovingAverage(points, windowSize);
-  }
-  
-  // Map original corners to current path positions
-  const mappedCornerIndices: number[] = [];
-  for (const corner of corners) {
-    const idx = findNearestPointToCorner(points, corner);
-    mappedCornerIndices.push(idx);
-  }
-  
-  // Sort corner indices
-  mappedCornerIndices.sort((a, b) => a - b);
-  
-  // Remove duplicates
-  const uniqueCornerIndices = mappedCornerIndices.filter((v, i, arr) => i === 0 || v !== arr[i - 1]);
-  
-  if (uniqueCornerIndices.length === 0) {
-    return applyMovingAverage(points, windowSize);
-  }
-  
-  // Split contour into segments between corners
-  const segments: { startIdx: number; endIdx: number; points: Point[] }[] = [];
-  
-  for (let i = 0; i < uniqueCornerIndices.length; i++) {
-    const startIdx = uniqueCornerIndices[i];
-    const endIdx = uniqueCornerIndices[(i + 1) % uniqueCornerIndices.length];
-    
-    // Extract segment points (excluding corner endpoints - they'll be added back)
-    const segmentPoints: Point[] = [];
-    let idx = (startIdx + 1) % points.length;
-    
-    while (idx !== endIdx) {
-      segmentPoints.push(points[idx]);
-      idx = (idx + 1) % points.length;
-    }
-    
-    segments.push({ startIdx, endIdx, points: segmentPoints });
-  }
-  
-  // Smooth each segment independently (without touching corners)
-  const smoothedSegments: Point[][] = [];
-  
-  for (const segment of segments) {
-    if (segment.points.length <= windowSize * 2) {
-      // Segment too short to smooth - keep as is
-      smoothedSegments.push(segment.points);
-    } else {
-      // Smooth this segment independently
-      const smoothed: Point[] = [];
-      for (let i = 0; i < segment.points.length; i++) {
-        let sumX = 0, sumY = 0, count = 0;
-        
-        for (let j = -windowSize; j <= windowSize; j++) {
-          const idx = i + j;
-          // Only include points within this segment (no wrapping)
-          if (idx >= 0 && idx < segment.points.length) {
-            sumX += segment.points[idx].x;
-            sumY += segment.points[idx].y;
-            count++;
-          }
-        }
-        
-        if (count > 0) {
-          smoothed.push({ x: sumX / count, y: sumY / count });
-        } else {
-          smoothed.push({ ...segment.points[i] });
-        }
-      }
-      smoothedSegments.push(smoothed);
-    }
-  }
-  
-  // Reconstruct the full contour with corners preserved exactly
-  const result: Point[] = [];
-  
-  for (let i = 0; i < uniqueCornerIndices.length; i++) {
-    const cornerIdx = uniqueCornerIndices[i];
-    // Add the corner point (preserved exactly)
-    result.push({ ...points[cornerIdx] });
-    // Add the smoothed segment points
-    for (const pt of smoothedSegments[i]) {
-      result.push(pt);
-    }
-  }
-  
-  return result;
-}
-
-// Simple moving average smoothing
-function applyMovingAverage(points: Point[], windowSize: number): Point[] {
-  const result: Point[] = [];
-  
-  for (let i = 0; i < points.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + points.length) % points.length;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
-      count++;
-    }
-    
-    result.push({ x: sumX / count, y: sumY / count });
-  }
-  
-  return result;
-}
-
-// Update corner positions by finding nearest points in current path
-function remapCorners(corners: CornerPoint[], points: Point[]): CornerPoint[] {
-  return corners.map(corner => {
-    const nearestIdx = findNearestPointToCorner(points, corner);
-    return {
-      index: nearestIdx,
-      x: points[nearestIdx].x,
-      y: points[nearestIdx].y,
-      angle: corner.angle
-    };
-  });
-}
-
 function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
-  
-  // Step 0: Detect sharp corners BEFORE any smoothing - these are anchored by position
-  // Use 150 degree threshold to catch more corners
-  let corners = detectSharpCorners(points, 150);
-  console.log(`[SharpCornerDetection] Total: ${corners.length} sharp corners to preserve`);
-  
-  // Count very sharp corners (< 120 degrees) - these are critical to preserve
-  const verySharpCorners = corners.filter(c => c.angle < 120);
-  console.log(`[SharpCornerDetection] Very sharp (< 120°): ${verySharpCorners.length}`);
-  
-  // If we have corners (like a shield/polygon shape), minimize smoothing
-  // Lower threshold: 3+ corners OR 2+ very sharp corners triggers geometric mode
-  if (corners.length >= 3 || verySharpCorners.length >= 2) {
-    console.log(`[SharpCornerDetection] GEOMETRIC SHAPE DETECTED - using minimal smoothing`);
-    
-    // Only do essential cleanup, skip aggressive smoothing
-    let cleaned = removeSelfIntersections(points);
-    
-    // Re-detect corners after intersection removal
-    corners = detectSharpCorners(cleaned, 150);
-    console.log(`[SharpCornerDetection] After intersection removal: ${corners.length} corners`);
-    
-    cleaned = removeSpikes(cleaned, 6, 0.3);
-    
-    // Re-detect corners after spike removal
-    corners = detectSharpCorners(cleaned, 150);
-    console.log(`[SharpCornerDetection] After spike removal: ${corners.length} corners`);
-    
-    // For shapes with very sharp corners, skip smoothing entirely
-    const stillVerySharp = corners.filter(c => c.angle < 100);
-    if (stillVerySharp.length >= 3) {
-      console.log(`[SharpCornerDetection] ZERO SMOOTHING MODE - ${stillVerySharp.length} very sharp corners`);
-      
-      // No smoothing at all - just simplify with corner protection
-      let simplified = simplifyWithCornerProtection(cleaned, corners, 1.0);
-      corners = detectSharpCorners(simplified, 150);
-      simplified = removeCollinearWithCornerProtection(simplified, corners, 5.0);
-      
-      console.log(`[SharpCornerDetection] Zero-smooth output: ${simplified.length} points`);
-      return simplified;
-    }
-    
-    // Light smoothing with corner protection for shapes with moderate corners
-    let smoothed = smoothBySegments(cleaned, corners, 2);
-    smoothed = removeSelfIntersections(smoothed);
-    
-    // Re-detect after smoothing
-    corners = detectSharpCorners(smoothed, 150);
-    console.log(`[SharpCornerDetection] After light smoothing: ${corners.length} corners`);
-    
-    // Simplify with corner protection
-    let simplified = simplifyWithCornerProtection(smoothed, corners, 1.0);
-    
-    // Re-detect after simplification
-    corners = detectSharpCorners(simplified, 150);
-    simplified = removeCollinearWithCornerProtection(simplified, corners, 5.0);
-    
-    console.log(`[SharpCornerDetection] Geometric shape output: ${simplified.length} points`);
-    return simplified;
-  }
   
   // Step 1: Remove self-intersections first
   let cleaned = removeSelfIntersections(points);
   
-  // Re-map corners after intersection removal
-  if (corners.length > 0) {
-    corners = remapCorners(corners, cleaned);
-  }
-  
   // Step 2: Remove tiny spikes/bumps that deviate sharply from the overall curve
   cleaned = removeSpikes(cleaned, 10, 0.25);
   
-  // Re-map corners after spike removal
-  if (corners.length > 0) {
-    corners = remapCorners(corners, cleaned);
-  }
-  
-  // Step 3: Apply smoothing with corner preservation (using segment-based approach)
+  // Step 3: Apply very aggressive smoothing with large window
   const extraLargeWindow = 8;
-  let smoothed = smoothBySegments(cleaned, corners, extraLargeWindow);
+  let smoothed: Point[] = [];
   
-  // Re-map corners after smoothing
-  if (corners.length > 0) {
-    corners = remapCorners(corners, smoothed);
+  for (let i = 0; i < cleaned.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -extraLargeWindow; j <= extraLargeWindow; j++) {
+      const idx = (i + j + cleaned.length) % cleaned.length;
+      sumX += cleaned[idx].x;
+      sumY += cleaned[idx].y;
+      count++;
+    }
+    
+    smoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
   }
   
   // Step 4: Remove intersections after first smoothing pass
   smoothed = removeSelfIntersections(smoothed);
   
-  // Step 5: Second smoothing pass with medium window, preserving corners
+  // Step 5: Second smoothing pass with medium window
   const mediumWindow = 6;
-  let medSmoothed = smoothBySegments(smoothed, corners, mediumWindow);
+  let medSmoothed: Point[] = [];
   
-  // Re-map corners
-  if (corners.length > 0) {
-    corners = remapCorners(corners, medSmoothed);
+  for (let i = 0; i < smoothed.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -mediumWindow; j <= mediumWindow; j++) {
+      const idx = (i + j + smoothed.length) % smoothed.length;
+      sumX += smoothed[idx].x;
+      sumY += smoothed[idx].y;
+      count++;
+    }
+    
+    medSmoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
   }
   
-  // Step 6: Apply Chaikin's corner cutting ONLY if few sharp corners
-  let chaikinSmoothed: Point[];
-  if (corners.length > 3) {
-    // Many sharp corners - skip Chaikin to preserve them
-    console.log(`[SharpCornerDetection] Skipping Chaikin smoothing to preserve ${corners.length} corners`);
-    chaikinSmoothed = medSmoothed;
-  } else {
-    chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
-  }
+  // Step 6: Apply Chaikin's corner cutting for ultra-smooth curves
+  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 2);
   
   // Step 7: Remove any remaining intersections
   chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
   
-  // Re-map corners
-  if (corners.length > 0) {
-    corners = remapCorners(corners, chaikinSmoothed);
+  // Step 8: Final smoothing pass
+  let fineSmoothed: Point[] = [];
+  for (let i = 0; i < chaikinSmoothed.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + chaikinSmoothed.length) % chaikinSmoothed.length;
+      sumX += chaikinSmoothed[idx].x;
+      sumY += chaikinSmoothed[idx].y;
+      count++;
+    }
+    
+    fineSmoothed.push({
+      x: sumX / count,
+      y: sumY / count
+    });
   }
-  
-  // Step 8: Final smoothing pass with corner preservation
-  let fineSmoothed = smoothBySegments(chaikinSmoothed, corners, windowSize);
   
   // Step 9: Remove spikes one more time
   fineSmoothed = removeSpikes(fineSmoothed, 6, 0.35);
@@ -1904,150 +1126,22 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Re-map corners before simplification
-  if (corners.length > 0) {
-    corners = remapCorners(corners, fineSmoothed);
-  }
+  // Simplify to reduce point count with higher tolerance for smoother result
+  let simplified = douglasPeucker(fineSmoothed, 1.5);
   
-  // Corner-protected simplification: split at corners, simplify each segment, reassemble
-  let simplified: Point[];
-  if (corners.length > 0) {
-    simplified = simplifyWithCornerProtection(fineSmoothed, corners, 2.5);
-  } else {
-    simplified = douglasPeucker(fineSmoothed, 2.5);
-  }
+  // Remove nearly-collinear points to clean up straight edges
+  // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
+  simplified = removeCollinearPoints(simplified, 2.0);
   
-  // Remove nearly-collinear points but protect corners
-  if (corners.length > 0) {
-    corners = remapCorners(corners, simplified);
-    simplified = removeCollinearWithCornerProtection(simplified, corners, 2.0);
-  } else {
-    simplified = removeCollinearPoints(simplified, 2.0);
-  }
+  // Smooth large sweeping curves (like butterfly wings) by reducing intermediate wobble points
+  // This makes big arcs cleaner without affecting small details
+  simplified = smoothLargeCurves(simplified, 15, 0.85, 30);
   
-  // Skip large curve smoothing if we have sharp corners to preserve
-  if (corners.length < 3) {
-    simplified = smoothLargeCurves(simplified, 15, 0.6, 25);
-    simplified = smoothLargeCurves(simplified, 8, 0.3, 12);
-  } else {
-    console.log(`[SharpCornerDetection] Skipping large curve smoothing to preserve ${corners.length} corners`);
-  }
+  // Also smooth medium curves (8+ points) with tighter angle threshold for cutter-friendly paths
+  simplified = smoothLargeCurves(simplified, 8, 0.5, 15);
   
   return simplified;
 }
-
-// Simplify path while protecting corner points
-function simplifyWithCornerProtection(
-  points: Point[], 
-  corners: CornerPoint[], 
-  tolerance: number
-): Point[] {
-  if (corners.length === 0) {
-    return douglasPeucker(points, tolerance);
-  }
-  
-  // Map corners to current indices
-  const cornerIndices: number[] = [];
-  for (const corner of corners) {
-    const idx = findNearestPointToCorner(points, corner);
-    cornerIndices.push(idx);
-  }
-  
-  // Sort and deduplicate
-  const sortedCorners = Array.from(new Set(cornerIndices)).sort((a, b) => a - b);
-  
-  // Split path at corners, simplify each segment, reassemble
-  const result: Point[] = [];
-  
-  for (let i = 0; i < sortedCorners.length; i++) {
-    const startIdx = sortedCorners[i];
-    const endIdx = sortedCorners[(i + 1) % sortedCorners.length];
-    
-    // Add the corner point (always preserved)
-    result.push({ ...points[startIdx] });
-    
-    // Extract segment between corners
-    const segment: Point[] = [];
-    let idx = (startIdx + 1) % points.length;
-    while (idx !== endIdx) {
-      segment.push(points[idx]);
-      idx = (idx + 1) % points.length;
-    }
-    
-    // Simplify segment if long enough
-    if (segment.length > 3) {
-      const simplified = douglasPeucker(segment, tolerance);
-      for (const pt of simplified) {
-        result.push(pt);
-      }
-    } else {
-      for (const pt of segment) {
-        result.push(pt);
-      }
-    }
-  }
-  
-  return result;
-}
-
-// Remove collinear points while protecting corners
-function removeCollinearWithCornerProtection(
-  points: Point[],
-  corners: CornerPoint[],
-  angleTolerance: number
-): Point[] {
-  if (corners.length === 0) {
-    return removeCollinearPoints(points, angleTolerance);
-  }
-  
-  // Map corners to current indices
-  const protectedIndices = new Set<number>();
-  for (const corner of corners) {
-    const idx = findNearestPointToCorner(points, corner);
-    protectedIndices.add(idx);
-    // Also protect adjacent points
-    protectedIndices.add((idx - 1 + points.length) % points.length);
-    protectedIndices.add((idx + 1) % points.length);
-  }
-  
-  const result: Point[] = [];
-  
-  for (let i = 0; i < points.length; i++) {
-    // Always keep protected points
-    if (protectedIndices.has(i)) {
-      result.push(points[i]);
-      continue;
-    }
-    
-    // Check if point is collinear with neighbors
-    const prev = points[(i - 1 + points.length) % points.length];
-    const curr = points[i];
-    const next = points[(i + 1) % points.length];
-    
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.001 || len2 < 0.001) {
-      result.push(curr);
-      continue;
-    }
-    
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-    const angleDeg = angle * 180 / Math.PI;
-    
-    // Keep point if angle deviation is significant
-    if (angleDeg > angleTolerance) {
-      result.push(curr);
-    }
-  }
-  
-  return result;
 
 // Chaikin's corner cutting algorithm for smooth curves
 function applyChaikinSmoothing(points: Point[], iterations: number): Point[] {
@@ -2969,7 +2063,7 @@ function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoi
         }
         
         // Check for sudden sharp turn (indicates end of gentle curve)
-        if (Math.abs(angleDiff) > 0.5) { // ~29 degrees sudden change
+        if (Math.abs(angleDiff) > 0.4) { // ~23 degrees sudden change
           break;
         }
       }
@@ -3093,25 +2187,9 @@ export function getContourPath(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings
 ): ContourPathResult | null {
-  // Use the shared helper for calculating effective design size
-  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
-    calculateEffectiveDesignSize(
-      resizeSettings.widthInches,
-      resizeSettings.heightInches,
-      strokeSettings.width,
-      true // contour is enabled
-    );
+  const effectiveDPI = image.width / resizeSettings.widthInches;
   
-  // DPI is calculated based on the EFFECTIVE design size (smaller)
-  // Use min to handle aspect ratio properly (same as worker/preview)
-  const dpiFromWidth = image.width / effectiveDesignWidth;
-  const dpiFromHeight = image.height / effectiveDesignHeight;
-  const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
-  
-  // Calculate the total offset that will be added to each side
   const baseOffsetInches = 0.015;
-  const totalOffsetPerSide = strokeSettings.width + baseOffsetInches;
-  
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
   const autoBridgeInches = 0.02;
@@ -3211,20 +2289,16 @@ export function getContourPath(
     
     const smoothedPath = smoothPath(boundaryPath, 2);
     
-    // The dilated dimensions naturally match the selected size due to DPI calculation
-    // effectiveDesignWidth + 2*(offset) = selectedWidth
-    // So dilatedWidth / effectiveDPI = selectedWidth
+    // Convert to inches and flip Y for PDF coordinate system (Y=0 at bottom)
     const widthInches = dilatedWidth / effectiveDPI;
     const heightInches = dilatedHeight / effectiveDPI;
     
-    // Flip Y coordinates so (0,0) is bottom-left instead of top-left (PDF standard)
+    // Flip Y coordinates so (0,0) is bottom-left instead of top-left
     const pathInInches = smoothedPath.map(p => ({
       x: p.x / effectiveDPI,
       y: heightInches - (p.y / effectiveDPI) // Flip Y
     }));
     
-    // Image offset: the design is positioned at totalOffsetPixels from the edge
-    // Convert to inches using the same DPI
     const imageOffsetX = totalOffsetPixels / effectiveDPI;
     const imageOffsetY = totalOffsetPixels / effectiveDPI;
     
@@ -3285,17 +2359,9 @@ export async function downloadContourPDF(
   // Draw image on page (convert inches to points)
   // Path points are already flipped to PDF coordinates (Y=0 at bottom)
   // Image Y position: imageOffsetY is from the BOTTOM in this coordinate system
-  
-  // The image dimensions are derived from the contour result
-  // widthInches = dilatedWidth / effectiveDPI, so:
-  // imageWidth = widthInches - 2*imageOffsetX (offset on both sides)
-  // imageHeight = heightInches - 2*imageOffsetY
-  const imageWidthInches = widthInches - (imageOffsetX * 2);
-  const imageHeightInches = heightInches - (imageOffsetY * 2);
-  
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = imageWidthInches * 72;
-  const imageHeightPts = imageHeightInches * 72;
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72; // Y from bottom
   
   page.drawImage(pngImage, {
@@ -3643,16 +2709,9 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // The image dimensions are derived from the contour result
-  // widthInches = dilatedWidth / effectiveDPI, so:
-  // imageWidth = widthInches - 2*imageOffsetX (offset on both sides)
-  // imageHeight = heightInches - 2*imageOffsetY
-  const imageWidthInches = widthInches - (imageOffsetX * 2);
-  const imageHeightInches = heightInches - (imageOffsetY * 2);
-  
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = imageWidthInches * 72;
-  const imageHeightPts = imageHeightInches * 72;
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
   
   page.drawImage(pngImage, {
