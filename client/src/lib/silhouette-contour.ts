@@ -1187,7 +1187,7 @@ interface CornerPoint {
   angle: number;
 }
 
-function detectSharpCorners(points: Point[], angleThreshold: number = 130): CornerPoint[] {
+function detectSharpCorners(points: Point[], angleThreshold: number = 150): CornerPoint[] {
   const corners: CornerPoint[] = [];
   if (points.length < 10) return corners;
   
@@ -1201,8 +1201,10 @@ function detectSharpCorners(points: Point[], angleThreshold: number = 130): Corn
   }
   const avgSpacing = totalDist / points.length;
   
-  // Adaptive window: aim for ~20 pixels worth of samples
-  const windowSize = Math.max(3, Math.min(15, Math.round(20 / avgSpacing)));
+  // Adaptive window: aim for ~15 pixels worth of samples (smaller for tighter corner detection)
+  const windowSize = Math.max(2, Math.min(10, Math.round(15 / avgSpacing)));
+  
+  console.log(`[SharpCornerDetection] Analyzing ${points.length} points, avgSpacing: ${avgSpacing.toFixed(2)}, window: ${windowSize}`);
   
   for (let i = 0; i < points.length; i++) {
     const prevIdx = (i - windowSize + points.length) % points.length;
@@ -1229,6 +1231,7 @@ function detectSharpCorners(points: Point[], angleThreshold: number = 130): Corn
     const angleDegrees = angle * 180 / Math.PI;
     
     // If angle is sharp (less than threshold), this is a corner
+    // Use higher threshold (150) to catch more corners
     if (angleDegrees < angleThreshold) {
       corners.push({
         index: i,
@@ -1241,12 +1244,12 @@ function detectSharpCorners(points: Point[], angleThreshold: number = 130): Corn
   
   // Merge nearby corners (keep the sharpest one in each cluster)
   const mergedCorners: CornerPoint[] = [];
-  const minCornerSpacing = Math.max(10, windowSize * 2);
+  const minCornerSpacing = Math.max(8, windowSize * 2);
   
   for (const corner of corners) {
     const existing = mergedCorners.find(c => 
       Math.abs(c.index - corner.index) < minCornerSpacing ||
-      (Math.abs(c.x - corner.x) < 10 && Math.abs(c.y - corner.y) < 10)
+      (Math.abs(c.x - corner.x) < 8 && Math.abs(c.y - corner.y) < 8)
     );
     
     if (existing) {
@@ -1260,6 +1263,11 @@ function detectSharpCorners(points: Point[], angleThreshold: number = 130): Corn
     } else {
       mergedCorners.push({ ...corner });
     }
+  }
+  
+  // Log detected corners
+  if (mergedCorners.length > 0) {
+    console.log(`[SharpCornerDetection] Found ${mergedCorners.length} corners: ${mergedCorners.map(c => `${c.angle.toFixed(0)}° at (${c.x.toFixed(0)},${c.y.toFixed(0)})`).join(', ')}`);
   }
   
   return mergedCorners;
@@ -1416,8 +1424,63 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
   
   // Step 0: Detect sharp corners BEFORE any smoothing - these are anchored by position
-  let corners = detectSharpCorners(points, 130);
-  console.log(`[SharpCornerDetection] Found ${corners.length} sharp corners to preserve`);
+  // Use 150 degree threshold to catch more corners
+  let corners = detectSharpCorners(points, 150);
+  console.log(`[SharpCornerDetection] Total: ${corners.length} sharp corners to preserve`);
+  
+  // Count very sharp corners (< 120 degrees) - these are critical to preserve
+  const verySharpCorners = corners.filter(c => c.angle < 120);
+  console.log(`[SharpCornerDetection] Very sharp (< 120°): ${verySharpCorners.length}`);
+  
+  // If we have many corners (like a shield/polygon shape), minimize smoothing
+  if (corners.length >= 4 || verySharpCorners.length >= 3) {
+    console.log(`[SharpCornerDetection] GEOMETRIC SHAPE DETECTED - using minimal smoothing`);
+    
+    // Only do essential cleanup, skip aggressive smoothing
+    let cleaned = removeSelfIntersections(points);
+    
+    // Re-detect corners after intersection removal
+    corners = detectSharpCorners(cleaned, 150);
+    console.log(`[SharpCornerDetection] After intersection removal: ${corners.length} corners`);
+    
+    cleaned = removeSpikes(cleaned, 6, 0.3);
+    
+    // Re-detect corners after spike removal
+    corners = detectSharpCorners(cleaned, 150);
+    console.log(`[SharpCornerDetection] After spike removal: ${corners.length} corners`);
+    
+    // For shapes with very sharp corners, skip smoothing entirely
+    const stillVerySharp = corners.filter(c => c.angle < 100);
+    if (stillVerySharp.length >= 3) {
+      console.log(`[SharpCornerDetection] ZERO SMOOTHING MODE - ${stillVerySharp.length} very sharp corners`);
+      
+      // No smoothing at all - just simplify with corner protection
+      let simplified = simplifyWithCornerProtection(cleaned, corners, 1.0);
+      corners = detectSharpCorners(simplified, 150);
+      simplified = removeCollinearWithCornerProtection(simplified, corners, 5.0);
+      
+      console.log(`[SharpCornerDetection] Zero-smooth output: ${simplified.length} points`);
+      return simplified;
+    }
+    
+    // Light smoothing with corner protection for shapes with moderate corners
+    let smoothed = smoothBySegments(cleaned, corners, 2);
+    smoothed = removeSelfIntersections(smoothed);
+    
+    // Re-detect after smoothing
+    corners = detectSharpCorners(smoothed, 150);
+    console.log(`[SharpCornerDetection] After light smoothing: ${corners.length} corners`);
+    
+    // Simplify with corner protection
+    let simplified = simplifyWithCornerProtection(smoothed, corners, 1.0);
+    
+    // Re-detect after simplification
+    corners = detectSharpCorners(simplified, 150);
+    simplified = removeCollinearWithCornerProtection(simplified, corners, 5.0);
+    
+    console.log(`[SharpCornerDetection] Geometric shape output: ${simplified.length} points`);
+    return simplified;
+  }
   
   // Step 1: Remove self-intersections first
   let cleaned = removeSelfIntersections(points);
