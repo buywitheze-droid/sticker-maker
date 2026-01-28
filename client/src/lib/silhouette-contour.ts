@@ -278,6 +278,10 @@ export function createSilhouetteContour(
       // Use sharp-corner geometric contour for polygon shapes
       console.log('[Contour] Using geometric polygon mode with sharp corners');
       smoothedPath = createGeometricContour(geometricResult.vertices);
+    } else if (strokeSettings.sharpCorners) {
+      // SHARP CORNERS MODE: Force perfect sharp corners at all major turns
+      console.log('[Contour] SHARP CORNERS MODE ENABLED - forcing perfect sharp turns');
+      smoothedPath = createSharpCornersPath(boundaryPath, effectiveDPI);
     } else {
       // Apply normal smoothing for organic/curved shapes
       const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
@@ -1196,6 +1200,183 @@ function createGeometricContour(vertices: Point[]): Point[] {
   console.log(`[GeometricContour] Created ${vertices.length}-vertex polygon (sharp corners, minimal lines)`);
   
   return vertices;
+}
+
+// Create a path with forced sharp corners at all major direction changes
+// This is used when the "Sharp Corners" toggle is enabled
+function createSharpCornersPath(points: Point[], effectiveDPI: number): Point[] {
+  if (points.length < 20) return points;
+  
+  console.log(`[SharpCorners] Processing ${points.length} points for sharp corner detection`);
+  
+  // Step 1: Clean up the raw boundary (remove noise, self-intersections)
+  let cleaned = removeSelfIntersections(points);
+  cleaned = removeSpikes(cleaned, 6, 0.3);
+  
+  // Step 2: Detect ALL significant direction changes (corners)
+  // Use a more aggressive angle threshold to catch more corners
+  const corners = detectMajorTurns(cleaned, 160); // 160° threshold catches more turns
+  
+  console.log(`[SharpCorners] Found ${corners.length} major turns`);
+  
+  if (corners.length < 3) {
+    // Not enough corners detected, fall back to standard smoothing
+    console.log(`[SharpCorners] Too few corners, using standard smoothing`);
+    return smoothPath(points, 2);
+  }
+  
+  // Step 3: Create a polygon from just the corner points
+  // This gives us perfect sharp corners with straight lines between them
+  const cornerPoints = corners.map(c => ({
+    x: cleaned[c.index].x,
+    y: cleaned[c.index].y
+  }));
+  
+  // Step 4: Add intermediate points on long edges to preserve curved sections
+  // Only add points where the original path deviates significantly from the straight edge
+  const result: Point[] = [];
+  const deviationThreshold = effectiveDPI * 0.03; // 0.03" deviation threshold
+  
+  for (let i = 0; i < cornerPoints.length; i++) {
+    const start = cornerPoints[i];
+    const end = cornerPoints[(i + 1) % cornerPoints.length];
+    const startIdx = corners[i].index;
+    const endIdx = corners[(i + 1) % corners.length].index;
+    
+    // Add the sharp corner point
+    result.push({ x: start.x, y: start.y });
+    
+    // Check if there's significant curvature between these corners
+    // If so, add intermediate points to preserve it
+    const segmentPoints: Point[] = [];
+    let idx = startIdx;
+    while (idx !== endIdx) {
+      segmentPoints.push(cleaned[idx]);
+      idx = (idx + 1) % cleaned.length;
+    }
+    
+    if (segmentPoints.length > 10) {
+      // Calculate edge line
+      const edgeX = end.x - start.x;
+      const edgeY = end.y - start.y;
+      const edgeLen = Math.sqrt(edgeX * edgeX + edgeY * edgeY);
+      
+      if (edgeLen > 5) {
+        // Find points that deviate significantly from the straight line
+        let maxDeviation = 0;
+        let maxDeviationIdx = -1;
+        
+        for (let j = Math.floor(segmentPoints.length * 0.1); j < segmentPoints.length * 0.9; j++) {
+          const pt = segmentPoints[j];
+          const ptX = pt.x - start.x;
+          const ptY = pt.y - start.y;
+          const t = (ptX * edgeX + ptY * edgeY) / (edgeLen * edgeLen);
+          
+          if (t > 0.15 && t < 0.85) {
+            // Calculate perpendicular distance
+            const projX = start.x + t * edgeX;
+            const projY = start.y + t * edgeY;
+            const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
+            
+            if (dist > maxDeviation) {
+              maxDeviation = dist;
+              maxDeviationIdx = j;
+            }
+          }
+        }
+        
+        // Only add intermediate point if deviation is significant
+        // This preserves curves but keeps straight edges clean
+        if (maxDeviation > deviationThreshold && maxDeviationIdx >= 0) {
+          // Add a few intermediate points for curved sections
+          const numIntermediates = Math.min(3, Math.floor(maxDeviation / deviationThreshold));
+          const step = Math.floor(segmentPoints.length / (numIntermediates + 1));
+          
+          for (let k = 1; k <= numIntermediates; k++) {
+            const interIdx = k * step;
+            if (interIdx < segmentPoints.length) {
+              result.push(segmentPoints[interIdx]);
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  console.log(`[SharpCorners] Created path with ${result.length} points (${corners.length} sharp corners)`);
+  
+  return result;
+}
+
+// Detect major direction changes (turns) in a path
+// More aggressive than detectSharpCorners - designed for "Sharp Corners" mode
+function detectMajorTurns(points: Point[], angleThreshold: number = 160): CornerPoint[] {
+  const corners: CornerPoint[] = [];
+  if (points.length < 20) return corners;
+  
+  // Use a larger window to detect major structural turns, not minor wiggles
+  const windowSize = Math.max(5, Math.floor(points.length / 50));
+  
+  for (let i = 0; i < points.length; i++) {
+    const prevIdx = (i - windowSize + points.length) % points.length;
+    const nextIdx = (i + windowSize) % points.length;
+    
+    const prev = points[prevIdx];
+    const curr = points[i];
+    const next = points[nextIdx];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 2 || len2 < 2) continue;
+    
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDegrees = angle * 180 / Math.PI;
+    
+    // Deviation from straight (180°) 
+    const deviation = 180 - angleDegrees;
+    
+    // If there's significant deviation (> 20°), this is a turn
+    if (deviation > (180 - angleThreshold)) {
+      corners.push({
+        index: i,
+        x: curr.x,
+        y: curr.y,
+        angle: angleDegrees
+      });
+    }
+  }
+  
+  // Merge nearby corners, keeping the sharpest
+  const merged: CornerPoint[] = [];
+  const minSpacing = Math.max(windowSize * 3, points.length / 30);
+  
+  for (const corner of corners) {
+    const existing = merged.find(c => Math.abs(c.index - corner.index) < minSpacing);
+    if (existing) {
+      if (corner.angle < existing.angle) {
+        existing.index = corner.index;
+        existing.x = corner.x;
+        existing.y = corner.y;
+        existing.angle = corner.angle;
+      }
+    } else {
+      merged.push({ ...corner });
+    }
+  }
+  
+  // Sort by index for proper path ordering
+  merged.sort((a, b) => a.index - b.index);
+  
+  console.log(`[MajorTurns] Detected ${merged.length} major turns: ${merged.map(c => `${(180 - c.angle).toFixed(0)}° deviation`).join(', ')}`);
+  
+  return merged;
 }
 
 // Detect sharp corners in a contour - returns array of corner points with their coordinates

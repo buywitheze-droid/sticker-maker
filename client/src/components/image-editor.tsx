@@ -35,6 +35,7 @@ export default function ImageEditor() {
     closeBigGaps: false, // Close gaps within 0.19" of each other
     backgroundColor: "#ffffff", // Default white background for contour
     useCustomBackground: true, // Default to solid background color
+    sharpCorners: false, // Force sharp corners on angular designs
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

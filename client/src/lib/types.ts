@@ -26,6 +26,7 @@ export interface StrokeSettings {
   closeBigGaps: boolean;
   backgroundColor: string;
   useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
+  sharpCorners: boolean; // If true, force sharp corners on angular designs
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
