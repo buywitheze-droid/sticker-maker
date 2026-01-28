@@ -37,6 +37,10 @@ interface WorkerResponse {
   };
 }
 
+// Maximum dimension for any processing to prevent browser crashes
+// 4000px is safe for most browsers while maintaining quality
+const MAX_SAFE_DIMENSION = 4000;
+
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
   const { type, imageData, strokeSettings, effectiveDPI, previewMode } = e.data;
   
@@ -44,18 +48,29 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
     try {
       postProgress(10);
       
-      // For preview mode with large images, aggressively downscale for instant rendering
-      // 400px matches the preview canvas size for optimal performance
+      // Determine target dimension based on mode
+      // Preview mode: 400px for instant rendering
+      // Non-preview: 4000px max to prevent browser crashes
       const maxPreviewDimension = 400;
-      const shouldDownscale = previewMode && 
-        (imageData.width > maxPreviewDimension || imageData.height > maxPreviewDimension);
+      const maxDim = Math.max(imageData.width, imageData.height);
+      
+      let targetMaxDim: number;
+      if (previewMode && maxDim > maxPreviewDimension) {
+        targetMaxDim = maxPreviewDimension;
+      } else if (maxDim > MAX_SAFE_DIMENSION) {
+        targetMaxDim = MAX_SAFE_DIMENSION;
+      } else {
+        targetMaxDim = maxDim; // No scaling needed
+      }
+      
+      const shouldDownscale = maxDim > targetMaxDim;
       
       let processedData: ImageData;
       let contourData: WorkerResponse['contourData'];
       let scale = 1;
       
       if (shouldDownscale) {
-        scale = Math.min(maxPreviewDimension / imageData.width, maxPreviewDimension / imageData.height);
+        scale = targetMaxDim / maxDim;
         const scaledWidth = Math.round(imageData.width * scale);
         const scaledHeight = Math.round(imageData.height * scale);
         const scaledData = downscaleImageData(imageData, scaledWidth, scaledHeight);
