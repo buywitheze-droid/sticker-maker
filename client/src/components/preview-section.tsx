@@ -264,7 +264,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 6;
+    const CONTOUR_CACHE_VERSION = 7;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
       return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;

@@ -236,9 +236,11 @@ export default function ControlsSection({
                     <div className="flex items-center mt-0.5">
                       <input
                         type="number"
-                        value={resizeSettings.widthInches.toFixed(2)}
+                        value={Math.round(resizeSettings.widthInches * 100) / 100}
                         onChange={(e) => {
-                          const newWidth = parseFloat(e.target.value) || 0.1;
+                          const val = e.target.value;
+                          if (val === '' || val === '.') return;
+                          const newWidth = Math.max(0.5, Math.min(24, parseFloat(val) || 0.5));
                           if (resizeSettings.maintainAspectRatio && imageInfo) {
                             const aspectRatio = resizeSettings.heightInches / resizeSettings.widthInches;
                             onResizeChange({ widthInches: newWidth, heightInches: newWidth * aspectRatio });
@@ -248,7 +250,7 @@ export default function ControlsSection({
                         }}
                         min="0.5"
                         max="24"
-                        step="0.1"
+                        step="0.25"
                         className="w-full h-7 px-2 text-sm bg-white border border-gray-300 rounded text-gray-900 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
                       />
                       <span className="ml-1 text-xs text-gray-500">"</span>
@@ -280,9 +282,11 @@ export default function ControlsSection({
                     <div className="flex items-center mt-0.5">
                       <input
                         type="number"
-                        value={resizeSettings.heightInches.toFixed(2)}
+                        value={Math.round(resizeSettings.heightInches * 100) / 100}
                         onChange={(e) => {
-                          const newHeight = parseFloat(e.target.value) || 0.1;
+                          const val = e.target.value;
+                          if (val === '' || val === '.') return;
+                          const newHeight = Math.max(0.5, Math.min(24, parseFloat(val) || 0.5));
                           if (resizeSettings.maintainAspectRatio && imageInfo) {
                             const aspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
                             onResizeChange({ heightInches: newHeight, widthInches: newHeight * aspectRatio });
@@ -292,7 +296,7 @@ export default function ControlsSection({
                         }}
                         min="0.5"
                         max="24"
-                        step="0.1"
+                        step="0.25"
                         className="w-full h-7 px-2 text-sm bg-white border border-gray-300 rounded text-gray-900 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
                       />
                       <span className="ml-1 text-xs text-gray-500">"</span>
