@@ -1432,8 +1432,9 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   const verySharpCorners = corners.filter(c => c.angle < 120);
   console.log(`[SharpCornerDetection] Very sharp (< 120°): ${verySharpCorners.length}`);
   
-  // If we have many corners (like a shield/polygon shape), minimize smoothing
-  if (corners.length >= 4 || verySharpCorners.length >= 3) {
+  // If we have corners (like a shield/polygon shape), minimize smoothing
+  // Lower threshold: 3+ corners OR 2+ very sharp corners triggers geometric mode
+  if (corners.length >= 3 || verySharpCorners.length >= 2) {
     console.log(`[SharpCornerDetection] GEOMETRIC SHAPE DETECTED - using minimal smoothing`);
     
     // Only do essential cleanup, skip aggressive smoothing
