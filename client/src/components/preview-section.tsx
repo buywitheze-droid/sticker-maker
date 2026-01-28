@@ -287,13 +287,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const cacheKey = generateContourCacheKey();
-      console.log('[ContourEffect] Checking cache:', { 
-        newKey: cacheKey.substring(0, 50), 
-        hasCache: !!contourCacheRef.current,
-        cacheKeyMatch: contourCacheRef.current?.key === cacheKey,
-        widthInches: resizeSettings.widthInches,
-        heightInches: resizeSettings.heightInches
-      });
       
       if (contourCacheRef.current?.key === cacheKey) return;
       
@@ -301,7 +294,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       // This prevents showing stale contour while new one is being generated
       contourCacheRef.current = null;
       setContourVersion(v => v + 1); // Force re-render to show raw image while processing
-      console.log('[ContourEffect] Cache cleared, regenerating contour...');
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {
@@ -328,12 +320,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           }
         ).then((contourCanvas) => {
           if (processingIdRef.current === currentId) {
-            console.log('[ContourEffect] Contour generated successfully, canvas:', contourCanvas.width, 'x', contourCanvas.height);
             contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
             setContourVersion(v => v + 1); // Force canvas redraw with new contour
             setIsProcessing(false);
-          } else {
-            console.log('[ContourEffect] Contour generation completed but was superseded by newer request');
           }
         }).catch((error) => {
           console.error('Contour processing error:', error);
@@ -341,7 +330,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             setIsProcessing(false);
           }
         });
-      }, 100); // 100ms debounce for smoother slider interaction
+      }, 150); // 150ms debounce for smoother resize/slider interaction
       
       return () => {
         if (contourDebounceRef.current) {
@@ -946,14 +935,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const viewPadding = 6;
       const availableWidth = canvasWidth - (viewPadding * 2);
       const availableHeight = canvasHeight - (viewPadding * 2);
-      
-      console.log('[drawImageWithResizePreview] Drawing:', {
-        strokeEnabled: strokeSettings.enabled,
-        hasContourCache: !!contourCacheRef.current?.canvas,
-        isProcessing,
-        contourVersion,
-        resizeWidth: resizeSettings.widthInches
-      });
       
       if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
         const contourCanvas = contourCacheRef.current.canvas;

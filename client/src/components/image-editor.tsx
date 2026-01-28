@@ -927,7 +927,7 @@ export default function ImageEditor() {
             ref={canvasRef}
             imageInfo={imageInfo}
             strokeSettings={debouncedStrokeSettings}
-            resizeSettings={debouncedResizeSettings}
+            resizeSettings={resizeSettings}
             shapeSettings={debouncedShapeSettings}
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
