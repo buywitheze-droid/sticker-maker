@@ -1,5 +1,43 @@
 import ContourWorker from './contour-worker?worker';
 
+// Maximum dimension for processing - images larger than this will be downsampled
+// 4000px provides high quality contours while preventing memory issues with huge files
+const MAX_PROCESSING_DIMENSION = 4000;
+
+// Downsample an image to fit within max dimensions while maintaining aspect ratio
+function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; scale: number } {
+  const maxDim = Math.max(image.width, image.height);
+  
+  if (maxDim <= MAX_PROCESSING_DIMENSION) {
+    // No downsampling needed
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(image, 0, 0);
+    return { canvas, scale: 1 };
+  }
+  
+  // Calculate scale factor to fit within max dimension
+  const scale = MAX_PROCESSING_DIMENSION / maxDim;
+  const newWidth = Math.round(image.width * scale);
+  const newHeight = Math.round(image.height * scale);
+  
+  console.log(`[ContourWorker] Downsampling from ${image.width}x${image.height} to ${newWidth}x${newHeight} (scale: ${scale.toFixed(3)})`);
+  
+  const canvas = document.createElement('canvas');
+  canvas.width = newWidth;
+  canvas.height = newHeight;
+  const ctx = canvas.getContext('2d')!;
+  
+  // Use high quality scaling
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, 0, 0, newWidth, newHeight);
+  
+  return { canvas, scale };
+}
+
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
   widthInches: number;
@@ -152,14 +190,12 @@ class ContourWorkerManager {
       return this.processFallback(image, strokeSettings, resizeSettings);
     }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = image.width;
-    canvas.height = image.height;
+    // Downsample large images to prevent memory issues
+    const { canvas, scale } = downsampleImage(image);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Could not get canvas context');
 
-    ctx.drawImage(image, 0, 0);
-    const imageData = ctx.getImageData(0, 0, image.width, image.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
     const clonedData = new ImageData(
       new Uint8ClampedArray(imageData.data),
@@ -167,10 +203,10 @@ class ContourWorkerManager {
       imageData.height
     );
 
-    // Calculate effective DPI based on image pixels and target size in inches
-    // Use the dimension that gives the correct scale (min of both to handle aspect ratio)
-    const dpiFromWidth = image.width / resizeSettings.widthInches;
-    const dpiFromHeight = image.height / resizeSettings.heightInches;
+    // Calculate effective DPI based on DOWNSAMPLED image pixels and target size in inches
+    // This ensures stroke width scales correctly even after downsampling
+    const dpiFromWidth = canvas.width / resizeSettings.widthInches;
+    const dpiFromHeight = canvas.height / resizeSettings.heightInches;
     // Use the minimum to ensure the stroke scales correctly with the actual resize
     const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
     
@@ -228,8 +264,35 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
+    // Downsample large images before processing to prevent memory issues
+    let processImage = image;
+    const maxDim = Math.max(image.width, image.height);
+    
+    if (maxDim > MAX_PROCESSING_DIMENSION) {
+      const scale = MAX_PROCESSING_DIMENSION / maxDim;
+      const newWidth = Math.round(image.width * scale);
+      const newHeight = Math.round(image.height * scale);
+      
+      console.log(`[ContourFallback] Downsampling from ${image.width}x${image.height} to ${newWidth}x${newHeight}`);
+      
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = newWidth;
+      tempCanvas.height = newHeight;
+      const tempCtx = tempCanvas.getContext('2d')!;
+      tempCtx.imageSmoothingEnabled = true;
+      tempCtx.imageSmoothingQuality = 'high';
+      tempCtx.drawImage(image, 0, 0, newWidth, newHeight);
+      
+      // Create a new image element from the downsampled canvas
+      processImage = await new Promise<HTMLImageElement>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = tempCanvas.toDataURL('image/png');
+      });
+    }
+    
     const { createSilhouetteContour } = await import('./contour-outline');
-    return createSilhouetteContour(image, strokeSettings, resizeSettings);
+    return createSilhouetteContour(processImage, strokeSettings, resizeSettings);
   }
 
   terminate() {

@@ -1810,7 +1810,8 @@ function createOutputWithImage(
       heightInches,
       imageOffsetX: padding / effectiveDPI,
       imageOffsetY: padding / effectiveDPI,
-      backgroundColor
+      backgroundColor,
+      useEdgeBleed: false
     }
   };
 }
