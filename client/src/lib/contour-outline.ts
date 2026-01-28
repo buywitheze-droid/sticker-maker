@@ -400,10 +400,9 @@ export function createSilhouetteContour(
     // Apply smoothing with optional corner preservation
     let smoothedPath: Point[];
     if (strokeSettings.sharpCorners) {
-      // Detect and preserve sharp geometric corners
+      // Use the 3-step pipeline: light simplify -> detect corners -> full smooth with protection
       const cornerConfig = getCornerDetectionConfig(effectiveDPI);
-      const preservedCorners = detectPreservedCorners(boundaryPath, cornerConfig);
-      smoothedPath = smoothPathWithCornerPreservation(boundaryPath, 2, preservedCorners, cornerConfig.protectRadius);
+      smoothedPath = processPathWithSharpCorners(boundaryPath, 2, cornerConfig);
     } else {
       smoothedPath = smoothPath(boundaryPath, 2);
     }
@@ -967,6 +966,50 @@ function getCornerDetectionConfig(effectiveDPI: number): CornerDetectionConfig {
     armThreshold: Math.round(20 * dpiScale), // Pixels - scales with DPI
     protectRadius: Math.round(15 * dpiScale), // Pixels - radius where smoothing is disabled
   };
+}
+
+// Light simplification to remove micro-jitter before corner detection
+// Uses a smaller window than full smoothing to preserve corner geometry
+function lightSimplifyPath(points: Point[], windowSize: number = 1): Point[] {
+  if (points.length < windowSize * 2 + 1) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    let sumX = 0, sumY = 0;
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + n) % n;
+      sumX += points[idx].x;
+      sumY += points[idx].y;
+    }
+    result.push({
+      x: sumX / (windowSize * 2 + 1),
+      y: sumY / (windowSize * 2 + 1)
+    });
+  }
+  
+  return result;
+}
+
+// Full sharp corners processing pipeline:
+// 1. Light simplification (remove micro-jitter)
+// 2. Detect corners on simplified path
+// 3. Apply full smoothing with corner protection
+function processPathWithSharpCorners(
+  rawPath: Point[],
+  fullSmoothWindow: number,
+  config: CornerDetectionConfig
+): Point[] {
+  // Step 1: Light simplification to remove micro-jitter (window=1)
+  const lightlySmoothed = lightSimplifyPath(rawPath, 1);
+  
+  // Step 2: Detect corners on the less-smoothed polyline
+  const preservedCorners = detectPreservedCorners(lightlySmoothed, config);
+  
+  // Step 3: Apply full smoothing with corner protection
+  // Map corners from simplified path back to original indices (1:1 mapping since same length)
+  return smoothPathWithCornerPreservation(rawPath, fullSmoothWindow, preservedCorners, config.protectRadius);
 }
 
 // Generate U-shaped merge path (for outward curves)
@@ -1914,11 +1957,10 @@ export function getContourPath(
     // Apply smoothing with optional corner preservation
     let smoothedPath: Point[];
     if (strokeSettings.sharpCorners) {
-      // Detect and preserve sharp geometric corners
+      // Use the 3-step pipeline: light simplify -> detect corners -> full smooth with protection
       const cornerConfig = getCornerDetectionConfig(effectiveDPI);
-      const preservedCorners = detectPreservedCorners(boundaryPath, cornerConfig);
-      smoothedPath = smoothPathWithCornerPreservation(boundaryPath, 2, preservedCorners, cornerConfig.protectRadius);
-      console.log('[getContourPath] Sharp corners enabled, preserved', preservedCorners.size, 'corners');
+      smoothedPath = processPathWithSharpCorners(boundaryPath, 2, cornerConfig);
+      console.log('[getContourPath] Sharp corners enabled with 3-step pipeline');
     } else {
       smoothedPath = smoothPath(boundaryPath, 2);
     }
