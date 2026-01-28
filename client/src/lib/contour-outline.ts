@@ -1950,25 +1950,9 @@ export async function downloadContourPDF(
     let backgroundColor: string;
     let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
-    // Use cached contour data if available AND dimensions match current resize settings
-    // This prevents using stale cache when user has changed the size
-    const { widthInches: expectedWidth, heightInches: expectedHeight } = calculateEffectiveDesignSize(
-      resizeSettings.widthInches,
-      resizeSettings.heightInches,
-      strokeSettings.width,
-      true
-    );
-    const expectedTotalWidth = resizeSettings.widthInches;
-    const expectedTotalHeight = resizeSettings.heightInches;
-    
-    // Check if cached dimensions match (with small tolerance for floating point)
-    const cacheMatchesSettings = cachedContourData && 
-      cachedContourData.pathPoints.length > 0 &&
-      Math.abs(cachedContourData.widthInches - expectedTotalWidth) < 0.01 &&
-      Math.abs(cachedContourData.heightInches - expectedTotalHeight) < 0.01;
-    
-    if (cacheMatchesSettings && cachedContourData) {
-      console.log('[downloadContourPDF] Using cached contour data (dimensions match)');
+    // Use cached contour data if available (from preview worker) for instant PDF export
+    if (cachedContourData && cachedContourData.pathPoints.length > 0) {
+      console.log('[downloadContourPDF] Using cached contour data');
       
       // The cached data is already generated with the correct DPI based on resize settings
       // Use it directly without rescaling
@@ -1986,12 +1970,6 @@ export async function downloadContourPDF(
         useEdgeBleed
       });
     } else {
-      if (cachedContourData) {
-        console.log('[downloadContourPDF] Cache dimensions mismatch, regenerating:', {
-          cached: `${cachedContourData.widthInches.toFixed(2)}x${cachedContourData.heightInches.toFixed(2)}`,
-          expected: `${expectedTotalWidth.toFixed(2)}x${expectedTotalHeight.toFixed(2)}`
-        });
-      }
       // Fallback: compute contour path (slower)
       console.log('[downloadContourPDF] Computing contour path (no cache)');
       const contourResult = getContourPath(image, strokeSettings, resizeSettings);
