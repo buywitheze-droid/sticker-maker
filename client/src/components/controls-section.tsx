@@ -12,7 +12,7 @@ import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
-import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X, Link, Unlink, Ruler } from "lucide-react";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -68,6 +68,37 @@ export default function ControlsSection({
   const [isSending, setIsSending] = useState(false);
   const [showSendForm, setShowSendForm] = useState(false);
   const [showSizeSection, setShowSizeSection] = useState(false);
+  const [aspectRatioLocked, setAspectRatioLocked] = useState(true);
+  const [aspectRatio, setAspectRatio] = useState(resizeSettings.widthInches / resizeSettings.heightInches);
+  
+  // Update aspect ratio when image changes
+  useEffect(() => {
+    if (imageInfo) {
+      setAspectRatio(resizeSettings.widthInches / resizeSettings.heightInches);
+    }
+  }, [imageInfo]);
+  
+  const handleWidthChange = (newWidth: number) => {
+    const clampedWidth = Math.max(0.5, Math.min(24, newWidth));
+    if (aspectRatioLocked) {
+      const newHeight = Math.max(0.5, Math.min(24, clampedWidth / aspectRatio));
+      onResizeChange({ widthInches: clampedWidth, heightInches: newHeight });
+    } else {
+      onResizeChange({ widthInches: clampedWidth });
+      setAspectRatio(clampedWidth / resizeSettings.heightInches);
+    }
+  };
+  
+  const handleHeightChange = (newHeight: number) => {
+    const clampedHeight = Math.max(0.5, Math.min(24, newHeight));
+    if (aspectRatioLocked) {
+      const newWidth = Math.max(0.5, Math.min(24, clampedHeight * aspectRatio));
+      onResizeChange({ heightInches: clampedHeight, widthInches: newWidth });
+    } else {
+      onResizeChange({ heightInches: clampedHeight });
+      setAspectRatio(resizeSettings.widthInches / clampedHeight);
+    }
+  };
   const [spotWhiteName, setSpotWhiteName] = useState("RDG_WHITE");
   const [spotGlossName, setSpotGlossName] = useState("RDG_GLOSS");
   const [editingWhiteName, setEditingWhiteName] = useState(false);
@@ -203,30 +234,78 @@ export default function ControlsSection({
           >
             <div className="flex items-center gap-3">
               <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center">
-                <span className="text-cyan-600 font-bold text-xs">{stickerSize}"</span>
+                <Ruler className="w-3.5 h-3.5 text-cyan-600" />
               </div>
               <span>Sticker Size</span>
+              <span className="text-xs text-gray-400 ml-1">
+                {resizeSettings.widthInches.toFixed(2)}" × {resizeSettings.heightInches.toFixed(2)}"
+              </span>
             </div>
             {showSizeSection ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
           </button>
           
           {showSizeSection && (
             <div className="px-4 pb-3">
-              <Select
-                value={stickerSize.toString()}
-                onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
-              >
-                <SelectTrigger className="w-full bg-gray-50 border-gray-200 text-gray-900">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STICKER_SIZES.map((size) => (
-                    <SelectItem key={size.value} value={size.value.toString()}>
-                      {size.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 mb-1 block">Width</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={resizeSettings.widthInches.toFixed(2)}
+                      onChange={(e) => handleWidthChange(parseFloat(e.target.value) || 0.5)}
+                      className="w-full h-8 text-sm text-center border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400"
+                      step="0.1"
+                      min="0.5"
+                      max="24"
+                    />
+                    <span className="text-xs text-gray-400">in</span>
+                  </div>
+                </div>
+                
+                <button
+                  onClick={() => setAspectRatioLocked(!aspectRatioLocked)}
+                  className={`mt-5 p-1.5 rounded-lg transition-colors ${aspectRatioLocked ? 'bg-cyan-50 text-cyan-500 hover:bg-cyan-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                  title={aspectRatioLocked ? "Unlock aspect ratio" : "Lock aspect ratio"}
+                >
+                  {aspectRatioLocked ? <Link className="w-4 h-4" /> : <Unlink className="w-4 h-4" />}
+                </button>
+                
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 mb-1 block">Height</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={resizeSettings.heightInches.toFixed(2)}
+                      onChange={(e) => handleHeightChange(parseFloat(e.target.value) || 0.5)}
+                      className="w-full h-8 text-sm text-center border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400"
+                      step="0.1"
+                      min="0.5"
+                      max="24"
+                    />
+                    <span className="text-xs text-gray-400">in</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="mt-2 grid grid-cols-4 gap-1">
+                {[2, 3, 4, 5].map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => {
+                      const newHeight = size / aspectRatio;
+                      onResizeChange({ widthInches: size, heightInches: aspectRatioLocked ? Math.max(0.5, Math.min(24, newHeight)) : size });
+                    }}
+                    className={`py-1.5 text-xs rounded-lg transition-colors ${
+                      Math.abs(resizeSettings.widthInches - size) < 0.1
+                        ? 'bg-cyan-500 text-white'
+                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {size}"
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
