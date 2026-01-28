@@ -24,6 +24,7 @@ export interface StrokeSettings {
   alphaThreshold: number;
   closeSmallGaps: boolean;
   closeBigGaps: boolean;
+  sharpCorners: boolean; // Preserve sharp geometric corners (badges, shields) while smoothing organic edges
   backgroundColor: string;
   useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
 }

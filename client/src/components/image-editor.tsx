@@ -33,6 +33,7 @@ export default function ImageEditor() {
     alphaThreshold: 128, // Auto-detected from alpha channel
     closeSmallGaps: false, // Close gaps within 0.06" of each other
     closeBigGaps: false, // Close gaps within 0.19" of each other
+    sharpCorners: false, // Preserve sharp geometric corners
     backgroundColor: "#ffffff", // Default white background for contour
     useCustomBackground: true, // Default to solid background color
   });
@@ -178,6 +179,7 @@ export default function ImageEditor() {
       alphaThreshold: 128,
       closeSmallGaps: false,
       closeBigGaps: false,
+      sharpCorners: false,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
     });
@@ -289,6 +291,7 @@ export default function ImageEditor() {
         alphaThreshold: 128,
         closeSmallGaps: false,
         closeBigGaps: false,
+        sharpCorners: false,
         backgroundColor: "#ffffff",
         useCustomBackground: true,
       });
@@ -368,6 +371,7 @@ export default function ImageEditor() {
       alphaThreshold: 128,
       closeSmallGaps: false,
       closeBigGaps: false,
+      sharpCorners: false,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
     });
