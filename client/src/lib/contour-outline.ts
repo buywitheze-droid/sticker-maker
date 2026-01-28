@@ -397,15 +397,7 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Apply smoothing with optional corner preservation
-    let smoothedPath: Point[];
-    if (strokeSettings.sharpCorners) {
-      // Use the 3-step pipeline: light simplify -> detect corners -> full smooth with protection
-      const cornerConfig = getCornerDetectionConfig(effectiveDPI);
-      smoothedPath = processPathWithSharpCorners(boundaryPath, 2, cornerConfig);
-    } else {
-      smoothedPath = smoothPath(boundaryPath, 2);
-    }
+    let smoothedPath = smoothPath(boundaryPath, 2);
     
     // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
     smoothedPath = fixOffsetCrossings(smoothedPath);
@@ -744,196 +736,6 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return path;
 }
 
-// Corner detection configuration - exposed as tunables
-interface CornerDetectionConfig {
-  angleThreshold: number; // Degrees - corners sharper than this are preserved (default ~120)
-  armThreshold: number; // Pixels - minimum arm length on both sides (scaled with DPI)
-  protectRadius: number; // Pixels - radius around corners where smoothing is disabled
-}
-
-// Compute the angle at point p[i] using neighbors at distance k
-function computeAngle(prev: Point, current: Point, next: Point): number {
-  const dx1 = prev.x - current.x;
-  const dy1 = prev.y - current.y;
-  const dx2 = next.x - current.x;
-  const dy2 = next.y - current.y;
-  
-  const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-  const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-  
-  if (len1 < 0.001 || len2 < 0.001) return 180; // Degenerate case
-  
-  // Dot product gives cos(angle)
-  const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-  const clampedDot = Math.max(-1, Math.min(1, dot));
-  const angleRad = Math.acos(clampedDot);
-  
-  return angleRad * (180 / Math.PI);
-}
-
-// Compute arc-length based arm lengths for corner detection
-function computeArmLengths(points: Point[], idx: number, windowPixels: number): { prev: number; next: number } {
-  const n = points.length;
-  
-  // Walk backward along polyline until we exceed windowPixels distance
-  let prevLength = 0;
-  let prevIdx = idx;
-  while (prevLength < windowPixels) {
-    const nextPrevIdx = (prevIdx - 1 + n) % n;
-    if (nextPrevIdx === idx) break; // Wrapped around
-    const dx = points[prevIdx].x - points[nextPrevIdx].x;
-    const dy = points[prevIdx].y - points[nextPrevIdx].y;
-    prevLength += Math.sqrt(dx * dx + dy * dy);
-    prevIdx = nextPrevIdx;
-  }
-  
-  // Walk forward along polyline
-  let nextLength = 0;
-  let nextIdx = idx;
-  while (nextLength < windowPixels) {
-    const nextNextIdx = (nextIdx + 1) % n;
-    if (nextNextIdx === idx) break; // Wrapped around
-    const dx = points[nextIdx].x - points[nextNextIdx].x;
-    const dy = points[nextIdx].y - points[nextNextIdx].y;
-    nextLength += Math.sqrt(dx * dx + dy * dy);
-    nextIdx = nextNextIdx;
-  }
-  
-  return { prev: prevLength, next: nextLength };
-}
-
-// Detect preserved corners based on angle and arm length criteria
-function detectPreservedCorners(
-  points: Point[], 
-  config: CornerDetectionConfig
-): Set<number> {
-  const corners = new Set<number>();
-  const n = points.length;
-  
-  if (n < 5) return corners;
-  
-  // Use a window for angle computation based on arm threshold
-  const angleWindow = Math.max(2, Math.round(config.armThreshold / 4));
-  
-  for (let i = 0; i < n; i++) {
-    // Get points at distance k for angle computation
-    const prevIdx = (i - angleWindow + n) % n;
-    const nextIdx = (i + angleWindow) % n;
-    
-    const angle = computeAngle(points[prevIdx], points[i], points[nextIdx]);
-    
-    // Check angle condition: angle must be sharp (less than threshold)
-    if (angle > config.angleThreshold) continue;
-    
-    // Check arm length condition: both arms must be long enough
-    const arms = computeArmLengths(points, i, config.armThreshold * 2);
-    if (Math.min(arms.prev, arms.next) < config.armThreshold) continue;
-    
-    // Stability check: this should be a local minimum angle
-    // (sharper than immediate neighbors)
-    const prevAngle = computeAngle(
-      points[(i - 1 - angleWindow + n) % n],
-      points[(i - 1 + n) % n],
-      points[(i - 1 + angleWindow + n) % n]
-    );
-    const nextAngle = computeAngle(
-      points[(i + 1 - angleWindow + n) % n],
-      points[(i + 1) % n],
-      points[(i + 1 + angleWindow) % n]
-    );
-    
-    // Accept if this is a local minimum or significantly sharper than neighbors
-    if (angle <= prevAngle && angle <= nextAngle) {
-      corners.add(i);
-    } else if (angle < prevAngle - 10 || angle < nextAngle - 10) {
-      // Also accept if significantly sharper than at least one neighbor
-      corners.add(i);
-    }
-  }
-  
-  return corners;
-}
-
-// Smooth path with corner preservation
-function smoothPathWithCornerPreservation(
-  points: Point[], 
-  windowSize: number,
-  preservedCorners: Set<number>,
-  protectRadius: number
-): Point[] {
-  if (points.length < windowSize * 2 + 1) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  
-  // Build a set of protected indices (within protectRadius of any corner)
-  const protectedIndices = new Set<number>();
-  const cornerArray = Array.from(preservedCorners);
-  for (let ci = 0; ci < cornerArray.length; ci++) {
-    const cornerIdx = cornerArray[ci];
-    protectedIndices.add(cornerIdx);
-    
-    // Walk backward and forward to mark protected zone
-    let distBack = 0;
-    for (let k = 1; k <= Math.ceil(protectRadius); k++) {
-      const idx = (cornerIdx - k + n) % n;
-      if (k > 1) {
-        const prevIdx = (cornerIdx - k + 1 + n) % n;
-        distBack += Math.sqrt(
-          (points[idx].x - points[prevIdx].x) ** 2 +
-          (points[idx].y - points[prevIdx].y) ** 2
-        );
-      }
-      if (distBack > protectRadius) break;
-      protectedIndices.add(idx);
-    }
-    
-    let distForward = 0;
-    for (let k = 1; k <= Math.ceil(protectRadius); k++) {
-      const idx = (cornerIdx + k) % n;
-      if (k > 1) {
-        const prevIdx = (cornerIdx + k - 1) % n;
-        distForward += Math.sqrt(
-          (points[idx].x - points[prevIdx].x) ** 2 +
-          (points[idx].y - points[prevIdx].y) ** 2
-        );
-      }
-      if (distForward > protectRadius) break;
-      protectedIndices.add(idx);
-    }
-  }
-  
-  for (let i = 0; i < n; i++) {
-    if (protectedIndices.has(i)) {
-      // Keep original point - no smoothing
-      result.push({ x: points[i].x, y: points[i].y });
-    } else {
-      // Apply smoothing
-      let sumX = 0, sumY = 0;
-      let count = 0;
-      for (let j = -windowSize; j <= windowSize; j++) {
-        const idx = (i + j + n) % n;
-        // Don't include protected points in averaging to prevent pulling toward corners
-        if (!protectedIndices.has(idx)) {
-          sumX += points[idx].x;
-          sumY += points[idx].y;
-          count++;
-        }
-      }
-      if (count > 0) {
-        result.push({
-          x: sumX / count,
-          y: sumY / count
-        });
-      } else {
-        result.push({ x: points[i].x, y: points[i].y });
-      }
-    }
-  }
-  
-  return result;
-}
-
 function smoothPath(points: Point[], windowSize: number): Point[] {
   // MATCHES WORKER EXACTLY - simple moving average smoothing
   if (points.length < windowSize * 2 + 1) return points;
@@ -955,61 +757,6 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   }
   
   return result;
-}
-
-// Get corner detection config scaled for current DPI
-function getCornerDetectionConfig(effectiveDPI: number): CornerDetectionConfig {
-  // Scale arm threshold with DPI (base is 20px at 100 DPI)
-  const dpiScale = effectiveDPI / 100;
-  return {
-    angleThreshold: 120, // Degrees - corners sharper than this are preserved
-    armThreshold: Math.round(20 * dpiScale), // Pixels - scales with DPI
-    protectRadius: Math.round(15 * dpiScale), // Pixels - radius where smoothing is disabled
-  };
-}
-
-// Light simplification to remove micro-jitter before corner detection
-// Uses a smaller window than full smoothing to preserve corner geometry
-function lightSimplifyPath(points: Point[], windowSize: number = 1): Point[] {
-  if (points.length < windowSize * 2 + 1) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  
-  for (let i = 0; i < n; i++) {
-    let sumX = 0, sumY = 0;
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + n) % n;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
-    }
-    result.push({
-      x: sumX / (windowSize * 2 + 1),
-      y: sumY / (windowSize * 2 + 1)
-    });
-  }
-  
-  return result;
-}
-
-// Full sharp corners processing pipeline:
-// 1. Light simplification (remove micro-jitter)
-// 2. Detect corners on simplified path
-// 3. Apply full smoothing with corner protection
-function processPathWithSharpCorners(
-  rawPath: Point[],
-  fullSmoothWindow: number,
-  config: CornerDetectionConfig
-): Point[] {
-  // Step 1: Light simplification to remove micro-jitter (window=1)
-  const lightlySmoothed = lightSimplifyPath(rawPath, 1);
-  
-  // Step 2: Detect corners on the less-smoothed polyline
-  const preservedCorners = detectPreservedCorners(lightlySmoothed, config);
-  
-  // Step 3: Apply full smoothing with corner protection
-  // Map corners from simplified path back to original indices (1:1 mapping since same length)
-  return smoothPathWithCornerPreservation(rawPath, fullSmoothWindow, preservedCorners, config.protectRadius);
 }
 
 // Generate U-shaped merge path (for outward curves)
@@ -1954,16 +1701,8 @@ export function getContourPath(
     
     if (boundaryPath.length < 3) return null;
     
-    // Apply smoothing with optional corner preservation
-    let smoothedPath: Point[];
-    if (strokeSettings.sharpCorners) {
-      // Use the 3-step pipeline: light simplify -> detect corners -> full smooth with protection
-      const cornerConfig = getCornerDetectionConfig(effectiveDPI);
-      smoothedPath = processPathWithSharpCorners(boundaryPath, 2, cornerConfig);
-      console.log('[getContourPath] Sharp corners enabled with 3-step pipeline');
-    } else {
-      smoothedPath = smoothPath(boundaryPath, 2);
-    }
+    // Smooth path (matches worker)
+    let smoothedPath = smoothPath(boundaryPath, 2);
     console.log('[getContourPath] After smooth, path points:', smoothedPath.length);
     
     // Fix crossings (matches worker)

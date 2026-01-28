@@ -468,37 +468,6 @@ export default function ControlsSection({
                 )}
               </div>
               
-              {/* Sharp Corners Toggle */}
-              <div className="pt-2 border-t border-gray-200">
-                <button
-                  onClick={() => onStrokeChange({ sharpCorners: !strokeSettings.sharpCorners })}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-lg border-2 transition-all ${
-                    strokeSettings.sharpCorners 
-                      ? 'border-blue-400 bg-blue-50 text-blue-700' 
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polygon points="4,4 20,4 20,20 4,20" />
-                    </svg>
-                    <span className="text-sm font-semibold">Sharp Corners</span>
-                  </div>
-                  <div className={`relative w-11 h-6 rounded-full transition-all ${
-                    strokeSettings.sharpCorners ? 'bg-blue-400' : 'bg-gray-200'
-                  }`}>
-                    <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
-                      strokeSettings.sharpCorners 
-                        ? 'right-0.5 bg-white' 
-                        : 'left-0.5 bg-gray-400'
-                    }`} />
-                  </div>
-                </button>
-                {strokeSettings.sharpCorners && (
-                  <p className="mt-1.5 text-xs text-gray-500 italic">Preserves crisp geometric corners (badges, shields) while keeping organic edges smooth.</p>
-                )}
-              </div>
-              
               {/* Hidden for now - may add back later
               <div className="space-y-2 pt-2 border-t border-gray-200">
                 <div className="flex items-center gap-2">
