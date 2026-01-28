@@ -15,6 +15,7 @@ interface WorkerMessage {
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    sharpCorners: boolean;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -184,6 +185,7 @@ function processContour(
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    sharpCorners: boolean;
   },
   effectiveDPI: number
 ): ContourResult {
@@ -266,7 +268,14 @@ function processContour(
   
   postProgress(80);
   
-  let smoothedPath = smoothPath(boundaryPath, 2);
+  let smoothedPath: Point[];
+  if (strokeSettings.sharpCorners) {
+    // SHARP CORNERS MODE: Force perfect sharp corners at major turns
+    console.log('[Worker] SHARP CORNERS MODE - detecting major turns');
+    smoothedPath = createSharpCornersPath(boundaryPath, effectiveDPI);
+  } else {
+    smoothedPath = smoothPath(boundaryPath, 2);
+  }
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -555,6 +564,239 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
       x: sumX / (windowSize * 2 + 1),
       y: sumY / (windowSize * 2 + 1)
     });
+  }
+  
+  return result;
+}
+
+interface CornerPoint {
+  index: number;
+  x: number;
+  y: number;
+  angle: number;
+  straightnessBefore: number;
+  straightnessAfter: number;
+}
+
+// Create a path with forced sharp corners at major direction changes
+// Only makes corners sharp if both incoming and outgoing edges are relatively straight
+function createSharpCornersPath(points: Point[], effectiveDPI: number): Point[] {
+  if (points.length < 20) return smoothPath(points, 2);
+  
+  console.log(`[SharpCorners] Processing ${points.length} points`);
+  
+  // Step 1: Light cleanup without smoothing
+  let cleaned = removeSpikesSimple(points, 5);
+  
+  // Step 2: Detect major turns with edge straightness analysis
+  const corners = detectMajorTurnsWithStraightness(cleaned, effectiveDPI);
+  
+  console.log(`[SharpCorners] Found ${corners.length} qualified sharp corners`);
+  
+  if (corners.length < 2) {
+    console.log(`[SharpCorners] Not enough sharp corners, using normal smoothing`);
+    return smoothPath(points, 2);
+  }
+  
+  // Step 3: Build path using sharp corners for straight-line junctions
+  // and preserved original points for curved sections
+  const result: Point[] = [];
+  
+  for (let i = 0; i < corners.length; i++) {
+    const current = corners[i];
+    const next = corners[(i + 1) % corners.length];
+    
+    // Add the sharp corner point
+    result.push({ x: current.x, y: current.y });
+    
+    // Get points between this corner and the next
+    const startIdx = current.index;
+    const endIdx = next.index;
+    
+    // Collect segment points
+    const segmentPoints: Point[] = [];
+    let idx = (startIdx + 1) % cleaned.length;
+    while (idx !== endIdx) {
+      segmentPoints.push(cleaned[idx]);
+      idx = (idx + 1) % cleaned.length;
+    }
+    
+    // Check if segment is curved or straight
+    if (segmentPoints.length > 5) {
+      const start = { x: current.x, y: current.y };
+      const end = { x: next.x, y: next.y };
+      const maxDev = calculateMaxDeviation(segmentPoints, start, end);
+      
+      // If segment deviates significantly, it's curved - add intermediate points
+      const curveThreshold = effectiveDPI * 0.02; // 0.02" threshold
+      if (maxDev > curveThreshold) {
+        // Add smoothed intermediate points to preserve the curve
+        const smoothedSegment = smoothPath(segmentPoints, 2);
+        const step = Math.max(1, Math.floor(smoothedSegment.length / 5));
+        for (let j = 0; j < smoothedSegment.length; j += step) {
+          result.push(smoothedSegment[j]);
+        }
+      }
+      // If straight, no intermediate points needed - line goes directly to next corner
+    }
+  }
+  
+  console.log(`[SharpCorners] Created path with ${result.length} points, ${corners.length} sharp corners`);
+  return result;
+}
+
+// Calculate max perpendicular deviation of points from a line
+function calculateMaxDeviation(points: Point[], start: Point, end: Point): number {
+  const edgeX = end.x - start.x;
+  const edgeY = end.y - start.y;
+  const edgeLen = Math.sqrt(edgeX * edgeX + edgeY * edgeY);
+  
+  if (edgeLen < 1) return 0;
+  
+  let maxDev = 0;
+  for (const pt of points) {
+    const ptX = pt.x - start.x;
+    const ptY = pt.y - start.y;
+    const t = (ptX * edgeX + ptY * edgeY) / (edgeLen * edgeLen);
+    
+    if (t > 0.1 && t < 0.9) {
+      const projX = start.x + t * edgeX;
+      const projY = start.y + t * edgeY;
+      const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
+      maxDev = Math.max(maxDev, dist);
+    }
+  }
+  return maxDev;
+}
+
+// Detect major direction changes, but only qualify them as sharp corners
+// if both the incoming and outgoing edges are relatively straight
+function detectMajorTurnsWithStraightness(points: Point[], effectiveDPI: number): CornerPoint[] {
+  const corners: CornerPoint[] = [];
+  if (points.length < 30) return corners;
+  
+  const windowSize = Math.max(8, Math.floor(points.length / 40));
+  const straightnessWindow = Math.max(15, Math.floor(points.length / 20));
+  const straightnessThreshold = effectiveDPI * 0.015; // 0.015" max deviation for "straight"
+  
+  console.log(`[MajorTurns] window=${windowSize}, straightnessWindow=${straightnessWindow}, threshold=${straightnessThreshold.toFixed(1)}px`);
+  
+  for (let i = 0; i < points.length; i++) {
+    const prevIdx = (i - windowSize + points.length) % points.length;
+    const nextIdx = (i + windowSize) % points.length;
+    
+    const prev = points[prevIdx];
+    const curr = points[i];
+    const next = points[nextIdx];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 3 || len2 < 3) continue;
+    
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDegrees = angle * 180 / Math.PI;
+    
+    // Significant direction change (> 25 degree deviation from straight)
+    if (angleDegrees < 155) {
+      // Calculate straightness of incoming edge
+      const beforeStart = (i - straightnessWindow + points.length) % points.length;
+      const beforePoints: Point[] = [];
+      for (let j = 0; j < straightnessWindow; j++) {
+        beforePoints.push(points[(beforeStart + j) % points.length]);
+      }
+      const straightnessBefore = calculateEdgeStraightness(beforePoints);
+      
+      // Calculate straightness of outgoing edge
+      const afterPoints: Point[] = [];
+      for (let j = 0; j < straightnessWindow; j++) {
+        afterPoints.push(points[(i + j) % points.length]);
+      }
+      const straightnessAfter = calculateEdgeStraightness(afterPoints);
+      
+      // Only qualify as sharp corner if BOTH edges are straight
+      if (straightnessBefore < straightnessThreshold && straightnessAfter < straightnessThreshold) {
+        corners.push({
+          index: i,
+          x: curr.x,
+          y: curr.y,
+          angle: angleDegrees,
+          straightnessBefore,
+          straightnessAfter
+        });
+        console.log(`[MajorTurns] Corner at (${curr.x.toFixed(0)},${curr.y.toFixed(0)}): ${(180-angleDegrees).toFixed(0)}° turn, straightness: before=${straightnessBefore.toFixed(1)}, after=${straightnessAfter.toFixed(1)}`);
+      }
+    }
+  }
+  
+  // Merge nearby corners
+  const merged: CornerPoint[] = [];
+  const minSpacing = Math.max(windowSize * 3, points.length / 25);
+  
+  for (const corner of corners) {
+    const existing = merged.find(c => Math.abs(c.index - corner.index) < minSpacing);
+    if (existing) {
+      if (corner.angle < existing.angle) {
+        Object.assign(existing, corner);
+      }
+    } else {
+      merged.push({ ...corner });
+    }
+  }
+  
+  merged.sort((a, b) => a.index - b.index);
+  return merged;
+}
+
+// Calculate how straight an edge segment is (lower = straighter)
+function calculateEdgeStraightness(points: Point[]): number {
+  if (points.length < 3) return 0;
+  
+  const start = points[0];
+  const end = points[points.length - 1];
+  
+  return calculateMaxDeviation(points.slice(1, -1), start, end);
+}
+
+// Simple spike removal without aggressive smoothing
+function removeSpikesSimple(points: Point[], threshold: number): Point[] {
+  if (points.length < 10) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.1 || len2 < 0.1) {
+      result.push(curr);
+      continue;
+    }
+    
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    
+    // Only remove extreme spikes (very sharp reversals)
+    if (dot < -0.8 && Math.max(len1, len2) < threshold) {
+      continue;
+    }
+    
+    result.push(curr);
   }
   
   return result;
