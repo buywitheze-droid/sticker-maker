@@ -2008,7 +2008,9 @@ export async function downloadContourPDF(
     // For edge bleed mode, create edge-extended canvas; for custom background, use solid color
     let edgeExtendedCanvas: HTMLCanvasElement | null = null;
     if (useEdgeBleed && !isTransparentBackground) {
-      const imageDPI = image.width / resizeSettings.widthInches;
+      // Design size = page size - 2*offset, use this for DPI calculation
+      const designWidthInches = widthInches - 2 * imageOffsetX;
+      const imageDPI = image.width / designWidthInches;
       const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
       edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
     }
@@ -2130,10 +2132,21 @@ export async function downloadContourPDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // Image position and size derived from contour dimensions
+  // The design size = page size - 2*offset (contour wraps around the design)
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
+  const imageWidthPts = (widthInches - 2 * imageOffsetX) * 72;
+  const imageHeightPts = (heightInches - 2 * imageOffsetY) * 72;
+  
+  console.log('[PDF] Image placement:', {
+    x: imageXPts.toFixed(2),
+    y: imageYPts.toFixed(2),
+    width: imageWidthPts.toFixed(2),
+    height: imageHeightPts.toFixed(2),
+    pageWidth: widthPts.toFixed(2),
+    pageHeight: heightPts.toFixed(2)
+  });
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -2365,8 +2378,11 @@ export async function downloadContourPDF(
           (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
           
           // Convert pixel coordinates to PDF points
-          const scaleX = (resizeSettings.widthInches * 72) / w;
-          const scaleY = (resizeSettings.heightInches * 72) / h;
+          // Use the same image dimensions as the design placement (page size - 2*offset)
+          const designWidthPts = (widthInches - 2 * imageOffsetX) * 72;
+          const designHeightPts = (heightInches - 2 * imageOffsetY) * 72;
+          const scaleX = designWidthPts / w;
+          const scaleY = designHeightPts / h;
           const offsetX = imageOffsetX * 72;
           const offsetY = imageOffsetY * 72;
           
@@ -2687,10 +2703,12 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // Image position and size derived from contour dimensions
+  // The design size = page size - 2*offset (contour wraps around the design)
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
+  const imageWidthPts = (widthInches - 2 * imageOffsetX) * 72;
+  const imageHeightPts = (heightInches - 2 * imageOffsetY) * 72;
   
   page.drawImage(pngImage, {
     x: imageXPts,
