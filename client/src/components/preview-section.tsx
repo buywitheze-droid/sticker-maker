@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2, Link, Unlink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,11 +20,14 @@ interface PreviewSectionProps {
   cadCutBounds?: CadCutBounds | null;
   spotPreviewData?: SpotPreviewData;
   showCutLineInfo?: boolean;
+  onResizeSettingsChange?: (settings: Partial<ResizeSettings>) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onResizeSettingsChange }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [aspectRatioLocked, setAspectRatioLocked] = useState(true);
+    const aspectRatioRef = useRef<number>(resizeSettings.widthInches / resizeSettings.heightInches);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
     const [panX, setPanX] = useState(0); // -100 to 100 (percent offset)
@@ -141,6 +144,39 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       setPanX(0);
       setPanY(0);
     }, []);
+    
+    // Update aspect ratio when image changes
+    useEffect(() => {
+      if (imageInfo) {
+        aspectRatioRef.current = resizeSettings.widthInches / resizeSettings.heightInches;
+      }
+    }, [imageInfo]);
+    
+    // Handle width change with optional aspect ratio lock
+    const handleWidthChange = useCallback((newWidth: number) => {
+      if (!onResizeSettingsChange) return;
+      const clampedWidth = Math.max(0.5, Math.min(24, newWidth));
+      if (aspectRatioLocked) {
+        const newHeight = clampedWidth / aspectRatioRef.current;
+        onResizeSettingsChange({ widthInches: clampedWidth, heightInches: Math.max(0.5, Math.min(24, newHeight)) });
+      } else {
+        onResizeSettingsChange({ widthInches: clampedWidth });
+        aspectRatioRef.current = clampedWidth / resizeSettings.heightInches;
+      }
+    }, [aspectRatioLocked, onResizeSettingsChange, resizeSettings.heightInches]);
+    
+    // Handle height change with optional aspect ratio lock
+    const handleHeightChange = useCallback((newHeight: number) => {
+      if (!onResizeSettingsChange) return;
+      const clampedHeight = Math.max(0.5, Math.min(24, newHeight));
+      if (aspectRatioLocked) {
+        const newWidth = clampedHeight * aspectRatioRef.current;
+        onResizeSettingsChange({ heightInches: clampedHeight, widthInches: Math.max(0.5, Math.min(24, newWidth)) });
+      } else {
+        onResizeSettingsChange({ heightInches: clampedHeight });
+        aspectRatioRef.current = resizeSettings.widthInches / clampedHeight;
+      }
+    }, [aspectRatioLocked, onResizeSettingsChange, resizeSettings.widthInches]);
     
     // Mouse wheel zoom handler
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -1087,6 +1123,38 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             )}
 
             <div className="flex flex-col items-start">
+              {imageInfo && onResizeSettingsChange && (
+                <div className="flex items-center gap-1.5 mb-2 bg-gray-50/80 rounded-lg px-2.5 py-1.5 border border-gray-100">
+                  <span className="text-xs text-gray-500 font-medium">Size:</span>
+                  <input
+                    type="number"
+                    value={resizeSettings.widthInches.toFixed(2)}
+                    onChange={(e) => handleWidthChange(parseFloat(e.target.value) || 0.5)}
+                    className="w-14 h-6 text-xs text-center border border-gray-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                    step="0.1"
+                    min="0.5"
+                    max="24"
+                  />
+                  <span className="text-xs text-gray-400">in</span>
+                  <button
+                    onClick={() => setAspectRatioLocked(!aspectRatioLocked)}
+                    className={`p-1 rounded transition-colors ${aspectRatioLocked ? 'text-cyan-500 hover:text-cyan-600' : 'text-gray-300 hover:text-gray-400'}`}
+                    title={aspectRatioLocked ? "Unlock aspect ratio" : "Lock aspect ratio"}
+                  >
+                    {aspectRatioLocked ? <Link className="w-3.5 h-3.5" /> : <Unlink className="w-3.5 h-3.5" />}
+                  </button>
+                  <input
+                    type="number"
+                    value={resizeSettings.heightInches.toFixed(2)}
+                    onChange={(e) => handleHeightChange(parseFloat(e.target.value) || 0.5)}
+                    className="w-14 h-6 text-xs text-center border border-gray-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                    step="0.1"
+                    min="0.5"
+                    max="24"
+                  />
+                  <span className="text-xs text-gray-400">in</span>
+                </div>
+              )}
               <div className="flex">
                 <div 
                   ref={containerRef}

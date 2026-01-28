@@ -928,6 +928,7 @@ export default function ImageEditor() {
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
+            onResizeSettingsChange={handleResizeChange}
           />
         </div>
       </div>
