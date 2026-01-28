@@ -223,6 +223,11 @@ export function createSilhouetteContour(
     const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI));
     const unifiedMask = unifyDisconnectedObjects(bridgedMask, bridgedWidth, bridgedHeight, unifyRadius);
     
+    // PRE-DILATION: Trace boundary and detect corners BEFORE dilation rounds them
+    const preDilationBoundary = traceBoundary(unifiedMask, bridgedWidth, bridgedHeight);
+    const preDilationCorners = detectSharpCorners(preDilationBoundary, 150);
+    console.log(`[PreDilation] Found ${preDilationCorners.length} corners BEFORE dilation`);
+    
     // Step 4: Dilate by base offset to create unified silhouette
     const baseDilatedMask = dilateSilhouette(unifiedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
     const baseWidth = bridgedWidth + baseOffsetPixels * 2;
@@ -242,7 +247,22 @@ export function createSilhouetteContour(
     const bridgedFinalMask = bridgeTouchingContours(finalDilatedMask, dilatedWidth, dilatedHeight, effectiveDPI);
     
     // Step 6: Trace the boundary of the final dilated silhouette
-    const boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
+    let boundaryPath = traceBoundary(bridgedFinalMask, dilatedWidth, dilatedHeight);
+    
+    // Calculate total dilation offset for corner projection
+    const totalDilationOffset = baseOffsetPixels + combinedUserOffset;
+    
+    // If we detected corners pre-dilation, restore them in the dilated path
+    if (preDilationCorners.length >= 3) {
+      console.log(`[CornerRestoration] Restoring ${preDilationCorners.length} sharp corners after dilation`);
+      boundaryPath = restoreSharpCornersAfterDilation(
+        boundaryPath, 
+        preDilationCorners, 
+        preDilationBoundary,
+        totalDilationOffset,
+        baseOffsetPixels  // Offset from pre-dilation coordinate space
+      );
+    }
     
     if (boundaryPath.length < 3) {
       ctx.drawImage(image, padding, padding);
@@ -1271,6 +1291,158 @@ function detectSharpCorners(points: Point[], angleThreshold: number = 150): Corn
   }
   
   return mergedCorners;
+}
+
+// Restore sharp corners that were rounded by dilation
+// Projects each corner outward along its bisector direction by the dilation amount
+function restoreSharpCornersAfterDilation(
+  dilatedPath: Point[],
+  originalCorners: CornerPoint[],
+  originalBoundary: Point[],
+  totalDilationOffset: number,
+  coordinateOffset: number  // Offset added to coordinate space by dilation
+): Point[] {
+  if (originalCorners.length === 0 || dilatedPath.length < 10) return dilatedPath;
+  
+  console.log(`[CornerRestoration] Processing ${originalCorners.length} corners with offset ${totalDilationOffset}px`);
+  
+  // For each original corner, calculate where it should be after dilation
+  const projectedCorners: { x: number; y: number; originalIdx: number; angle: number }[] = [];
+  
+  for (const corner of originalCorners) {
+    // Get points before and after the corner to calculate edge directions
+    const idx = corner.index;
+    const windowSize = Math.max(5, Math.min(20, Math.floor(originalBoundary.length / 20)));
+    
+    const prevIdx = (idx - windowSize + originalBoundary.length) % originalBoundary.length;
+    const nextIdx = (idx + windowSize) % originalBoundary.length;
+    
+    const prev = originalBoundary[prevIdx];
+    const curr = originalBoundary[idx];
+    const next = originalBoundary[nextIdx];
+    
+    // Calculate incoming and outgoing edge vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.1 || len2 < 0.1) continue;
+    
+    // Normalize vectors
+    const n1x = v1x / len1;
+    const n1y = v1y / len1;
+    const n2x = v2x / len2;
+    const n2y = v2y / len2;
+    
+    // Calculate outward normal for each edge (perpendicular, pointing outward)
+    // For a CCW path, outward is to the left of the edge direction
+    const out1x = -n1y;
+    const out1y = n1x;
+    const out2x = -n2y;
+    const out2y = n2x;
+    
+    // Average the two outward normals to get the corner bisector direction
+    let bisectX = out1x + out2x;
+    let bisectY = out1y + out2y;
+    const bisectLen = Math.sqrt(bisectX * bisectX + bisectY * bisectY);
+    
+    if (bisectLen < 0.1) {
+      // Edges are parallel, use the normal directly
+      bisectX = out1x;
+      bisectY = out1y;
+    } else {
+      bisectX /= bisectLen;
+      bisectY /= bisectLen;
+    }
+    
+    // For sharp corners (< 90°), project further out to maintain the sharp point
+    // The sharper the corner, the further we need to project
+    const cornerAngleRad = (corner.angle * Math.PI) / 180;
+    const halfAngle = cornerAngleRad / 2;
+    const projectionMultiplier = halfAngle > 0.1 ? 1 / Math.sin(halfAngle) : 2;
+    
+    // Project the corner outward
+    const projectedX = curr.x + coordinateOffset + bisectX * totalDilationOffset * projectionMultiplier;
+    const projectedY = curr.y + coordinateOffset + bisectY * totalDilationOffset * projectionMultiplier;
+    
+    projectedCorners.push({
+      x: projectedX,
+      y: projectedY,
+      originalIdx: idx,
+      angle: corner.angle
+    });
+    
+    console.log(`[CornerRestoration] Corner ${corner.angle.toFixed(0)}° at (${curr.x.toFixed(0)},${curr.y.toFixed(0)}) -> projected to (${projectedX.toFixed(0)},${projectedY.toFixed(0)})`);
+  }
+  
+  if (projectedCorners.length === 0) return dilatedPath;
+  
+  // Now find the closest points in the dilated path to each projected corner
+  // and replace the rounded region with a sharp corner
+  const result: Point[] = [];
+  const cornerReplacements: { pathIdx: number; newPoint: Point; radius: number }[] = [];
+  
+  for (const projected of projectedCorners) {
+    // Find the closest point in the dilated path
+    let closestIdx = 0;
+    let closestDist = Infinity;
+    
+    for (let i = 0; i < dilatedPath.length; i++) {
+      const dx = dilatedPath[i].x - projected.x;
+      const dy = dilatedPath[i].y - projected.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIdx = i;
+      }
+    }
+    
+    // The replacement radius depends on the dilation amount and corner sharpness
+    const replacementRadius = Math.max(3, Math.min(totalDilationOffset * 1.5, dilatedPath.length / 10));
+    
+    cornerReplacements.push({
+      pathIdx: closestIdx,
+      newPoint: { x: projected.x, y: projected.y },
+      radius: replacementRadius
+    });
+  }
+  
+  // Sort replacements by path index
+  cornerReplacements.sort((a, b) => a.pathIdx - b.pathIdx);
+  
+  // Build the new path, replacing rounded sections with sharp corners
+  let currentIdx = 0;
+  
+  for (const replacement of cornerReplacements) {
+    const startSkip = Math.max(0, replacement.pathIdx - Math.floor(replacement.radius));
+    const endSkip = Math.min(dilatedPath.length - 1, replacement.pathIdx + Math.floor(replacement.radius));
+    
+    // Add points from current position up to the start of replacement zone
+    while (currentIdx < startSkip && currentIdx < dilatedPath.length) {
+      result.push(dilatedPath[currentIdx]);
+      currentIdx++;
+    }
+    
+    // Add the sharp corner point
+    result.push(replacement.newPoint);
+    
+    // Skip past the rounded section
+    currentIdx = endSkip + 1;
+  }
+  
+  // Add remaining points
+  while (currentIdx < dilatedPath.length) {
+    result.push(dilatedPath[currentIdx]);
+    currentIdx++;
+  }
+  
+  console.log(`[CornerRestoration] Result: ${dilatedPath.length} -> ${result.length} points with ${projectedCorners.length} sharp corners`);
+  
+  return result;
 }
 
 // Find the nearest point in the current path to an original corner position
