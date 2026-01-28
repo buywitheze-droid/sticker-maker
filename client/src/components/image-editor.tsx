@@ -128,14 +128,94 @@ export default function ImageEditor() {
         
         const dpi = 300; // Default DPI for high-quality printing
         
-        // Create final cropped image info with zero padding
-        const newImageInfo: ImageInfo = {
-          file,
-          image: croppedImage,
-          originalWidth: croppedImage.width,
-          originalHeight: croppedImage.height,
-          dpi,
+        // Downsample very large images to prevent performance issues
+        // 4000px max dimension provides enough quality for contour generation
+        const MAX_STORED_DIMENSION = 4000;
+        let finalImage = croppedImage;
+        let finalWidth = croppedImage.width;
+        let finalHeight = croppedImage.height;
+        
+        const maxDim = Math.max(croppedImage.width, croppedImage.height);
+        if (maxDim > MAX_STORED_DIMENSION) {
+          const scale = MAX_STORED_DIMENSION / maxDim;
+          finalWidth = Math.round(croppedImage.width * scale);
+          finalHeight = Math.round(croppedImage.height * scale);
+          
+          console.log(`[Upload] Downsampling from ${croppedImage.width}x${croppedImage.height} to ${finalWidth}x${finalHeight}`);
+          
+          const downsampleCanvas = document.createElement('canvas');
+          downsampleCanvas.width = finalWidth;
+          downsampleCanvas.height = finalHeight;
+          const dsCtx = downsampleCanvas.getContext('2d')!;
+          dsCtx.imageSmoothingEnabled = true;
+          dsCtx.imageSmoothingQuality = 'high';
+          dsCtx.drawImage(croppedImage, 0, 0, finalWidth, finalHeight);
+          
+          // Create new image from downsampled canvas
+          finalImage = new Image();
+          finalImage.src = downsampleCanvas.toDataURL('image/png');
+        }
+        
+        // Wait for final image to be ready (only needed if we downsampled)
+        const processImage = () => {
+          // Create final cropped image info with zero padding
+          const newImageInfo: ImageInfo = {
+            file,
+            image: finalImage,
+            originalWidth: finalWidth,
+            originalHeight: finalHeight,
+            dpi,
+          };
+          
+          // Calculate detected dimensions based on ORIGINAL image size, not downsampled
+          // This preserves the correct aspect ratio for resize calculations
+          const originalMaxDim = Math.max(croppedImage.width, croppedImage.height);
+          const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
+          
+          // Store pending info and show resize modal
+          setPendingImageInfo(newImageInfo);
+          setDetectedDimensions({ width: widthInches, height: heightInches });
+          setShowResizeModal(true);
         };
+        
+        if (finalImage === croppedImage) {
+          processImage();
+        } else {
+          finalImage.onload = processImage;
+        }
+      };
+      
+      croppedImage.onerror = () => {
+        console.error('Error loading cropped image, using original');
+        handleFallbackImage(file, image);
+      };
+      
+      croppedImage.src = croppedCanvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Error processing uploaded image:', error);
+      handleFallbackImage(file, image);
+    }
+  }, [shapeSettings, stickerSize, updateCadCutBounds]);
+
+  const handleResizeConfirm = useCallback((widthInches: number, heightInches: number) => {
+    if (!pendingImageInfo) return;
+    
+    // Apply the pending image info
+    setImageInfo(pendingImageInfo);
+    
+    // Detect shape from image (threshold must match detectShape's internal confidenceThreshold of 0.88)
+    const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
+    const detectionResult = detectShape(pendingImageInfo.image);
+    const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
+    const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
+    
+    // Reset all settings to defaults when new image is uploaded
+    // If shape detected, enable shape mode; otherwise default to contour mode
+    setStrokeSettings({
+      width: 0.14,
+      color: "#ffffff",
+      enabled: !shouldAutoApplyShape,
+      alphaThreshold: 128,
         
         // Calculate detected dimensions in inches
         const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
