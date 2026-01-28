@@ -1096,8 +1096,8 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 6: Apply Chaikin's corner cutting for ultra-smooth curves
-  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 2);
+  // Step 6: Apply Chaikin's corner cutting for smoother curves (1 iteration = less curvy)
+  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
   
   // Step 7: Remove any remaining intersections
   chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
@@ -1126,8 +1126,8 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Simplify to reduce point count with higher tolerance for smoother result
-  let simplified = douglasPeucker(fineSmoothed, 1.5);
+  // Simplify to reduce point count (higher tolerance = less curvy, more angular)
+  let simplified = douglasPeucker(fineSmoothed, 2.5);
   
   // Remove nearly-collinear points to clean up straight edges
   // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves

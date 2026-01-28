@@ -211,7 +211,7 @@ export default function ControlsSection({
           </button>
           
           {showSizeSection && (
-            <div className="px-4 pb-3">
+            <div className="px-4 pb-3 space-y-3">
               <Select
                 value={stickerSize.toString()}
                 onValueChange={(value) => onStickerSizeChange(parseFloat(value) as StickerSize)}
@@ -227,6 +227,79 @@ export default function ControlsSection({
                   ))}
                 </SelectContent>
               </Select>
+              
+              {/* Compact Width/Height Resize Controls */}
+              <div className="bg-gray-50 rounded-lg p-2.5 border border-gray-200">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Width</label>
+                    <div className="flex items-center mt-0.5">
+                      <input
+                        type="number"
+                        value={resizeSettings.widthInches.toFixed(2)}
+                        onChange={(e) => {
+                          const newWidth = parseFloat(e.target.value) || 0.1;
+                          if (resizeSettings.maintainAspectRatio && imageInfo) {
+                            const aspectRatio = resizeSettings.heightInches / resizeSettings.widthInches;
+                            onResizeChange({ widthInches: newWidth, heightInches: newWidth * aspectRatio });
+                          } else {
+                            onResizeChange({ widthInches: newWidth });
+                          }
+                        }}
+                        min="0.5"
+                        max="24"
+                        step="0.1"
+                        className="w-full h-7 px-2 text-sm bg-white border border-gray-300 rounded text-gray-900 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                      />
+                      <span className="ml-1 text-xs text-gray-500">"</span>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => onResizeChange({ maintainAspectRatio: !resizeSettings.maintainAspectRatio })}
+                    className={`mt-4 p-1.5 rounded transition-colors ${resizeSettings.maintainAspectRatio ? 'bg-cyan-100 text-cyan-600' : 'bg-gray-200 text-gray-400'}`}
+                    title={resizeSettings.maintainAspectRatio ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      {resizeSettings.maintainAspectRatio ? (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </>
+                      ) : (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                          <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+                        </>
+                      )}
+                    </svg>
+                  </button>
+                  
+                  <div className="flex-1">
+                    <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Height</label>
+                    <div className="flex items-center mt-0.5">
+                      <input
+                        type="number"
+                        value={resizeSettings.heightInches.toFixed(2)}
+                        onChange={(e) => {
+                          const newHeight = parseFloat(e.target.value) || 0.1;
+                          if (resizeSettings.maintainAspectRatio && imageInfo) {
+                            const aspectRatio = resizeSettings.widthInches / resizeSettings.heightInches;
+                            onResizeChange({ heightInches: newHeight, widthInches: newHeight * aspectRatio });
+                          } else {
+                            onResizeChange({ heightInches: newHeight });
+                          }
+                        }}
+                        min="0.5"
+                        max="24"
+                        step="0.1"
+                        className="w-full h-7 px-2 text-sm bg-white border border-gray-300 rounded text-gray-900 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                      />
+                      <span className="ml-1 text-xs text-gray-500">"</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
