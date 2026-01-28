@@ -286,11 +286,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const cacheKey = generateContourCacheKey();
+      console.log('[ContourEffect] Checking cache:', { 
+        newKey: cacheKey.substring(0, 50), 
+        hasCache: !!contourCacheRef.current,
+        cacheKeyMatch: contourCacheRef.current?.key === cacheKey,
+        widthInches: resizeSettings.widthInches,
+        heightInches: resizeSettings.heightInches
+      });
+      
       if (contourCacheRef.current?.key === cacheKey) return;
       
       // Clear old contour cache immediately when settings change
       // This prevents showing stale contour while new one is being generated
       contourCacheRef.current = null;
+      console.log('[ContourEffect] Cache cleared, regenerating contour...');
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {
