@@ -153,21 +153,6 @@ class ContourWorkerManager {
       return this.processFallback(image, strokeSettings, resizeSettings);
     }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Could not get canvas context');
-
-    ctx.drawImage(image, 0, 0);
-    const imageData = ctx.getImageData(0, 0, image.width, image.height);
-    
-    const clonedData = new ImageData(
-      new Uint8ClampedArray(imageData.data),
-      imageData.width,
-      imageData.height
-    );
-
     // Use the shared helper for calculating effective design size
     // The selected size is the TOTAL sticker size (design + contour)
     const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
@@ -178,11 +163,32 @@ class ContourWorkerManager {
         true // contour is enabled
       );
     
-    // DPI is calculated from the effective design size (smaller)
-    // This ensures the contour offset brings the total back to the selected size
-    const dpiFromWidth = image.width / effectiveDesignWidth;
-    const dpiFromHeight = image.height / effectiveDesignHeight;
-    const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
+    // Calculate target pixel dimensions based on a fixed preview DPI
+    // This ensures different sticker sizes produce different pixel dimensions for alpha tracing
+    const previewDPI = resizeSettings.outputDPI || 100;
+    const targetWidth = Math.round(effectiveDesignWidth * previewDPI);
+    const targetHeight = Math.round(effectiveDesignHeight * previewDPI);
+    
+    // Resize the image to the target dimensions BEFORE alpha tracing
+    // This ensures the contour is traced on the correctly-sized image
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get canvas context');
+
+    // Draw the image scaled to the target size
+    ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+    const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+    
+    const clonedData = new ImageData(
+      new Uint8ClampedArray(imageData.data),
+      imageData.width,
+      imageData.height
+    );
+
+    // The effective DPI is now the preview DPI since we've already resized the image
+    const effectiveDPI = previewDPI;
     
     const request: ProcessRequest = {
       imageData: clonedData,
