@@ -409,6 +409,10 @@ export default function ImageEditor() {
   }, []);
 
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
+    // Clear contour cache immediately when resize changes - forces fresh contour calculation
+    const workerManager = getContourWorkerManager();
+    workerManager.clearCache();
+    
     setResizeSettings(prev => {
       const updated = { ...prev, ...newSettings };
       
