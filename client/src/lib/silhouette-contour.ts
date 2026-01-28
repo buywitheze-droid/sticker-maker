@@ -1,6 +1,7 @@
 import { StrokeSettings, ResizeSettings, ShapeSettings } from "@/components/image-editor";
 import { PDFDocument, PDFPage, rgb, PDFName, PDFArray, PDFDict, PDFStream, PDFRef } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
+import { calculateEffectiveDesignSize } from './types';
 
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>; // Points in inches
@@ -19,10 +20,17 @@ export function createSilhouetteContour(
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  // Calculate effective DPI based on actual image dimensions and target inches
-  const effectiveDPI = resizeSettings 
-    ? image.width / resizeSettings.widthInches
-    : image.width / 5; // Default assumption: image represents ~5 inches
+  // Use the shared helper for calculating effective design size
+  const selectedWidth = resizeSettings?.widthInches || 5;
+  const selectedHeight = resizeSettings?.heightInches || 5;
+  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
+    calculateEffectiveDesignSize(selectedWidth, selectedHeight, strokeSettings.width, true);
+  
+  // DPI is calculated based on the EFFECTIVE design size (smaller)
+  // Use min to handle aspect ratio properly
+  const dpiFromWidth = image.width / effectiveDesignWidth;
+  const dpiFromHeight = image.height / effectiveDesignHeight;
+  const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
   
   // Base offset (0.015") to create unified silhouette for multi-object images
   const baseOffsetInches = 0.015;
@@ -3085,9 +3093,25 @@ export function getContourPath(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings
 ): ContourPathResult | null {
-  const effectiveDPI = image.width / resizeSettings.widthInches;
+  // Use the shared helper for calculating effective design size
+  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
+    calculateEffectiveDesignSize(
+      resizeSettings.widthInches,
+      resizeSettings.heightInches,
+      strokeSettings.width,
+      true // contour is enabled
+    );
   
+  // DPI is calculated based on the EFFECTIVE design size (smaller)
+  // Use min to handle aspect ratio properly (same as worker/preview)
+  const dpiFromWidth = image.width / effectiveDesignWidth;
+  const dpiFromHeight = image.height / effectiveDesignHeight;
+  const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
+  
+  // Calculate the total offset that will be added to each side
   const baseOffsetInches = 0.015;
+  const totalOffsetPerSide = strokeSettings.width + baseOffsetInches;
+  
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
   const autoBridgeInches = 0.02;
@@ -3187,16 +3211,20 @@ export function getContourPath(
     
     const smoothedPath = smoothPath(boundaryPath, 2);
     
-    // Convert to inches and flip Y for PDF coordinate system (Y=0 at bottom)
+    // The dilated dimensions naturally match the selected size due to DPI calculation
+    // effectiveDesignWidth + 2*(offset) = selectedWidth
+    // So dilatedWidth / effectiveDPI = selectedWidth
     const widthInches = dilatedWidth / effectiveDPI;
     const heightInches = dilatedHeight / effectiveDPI;
     
-    // Flip Y coordinates so (0,0) is bottom-left instead of top-left
+    // Flip Y coordinates so (0,0) is bottom-left instead of top-left (PDF standard)
     const pathInInches = smoothedPath.map(p => ({
       x: p.x / effectiveDPI,
       y: heightInches - (p.y / effectiveDPI) // Flip Y
     }));
     
+    // Image offset: the design is positioned at totalOffsetPixels from the edge
+    // Convert to inches using the same DPI
     const imageOffsetX = totalOffsetPixels / effectiveDPI;
     const imageOffsetY = totalOffsetPixels / effectiveDPI;
     
@@ -3257,9 +3285,17 @@ export async function downloadContourPDF(
   // Draw image on page (convert inches to points)
   // Path points are already flipped to PDF coordinates (Y=0 at bottom)
   // Image Y position: imageOffsetY is from the BOTTOM in this coordinate system
+  
+  // The image dimensions are derived from the contour result
+  // widthInches = dilatedWidth / effectiveDPI, so:
+  // imageWidth = widthInches - 2*imageOffsetX (offset on both sides)
+  // imageHeight = heightInches - 2*imageOffsetY
+  const imageWidthInches = widthInches - (imageOffsetX * 2);
+  const imageHeightInches = heightInches - (imageOffsetY * 2);
+  
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageWidthPts = imageWidthInches * 72;
+  const imageHeightPts = imageHeightInches * 72;
   const imageYPts = imageOffsetY * 72; // Y from bottom
   
   page.drawImage(pngImage, {
@@ -3607,9 +3643,16 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // The image dimensions are derived from the contour result
+  // widthInches = dilatedWidth / effectiveDPI, so:
+  // imageWidth = widthInches - 2*imageOffsetX (offset on both sides)
+  // imageHeight = heightInches - 2*imageOffsetY
+  const imageWidthInches = widthInches - (imageOffsetX * 2);
+  const imageHeightInches = heightInches - (imageOffsetY * 2);
+  
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageWidthPts = imageWidthInches * 72;
+  const imageHeightPts = imageHeightInches * 72;
   const imageYPts = imageOffsetY * 72;
   
   page.drawImage(pngImage, {

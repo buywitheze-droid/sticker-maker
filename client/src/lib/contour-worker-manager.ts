@@ -1,4 +1,5 @@
 import ContourWorker from './contour-worker?worker';
+import { calculateEffectiveDesignSize } from './types';
 
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
@@ -167,11 +168,20 @@ class ContourWorkerManager {
       imageData.height
     );
 
-    // Calculate effective DPI based on image pixels and target size in inches
-    // Use the dimension that gives the correct scale (min of both to handle aspect ratio)
-    const dpiFromWidth = image.width / resizeSettings.widthInches;
-    const dpiFromHeight = image.height / resizeSettings.heightInches;
-    // Use the minimum to ensure the stroke scales correctly with the actual resize
+    // Use the shared helper for calculating effective design size
+    // The selected size is the TOTAL sticker size (design + contour)
+    const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
+      calculateEffectiveDesignSize(
+        resizeSettings.widthInches,
+        resizeSettings.heightInches,
+        strokeSettings.width,
+        true // contour is enabled
+      );
+    
+    // DPI is calculated from the effective design size (smaller)
+    // This ensures the contour offset brings the total back to the selected size
+    const dpiFromWidth = image.width / effectiveDesignWidth;
+    const dpiFromHeight = image.height / effectiveDesignHeight;
     const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
     
     const request: ProcessRequest = {

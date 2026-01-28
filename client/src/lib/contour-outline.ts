@@ -1,4 +1,5 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
+import { calculateEffectiveDesignSize } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
 
@@ -190,11 +191,21 @@ export function createSilhouetteContour(
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  const effectiveDPI = resizeSettings 
-    ? image.width / resizeSettings.widthInches
-    : image.width / 5;
+  // Use the shared helper for calculating effective design size
+  const selectedWidth = resizeSettings?.widthInches || 5;
+  const selectedHeight = resizeSettings?.heightInches || 5;
+  const { widthInches: effectiveDesignWidth, heightInches: effectiveDesignHeight } = 
+    calculateEffectiveDesignSize(selectedWidth, selectedHeight, strokeSettings.width, true);
   
+  // DPI is based on effective design size (smaller) so contour brings it back to selected size
+  // Use min to handle aspect ratio properly
+  const dpiFromWidth = image.width / effectiveDesignWidth;
+  const dpiFromHeight = image.height / effectiveDesignHeight;
+  const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
+  
+  // Base offset (0.015") is included in the shared helper calculation
   const baseOffsetInches = 0.015;
+  
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
   const autoBridgeInches = 0.02;
