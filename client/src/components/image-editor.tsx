@@ -216,47 +216,6 @@ export default function ImageEditor() {
       color: "#ffffff",
       enabled: !shouldAutoApplyShape,
       alphaThreshold: 128,
-        
-        // Calculate detected dimensions in inches
-        const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
-        
-        // Store pending info and show resize modal
-        setPendingImageInfo(newImageInfo);
-        setDetectedDimensions({ width: widthInches, height: heightInches });
-        setShowResizeModal(true);
-      };
-      
-      croppedImage.onerror = () => {
-        console.error('Error loading cropped image, using original');
-        handleFallbackImage(file, image);
-      };
-      
-      croppedImage.src = croppedCanvas.toDataURL('image/png');
-    } catch (error) {
-      console.error('Error processing uploaded image:', error);
-      handleFallbackImage(file, image);
-    }
-  }, [shapeSettings, stickerSize, updateCadCutBounds]);
-
-  const handleResizeConfirm = useCallback((widthInches: number, heightInches: number) => {
-    if (!pendingImageInfo) return;
-    
-    // Apply the pending image info
-    setImageInfo(pendingImageInfo);
-    
-    // Detect shape from image (threshold must match detectShape's internal confidenceThreshold of 0.88)
-    const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
-    const detectionResult = detectShape(pendingImageInfo.image);
-    const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
-    const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
-    
-    // Reset all settings to defaults when new image is uploaded
-    // If shape detected, enable shape mode; otherwise default to contour mode
-    setStrokeSettings({
-      width: 0.14,
-      color: "#ffffff",
-      enabled: !shouldAutoApplyShape,
-      alphaThreshold: 128,
       closeSmallGaps: false,
       closeBigGaps: false,
       backgroundColor: "#ffffff",
