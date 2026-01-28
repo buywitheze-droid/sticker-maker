@@ -1178,81 +1178,304 @@ function createGeometricContour(vertices: Point[]): Point[] {
   return vertices;
 }
 
+// Detect sharp corners in a contour - returns array of corner points with their coordinates
+// Uses adaptive window size based on average point spacing
+interface CornerPoint {
+  index: number;
+  x: number;
+  y: number;
+  angle: number;
+}
+
+function detectSharpCorners(points: Point[], angleThreshold: number = 130): CornerPoint[] {
+  const corners: CornerPoint[] = [];
+  if (points.length < 10) return corners;
+  
+  // Calculate average point spacing for adaptive window
+  let totalDist = 0;
+  for (let i = 0; i < points.length; i++) {
+    const next = points[(i + 1) % points.length];
+    const dx = next.x - points[i].x;
+    const dy = next.y - points[i].y;
+    totalDist += Math.sqrt(dx * dx + dy * dy);
+  }
+  const avgSpacing = totalDist / points.length;
+  
+  // Adaptive window: aim for ~20 pixels worth of samples
+  const windowSize = Math.max(3, Math.min(15, Math.round(20 / avgSpacing)));
+  
+  for (let i = 0; i < points.length; i++) {
+    const prevIdx = (i - windowSize + points.length) % points.length;
+    const nextIdx = (i + windowSize) % points.length;
+    
+    const prev = points[prevIdx];
+    const curr = points[i];
+    const next = points[nextIdx];
+    
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 1 || len2 < 1) continue;
+    
+    // Calculate angle between vectors
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDegrees = angle * 180 / Math.PI;
+    
+    // If angle is sharp (less than threshold), this is a corner
+    if (angleDegrees < angleThreshold) {
+      corners.push({
+        index: i,
+        x: curr.x,
+        y: curr.y,
+        angle: angleDegrees
+      });
+    }
+  }
+  
+  // Merge nearby corners (keep the sharpest one in each cluster)
+  const mergedCorners: CornerPoint[] = [];
+  const minCornerSpacing = Math.max(10, windowSize * 2);
+  
+  for (const corner of corners) {
+    const existing = mergedCorners.find(c => 
+      Math.abs(c.index - corner.index) < minCornerSpacing ||
+      (Math.abs(c.x - corner.x) < 10 && Math.abs(c.y - corner.y) < 10)
+    );
+    
+    if (existing) {
+      // Keep the sharper corner
+      if (corner.angle < existing.angle) {
+        existing.index = corner.index;
+        existing.x = corner.x;
+        existing.y = corner.y;
+        existing.angle = corner.angle;
+      }
+    } else {
+      mergedCorners.push({ ...corner });
+    }
+  }
+  
+  return mergedCorners;
+}
+
+// Find the nearest point in the current path to an original corner position
+function findNearestPointToCorner(points: Point[], corner: CornerPoint): number {
+  let nearestIdx = 0;
+  let nearestDist = Infinity;
+  
+  for (let i = 0; i < points.length; i++) {
+    const dx = points[i].x - corner.x;
+    const dy = points[i].y - corner.y;
+    const dist = dx * dx + dy * dy;
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestIdx = i;
+    }
+  }
+  
+  return nearestIdx;
+}
+
+// True segment-based smoothing: split contour at corners, smooth each segment independently
+function smoothBySegments(
+  points: Point[], 
+  corners: CornerPoint[], 
+  windowSize: number
+): Point[] {
+  if (corners.length === 0) {
+    // No corners - smooth everything
+    return applyMovingAverage(points, windowSize);
+  }
+  
+  // Map original corners to current path positions
+  const mappedCornerIndices: number[] = [];
+  for (const corner of corners) {
+    const idx = findNearestPointToCorner(points, corner);
+    mappedCornerIndices.push(idx);
+  }
+  
+  // Sort corner indices
+  mappedCornerIndices.sort((a, b) => a - b);
+  
+  // Remove duplicates
+  const uniqueCornerIndices = mappedCornerIndices.filter((v, i, arr) => i === 0 || v !== arr[i - 1]);
+  
+  if (uniqueCornerIndices.length === 0) {
+    return applyMovingAverage(points, windowSize);
+  }
+  
+  // Split contour into segments between corners
+  const segments: { startIdx: number; endIdx: number; points: Point[] }[] = [];
+  
+  for (let i = 0; i < uniqueCornerIndices.length; i++) {
+    const startIdx = uniqueCornerIndices[i];
+    const endIdx = uniqueCornerIndices[(i + 1) % uniqueCornerIndices.length];
+    
+    // Extract segment points (excluding corner endpoints - they'll be added back)
+    const segmentPoints: Point[] = [];
+    let idx = (startIdx + 1) % points.length;
+    
+    while (idx !== endIdx) {
+      segmentPoints.push(points[idx]);
+      idx = (idx + 1) % points.length;
+    }
+    
+    segments.push({ startIdx, endIdx, points: segmentPoints });
+  }
+  
+  // Smooth each segment independently (without touching corners)
+  const smoothedSegments: Point[][] = [];
+  
+  for (const segment of segments) {
+    if (segment.points.length <= windowSize * 2) {
+      // Segment too short to smooth - keep as is
+      smoothedSegments.push(segment.points);
+    } else {
+      // Smooth this segment independently
+      const smoothed: Point[] = [];
+      for (let i = 0; i < segment.points.length; i++) {
+        let sumX = 0, sumY = 0, count = 0;
+        
+        for (let j = -windowSize; j <= windowSize; j++) {
+          const idx = i + j;
+          // Only include points within this segment (no wrapping)
+          if (idx >= 0 && idx < segment.points.length) {
+            sumX += segment.points[idx].x;
+            sumY += segment.points[idx].y;
+            count++;
+          }
+        }
+        
+        if (count > 0) {
+          smoothed.push({ x: sumX / count, y: sumY / count });
+        } else {
+          smoothed.push({ ...segment.points[i] });
+        }
+      }
+      smoothedSegments.push(smoothed);
+    }
+  }
+  
+  // Reconstruct the full contour with corners preserved exactly
+  const result: Point[] = [];
+  
+  for (let i = 0; i < uniqueCornerIndices.length; i++) {
+    const cornerIdx = uniqueCornerIndices[i];
+    // Add the corner point (preserved exactly)
+    result.push({ ...points[cornerIdx] });
+    // Add the smoothed segment points
+    for (const pt of smoothedSegments[i]) {
+      result.push(pt);
+    }
+  }
+  
+  return result;
+}
+
+// Simple moving average smoothing
+function applyMovingAverage(points: Point[], windowSize: number): Point[] {
+  const result: Point[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    let sumX = 0, sumY = 0, count = 0;
+    
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + points.length) % points.length;
+      sumX += points[idx].x;
+      sumY += points[idx].y;
+      count++;
+    }
+    
+    result.push({ x: sumX / count, y: sumY / count });
+  }
+  
+  return result;
+}
+
+// Update corner positions by finding nearest points in current path
+function remapCorners(corners: CornerPoint[], points: Point[]): CornerPoint[] {
+  return corners.map(corner => {
+    const nearestIdx = findNearestPointToCorner(points, corner);
+    return {
+      index: nearestIdx,
+      x: points[nearestIdx].x,
+      y: points[nearestIdx].y,
+      angle: corner.angle
+    };
+  });
+}
+
 function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
+  
+  // Step 0: Detect sharp corners BEFORE any smoothing - these are anchored by position
+  let corners = detectSharpCorners(points, 130);
+  console.log(`[SharpCornerDetection] Found ${corners.length} sharp corners to preserve`);
   
   // Step 1: Remove self-intersections first
   let cleaned = removeSelfIntersections(points);
   
+  // Re-map corners after intersection removal
+  if (corners.length > 0) {
+    corners = remapCorners(corners, cleaned);
+  }
+  
   // Step 2: Remove tiny spikes/bumps that deviate sharply from the overall curve
   cleaned = removeSpikes(cleaned, 10, 0.25);
   
-  // Step 3: Apply very aggressive smoothing with large window
-  const extraLargeWindow = 8;
-  let smoothed: Point[] = [];
+  // Re-map corners after spike removal
+  if (corners.length > 0) {
+    corners = remapCorners(corners, cleaned);
+  }
   
-  for (let i = 0; i < cleaned.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
-    for (let j = -extraLargeWindow; j <= extraLargeWindow; j++) {
-      const idx = (i + j + cleaned.length) % cleaned.length;
-      sumX += cleaned[idx].x;
-      sumY += cleaned[idx].y;
-      count++;
-    }
-    
-    smoothed.push({
-      x: sumX / count,
-      y: sumY / count
-    });
+  // Step 3: Apply smoothing with corner preservation (using segment-based approach)
+  const extraLargeWindow = 8;
+  let smoothed = smoothBySegments(cleaned, corners, extraLargeWindow);
+  
+  // Re-map corners after smoothing
+  if (corners.length > 0) {
+    corners = remapCorners(corners, smoothed);
   }
   
   // Step 4: Remove intersections after first smoothing pass
   smoothed = removeSelfIntersections(smoothed);
   
-  // Step 5: Second smoothing pass with medium window
+  // Step 5: Second smoothing pass with medium window, preserving corners
   const mediumWindow = 6;
-  let medSmoothed: Point[] = [];
+  let medSmoothed = smoothBySegments(smoothed, corners, mediumWindow);
   
-  for (let i = 0; i < smoothed.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
-    for (let j = -mediumWindow; j <= mediumWindow; j++) {
-      const idx = (i + j + smoothed.length) % smoothed.length;
-      sumX += smoothed[idx].x;
-      sumY += smoothed[idx].y;
-      count++;
-    }
-    
-    medSmoothed.push({
-      x: sumX / count,
-      y: sumY / count
-    });
+  // Re-map corners
+  if (corners.length > 0) {
+    corners = remapCorners(corners, medSmoothed);
   }
   
-  // Step 6: Apply Chaikin's corner cutting for smooth curves (reduced from 2 to 1 iteration for sharper corners)
-  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
+  // Step 6: Apply Chaikin's corner cutting ONLY if few sharp corners
+  let chaikinSmoothed: Point[];
+  if (corners.length > 3) {
+    // Many sharp corners - skip Chaikin to preserve them
+    console.log(`[SharpCornerDetection] Skipping Chaikin smoothing to preserve ${corners.length} corners`);
+    chaikinSmoothed = medSmoothed;
+  } else {
+    chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
+  }
   
   // Step 7: Remove any remaining intersections
   chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
   
-  // Step 8: Final smoothing pass
-  let fineSmoothed: Point[] = [];
-  for (let i = 0; i < chaikinSmoothed.length; i++) {
-    let sumX = 0, sumY = 0, count = 0;
-    
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + chaikinSmoothed.length) % chaikinSmoothed.length;
-      sumX += chaikinSmoothed[idx].x;
-      sumY += chaikinSmoothed[idx].y;
-      count++;
-    }
-    
-    fineSmoothed.push({
-      x: sumX / count,
-      y: sumY / count
-    });
+  // Re-map corners
+  if (corners.length > 0) {
+    corners = remapCorners(corners, chaikinSmoothed);
   }
+  
+  // Step 8: Final smoothing pass with corner preservation
+  let fineSmoothed = smoothBySegments(chaikinSmoothed, corners, windowSize);
   
   // Step 9: Remove spikes one more time
   fineSmoothed = removeSpikes(fineSmoothed, 6, 0.35);
@@ -1260,21 +1483,150 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Simplify to reduce point count (increased tolerance from 1.5 to 2.5 for sharper/less curvy result)
-  let simplified = douglasPeucker(fineSmoothed, 2.5);
+  // Re-map corners before simplification
+  if (corners.length > 0) {
+    corners = remapCorners(corners, fineSmoothed);
+  }
   
-  // Remove nearly-collinear points to clean up straight edges
-  // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
-  simplified = removeCollinearPoints(simplified, 2.0);
+  // Corner-protected simplification: split at corners, simplify each segment, reassemble
+  let simplified: Point[];
+  if (corners.length > 0) {
+    simplified = simplifyWithCornerProtection(fineSmoothed, corners, 2.5);
+  } else {
+    simplified = douglasPeucker(fineSmoothed, 2.5);
+  }
   
-  // Smooth large sweeping curves (reduced smoothing factor from 0.85 to 0.6 for less curve merging)
-  simplified = smoothLargeCurves(simplified, 15, 0.6, 25);
+  // Remove nearly-collinear points but protect corners
+  if (corners.length > 0) {
+    corners = remapCorners(corners, simplified);
+    simplified = removeCollinearWithCornerProtection(simplified, corners, 2.0);
+  } else {
+    simplified = removeCollinearPoints(simplified, 2.0);
+  }
   
-  // Also smooth medium curves (reduced from 0.5 to 0.3 for sharper corners)
-  simplified = smoothLargeCurves(simplified, 8, 0.3, 12);
+  // Skip large curve smoothing if we have sharp corners to preserve
+  if (corners.length < 3) {
+    simplified = smoothLargeCurves(simplified, 15, 0.6, 25);
+    simplified = smoothLargeCurves(simplified, 8, 0.3, 12);
+  } else {
+    console.log(`[SharpCornerDetection] Skipping large curve smoothing to preserve ${corners.length} corners`);
+  }
   
   return simplified;
 }
+
+// Simplify path while protecting corner points
+function simplifyWithCornerProtection(
+  points: Point[], 
+  corners: CornerPoint[], 
+  tolerance: number
+): Point[] {
+  if (corners.length === 0) {
+    return douglasPeucker(points, tolerance);
+  }
+  
+  // Map corners to current indices
+  const cornerIndices: number[] = [];
+  for (const corner of corners) {
+    const idx = findNearestPointToCorner(points, corner);
+    cornerIndices.push(idx);
+  }
+  
+  // Sort and deduplicate
+  const sortedCorners = Array.from(new Set(cornerIndices)).sort((a, b) => a - b);
+  
+  // Split path at corners, simplify each segment, reassemble
+  const result: Point[] = [];
+  
+  for (let i = 0; i < sortedCorners.length; i++) {
+    const startIdx = sortedCorners[i];
+    const endIdx = sortedCorners[(i + 1) % sortedCorners.length];
+    
+    // Add the corner point (always preserved)
+    result.push({ ...points[startIdx] });
+    
+    // Extract segment between corners
+    const segment: Point[] = [];
+    let idx = (startIdx + 1) % points.length;
+    while (idx !== endIdx) {
+      segment.push(points[idx]);
+      idx = (idx + 1) % points.length;
+    }
+    
+    // Simplify segment if long enough
+    if (segment.length > 3) {
+      const simplified = douglasPeucker(segment, tolerance);
+      for (const pt of simplified) {
+        result.push(pt);
+      }
+    } else {
+      for (const pt of segment) {
+        result.push(pt);
+      }
+    }
+  }
+  
+  return result;
+}
+
+// Remove collinear points while protecting corners
+function removeCollinearWithCornerProtection(
+  points: Point[],
+  corners: CornerPoint[],
+  angleTolerance: number
+): Point[] {
+  if (corners.length === 0) {
+    return removeCollinearPoints(points, angleTolerance);
+  }
+  
+  // Map corners to current indices
+  const protectedIndices = new Set<number>();
+  for (const corner of corners) {
+    const idx = findNearestPointToCorner(points, corner);
+    protectedIndices.add(idx);
+    // Also protect adjacent points
+    protectedIndices.add((idx - 1 + points.length) % points.length);
+    protectedIndices.add((idx + 1) % points.length);
+  }
+  
+  const result: Point[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    // Always keep protected points
+    if (protectedIndices.has(i)) {
+      result.push(points[i]);
+      continue;
+    }
+    
+    // Check if point is collinear with neighbors
+    const prev = points[(i - 1 + points.length) % points.length];
+    const curr = points[i];
+    const next = points[(i + 1) % points.length];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.001 || len2 < 0.001) {
+      result.push(curr);
+      continue;
+    }
+    
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDeg = angle * 180 / Math.PI;
+    
+    // Keep point if angle deviation is significant
+    if (angleDeg > angleTolerance) {
+      result.push(curr);
+    }
+  }
+  
+  return result;
 
 // Chaikin's corner cutting algorithm for smooth curves
 function applyChaikinSmoothing(points: Point[], iterations: number): Point[] {
