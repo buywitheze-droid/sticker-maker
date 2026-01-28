@@ -313,20 +313,6 @@ export default function ControlsSection({
                 </Select>
               </div>
 
-              <div className="flex items-center justify-between py-1">
-                <Label className="text-xs text-gray-500 font-medium">Sharp Corners</Label>
-                <button
-                  onClick={() => onStrokeChange({ sharpCorners: !strokeSettings.sharpCorners })}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    strokeSettings.sharpCorners 
-                      ? 'bg-cyan-500 text-white' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {strokeSettings.sharpCorners ? 'ON' : 'OFF'}
-                </button>
-              </div>
-
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Fill Color</Label>
                 <div className="flex items-center gap-3 mt-2">

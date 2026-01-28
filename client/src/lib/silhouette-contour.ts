@@ -278,10 +278,6 @@ export function createSilhouetteContour(
       // Use sharp-corner geometric contour for polygon shapes
       console.log('[Contour] Using geometric polygon mode with sharp corners');
       smoothedPath = createGeometricContour(geometricResult.vertices);
-    } else if (strokeSettings.sharpCorners) {
-      // SHARP CORNERS MODE: Force perfect sharp corners at all major turns
-      console.log('[Contour] SHARP CORNERS MODE ENABLED - forcing perfect sharp turns');
-      smoothedPath = createSharpCornersPath(boundaryPath, effectiveDPI);
     } else {
       // Apply normal smoothing for organic/curved shapes
       const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;

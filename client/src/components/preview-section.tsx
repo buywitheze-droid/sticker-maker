@@ -267,8 +267,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const CONTOUR_CACHE_VERSION = 6;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${strokeSettings.sharpCorners}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
-    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, strokeSettings.sharpCorners, resizeSettings.widthInches, resizeSettings.heightInches]);
+      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
       // Clear any pending debounce
@@ -672,14 +672,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useEffect(() => {
       if (!imageInfo) return;
-      const settingsKey = `${strokeSettings.enabled}-${strokeSettings.width}-${strokeSettings.sharpCorners}-${shapeSettings.enabled}-${shapeSettings.type}-${resizeSettings.widthInches}`;
+      const settingsKey = `${strokeSettings.enabled}-${strokeSettings.width}-${shapeSettings.enabled}-${shapeSettings.type}-${resizeSettings.widthInches}`;
       if (lastSettingsRef.current && lastSettingsRef.current !== settingsKey) {
         setShowHighlight(true);
         const timer = setTimeout(() => setShowHighlight(false), 500);
         return () => clearTimeout(timer);
       }
       lastSettingsRef.current = settingsKey;
-    }, [imageInfo, strokeSettings.enabled, strokeSettings.width, strokeSettings.sharpCorners, shapeSettings.enabled, shapeSettings.type, resizeSettings.widthInches]);
+    }, [imageInfo, strokeSettings.enabled, strokeSettings.width, shapeSettings.enabled, shapeSettings.type, resizeSettings.widthInches]);
 
     const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
