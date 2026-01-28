@@ -79,6 +79,7 @@ class ContourWorkerManager {
   
   // Clear cached data when settings change
   clearCache() {
+    console.log('[ContourWorkerManager] clearCache called, had data:', !!this.cachedContourData);
     this.cachedContourData = null;
   }
 
