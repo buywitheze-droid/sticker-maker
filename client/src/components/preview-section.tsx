@@ -287,6 +287,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const cacheKey = generateContourCacheKey();
       if (contourCacheRef.current?.key === cacheKey) return;
+      
+      // Clear old contour cache immediately when settings change
+      // This prevents showing stale contour while new one is being generated
+      contourCacheRef.current = null;
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {
