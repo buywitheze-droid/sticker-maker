@@ -35,6 +35,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const processingIdRef = useRef(0);
+    const [contourVersion, setContourVersion] = useState(0); // Force re-render when contour is invalidated
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -299,6 +300,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       // Clear old contour cache immediately when settings change
       // This prevents showing stale contour while new one is being generated
       contourCacheRef.current = null;
+      setContourVersion(v => v + 1); // Force re-render to show raw image while processing
       console.log('[ContourEffect] Cache cleared, regenerating contour...');
 
       // Debounce processing to avoid rapid re-renders during slider drags
@@ -609,7 +611,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, contourVersion]);
 
     // Helper function to create spot color overlay canvas from original image
     const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {
