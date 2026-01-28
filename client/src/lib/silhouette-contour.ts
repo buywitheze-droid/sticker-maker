@@ -249,10 +249,20 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Step 6: Smooth and simplify the path
-    // Apply extra smoothing for text/small shapes (window size 4 vs 2 for normal)
-    const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
-    let smoothedPath = smoothPath(boundaryPath, smoothingWindow);
+    // Step 6: Check if this is a geometric polygon (straight-line shape)
+    const geometricResult = detectGeometricPolygon(boundaryPath);
+    
+    let smoothedPath: Point[];
+    
+    if (geometricResult.isPolygon) {
+      // Use sharp-corner geometric contour for polygon shapes
+      console.log('[Contour] Using geometric polygon mode with sharp corners');
+      smoothedPath = createGeometricContour(geometricResult.vertices);
+    } else {
+      // Apply normal smoothing for organic/curved shapes
+      const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
+      smoothedPath = smoothPath(boundaryPath, smoothingWindow);
+    }
     
     // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -1042,6 +1052,130 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   }
   
   return boundary;
+}
+
+// Detect if a contour represents a geometric polygon (straight-line shape with few corners)
+// Returns the number of vertices if it's a polygon (3-12), or 0 if it's organic/curved
+function detectGeometricPolygon(points: Point[]): { isPolygon: boolean; vertices: Point[] } {
+  if (points.length < 10) return { isPolygon: false, vertices: [] };
+  
+  // Calculate bounding box for scale-aware thresholds
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const bbox = Math.max(maxX - minX, maxY - minY);
+  
+  // Scale-aware tolerance: 1.5% of bounding box for Douglas-Peucker
+  const dpTolerance = Math.max(bbox * 0.015, 2);
+  
+  // Step 1: Use Douglas-Peucker to find key vertices
+  const simplified = douglasPeucker(points, dpTolerance);
+  
+  // Step 2: Check if we have a reasonable number of vertices for a polygon (3-12)
+  if (simplified.length < 3 || simplified.length > 12) {
+    console.log(`[GeometricDetection] Rejected: ${simplified.length} vertices (need 3-12)`);
+    return { isPolygon: false, vertices: [] };
+  }
+  
+  // Step 3: Check corner angles - corners must be in sharp range (30-150 degrees)
+  // This rejects both rounded shapes (near 180°) and over-acute spikes
+  let allCornersSharp = true;
+  const cornerAngles: number[] = [];
+  
+  for (let i = 0; i < simplified.length; i++) {
+    const prev = simplified[(i - 1 + simplified.length) % simplified.length];
+    const curr = simplified[i];
+    const next = simplified[(i + 1) % simplified.length];
+    
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.001 || len2 < 0.001) continue;
+    
+    // Calculate angle between vectors (this is the exterior angle / turn angle)
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDegrees = angle * 180 / Math.PI;
+    cornerAngles.push(angleDegrees);
+    
+    // Reject if angle is too close to 180° (nearly straight - not a real corner)
+    // or if angle is too acute (< 30°) which suggests a spike, not a polygon
+    if (angleDegrees > 165 || angleDegrees < 25) {
+      allCornersSharp = false;
+      break;
+    }
+  }
+  
+  if (!allCornersSharp) {
+    console.log(`[GeometricDetection] Rejected: corners not in valid range (30-150°)`);
+    return { isPolygon: false, vertices: [] };
+  }
+  
+  // Step 4: Per-edge straightness test using segment projection bounds
+  const maxDeviationThreshold = Math.max(bbox * 0.012, 1.5); // 1.2% of bbox
+  let allEdgesStraight = true;
+  
+  for (let i = 0; i < simplified.length; i++) {
+    const start = simplified[i];
+    const end = simplified[(i + 1) % simplified.length];
+    
+    // Calculate edge vector and length
+    const edgeX = end.x - start.x;
+    const edgeY = end.y - start.y;
+    const edgeLen = Math.sqrt(edgeX * edgeX + edgeY * edgeY);
+    if (edgeLen < 1) continue;
+    
+    // Check points that project onto this segment (not beyond endpoints)
+    let maxDeviation = 0;
+    for (const pt of points) {
+      // Project point onto edge line
+      const ptX = pt.x - start.x;
+      const ptY = pt.y - start.y;
+      const t = (ptX * edgeX + ptY * edgeY) / (edgeLen * edgeLen);
+      
+      // Only consider points that project within segment bounds (0 < t < 1)
+      if (t > 0.05 && t < 0.95) {
+        const dist = perpendicularDistance(pt, start, end);
+        maxDeviation = Math.max(maxDeviation, dist);
+      }
+    }
+    
+    if (maxDeviation > maxDeviationThreshold) {
+      allEdgesStraight = false;
+      break;
+    }
+  }
+  
+  if (!allEdgesStraight) {
+    console.log(`[GeometricDetection] Rejected: has curved edges (max deviation > ${maxDeviationThreshold.toFixed(1)}px)`);
+    return { isPolygon: false, vertices: [] };
+  }
+  
+  console.log(`[GeometricDetection] ACCEPTED: ${simplified.length}-vertex polygon with sharp corners (${cornerAngles.map(a => a.toFixed(0)).join('°, ')}°) and straight edges`);
+  
+  return { isPolygon: true, vertices: simplified };
+}
+
+// Create a sharp-corner contour for geometric polygons
+// Uses exact vertices with no smoothing - perfect sharp corners, minimal lines
+function createGeometricContour(vertices: Point[]): Point[] {
+  if (vertices.length < 3) return vertices;
+  
+  // For geometric shapes, return ONLY the exact vertices for fewest possible lines
+  // No interpolation - just the pure polygon vertices
+  console.log(`[GeometricContour] Created ${vertices.length}-vertex polygon (sharp corners, minimal lines)`);
+  
+  return vertices;
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {
