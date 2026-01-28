@@ -578,70 +578,180 @@ interface CornerPoint {
   straightnessAfter: number;
 }
 
-// Create a path with forced sharp corners at major direction changes
-// Only makes corners sharp if both incoming and outgoing edges are relatively straight
+// Create a path with forced sharp corners at ISOLATED major direction changes
+// A corner is "isolated" if it's the only significant turn in a 10% segment of the path
+// This preserves curves while sharpening true geometric corners
 function createSharpCornersPath(points: Point[], effectiveDPI: number): Point[] {
-  if (points.length < 20) return smoothPath(points, 2);
+  if (points.length < 30) return smoothPath(points, 2);
   
-  console.log(`[SharpCorners] Processing ${points.length} points`);
+  console.log(`[SharpCorners] Processing ${points.length} points - looking for ISOLATED corners`);
   
-  // Step 1: Light cleanup without smoothing
-  let cleaned = removeSpikesSimple(points, 5);
+  // Step 1: First, do standard smoothing
+  let smoothed = smoothPath(points, 2);
   
-  // Step 2: Detect major turns with edge straightness analysis
-  const corners = detectMajorTurnsWithStraightness(cleaned, effectiveDPI);
+  // Step 2: Find ALL potential turn points with their angles
+  const allTurns = detectAllTurns(smoothed);
+  console.log(`[SharpCorners] Found ${allTurns.length} total turn points`);
   
-  console.log(`[SharpCorners] Found ${corners.length} qualified sharp corners`);
-  
-  if (corners.length < 2) {
-    console.log(`[SharpCorners] Not enough sharp corners, using normal smoothing`);
-    return smoothPath(points, 2);
+  if (allTurns.length === 0) {
+    return smoothed;
   }
   
-  // Step 3: Build path using sharp corners for straight-line junctions
-  // and preserved original points for curved sections
-  const result: Point[] = [];
+  // Step 3: Find ISOLATED corners - only 1 significant turn in each 10% segment
+  const segmentSize = Math.floor(smoothed.length * 0.10); // 10% of path
+  const isolatedCorners: CornerPoint[] = [];
   
-  for (let i = 0; i < corners.length; i++) {
-    const current = corners[i];
-    const next = corners[(i + 1) % corners.length];
+  for (const turn of allTurns) {
+    // Count how many other significant turns are within this 10% segment
+    const segmentStart = turn.index - Math.floor(segmentSize / 2);
+    const segmentEnd = turn.index + Math.floor(segmentSize / 2);
     
-    // Add the sharp corner point
-    result.push({ x: current.x, y: current.y });
+    let turnsInSegment = 0;
+    let sharpestInSegment = turn;
     
-    // Get points between this corner and the next
-    const startIdx = current.index;
-    const endIdx = next.index;
-    
-    // Collect segment points
-    const segmentPoints: Point[] = [];
-    let idx = (startIdx + 1) % cleaned.length;
-    while (idx !== endIdx) {
-      segmentPoints.push(cleaned[idx]);
-      idx = (idx + 1) % cleaned.length;
-    }
-    
-    // Check if segment is curved or straight
-    if (segmentPoints.length > 5) {
-      const start = { x: current.x, y: current.y };
-      const end = { x: next.x, y: next.y };
-      const maxDev = calculateMaxDeviation(segmentPoints, start, end);
+    for (const other of allTurns) {
+      // Check if other turn is in the segment (handle wraparound)
+      const dist = Math.min(
+        Math.abs(other.index - turn.index),
+        smoothed.length - Math.abs(other.index - turn.index)
+      );
       
-      // If segment deviates significantly, it's curved - add intermediate points
-      const curveThreshold = effectiveDPI * 0.02; // 0.02" threshold
-      if (maxDev > curveThreshold) {
-        // Add smoothed intermediate points to preserve the curve
-        const smoothedSegment = smoothPath(segmentPoints, 2);
-        const step = Math.max(1, Math.floor(smoothedSegment.length / 5));
-        for (let j = 0; j < smoothedSegment.length; j += step) {
-          result.push(smoothedSegment[j]);
+      if (dist < segmentSize / 2) {
+        turnsInSegment++;
+        if (other.angle < sharpestInSegment.angle) {
+          sharpestInSegment = other;
         }
       }
-      // If straight, no intermediate points needed - line goes directly to next corner
+    }
+    
+    // If this is the only turn (or sharpest) in its segment, it's isolated
+    if (turnsInSegment <= 2 && sharpestInSegment.index === turn.index) {
+      // Check if already added a nearby corner
+      const alreadyAdded = isolatedCorners.some(c => {
+        const dist = Math.min(
+          Math.abs(c.index - turn.index),
+          smoothed.length - Math.abs(c.index - turn.index)
+        );
+        return dist < segmentSize / 3;
+      });
+      
+      if (!alreadyAdded) {
+        isolatedCorners.push(turn);
+        console.log(`[SharpCorners] ISOLATED corner at idx ${turn.index}: ${(180 - turn.angle).toFixed(0)}° turn`);
+      }
     }
   }
   
-  console.log(`[SharpCorners] Created path with ${result.length} points, ${corners.length} sharp corners`);
+  console.log(`[SharpCorners] Found ${isolatedCorners.length} ISOLATED corners to sharpen`);
+  
+  if (isolatedCorners.length === 0) {
+    console.log(`[SharpCorners] No isolated corners found, using normal smooth path`);
+    return smoothed;
+  }
+  
+  // Step 4: Replace the smoothed curve around each isolated corner with a sharp point
+  const result = sharpenIsolatedCorners(smoothed, isolatedCorners, segmentSize);
+  
+  console.log(`[SharpCorners] Created path with ${result.length} points, ${isolatedCorners.length} sharp corners`);
+  return result;
+}
+
+// Detect all significant direction changes in the path
+function detectAllTurns(points: Point[]): CornerPoint[] {
+  const turns: CornerPoint[] = [];
+  if (points.length < 20) return turns;
+  
+  const windowSize = Math.max(3, Math.floor(points.length / 80));
+  
+  for (let i = 0; i < points.length; i++) {
+    const prevIdx = (i - windowSize + points.length) % points.length;
+    const nextIdx = (i + windowSize) % points.length;
+    
+    const prev = points[prevIdx];
+    const curr = points[i];
+    const next = points[nextIdx];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 1 || len2 < 1) continue;
+    
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDegrees = angle * 180 / Math.PI;
+    
+    // A turn is significant if angle deviation > 20 degrees
+    if (angleDegrees < 160) {
+      turns.push({
+        index: i,
+        x: curr.x,
+        y: curr.y,
+        angle: angleDegrees,
+        straightnessBefore: 0,
+        straightnessAfter: 0
+      });
+    }
+  }
+  
+  // Merge very close turns (keep sharpest)
+  const merged: CornerPoint[] = [];
+  const minSpacing = Math.max(5, points.length / 50);
+  
+  for (const turn of turns) {
+    const existing = merged.find(t => Math.abs(t.index - turn.index) < minSpacing);
+    if (existing) {
+      if (turn.angle < existing.angle) {
+        Object.assign(existing, turn);
+      }
+    } else {
+      merged.push({ ...turn });
+    }
+  }
+  
+  return merged;
+}
+
+// Replace smoothed curves around isolated corners with sharp points
+function sharpenIsolatedCorners(points: Point[], corners: CornerPoint[], segmentSize: number): Point[] {
+  if (corners.length === 0) return points;
+  
+  // Sort corners by index
+  corners.sort((a, b) => a.index - b.index);
+  
+  const result: Point[] = [];
+  const replaceRadius = Math.floor(segmentSize / 6); // Replace small region around corner
+  
+  // Build a set of indices to skip (will be replaced by sharp corner)
+  const skipIndices = new Set<number>();
+  const cornerIndices = new Map<number, Point>();
+  
+  for (const corner of corners) {
+    // Mark indices around the corner to skip
+    for (let i = -replaceRadius; i <= replaceRadius; i++) {
+      const idx = (corner.index + i + points.length) % points.length;
+      skipIndices.add(idx);
+    }
+    // Store the exact corner position
+    cornerIndices.set(corner.index, { x: corner.x, y: corner.y });
+  }
+  
+  // Build the result path
+  for (let i = 0; i < points.length; i++) {
+    if (cornerIndices.has(i)) {
+      // This is a corner - add the sharp point
+      result.push(cornerIndices.get(i)!);
+    } else if (!skipIndices.has(i)) {
+      // Normal point - keep it
+      result.push(points[i]);
+    }
+    // Skip indices are omitted (replaced by the corner point)
+  }
+  
   return result;
 }
 
