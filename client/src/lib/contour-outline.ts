@@ -2206,15 +2206,15 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Smooth the contour to reduce jagged edges from alpha tracing
-    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
-    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    // NOTE: Removed gaussianSmoothContour - RDP already straightened edges
+    // Gaussian smoothing was reintroducing waves on flat edges
+    const smoothedPath = pathPoints;
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts (no post-smoothing)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
@@ -2763,15 +2763,15 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Smooth the contour to reduce jagged edges from alpha tracing
-    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
-    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    // NOTE: Removed gaussianSmoothContour - RDP already straightened edges
+    // Gaussian smoothing was reintroducing waves on flat edges
+    const smoothedPath = pathPoints;
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts (no post-smoothing)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
