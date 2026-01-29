@@ -357,9 +357,6 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
-  // Apply text baseline flattening for horizontal text designs
-  smoothedPath = flattenTextBaselines(smoothedPath, effectiveDPI);
-  
   // Apply smart point reduction to sharpen lines and smooth curves
   smoothedPath = optimizePathPoints(smoothedPath, effectiveDPI);
   
