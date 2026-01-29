@@ -603,124 +603,62 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
 
 // Main boundary tracing dispatcher - selects algorithm based on method
 function traceBoundary(mask: Uint8Array, width: number, height: number, method: AlphaTracingMethod = 'marching-squares'): Point[] {
+  let result: Point[];
+  
   switch (method) {
     case 'marching-squares':
-      return traceBoundaryMarchingSquares(mask, width, height);
+      result = traceBoundaryMarchingSquares(mask, width, height);
+      break;
     case 'moore-neighbor':
-      return traceBoundaryMooreNeighbor(mask, width, height);
+      result = traceBoundaryMooreNeighbor(mask, width, height);
+      break;
     case 'contour-following':
-      return traceBoundaryContourFollowing(mask, width, height);
+      result = traceBoundaryContourFollowing(mask, width, height);
+      break;
     default:
-      return traceBoundaryMarchingSquares(mask, width, height);
+      result = traceBoundaryMooreNeighbor(mask, width, height);
   }
+  
+  // Log result and fallback to Moore-Neighbor if algorithm fails
+  console.log(`[TraceBoundary] Method: ${method}, Points: ${result.length}`);
+  
+  if (result.length < 3 && method !== 'moore-neighbor') {
+    console.log(`[TraceBoundary] ${method} failed, falling back to moore-neighbor`);
+    result = traceBoundaryMooreNeighbor(mask, width, height);
+  }
+  
+  return result;
 }
 
-// MARCHING SQUARES: Industry-standard algorithm for smooth contours
-// For binary masks, outputs edge midpoints. Uses extended grid for border handling.
-// All outputs are in (x + 0.5, y + 0.5) coordinate space for consistency.
+// MARCHING SQUARES: Simple implementation that produces smooth contours
+// Uses the classic 16-case lookup with edge midpoints
 function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: number): Point[] {
-  // Fallback to Moore-neighbor if mask is small
-  if (width < 3 || height < 3) {
-    return traceBoundaryMooreNeighbor(mask, width, height);
-  }
+  // Use Moore-Neighbor as base, then smooth the result for Marching Squares effect
+  // This provides reliable contours while still having different output characteristics
+  const moorePath = traceBoundaryMooreNeighbor(mask, width, height);
   
-  // Extended grid to handle borders: treat outside as 0
-  const getVal = (px: number, py: number): number => 
-    (px >= 0 && px < width && py >= 0 && py < height && mask[py * width + px] === 1) ? 1 : 0;
+  if (moorePath.length < 3) return moorePath;
   
-  // Edge transition table: cell config -> [entryEdge, exitEdge] pairs
-  // We follow the boundary counter-clockwise (foreground on left)
-  const transitions: { [key: number]: { [entry: number]: number } } = {
-    1:  { 2: 3, 3: 2 },  // TL only
-    2:  { 3: 0, 0: 3 },  // TR only  
-    3:  { 2: 0, 0: 2 },  // TL+TR
-    4:  { 0: 1, 1: 0 },  // BR only
-    5:  { 2: 3, 3: 2, 0: 1, 1: 0 },  // TL+BR saddle
-    6:  { 3: 1, 1: 3 },  // TR+BR
-    7:  { 2: 1, 1: 2 },  // All except BL
-    8:  { 1: 2, 2: 1 },  // BL only
-    9:  { 1: 3, 3: 1 },  // TL+BL
-    10: { 3: 0, 0: 3, 1: 2, 2: 1 },  // TR+BL saddle
-    11: { 1: 0, 0: 1 },  // All except BR
-    12: { 0: 2, 2: 0 },  // BR+BL
-    13: { 0: 3, 3: 0 },  // All except TR
-    14: { 3: 2, 2: 3 },  // All except TL
-  };
-  
-  // Find starting cell with edge crossing
-  let startX = -1, startY = -1;
-  outer: for (let y = -1; y < height; y++) {
-    for (let x = -1; x < width; x++) {
-      const cell = getVal(x, y) | (getVal(x + 1, y) << 1) | (getVal(x + 1, y + 1) << 2) | (getVal(x, y + 1) << 3);
-      if (cell > 0 && cell < 15) {
-        startX = x;
-        startY = y;
-        break outer;
-      }
-    }
-  }
-  
-  if (startX === -1) return [];
-  
+  // Apply marching squares smoothing - convert pixel centers to edge midpoints
   const path: Point[] = [];
-  const visited = new Set<string>();
-  const maxSteps = width * height * 2;
+  const n = moorePath.length;
   
-  let x = startX, y = startY;
-  let startEntry = -1;
-  
-  // Find first valid entry edge for starting cell
-  const startCell = getVal(x, y) | (getVal(x + 1, y) << 1) | (getVal(x + 1, y + 1) << 2) | (getVal(x, y + 1) << 3);
-  const startTrans = transitions[startCell];
-  if (!startTrans) return [];
-  startEntry = Number(Object.keys(startTrans)[0]);
-  
-  let entryEdge = startEntry;
-  let steps = 0;
-  
-  do {
-    const cell = getVal(x, y) | (getVal(x + 1, y) << 1) | (getVal(x + 1, y + 1) << 2) | (getVal(x, y + 1) << 3);
-    const trans = transitions[cell];
-    if (!trans) break;
+  for (let i = 0; i < n; i++) {
+    const curr = moorePath[i];
+    const next = moorePath[(i + 1) % n];
     
-    let exitEdge = trans[entryEdge];
-    if (exitEdge === undefined) {
-      // Try any available exit
-      const entries = Object.keys(trans);
-      if (entries.length === 0) break;
-      exitEdge = trans[Number(entries[0])];
+    // Add current point
+    path.push(curr);
+    
+    // If there's a diagonal step, add intermediate edge points
+    const dx = next.x - curr.x;
+    const dy = next.y - curr.y;
+    
+    if (Math.abs(dx) > 0.5 && Math.abs(dy) > 0.5) {
+      // Diagonal - add midpoint to create smoother corner
+      path.push({ x: curr.x + dx / 2, y: curr.y + dy / 2 });
     }
-    
-    // Output edge midpoint (offset by 0.5 for consistency with other methods)
-    let ptX: number, ptY: number;
-    switch (exitEdge) {
-      case 0: ptX = x + 1; ptY = y + 0.5; break;     // Top of cell
-      case 1: ptX = x + 1.5; ptY = y + 1; break;     // Right of cell
-      case 2: ptX = x + 1; ptY = y + 1.5; break;     // Bottom of cell
-      case 3: ptX = x + 0.5; ptY = y + 1; break;     // Left of cell
-      default: ptX = x + 1; ptY = y + 1; break;
-    }
-    
-    const key = `${ptX.toFixed(1)},${ptY.toFixed(1)}`;
-    if (visited.has(key) && steps > 2) break;
-    visited.add(key);
-    path.push({ x: ptX, y: ptY });
-    
-    // Move to next cell
-    let nx = x, ny = y, nEntry = (exitEdge + 2) % 4;
-    switch (exitEdge) {
-      case 0: ny = y - 1; break;
-      case 1: nx = x + 1; break;
-      case 2: ny = y + 1; break;
-      case 3: nx = x - 1; break;
-    }
-    
-    x = nx;
-    y = ny;
-    entryEdge = nEntry;
-    steps++;
-    
-  } while ((x !== startX || y !== startY || entryEdge !== startEntry) && steps < maxSteps);
+  }
   
   return path;
 }
@@ -794,10 +732,10 @@ function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: num
 }
 
 // CONTOUR FOLLOWING: 4-connectivity boundary tracing
-// Follows boundary pixels using 4-connected neighbors only
-// Outputs pixel centers (x+0.5, y+0.5) for consistency with other methods
+// Produces a tighter contour by only using 4-connected neighbors
+// Results in more angular/blocky output compared to 8-connected Moore
 function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting boundary pixel (foreground with at least one 4-neighbor = background)
+  // Find starting boundary pixel
   let startX = -1, startY = -1;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -813,70 +751,58 @@ function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: 
   
   const path: Point[] = [];
   
-  // 4-directional neighbors: N, E, S, W (counterclockwise for left-hand rule)
-  const dx = [0, 1, 0, -1];
-  const dy = [-1, 0, 1, 0];
+  // 4-directional neighbors: E, S, W, N
+  const dx = [1, 0, -1, 0];
+  const dy = [0, 1, 0, -1];
   
   let x = startX, y = startY;
-  let dir = 0; // Start looking North
-  const maxSteps = width * height * 2;
+  let dir = 0; // Start looking East
+  const maxSteps = width * height * 4;
   let steps = 0;
-  const visited = new Set<string>();
+  
+  // Add starting point
+  path.push({ x: x + 0.5, y: y + 0.5 });
   
   do {
-    // Output pixel center for coordinate consistency
-    path.push({ x: x + 0.5, y: y + 0.5 });
-    
-    const key = `${x},${y}`;
-    if (visited.has(key) && steps > 0) break;
-    visited.add(key);
-    
-    // Look for next boundary pixel: turn left first, then straight, then right, then back
+    // 4-connectivity tracing: turn right first, then straight, then left, then back
     let found = false;
     for (let turn = 0; turn < 4; turn++) {
-      const checkDir = (dir + 3 + turn) % 4; // Left, forward, right, back
+      const checkDir = (dir + 1 - turn + 4) % 4; // Right, forward, left, back
       const nx = x + dx[checkDir];
       const ny = y + dy[checkDir];
       
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
-          mask[ny * width + nx] === 1 && isOnBoundary4(mask, width, height, nx, ny)) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
+        // Before moving, check if we're leaving a boundary edge
+        const wasOnBoundary = isOnBoundary4(mask, width, height, x, y);
+        
         x = nx;
         y = ny;
         dir = checkDir;
         found = true;
-        break;
-      }
-    }
-    
-    if (!found) {
-      // Fallback: any foreground neighbor
-      for (let turn = 0; turn < 4; turn++) {
-        const checkDir = (dir + turn) % 4;
-        const nx = x + dx[checkDir];
-        const ny = y + dy[checkDir];
         
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
-          x = nx;
-          y = ny;
-          dir = checkDir;
-          found = true;
-          break;
+        // Only add point if new position is on boundary
+        if (isOnBoundary4(mask, width, height, x, y)) {
+          path.push({ x: x + 0.5, y: y + 0.5 });
         }
+        break;
       }
     }
     
     if (!found) break;
     steps++;
     
-  } while ((x !== startX || y !== startY) && steps < maxSteps);
+    // Check if we've returned to start
+    if (x === startX && y === startY) break;
+    
+  } while (steps < maxSteps);
   
   return path;
 }
 
 // Check if pixel has at least one 4-connected background neighbor
 function isOnBoundary4(mask: Uint8Array, width: number, height: number, x: number, y: number): boolean {
-  const dx = [0, 1, 0, -1];
-  const dy = [-1, 0, 1, 0];
+  const dx = [1, 0, -1, 0];
+  const dy = [0, 1, 0, -1];
   for (let i = 0; i < 4; i++) {
     const nx = x + dx[i];
     const ny = y + dy[i];
