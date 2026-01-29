@@ -735,16 +735,18 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
  * Check if a design is solid (single connected component) vs multi-part
  * A solid design doesn't need aggressive bridging - just internal gap filling
  * A multi-part design has separate objects that need to be united
+ * Uses 8-connected adjacency and the filled mask for more accurate detection
  */
 function checkIfSolidDesign(originalMask: Uint8Array, filledMask: Uint8Array, width: number, height: number): boolean {
-  // Count connected components in the original mask using flood fill
+  // Count connected components using 8-connectivity on the filled mask
+  // This treats diagonally connected pixels as connected
   const visited = new Uint8Array(width * height);
   let componentCount = 0;
   
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = y * width + x;
-      if (originalMask[idx] === 1 && visited[idx] === 0) {
+      if (filledMask[idx] === 1 && visited[idx] === 0) {
         // Found a new component, flood fill to mark all connected pixels
         componentCount++;
         const queue: number[] = [idx];
@@ -755,25 +757,26 @@ function checkIfSolidDesign(originalMask: Uint8Array, filledMask: Uint8Array, wi
           const cx = currentIdx % width;
           const cy = Math.floor(currentIdx / width);
           
-          // Check 4-connected neighbors
-          const neighbors = [
-            cy > 0 ? currentIdx - width : -1,
-            cy < height - 1 ? currentIdx + width : -1,
-            cx > 0 ? currentIdx - 1 : -1,
-            cx < width - 1 ? currentIdx + 1 : -1
-          ];
-          
-          for (const nIdx of neighbors) {
-            if (nIdx >= 0 && originalMask[nIdx] === 1 && visited[nIdx] === 0) {
-              visited[nIdx] = 1;
-              queue.push(nIdx);
+          // Check 8-connected neighbors (includes diagonals)
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = cx + dx;
+              const ny = cy + dy;
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                const nIdx = ny * width + nx;
+                if (filledMask[nIdx] === 1 && visited[nIdx] === 0) {
+                  visited[nIdx] = 1;
+                  queue.push(nIdx);
+                }
+              }
             }
           }
         }
         
         // If we find more than 1 component, it's multi-part
         if (componentCount > 1) {
-          console.log('[Worker] Detected MULTI-PART design:', componentCount, 'components');
+          console.log('[Worker] Detected MULTI-PART design:', componentCount, 'components (8-connected)');
           return false;
         }
       }
@@ -2097,9 +2100,79 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     const gapDist = gap.dist;
     
     if (gapDist > 0.5) {
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
-      result.push({ x: midX, y: midY });
+      // Detect angle at the gap to decide between sharp corner or rounded merge
+      // Use adaptive window: look back/ahead based on local segment length
+      const windowSize = Math.max(2, Math.min(10, Math.floor(gapDist / 3)));
+      const prevIdx = Math.max(0, gap.i - windowSize);
+      const nextIdx = Math.min(n - 1, gap.j + windowSize);
+      const pPrev = points[prevIdx];
+      const pNext = points[nextIdx];
+      
+      // Direction coming into p1 (normalized)
+      const dir1x = p1.x - pPrev.x;
+      const dir1y = p1.y - pPrev.y;
+      const len1 = Math.sqrt(dir1x * dir1x + dir1y * dir1y) || 1;
+      const n1x = dir1x / len1, n1y = dir1y / len1;
+      
+      // Direction going out from p2 (normalized)
+      const dir2x = pNext.x - p2.x;
+      const dir2y = pNext.y - p2.y;
+      const len2 = Math.sqrt(dir2x * dir2x + dir2y * dir2y) || 1;
+      const n2x = dir2x / len2, n2y = dir2y / len2;
+      
+      // Calculate angle between directions (dot product gives cos(angle))
+      const dot = n1x * n2x + n1y * n2y;
+      const angleDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+      
+      // Check if both sides are sufficiently straight (not curved)
+      // Compare immediate neighbor direction to extended direction
+      const immPrevIdx = Math.max(0, gap.i - 1);
+      const immNextIdx = Math.min(n - 1, gap.j + 1);
+      const immDir1x = p1.x - points[immPrevIdx].x;
+      const immDir1y = p1.y - points[immPrevIdx].y;
+      const immDir2x = points[immNextIdx].x - p2.x;
+      const immDir2y = points[immNextIdx].y - p2.y;
+      const immLen1 = Math.sqrt(immDir1x * immDir1x + immDir1y * immDir1y) || 1;
+      const immLen2 = Math.sqrt(immDir2x * immDir2x + immDir2y * immDir2y) || 1;
+      
+      // Dot product between immediate and extended directions (1 = straight, <1 = curved)
+      const straight1 = Math.abs((immDir1x * n1x + immDir1y * n1y) / immLen1);
+      const straight2 = Math.abs((immDir2x * n2x + immDir2y * n2y) / immLen2);
+      const bothStraight = straight1 > 0.85 && straight2 > 0.85;
+      
+      // Sharp angle threshold: angle > 60 degrees AND both sides are straight
+      const isSharpAngle = angleDeg > 60 && bothStraight;
+      
+      if (isSharpAngle) {
+        // Create sharp corner: find intersection of the two edge lines
+        const cross = dir1x * dir2y - dir1y * dir2x;
+        
+        if (Math.abs(cross) > 0.01) {
+          // Lines intersect - find intersection point
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const t = (dx * dir2y - dy * dir2x) / cross;
+          
+          // Bound corner distance by gapDist * 1.5 (reasonable wedge)
+          const maxCornerDist = gapDist * 1.5;
+          const cornerX = p1.x + t * dir1x;
+          const cornerY = p1.y + t * dir1y;
+          const distToCorner = Math.sqrt((cornerX - p1.x) ** 2 + (cornerY - p1.y) ** 2);
+          
+          if (distToCorner < maxCornerDist && distToCorner > 0.1) {
+            result.push({ x: cornerX, y: cornerY });
+          } else {
+            // Fallback to midpoint if corner is outside reasonable wedge
+            result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
+          }
+        } else {
+          // Parallel lines - use midpoint
+          result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
+        }
+      } else {
+        // Gentle curve or not straight enough - use rounded midpoint
+        result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
+      }
     }
     
     // For exterior caves, ALWAYS delete the cave interior
