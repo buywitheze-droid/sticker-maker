@@ -278,25 +278,16 @@ function processContour(
   // 4. Use ClipperOffset with JT_ROUND for perfect vector offsetting
   // =============================================================================
   
-  // Step 1: Detect if design is solid (single connected shape) vs multi-part
-  // Solid designs use smaller bridge, multi-part designs use larger bridge to unite
-  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
-  const isSolidDesign = checkIfSolidDesign(hiResMask, filledOriginalMask, hiResWidth, hiResHeight);
-  
-  // Use appropriate bridge distance based on design type
-  // Solid designs: 0.06" (just closes small internal gaps)
-  // Multi-part designs: 0.08" (unites separate objects)
-  const solidBridgeInches = 0.06;
-  const multiPartBridgeInches = 0.08;
-  const minBridgeInches = isSolidDesign ? solidBridgeInches : multiPartBridgeInches;
+  // Step 1: Apply morphological closing to unite separate objects
+  // Dilate → Fill → creates a unified shape from all parts of the design
+  // Use autoBridging threshold (scaled to 4x hi-res) or minimum 0.02" bridge
+  const minBridgeInches = 0.02; // Always bridge objects within 0.02" of each other
   const bridgeInches = Math.max(autoBridgeInches, minBridgeInches);
   const bridgePixelsHiRes = Math.round(bridgeInches * effectiveDPI * SUPER_SAMPLE);
-  const bridgePixels1x = bridgeInches * effectiveDPI; // 1x scale for Clipper compensation
   
-  console.log('[Worker] Design type:', isSolidDesign ? 'SOLID' : 'MULTI-PART', 
-              'bridge radius:', bridgePixelsHiRes, 'px (hi-res),', bridgeInches.toFixed(3), 'inches');
+  console.log('[Worker] Applying morphological closing to unite objects, bridge radius:', bridgePixelsHiRes, 'px (hi-res)');
   
-  // Dilate to bridge nearby objects (or just close small gaps for solid designs)
+  // Dilate to bridge nearby objects
   const dilatedMask = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, bridgePixelsHiRes);
   const dilatedWidth = hiResWidth + bridgePixelsHiRes * 2;
   const dilatedHeight = hiResHeight + bridgePixelsHiRes * 2;
@@ -315,6 +306,7 @@ function processContour(
   
   // Downscale to 1x coordinates for vector processing
   // Account for the dilation offset: subtract bridgePixelsHiRes to get back to original image coordinates
+  const bridgePixels1x = bridgePixelsHiRes / SUPER_SAMPLE;
   let tightContour = originalContour.map(p => ({
     x: (p.x - bridgePixelsHiRes) / SUPER_SAMPLE,
     y: (p.y - bridgePixelsHiRes) / SUPER_SAMPLE
@@ -334,13 +326,9 @@ function processContour(
   postProgress(50);
   
   // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
-  // Compensate for the dilation: the traced contour is already expanded by bridgePixels1x
-  // So we offset by (totalOffsetPixels - bridgePixels1x) to get the correct final size
-  // This can be negative (shrinking) if user offset is smaller than bridge radius
-  const effectiveOffset = totalOffsetPixels - bridgePixels1x;
-  console.log('[Worker] Offset calculation: total=', totalOffsetPixels.toFixed(1), 'bridge=', bridgePixels1x.toFixed(1), 'effective=', effectiveOffset.toFixed(1));
-  const vectorOffsetPath = clipperVectorOffset(tightContour, effectiveOffset);
-  console.log('[Worker] After Clipper vector offset (', effectiveOffset.toFixed(1), 'px):', vectorOffsetPath.length, 'points');
+  // This guarantees: straight lines stay straight, corners are perfectly rounded
+  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
+  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
@@ -356,9 +344,6 @@ function processContour(
   if (gapThresholdPixels > 0) {
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
-  
-  // Apply smart point reduction to sharpen lines and smooth curves
-  smoothedPath = optimizePathPoints(smoothedPath, effectiveDPI);
   
   postProgress(70);
   
@@ -405,14 +390,12 @@ function processContour(
   }
   
   // Draw original image on top
-  // The image content starts at (0,0) in the original coordinate system
-  // After canvas offset, position is: 0 + offsetX = offsetX
-  // This places the image correctly relative to the contour
-  // Since the contour's inner edge should be approximately at the image boundary
-  const imageCanvasX = 0 + offsetX;
-  const imageCanvasY = 0 + offsetY;
+  // The image should be positioned where the contour's inner edge is
+  // Inner edge is at (previewMinX + totalOffsetPixels, previewMinY + totalOffsetPixels) in original coords
+  // After shifting by offset, this becomes:
+  const imageCanvasX = (previewMinX + totalOffsetPixels) + offsetX;
+  const imageCanvasY = (previewMinY + totalOffsetPixels) + offsetY;
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
-  console.log('[Worker] previewMin:', previewMinX.toFixed(1), previewMinY.toFixed(1), 'offset:', offsetX.toFixed(1), offsetY.toFixed(1));
   drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
   // Calculate contour data for PDF export
@@ -452,15 +435,13 @@ function processContour(
   }));
   
   // Image offset in the PDF coordinate system
-  // The image content starts at (0, 0) in the original coordinate system
-  // In PDF coordinates, this maps to: ((-minPathX) / DPI) + bleedInches
-  // This is consistent with how the preview positions the image
+  // The image inner edge in pixel space is at approximately (0, 0) of the original image
+  // After Clipper offset, this is at (minPathX + totalOffsetPixels, minPathY + totalOffsetPixels) approximately
+  // But more accurately, the original image occupies the center of the contour
+  // Image left edge in PDF = ((0 - minPathX) / DPI) + bleedInches (if original image started at x=0)
+  // But with Clipper, minPathX ≈ -totalOffsetPixels, so image left ≈ totalOffsetInches + bleedInches
   const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
   const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
-  
-  // Verify alignment: the contour minimum should be at bleedInches, image should be inside
-  console.log('[Worker] Alignment check: contourMin (px)=', minPathX.toFixed(1), minPathY.toFixed(1),
-              'imageOffset (in)=', imageOffsetXCalc.toFixed(4), imageOffsetYCalc.toFixed(4));
   
   console.log('[Worker] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
   console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
@@ -732,62 +713,6 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   }
   
   return filled;
-}
-
-/**
- * Check if a design is solid (single connected component) vs multi-part
- * A solid design doesn't need aggressive bridging - just internal gap filling
- * A multi-part design has separate objects that need to be united
- * Uses 8-connected adjacency and the filled mask for more accurate detection
- */
-function checkIfSolidDesign(originalMask: Uint8Array, filledMask: Uint8Array, width: number, height: number): boolean {
-  // Count connected components using 8-connectivity on the filled mask
-  // This treats diagonally connected pixels as connected
-  const visited = new Uint8Array(width * height);
-  let componentCount = 0;
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      if (filledMask[idx] === 1 && visited[idx] === 0) {
-        // Found a new component, flood fill to mark all connected pixels
-        componentCount++;
-        const queue: number[] = [idx];
-        visited[idx] = 1;
-        
-        while (queue.length > 0) {
-          const currentIdx = queue.shift()!;
-          const cx = currentIdx % width;
-          const cy = Math.floor(currentIdx / width);
-          
-          // Check 8-connected neighbors (includes diagonals)
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (dx === 0 && dy === 0) continue;
-              const nx = cx + dx;
-              const ny = cy + dy;
-              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                const nIdx = ny * width + nx;
-                if (filledMask[nIdx] === 1 && visited[nIdx] === 0) {
-                  visited[nIdx] = 1;
-                  queue.push(nIdx);
-                }
-              }
-            }
-          }
-        }
-        
-        // If we find more than 1 component, it's multi-part
-        if (componentCount > 1) {
-          console.log('[Worker] Detected MULTI-PART design:', componentCount, 'components (8-connected)');
-          return false;
-        }
-      }
-    }
-  }
-  
-  console.log('[Worker] Detected SOLID design:', componentCount, 'component(s)');
-  return componentCount <= 1;
 }
 
 /**
@@ -1093,8 +1018,7 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
  * @returns offset polygon with rounded corners
  */
 function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
-  if (points.length < 3) return points;
-  if (offsetPixels === 0) return points;
+  if (points.length < 3 || offsetPixels <= 0) return points;
   
   // Convert to Clipper format with scaling
   const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
@@ -1102,7 +1026,6 @@ function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
     Y: Math.round(p.y * CLIPPER_SCALE)
   }));
   
-  // Clipper supports negative offsets for shrinking (inward offset)
   const scaledOffset = offsetPixels * CLIPPER_SCALE;
   
   // Create ClipperOffset object
@@ -2103,113 +2026,9 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
     const gapDist = gap.dist;
     
     if (gapDist > 0.5) {
-      // Detect angle at the gap to decide between sharp corner or rounded merge
-      // Use adaptive window: look back/ahead based on local segment length
-      const windowSize = Math.max(2, Math.min(10, Math.floor(gapDist / 3)));
-      const prevIdx = Math.max(0, gap.i - windowSize);
-      const nextIdx = Math.min(n - 1, gap.j + windowSize);
-      const pPrev = points[prevIdx];
-      const pNext = points[nextIdx];
-      
-      // Direction coming into p1 (normalized)
-      const dir1x = p1.x - pPrev.x;
-      const dir1y = p1.y - pPrev.y;
-      const len1 = Math.sqrt(dir1x * dir1x + dir1y * dir1y) || 1;
-      const n1x = dir1x / len1, n1y = dir1y / len1;
-      
-      // Direction going out from p2 (normalized)
-      const dir2x = pNext.x - p2.x;
-      const dir2y = pNext.y - p2.y;
-      const len2 = Math.sqrt(dir2x * dir2x + dir2y * dir2y) || 1;
-      const n2x = dir2x / len2, n2y = dir2y / len2;
-      
-      // Calculate angle between directions (dot product gives cos(angle))
-      const dot = n1x * n2x + n1y * n2y;
-      const angleDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
-      
-      // Check if both sides are sufficiently straight (not curved)
-      // Compare immediate neighbor direction to extended direction
-      const immPrevIdx = Math.max(0, gap.i - 1);
-      const immNextIdx = Math.min(n - 1, gap.j + 1);
-      const immDir1x = p1.x - points[immPrevIdx].x;
-      const immDir1y = p1.y - points[immPrevIdx].y;
-      const immDir2x = points[immNextIdx].x - p2.x;
-      const immDir2y = points[immNextIdx].y - p2.y;
-      const immLen1 = Math.sqrt(immDir1x * immDir1x + immDir1y * immDir1y) || 1;
-      const immLen2 = Math.sqrt(immDir2x * immDir2x + immDir2y * immDir2y) || 1;
-      
-      // Dot product between immediate and extended directions (1 = straight, <1 = curved)
-      // Relaxed threshold from 0.85 to 0.70 to allow more corners to be sharp
-      const straight1 = Math.abs((immDir1x * n1x + immDir1y * n1y) / immLen1);
-      const straight2 = Math.abs((immDir2x * n2x + immDir2y * n2y) / immLen2);
-      const bothStraight = straight1 > 0.70 && straight2 > 0.70;
-      
-      // Check if corner faces OUTWARD (convex) vs INWARD (concave)
-      // Use cross product of incoming direction with vector to next point
-      // For outward corners, the corner point would be OUTSIDE the line from p1 to p2
-      // Calculate cross product: dir1 x (p2 - p1)
-      const toP2x = p2.x - p1.x;
-      const toP2y = p2.y - p1.y;
-      const crossToP2 = dir1x * toP2y - dir1y * toP2x;
-      
-      // Also check where the intersection point would be relative to centroid
-      // Calculate shape centroid for reference
-      let centroidX = 0, centroidY = 0;
-      for (const p of points) {
-        centroidX += p.x;
-        centroidY += p.y;
-      }
-      centroidX /= points.length;
-      centroidY /= points.length;
-      
-      // The corner is outward-facing if the intersection point would be 
-      // further from centroid than the midpoint of p1-p2
       const midX = (p1.x + p2.x) / 2;
       const midY = (p1.y + p2.y) / 2;
-      const midDistFromCentroid = Math.sqrt((midX - centroidX) ** 2 + (midY - centroidY) ** 2);
-      
-      // Estimate where corner would be (using direction from p1)
-      const estCornerX = p1.x + dir1x * 0.5;
-      const estCornerY = p1.y + dir1y * 0.5;
-      const estCornerDistFromCentroid = Math.sqrt((estCornerX - centroidX) ** 2 + (estCornerY - centroidY) ** 2);
-      
-      // Corner faces outward if the extension goes away from centroid
-      const facesOutward = estCornerDistFromCentroid > midDistFromCentroid * 0.9;
-      
-      // Sharp angle threshold: angle > 20 degrees AND both sides are straight AND faces outward
-      // Lowered from 25 to 20 degrees to make corners 20% less rounded
-      const isSharpAngle = angleDeg > 20 && bothStraight && facesOutward;
-      
-      if (isSharpAngle) {
-        // Create sharp corner: find intersection of the two edge lines
-        const cross = dir1x * dir2y - dir1y * dir2x;
-        
-        if (Math.abs(cross) > 0.01) {
-          // Lines intersect - find intersection point
-          const dx = p2.x - p1.x;
-          const dy = p2.y - p1.y;
-          const t = (dx * dir2y - dy * dir2x) / cross;
-          
-          // Bound corner distance by gapDist * 1.5 (reasonable wedge)
-          const maxCornerDist = gapDist * 1.5;
-          const cornerX = p1.x + t * dir1x;
-          const cornerY = p1.y + t * dir1y;
-          const distToCorner = Math.sqrt((cornerX - p1.x) ** 2 + (cornerY - p1.y) ** 2);
-          
-          if (distToCorner < maxCornerDist && distToCorner > 0.1) {
-            result.push({ x: cornerX, y: cornerY });
-          } else {
-            // Fallback to midpoint if corner is outside reasonable wedge
-            result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
-          }
-        } else {
-          // Parallel lines - use midpoint
-          result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
-        }
-      } else {
-        // Gentle curve or not straight enough - use rounded midpoint
-        result.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
-      }
+      result.push({ x: midX, y: midY });
     }
     
     // For exterior caves, ALWAYS delete the cave interior
@@ -2273,421 +2092,6 @@ function smoothBridgeAreas(points: Point[]): Point[] {
         result.push(curr);
       }
     }
-  }
-  
-  return result;
-}
-
-/**
- * Detect if path looks like aligned text (horizontal OR tilted) and apply:
- * 1. Baseline flattening for top/bottom edges along the principal axis
- * 2. Moving average smoothing to reduce bumpiness along the text outline
- * Works for tilted text by detecting the principal axis of the shape
- */
-function flattenTextBaselines(points: Point[], dpi: number): Point[] {
-  if (points.length < 50) return points;
-  
-  // Calculate centroid
-  let cx = 0, cy = 0;
-  for (const p of points) {
-    cx += p.x;
-    cy += p.y;
-  }
-  cx /= points.length;
-  cy /= points.length;
-  
-  // Calculate covariance matrix for PCA to find principal axis
-  let cxx = 0, cyy = 0, cxy = 0;
-  for (const p of points) {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    cxx += dx * dx;
-    cyy += dy * dy;
-    cxy += dx * dy;
-  }
-  cxx /= points.length;
-  cyy /= points.length;
-  cxy /= points.length;
-  
-  // Calculate principal axis angle using eigenvalue decomposition
-  // theta = 0.5 * atan2(2*cxy, cxx - cyy)
-  const theta = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
-  const cosT = Math.cos(theta);
-  const sinT = Math.sin(theta);
-  
-  // Rotate all points to align principal axis with X
-  const rotated: Point[] = points.map(p => ({
-    x: (p.x - cx) * cosT + (p.y - cy) * sinT,
-    y: -(p.x - cx) * sinT + (p.y - cy) * cosT
-  }));
-  
-  // Get bounding box in rotated space
-  const rxs = rotated.map(p => p.x);
-  const rys = rotated.map(p => p.y);
-  const minX = Math.min(...rxs), maxX = Math.max(...rxs);
-  const minY = Math.min(...rys), maxY = Math.max(...rys);
-  const width = maxX - minX;
-  const height = maxY - minY;
-  
-  // Only apply to elongated shapes (width > 1.3x height after rotation)
-  // Lower threshold to catch more text-like shapes
-  if (width < height * 1.3) {
-    return points;
-  }
-  
-  console.log('[Worker] Text detection: principal axis angle', (theta * 180 / Math.PI).toFixed(1), 
-              'degrees, aspect ratio', (width/height).toFixed(2));
-  
-  // Define baseline regions in rotated space (top and bottom 10% of height)
-  const baselineThickness = height * 0.10;
-  const topRegionMax = minY + baselineThickness;
-  const bottomRegionMin = maxY - baselineThickness;
-  
-  // Find points in top and bottom regions using ROTATED coordinates
-  const topIndices = new Set<number>();
-  const bottomIndices = new Set<number>();
-  
-  for (let i = 0; i < rotated.length; i++) {
-    const rp = rotated[i];
-    if (rp.y <= topRegionMax) {
-      topIndices.add(i);
-    } else if (rp.y >= bottomRegionMin) {
-      bottomIndices.add(i);
-    }
-  }
-  
-  // Need enough points in each region to be text-like
-  const minRegionPoints = Math.floor(points.length * 0.05);
-  if (topIndices.size < minRegionPoints || bottomIndices.size < minRegionPoints) {
-    return points;
-  }
-  
-  // Check if top/bottom regions are relatively flat in rotated space
-  const topYValues = Array.from(topIndices).map(i => rotated[i].y);
-  const bottomYValues = Array.from(bottomIndices).map(i => rotated[i].y);
-  
-  const topMean = topYValues.reduce((a, b) => a + b, 0) / topYValues.length;
-  const bottomMean = bottomYValues.reduce((a, b) => a + b, 0) / bottomYValues.length;
-  
-  const topStdDev = Math.sqrt(topYValues.reduce((sum, y) => sum + (y - topMean) ** 2, 0) / topYValues.length);
-  const bottomStdDev = Math.sqrt(bottomYValues.reduce((sum, y) => sum + (y - bottomMean) ** 2, 0) / bottomYValues.length);
-  
-  // Threshold: if std dev is less than 6% of height, it's text-like
-  const flatnessThreshold = height * 0.06;
-  const topIsFlat = topStdDev < flatnessThreshold;
-  const bottomIsFlat = bottomStdDev < flatnessThreshold;
-  
-  if (!topIsFlat && !bottomIsFlat) {
-    // Not text-like enough
-    return points;
-  }
-  
-  console.log('[Worker] Text baseline detection: angle', (theta * 180 / Math.PI).toFixed(1), 'deg,',
-              'ratio', (width/height).toFixed(2), 
-              'top stddev', topStdDev.toFixed(1), 'bottom stddev', bottomStdDev.toFixed(1));
-  
-  // Work in rotated space for smoothing
-  let resultRotated = [...rotated];
-  const n = resultRotated.length;
-  
-  // SAFEGUARD: Only apply smoothing that moves points OUTWARD, never inward
-  // In rotated space: top region should only move points more negative (up/out)
-  // bottom region should only move points more positive (down/out)
-  
-  // Step 1: Apply moving average smoothing to baseline regions (in rotated space)
-  const windowSize = Math.max(3, Math.floor(n / 150));
-  
-  const smoothedRotated = [...resultRotated];
-  for (let i = 0; i < n; i++) {
-    const inTopRegion = topIsFlat && topIndices.has(i);
-    const inBottomRegion = bottomIsFlat && bottomIndices.has(i);
-    
-    if (inTopRegion || inBottomRegion) {
-      // Apply moving average to rotated Y coordinate
-      let sumY = 0;
-      let count = 0;
-      
-      for (let j = -windowSize; j <= windowSize; j++) {
-        const idx = (i + j + n) % n;
-        const neighborInSameRegion = (inTopRegion && topIndices.has(idx)) || 
-                                      (inBottomRegion && bottomIndices.has(idx));
-        if (neighborInSameRegion) {
-          sumY += resultRotated[idx].y;
-          count++;
-        }
-      }
-      
-      if (count > 1) {
-        const avgY = sumY / count;
-        const newY = resultRotated[i].y * 0.5 + avgY * 0.5;
-        
-        // SAFEGUARD: Only allow outward movement
-        // Top region: only allow newY <= currentY (moving up/outward)
-        // Bottom region: only allow newY >= currentY (moving down/outward)
-        const currentY = resultRotated[i].y;
-        if (inTopRegion && newY <= currentY) {
-          smoothedRotated[i] = { x: resultRotated[i].x, y: newY };
-        } else if (inBottomRegion && newY >= currentY) {
-          smoothedRotated[i] = { x: resultRotated[i].x, y: newY };
-        }
-        // Otherwise keep original point (don't move inward)
-      }
-    }
-  }
-  resultRotated = smoothedRotated;
-  
-  // Step 2: Apply baseline flattening in rotated space
-  // ONLY flatten if it moves outward
-  const blendFactor = 0.4;
-  
-  if (topIsFlat) {
-    const targetTopY = topMean;
-    const topIdxArray = Array.from(topIndices);
-    for (let i = 0; i < topIdxArray.length; i++) {
-      const idx = topIdxArray[i];
-      const currentY = resultRotated[idx].y;
-      if (currentY <= minY + baselineThickness * 0.4) {
-        const newY = currentY + (targetTopY - currentY) * blendFactor;
-        // Only apply if moving outward (more negative for top)
-        if (newY <= currentY) {
-          resultRotated[idx] = { x: resultRotated[idx].x, y: newY };
-        }
-      }
-    }
-  }
-  
-  if (bottomIsFlat) {
-    const targetBottomY = bottomMean;
-    const bottomIdxArray = Array.from(bottomIndices);
-    for (let i = 0; i < bottomIdxArray.length; i++) {
-      const idx = bottomIdxArray[i];
-      const currentY = resultRotated[idx].y;
-      if (currentY >= maxY - baselineThickness * 0.4) {
-        const newY = currentY + (targetBottomY - currentY) * blendFactor;
-        // Only apply if moving outward (more positive for bottom)
-        if (newY >= currentY) {
-          resultRotated[idx] = { x: resultRotated[idx].x, y: newY };
-        }
-      }
-    }
-  }
-  
-  // Step 3: Rotate back to original coordinate space
-  const result: Point[] = resultRotated.map(rp => ({
-    x: rp.x * cosT - rp.y * sinT + cx,
-    y: rp.x * sinT + rp.y * cosT + cy
-  }));
-  
-  console.log('[Worker] Applied text baseline flattening with moving average smoothing (tilted text support)');
-  return result;
-}
-
-/**
- * Smart point optimization that:
- * 1. Removes redundant points on straight lines (sharper lines)
- * 2. Preserves optimal point spacing on curves (smoother curves)
- * Uses curvature analysis to decide which points to keep
- */
-function optimizePathPoints(points: Point[], dpi: number): Point[] {
-  if (points.length < 20) return points;
-  
-  const n = points.length;
-  const result: Point[] = [];
-  
-  // Curvature threshold: points with curvature below this are on "straight" segments
-  // Points with curvature above this are on curves
-  const straightThreshold = 0.02; // Low curvature = straight line
-  
-  // Calculate curvature at each point
-  const curvatures: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    // Vectors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y) || 0.001;
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y) || 0.001;
-    
-    // Normalize
-    const n1x = v1x / len1, n1y = v1y / len1;
-    const n2x = v2x / len2, n2y = v2y / len2;
-    
-    // Cross product magnitude = sin(angle) = curvature indicator
-    const cross = Math.abs(n1x * n2y - n1y * n2x);
-    curvatures.push(cross);
-  }
-  
-  // Mark points to keep
-  const keep = new Array(n).fill(false);
-  
-  // Always keep first point
-  keep[0] = true;
-  
-  let lastKeptIdx = 0;
-  
-  for (let i = 1; i < n; i++) {
-    const curvature = curvatures[i];
-    const distFromLastKept = Math.sqrt(
-      (points[i].x - points[lastKeptIdx].x) ** 2 + 
-      (points[i].y - points[lastKeptIdx].y) ** 2
-    );
-    
-    // Minimum distance between points (in pixels) - adaptive based on DPI
-    const minDistStraight = dpi * 0.03; // ~9 pixels at 300 DPI for straight lines
-    const minDistCurve = dpi * 0.008;   // ~2.4 pixels at 300 DPI for curves
-    
-    if (curvature > straightThreshold) {
-      // This is a curve point - keep it if far enough from last kept
-      if (distFromLastKept >= minDistCurve) {
-        keep[i] = true;
-        lastKeptIdx = i;
-      }
-    } else {
-      // This is a straight segment point - keep only if far enough
-      // Also check if the next high-curvature point is coming up
-      let nearCurve = false;
-      for (let j = i + 1; j < Math.min(i + 5, n); j++) {
-        if (curvatures[j] > straightThreshold * 2) {
-          nearCurve = true;
-          break;
-        }
-      }
-      
-      if (nearCurve && distFromLastKept >= minDistCurve) {
-        // Near a curve, use tighter spacing
-        keep[i] = true;
-        lastKeptIdx = i;
-      } else if (distFromLastKept >= minDistStraight) {
-        // On a straight segment, use wider spacing
-        keep[i] = true;
-        lastKeptIdx = i;
-      }
-    }
-  }
-  
-  // Collect kept points
-  for (let i = 0; i < n; i++) {
-    if (keep[i]) {
-      result.push(points[i]);
-    }
-  }
-  
-  // Ensure we didn't remove too many points
-  if (result.length < 10) {
-    return points; // Fallback if too aggressive
-  }
-  
-  const reduction = ((n - result.length) / n * 100).toFixed(1);
-  console.log('[Worker] Point optimization: reduced from', n, 'to', result.length, 'points (' + reduction + '% reduction)');
-  
-  // Apply smoothing pass to eliminate zigzags
-  const smoothed = smoothPathForCutting(result);
-  
-  return smoothed;
-}
-
-/**
- * Smooth the path to eliminate zigzags for clean cutting
- * Uses Chaikin's corner cutting algorithm for smooth curves
- */
-function smoothPathForCutting(points: Point[]): Point[] {
-  if (points.length < 4) return points;
-  
-  // Apply rope pulling to smooth small deviations without moving overall position
-  let smoothed = ropePullSmooth(points, 3); // 3 passes
-  
-  // Apply Chaikin smoothing for additional curve refinement
-  smoothed = chaikinSmooth(smoothed);
-  
-  // Then apply a light moving average to further smooth any remaining zigzags
-  smoothed = movingAverageSmooth(smoothed, 3);
-  
-  console.log('[Worker] Path smoothing: final point count', smoothed.length);
-  return smoothed;
-}
-
-/**
- * Rope pulling smoothing - gently pulls points toward the line between neighbors
- * Only affects small deviations, preserving the overall shape
- * Like pulling a rope taut - removes slack without changing endpoints
- */
-function ropePullSmooth(points: Point[], passes: number): Point[] {
-  if (points.length < 5) return points;
-  
-  let result = [...points];
-  const n = result.length;
-  
-  for (let pass = 0; pass < passes; pass++) {
-    const newPoints = [...result];
-    
-    for (let i = 0; i < n; i++) {
-      const prev = result[(i - 1 + n) % n];
-      const curr = result[i];
-      const next = result[(i + 1) % n];
-      
-      // Calculate the ideal position (midpoint between neighbors on the line)
-      const idealX = (prev.x + next.x) / 2;
-      const idealY = (prev.y + next.y) / 2;
-      
-      // Calculate deviation from the ideal straight line
-      const deviationX = curr.x - idealX;
-      const deviationY = curr.y - idealY;
-      const deviation = Math.sqrt(deviationX * deviationX + deviationY * deviationY);
-      
-      // Calculate the distance between prev and next (segment length)
-      const segmentLen = Math.sqrt((next.x - prev.x) ** 2 + (next.y - prev.y) ** 2);
-      
-      // Only smooth if deviation is small relative to segment length
-      // This preserves intentional corners and curves
-      const maxDeviationRatio = 0.15; // Max 15% deviation from straight line
-      
-      if (deviation < segmentLen * maxDeviationRatio && deviation > 0.1) {
-        // Pull toward the ideal position with decreasing strength
-        // Smaller deviations get pulled more strongly
-        const pullStrength = 0.3 * (1 - deviation / (segmentLen * maxDeviationRatio));
-        
-        newPoints[i] = {
-          x: curr.x - deviationX * pullStrength,
-          y: curr.y - deviationY * pullStrength
-        };
-      }
-    }
-    
-    result = newPoints;
-  }
-  
-  return result;
-}
-
-/**
- * Chaikin's corner cutting algorithm
- * Creates smoother curves by cutting corners
- */
-function chaikinSmooth(points: Point[]): Point[] {
-  if (points.length < 3) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  
-  for (let i = 0; i < n; i++) {
-    const p0 = points[i];
-    const p1 = points[(i + 1) % n];
-    
-    // Create two new points at 25% and 75% along each segment
-    result.push({
-      x: p0.x * 0.75 + p1.x * 0.25,
-      y: p0.y * 0.75 + p1.y * 0.25
-    });
-    result.push({
-      x: p0.x * 0.25 + p1.x * 0.75,
-      y: p0.y * 0.25 + p1.y * 0.75
-    });
   }
   
   return result;
