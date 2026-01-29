@@ -272,16 +272,31 @@ function processContour(
   // =============================================================================
   // VECTOR OFFSETTING APPROACH (PyClipper / Vatti clipping algorithm)
   // =============================================================================
-  // 1. Trace the ORIGINAL tight contour from the raw image mask (no pixel dilation)
-  // 2. Convert to Clipper path format
-  // 3. Use ClipperOffset with JT_ROUND for perfect vector offsetting
-  // 4. Straight lines stay straight, corners are perfectly rounded
+  // 1. Apply morphological closing to unite separate objects (letters, etc.)
+  // 2. Fill all interior holes/gaps to create solid silhouette
+  // 3. Trace the unified contour
+  // 4. Use ClipperOffset with JT_ROUND for perfect vector offsetting
   // =============================================================================
   
-  // Step 1: Trace original tight contour from hi-res mask (NO dilation yet)
-  // First fill any interior holes
-  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
-  const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+  // Step 1: Apply morphological closing to unite separate objects
+  // Dilate → Fill → creates a unified shape from all parts of the design
+  // Use autoBridging threshold (scaled to 4x hi-res) or minimum 0.02" bridge
+  const minBridgeInches = 0.02; // Always bridge objects within 0.02" of each other
+  const bridgeInches = Math.max(autoBridgeInches, minBridgeInches);
+  const bridgePixelsHiRes = Math.round(bridgeInches * effectiveDPI * SUPER_SAMPLE);
+  
+  console.log('[Worker] Applying morphological closing to unite objects, bridge radius:', bridgePixelsHiRes, 'px (hi-res)');
+  
+  // Dilate to bridge nearby objects
+  const dilatedMask = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, bridgePixelsHiRes);
+  const dilatedWidth = hiResWidth + bridgePixelsHiRes * 2;
+  const dilatedHeight = hiResHeight + bridgePixelsHiRes * 2;
+  
+  // Fill all interior holes in the dilated mask
+  const filledDilatedMask = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+  
+  // Trace the unified contour from the filled dilated mask
+  const originalContour = traceBoundary(filledDilatedMask, dilatedWidth, dilatedHeight);
   
   if (originalContour.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -290,12 +305,14 @@ function processContour(
   postProgress(40);
   
   // Downscale to 1x coordinates for vector processing
+  // Account for the dilation offset: subtract bridgePixelsHiRes to get back to original image coordinates
+  const bridgePixels1x = bridgePixelsHiRes / SUPER_SAMPLE;
   let tightContour = originalContour.map(p => ({
-    x: p.x / SUPER_SAMPLE,
-    y: p.y / SUPER_SAMPLE
+    x: (p.x - bridgePixelsHiRes) / SUPER_SAMPLE,
+    y: (p.y - bridgePixelsHiRes) / SUPER_SAMPLE
   }));
   
-  console.log('[Worker] Original tight contour:', tightContour.length, 'points');
+  console.log('[Worker] Unified contour after morphological closing:', tightContour.length, 'points');
   
   // Step 2: Skip RDP simplification - it can cut across concave areas
   // Clipper's JT_ROUND already produces clean vector output
