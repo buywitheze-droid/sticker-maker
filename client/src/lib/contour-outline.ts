@@ -2253,25 +2253,30 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Smooth the contour to reduce jagged edges from alpha tracing
-    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
-    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    // Use new curve fitting algorithm for smoother bezier curves
+    const curveFitResult = fitCurvesToPath(pathPoints, 0.4, 0.01);
+    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', pathPoints.length, 'points');
     
     // Guard for empty/degenerate paths
-    if (smoothedPath.length < 3) {
+    if (curveFitResult.segments.length < 1) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts to', curveFitResult.segments.length, 'bezier segments');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so minDistance needs to be in inches too
-      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
-      const minDistanceInches = 70 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
+      // Convert BezierSegment[] to PathSegment[] format
+      const pathSegments: PathSegment[] = [];
+      pathSegments.push({ type: 'move', point: curveFitResult.segments[0].start });
+      for (const seg of curveFitResult.segments) {
+        if (seg.type === 'line') {
+          pathSegments.push({ type: 'line', point: seg.end });
+        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2) {
+          pathSegments.push({ type: 'curve', cp1: seg.cp1, cp2: seg.cp2, end: seg.end });
+        }
+      }
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2810,25 +2815,30 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Smooth the contour to reduce jagged edges from alpha tracing
-    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
-    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    // Use new curve fitting algorithm for smoother bezier curves
+    const curveFitResult = fitCurvesToPath(pathPoints, 0.4, 0.01);
+    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', pathPoints.length, 'points');
     
     // Guard for empty/degenerate paths
-    if (smoothedPath.length < 3) {
+    if (curveFitResult.segments.length < 1) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts to', curveFitResult.segments.length, 'bezier segments');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so minDistance needs to be in inches too
-      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
-      const minDistanceInches = 70 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
+      // Convert BezierSegment[] to PathSegment[] format
+      const pathSegments: PathSegment[] = [];
+      pathSegments.push({ type: 'move', point: curveFitResult.segments[0].start });
+      for (const seg of curveFitResult.segments) {
+        if (seg.type === 'line') {
+          pathSegments.push({ type: 'line', point: seg.end });
+        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2) {
+          pathSegments.push({ type: 'curve', cp1: seg.cp1, cp2: seg.cp2, end: seg.end });
+        }
+      }
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
