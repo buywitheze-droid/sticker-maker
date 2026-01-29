@@ -35,28 +35,27 @@ function detectPathCorners(points: PathPoint[]): boolean[] {
     angleDeltas[i] = delta;
   }
   
-  const avgDelta = angleDeltas.reduce((a, b) => a + b, 0) / n;
+  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
+  const medianDelta = sortedDeltas[Math.floor(n / 2)];
   
   for (let i = 0; i < n; i++) {
-    const windowSize = 3;
-    let neighborSum = 0;
-    let neighborCount = 0;
+    const currentDelta = angleDeltas[i];
     
+    const windowSize = 2;
+    const neighbors: number[] = [];
     for (let j = -windowSize; j <= windowSize; j++) {
       if (j === 0) continue;
       const idx = (i + j + n) % n;
-      neighborSum += angleDeltas[idx];
-      neighborCount++;
+      neighbors.push(angleDeltas[idx]);
     }
+    neighbors.sort((a, b) => a - b);
+    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
     
-    const neighborAvg = neighborSum / neighborCount;
-    const currentDelta = angleDeltas[i];
+    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
+    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
+    const isSharpAngle = currentDelta > Math.PI / 8;
     
-    const isAbruptChange = currentDelta > neighborAvg * 2.0 && currentDelta > 0.3;
-    const isSignificantAngle = currentDelta > Math.PI / 6;
-    const isRelativelySharp = currentDelta > avgDelta * 1.8;
-    
-    isCorner[i] = isAbruptChange || (isSignificantAngle && isRelativelySharp);
+    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
   }
   
   return isCorner;
@@ -75,17 +74,28 @@ function buildCornerAwarePdfPath(pathPoints: PathPoint[], scaleFactor: number = 
   pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
   
   for (let i = 0; i < n; i++) {
-    const p1 = pathPoints[i];
-    const p2 = pathPoints[(i + 1) % n];
+    const currIdx = i;
+    const nextIdx = (i + 1) % n;
+    const nextNextIdx = (i + 2) % n;
     
-    const endX = p2.x * scaleFactor;
-    const endY = p2.y * scaleFactor;
+    const curr = pathPoints[currIdx];
+    const next = pathPoints[nextIdx];
     
-    if (isCorner[i] || isCorner[(i + 1) % n]) {
+    const endX = next.x * scaleFactor;
+    const endY = next.y * scaleFactor;
+    
+    const currIsCorner = isCorner[currIdx];
+    const nextIsCorner = isCorner[nextIdx];
+    const nextNextIsCorner = isCorner[nextNextIdx];
+    
+    if (currIsCorner || nextIsCorner || nextNextIsCorner) {
       pathOps += `${endX.toFixed(4)} ${endY.toFixed(4)} l\n`;
     } else {
-      const p0 = pathPoints[(i - 1 + n) % n];
-      const p3 = pathPoints[(i + 2) % n];
+      const prevIdx = (i - 1 + n) % n;
+      const p0 = pathPoints[prevIdx];
+      const p1 = curr;
+      const p2 = next;
+      const p3 = pathPoints[nextNextIdx];
       
       const tension = 0.5;
       const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * scaleFactor;

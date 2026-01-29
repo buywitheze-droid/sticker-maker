@@ -440,12 +440,19 @@ function normalizeAngle(angle: number): number {
   return angle;
 }
 
+function getSegmentLength(p1: Point, p2: Point): number {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 function detectCorners(contour: Point[]): boolean[] {
   const n = contour.length;
   if (n < 3) return new Array(n).fill(false);
   
   const isCorner: boolean[] = new Array(n).fill(false);
   const angleDeltas: number[] = new Array(n).fill(0);
+  const segmentLengths: number[] = new Array(n).fill(0);
   
   for (let i = 0; i < n; i++) {
     const prev = contour[(i - 1 + n) % n];
@@ -456,30 +463,30 @@ function detectCorners(contour: Point[]): boolean[] {
     const outAngle = calculateAngle(curr, next);
     const delta = Math.abs(normalizeAngle(outAngle - inAngle));
     angleDeltas[i] = delta;
+    segmentLengths[i] = getSegmentLength(curr, next);
   }
   
-  const avgDelta = angleDeltas.reduce((a, b) => a + b, 0) / n;
+  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
+  const medianDelta = sortedDeltas[Math.floor(n / 2)];
   
   for (let i = 0; i < n; i++) {
-    const windowSize = 3;
-    let neighborSum = 0;
-    let neighborCount = 0;
+    const currentDelta = angleDeltas[i];
     
+    const windowSize = 2;
+    const neighbors: number[] = [];
     for (let j = -windowSize; j <= windowSize; j++) {
       if (j === 0) continue;
       const idx = (i + j + n) % n;
-      neighborSum += angleDeltas[idx];
-      neighborCount++;
+      neighbors.push(angleDeltas[idx]);
     }
+    neighbors.sort((a, b) => a - b);
+    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
     
-    const neighborAvg = neighborSum / neighborCount;
-    const currentDelta = angleDeltas[i];
+    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
+    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
+    const isSharpAngle = currentDelta > Math.PI / 8;
     
-    const isAbruptChange = currentDelta > neighborAvg * 2.0 && currentDelta > 0.3;
-    const isSignificantAngle = currentDelta > Math.PI / 6;
-    const isRelativelySharp = currentDelta > avgDelta * 1.8;
-    
-    isCorner[i] = isAbruptChange || (isSignificantAngle && isRelativelySharp);
+    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
   }
   
   return isCorner;
@@ -499,24 +506,31 @@ function drawContour(ctx: CanvasRenderingContext2D, contour: Point[], color: str
   ctx.shadowOffsetY = 1;
 
   const isCorner = detectCorners(contour);
+  const n = contour.length;
 
   ctx.beginPath();
   ctx.moveTo(contour[0].x + offsetX, contour[0].y + offsetY);
   
-  for (let i = 1; i < contour.length; i++) {
+  for (let i = 0; i < n; i++) {
     const curr = contour[i];
-    const prev = contour[i - 1];
+    const nextIdx = (i + 1) % n;
+    const next = contour[nextIdx];
+    const prevIdx = (i - 1 + n) % n;
+    const nextNextIdx = (i + 2) % n;
     
-    if (isCorner[i] || isCorner[i - 1]) {
-      ctx.lineTo(curr.x + offsetX, curr.y + offsetY);
+    const currIsCorner = isCorner[i];
+    const nextIsCorner = isCorner[nextIdx];
+    
+    if (currIsCorner || nextIsCorner) {
+      ctx.lineTo(next.x + offsetX, next.y + offsetY);
     } else {
-      if (i < contour.length - 1) {
-        const next = contour[i + 1];
-        const xc = (curr.x + next.x) / 2 + offsetX;
-        const yc = (curr.y + next.y) / 2 + offsetY;
-        ctx.quadraticCurveTo(curr.x + offsetX, curr.y + offsetY, xc, yc);
+      const nextNext = contour[nextNextIdx];
+      if (!isCorner[nextNextIdx]) {
+        const xc = (next.x + nextNext.x) / 2 + offsetX;
+        const yc = (next.y + nextNext.y) / 2 + offsetY;
+        ctx.quadraticCurveTo(next.x + offsetX, next.y + offsetY, xc, yc);
       } else {
-        ctx.lineTo(curr.x + offsetX, curr.y + offsetY);
+        ctx.lineTo(next.x + offsetX, next.y + offsetY);
       }
     }
   }
