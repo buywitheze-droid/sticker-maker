@@ -247,8 +247,8 @@ function processContour(
   
   // Apply box blur to alpha channel to smooth out anti-aliasing artifacts
   // This makes straight edges with slight transparency variations appear cleaner
-  // Radius of 3px at super-sampled resolution (= 0.75px at original resolution)
-  const blurRadius = 3;
+  // Radius of 2px at super-sampled resolution (= 0.5px at original resolution)
+  const blurRadius = 2;
   const smoothedAlpha = boxBlurAlpha(hiResAlpha, hiResWidth, hiResHeight, blurRadius);
   console.log('[Worker] Applied alpha blur radius:', blurRadius, 'px');
   
