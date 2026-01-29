@@ -802,6 +802,67 @@ function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
   return simplified;
 }
 
+// Chaikin's corner-cutting algorithm to smooth pixel-step jaggies in PDF export
+// Replaces each shallow-angle corner with two points for smooth curves
+// Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
+function smoothPolyChaikinForPDF(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
+  if (points.length < 3) return points;
+  
+  let result = [...points];
+  
+  for (let iter = 0; iter < iterations; iter++) {
+    const newPoints: Point[] = [];
+    const n = result.length;
+    
+    for (let i = 0; i < n; i++) {
+      const prev = result[(i - 1 + n) % n];
+      const curr = result[i];
+      const next = result[(i + 1) % n];
+      
+      // Calculate angle at current point
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+      
+      const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      
+      // Calculate angle between vectors (0° = same direction, 180° = opposite)
+      let angleDegrees = 180; // default to straight line
+      if (len1 > 0.0001 && len2 > 0.0001) {
+        const dot = v1x * v2x + v1y * v2y;
+        const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+        angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
+      }
+      
+      // Deviation from straight line (0° = straight, 180° = U-turn)
+      const deviation = 180 - angleDegrees;
+      
+      // If sharp corner (deviation > threshold), preserve the original point
+      if (deviation > sharpAngleThreshold) {
+        newPoints.push(curr);
+      } else {
+        // Apply Chaikin's corner cutting for shallow angles
+        // Q = 0.75 * P_i + 0.25 * P_{i+1} (cut 25% from this point toward next)
+        const qx = 0.75 * curr.x + 0.25 * next.x;
+        const qy = 0.75 * curr.y + 0.25 * next.y;
+        
+        // R = 0.25 * P_i + 0.75 * P_{i+1} (cut 75% from this point toward next)
+        const rx = 0.25 * curr.x + 0.75 * next.x;
+        const ry = 0.25 * curr.y + 0.75 * next.y;
+        
+        newPoints.push({ x: qx, y: qy });
+        newPoints.push({ x: rx, y: ry });
+      }
+    }
+    
+    result = newPoints;
+  }
+  
+  return result;
+}
+
 // Prune short segments that create tiny "jogs" on flat edges
 // Only removes segments if the angle change is shallow (preserves sharp corners)
 function pruneShortSegments(points: Point[], minLength: number = 4, maxAngleDegrees: number = 30): Point[] {
@@ -2296,15 +2357,16 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // NOTE: Removed gaussianSmoothContour - RDP already straightened edges
-    // Gaussian smoothing was reintroducing waves on flat edges
-    const smoothedPath = pathPoints;
+    // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
+    // This removes staircase artifacts while preserving sharp corners (>60°)
+    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
+    console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts (no post-smoothing)');
+      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (Chaikin smoothed)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
@@ -2864,15 +2926,16 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // NOTE: Removed gaussianSmoothContour - RDP already straightened edges
-    // Gaussian smoothing was reintroducing waves on flat edges
-    const smoothedPath = pathPoints;
+    // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
+    // This removes staircase artifacts while preserving sharp corners (>60°)
+    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
+    console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts (no post-smoothing)');
+      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (Chaikin smoothed)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
