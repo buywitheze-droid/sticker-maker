@@ -317,10 +317,14 @@ function processContour(
   console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
   console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
   
-  // RDP on high-precision coordinates will produce perfectly straight lines
-  // Tolerance scaled for the higher precision data
-  let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
-  console.log('[Worker] After RDP:', smoothedPath.length, 'points');
+  // RDP simplifies diagonal lines by removing unnecessary intermediate points
+  // Higher tolerance = straighter diagonals with fewer jagged segments
+  // Use DPI-proportional tolerance: 0.005" deviation is invisible at print scale
+  // This scales correctly: at 150 DPI = 0.75px, at 300 DPI = 1.5px, at 600 DPI = 3px
+  const rdpToleranceInches = 0.005;
+  const rdpTolerance = rdpToleranceInches * effectiveDPI;
+  let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
+  console.log('[Worker] After RDP (tolerance', rdpTolerance.toFixed(2), 'px /', rdpToleranceInches, 'in):', smoothedPath.length, 'points');
   
   // Prune short segments that create tiny jogs on flat edges
   smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
