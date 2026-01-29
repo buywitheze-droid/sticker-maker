@@ -431,12 +431,11 @@ function processContour(
   postProgress(60);
   
   // Step 1: Apply Potrace-style curve fitting to detect straight lines from stair-step pixels
-  // This converts jagged pixel edges into clean diagonal/straight lines while preserving true corners
-  // Line tolerance of 1.5 pixels allows diagonal stair-steps to be detected as lines
-  const fittedPath = fitCurvesToPath(rawBoundaryPath, 1.5);
+  // Use very tight tolerance (0.7 pixels) to only merge true stair-step diagonals, not corners
+  const fittedPath = fitCurvesToPath(rawBoundaryPath, 0.7);
   
-  // Step 2: Light cleanup with Clipper to remove any remaining micro-artifacts
-  const simplifiedPath = simplifyPolygonClipper(fittedPath, 0.1);
+  // Step 2: Minimal cleanup - tolerance 0.05 to preserve all corner detail
+  const simplifiedPath = simplifyPolygonClipper(fittedPath, 0.05);
   
   postProgress(70);
   
