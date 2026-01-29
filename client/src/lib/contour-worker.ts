@@ -615,6 +615,9 @@ function traceBoundary(mask: Uint8Array, width: number, height: number, method: 
     case 'contour-following':
       result = traceBoundaryContourFollowing(mask, width, height);
       break;
+    case 'potrace':
+      result = traceBoundaryPotrace(mask, width, height);
+      break;
     default:
       result = traceBoundaryMooreNeighbor(mask, width, height);
   }
@@ -811,6 +814,206 @@ function isOnBoundary4(mask: Uint8Array, width: number, height: number, x: numbe
     }
   }
   return false;
+}
+
+// POTRACE: Industry-standard bitmap-to-vector tracing algorithm
+// Produces smooth bezier curves by fitting optimal paths to boundary points
+// Based on Peter Selinger's Potrace algorithm
+function traceBoundaryPotrace(mask: Uint8Array, width: number, height: number): Point[] {
+  // Step 1: Get raw boundary using Moore-Neighbor (high detail)
+  const rawPath = traceBoundaryMooreNeighbor(mask, width, height);
+  if (rawPath.length < 4) return rawPath;
+  
+  // Step 2: Find straight segments and corners (Potrace "polygon" step)
+  const polygon = findOptimalPolygon(rawPath);
+  if (polygon.length < 3) return rawPath;
+  
+  // Step 3: Fit bezier curves between corners (Potrace "curve" step)
+  const bezierPath = fitBezierCurves(polygon, rawPath);
+  
+  return bezierPath;
+}
+
+// Find optimal polygon that approximates the path
+// Uses dynamic programming approach inspired by Potrace
+function findOptimalPolygon(path: Point[]): number[] {
+  const n = path.length;
+  if (n < 4) return [0, 1, 2];
+  
+  // Compute cumulative sums for efficient line fitting
+  const x: number[] = [];
+  const y: number[] = [];
+  const xy: number[] = [];
+  const x2: number[] = [];
+  const y2: number[] = [];
+  
+  let sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
+  for (let i = 0; i < n; i++) {
+    sx += path[i].x;
+    sy += path[i].y;
+    sxy += path[i].x * path[i].y;
+    sx2 += path[i].x * path[i].x;
+    sy2 += path[i].y * path[i].y;
+    x.push(sx);
+    y.push(sy);
+    xy.push(sxy);
+    x2.push(sx2);
+    y2.push(sy2);
+  }
+  
+  // Penalty function for segment from i to j
+  const penalty = (i: number, j: number): number => {
+    const len = j - i + 1;
+    if (len < 2) return 0;
+    
+    // Get cumulative sums for range
+    const sumX = i === 0 ? x[j] : x[j] - x[i - 1];
+    const sumY = i === 0 ? y[j] : y[j] - y[i - 1];
+    const sumXY = i === 0 ? xy[j] : xy[j] - xy[i - 1];
+    const sumX2 = i === 0 ? x2[j] : x2[j] - x2[i - 1];
+    const sumY2 = i === 0 ? y2[j] : y2[j] - y2[i - 1];
+    
+    // Compute least-squares line fit error
+    const meanX = sumX / len;
+    const meanY = sumY / len;
+    const varX = sumX2 / len - meanX * meanX;
+    const varY = sumY2 / len - meanY * meanY;
+    const covXY = sumXY / len - meanX * meanY;
+    
+    // Total variance minus explained variance
+    const totalVar = varX + varY;
+    if (totalVar < 0.001) return 0;
+    
+    const r2 = (covXY * covXY) / Math.max(varX * varY, 0.001);
+    return totalVar * (1 - Math.min(r2, 1)) * len;
+  };
+  
+  // Find corner candidates using angle change
+  const corners: number[] = [0];
+  const threshold = Math.PI / 6; // 30 degrees
+  
+  for (let i = 1; i < n - 1; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    
+    if (len1 > 0.001 && len2 > 0.001) {
+      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      if (angle > threshold) {
+        corners.push(i);
+      }
+    }
+  }
+  
+  // Ensure we have enough corners
+  if (corners.length < 3) {
+    // Add evenly spaced corners
+    const step = Math.floor(n / 4);
+    corners.length = 0;
+    for (let i = 0; i < n; i += step) {
+      corners.push(i);
+    }
+  }
+  
+  return corners;
+}
+
+// Fit bezier curves between polygon corners
+function fitBezierCurves(cornerIndices: number[], path: Point[]): Point[] {
+  const n = path.length;
+  const result: Point[] = [];
+  const numCorners = cornerIndices.length;
+  
+  for (let c = 0; c < numCorners; c++) {
+    const startIdx = cornerIndices[c];
+    const endIdx = cornerIndices[(c + 1) % numCorners];
+    
+    // Get segment points
+    const segmentPoints: Point[] = [];
+    if (endIdx > startIdx) {
+      for (let i = startIdx; i <= endIdx; i++) {
+        segmentPoints.push(path[i]);
+      }
+    } else {
+      // Wraps around
+      for (let i = startIdx; i < n; i++) {
+        segmentPoints.push(path[i]);
+      }
+      for (let i = 0; i <= endIdx; i++) {
+        segmentPoints.push(path[i]);
+      }
+    }
+    
+    if (segmentPoints.length < 2) continue;
+    
+    // Fit cubic bezier and sample it
+    const bezierPoints = fitAndSampleBezier(segmentPoints);
+    
+    // Add to result (skip first point to avoid duplicates except for first segment)
+    const startAt = c === 0 ? 0 : 1;
+    for (let i = startAt; i < bezierPoints.length; i++) {
+      result.push(bezierPoints[i]);
+    }
+  }
+  
+  return result.length >= 3 ? result : path;
+}
+
+// Fit a cubic bezier curve to points and sample it
+function fitAndSampleBezier(points: Point[]): Point[] {
+  const n = points.length;
+  if (n < 2) return points;
+  if (n === 2) return points;
+  
+  // Start and end points
+  const p0 = points[0];
+  const p3 = points[n - 1];
+  
+  // Compute tangent directions
+  const t0 = { x: points[Math.min(1, n - 1)].x - p0.x, y: points[Math.min(1, n - 1)].y - p0.y };
+  const t3 = { x: p3.x - points[Math.max(0, n - 2)].x, y: p3.y - points[Math.max(0, n - 2)].y };
+  
+  // Normalize tangents
+  const len0 = Math.sqrt(t0.x * t0.x + t0.y * t0.y);
+  const len3 = Math.sqrt(t3.x * t3.x + t3.y * t3.y);
+  
+  if (len0 > 0.001) { t0.x /= len0; t0.y /= len0; }
+  if (len3 > 0.001) { t3.x /= len3; t3.y /= len3; }
+  
+  // Estimate control point distances (chord length parameterization)
+  const chordLen = Math.sqrt((p3.x - p0.x) ** 2 + (p3.y - p0.y) ** 2);
+  const scale = chordLen / 3;
+  
+  // Control points
+  const p1 = { x: p0.x + t0.x * scale, y: p0.y + t0.y * scale };
+  const p2 = { x: p3.x - t3.x * scale, y: p3.y - t3.y * scale };
+  
+  // Sample the bezier curve
+  const numSamples = Math.max(4, Math.ceil(chordLen / 2));
+  const result: Point[] = [];
+  
+  for (let i = 0; i <= numSamples; i++) {
+    const t = i / numSamples;
+    const mt = 1 - t;
+    
+    // Cubic bezier formula: B(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3
+    const x = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
+    const y = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
+    
+    result.push({ x: x + 0.5, y: y + 0.5 });
+  }
+  
+  return result;
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {

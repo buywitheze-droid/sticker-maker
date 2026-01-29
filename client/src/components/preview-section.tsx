@@ -1156,6 +1156,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         {contourDebugSettings.alphaTracingMethod === 'marching-squares' && 'Marching Squares'}
                         {contourDebugSettings.alphaTracingMethod === 'moore-neighbor' && 'Moore-Neighbor'}
                         {contourDebugSettings.alphaTracingMethod === 'contour-following' && 'Contour Following'}
+                        {contourDebugSettings.alphaTracingMethod === 'potrace' && 'Potrace'}
                       </div>
                       <div className={contourDebugSettings.gaussianSmoothing ? '' : 'line-through opacity-50'}>Smoothing</div>
                       <div className={contourDebugSettings.cornerDetection ? '' : 'line-through opacity-50'}>Corners</div>

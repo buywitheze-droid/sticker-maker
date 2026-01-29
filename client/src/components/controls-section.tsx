@@ -1021,7 +1021,7 @@ export default function ControlsSection({
                     </Label>
                     <Select
                       value={contourDebugSettings.alphaTracingMethod}
-                      onValueChange={(value) => onContourDebugChange({ alphaTracingMethod: value as 'marching-squares' | 'moore-neighbor' | 'contour-following' })}
+                      onValueChange={(value) => onContourDebugChange({ alphaTracingMethod: value as 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' })}
                     >
                       <SelectTrigger className="w-full h-8 text-xs bg-white border-blue-200">
                         <SelectValue />
@@ -1043,6 +1043,12 @@ export default function ControlsSection({
                           <div className="flex flex-col">
                             <span className="font-medium">Contour Following</span>
                             <span className="text-[10px] text-gray-400">Good for complex shapes</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="potrace">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Potrace</span>
+                            <span className="text-[10px] text-gray-400">Industry-standard bezier curves</span>
                           </div>
                         </SelectItem>
                       </SelectContent>
