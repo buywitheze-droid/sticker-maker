@@ -2357,16 +2357,16 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
-    // This removes staircase artifacts while preserving sharp corners (>60°)
-    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
-    console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
+    // NOTE: Chaikin smoothing is now applied in the worker, so cached data is already smooth
+    // No double-smoothing needed - use pathPoints directly
+    const smoothedPath = pathPoints;
+    console.log('[PDF] Using cached path (Chaikin applied in worker):', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (Chaikin smoothed)');
+      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (from worker cache)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
@@ -2926,16 +2926,16 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
-    // This removes staircase artifacts while preserving sharp corners (>60°)
-    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
-    console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
+    // NOTE: Chaikin smoothing is now applied in the worker, so cached data is already smooth
+    // No double-smoothing needed - use pathPoints directly
+    const smoothedPath = pathPoints;
+    console.log('[PDF] Using cached path (Chaikin applied in worker):', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths
     if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (Chaikin smoothed)');
+      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (from worker cache)');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
