@@ -688,7 +688,230 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   return filled;
 }
 
-function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
+/**
+ * Marching Squares algorithm for sub-pixel accurate contour tracing
+ * Processes the mask in 2x2 cells, producing edge midpoint crossings
+ * This gives sharper axis-aligned edges compared to pixel-by-pixel tracing
+ * 
+ * Standard marching squares with proper edge-following:
+ * - Tracks entry edge to determine exit edge
+ * - Uses lookup table for consistent traversal
+ * - Handles saddle cases based on entry direction
+ */
+function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: number): Point[] {
+  // Find starting cell - look for first cell that crosses the boundary
+  // Start from top-left, find a cell with code 1-14 (not 0 or 15)
+  let startCellX = -1, startCellY = -1;
+  let startEdge = -1; // Which edge we start from (0=top, 1=right, 2=bottom, 3=left)
+  
+  outer: for (let cy = 0; cy < height - 1; cy++) {
+    for (let cx = 0; cx < width - 1; cx++) {
+      const code = getCellCode(mask, width, height, cx, cy);
+      if (code > 0 && code < 15) {
+        startCellX = cx;
+        startCellY = cy;
+        // Determine starting edge based on code
+        startEdge = getStartEdge(code);
+        break outer;
+      }
+    }
+  }
+  
+  if (startCellX === -1) {
+    return traceBoundarySimple(mask, width, height);
+  }
+  
+  const path: Point[] = [];
+  const visited = new Set<string>();
+  
+  let cx = startCellX;
+  let cy = startCellY;
+  let entryEdge = startEdge;
+  
+  const maxSteps = width * height * 2;
+  let steps = 0;
+  
+  do {
+    const key = `${cx},${cy},${entryEdge}`;
+    if (visited.has(key)) break;
+    visited.add(key);
+    
+    const code = getCellCode(mask, width, height, cx, cy);
+    if (code === 0 || code === 15) break; // No boundary
+    
+    // Get exit edge based on code and entry edge
+    const exitEdge = getExitEdge(code, entryEdge);
+    if (exitEdge === -1) break;
+    
+    // Add the crossing point on the exit edge
+    const point = getEdgeMidpoint(cx, cy, exitEdge);
+    
+    // Avoid duplicate consecutive points
+    if (path.length === 0 || 
+        Math.abs(path[path.length - 1].x - point.x) > 0.001 || 
+        Math.abs(path[path.length - 1].y - point.y) > 0.001) {
+      path.push(point);
+    }
+    
+    // Move to adjacent cell through the exit edge
+    // Exit edge becomes entry edge of the new cell (opposite side)
+    switch (exitEdge) {
+      case 0: cy--; entryEdge = 2; break; // Exit top -> enter from bottom
+      case 1: cx++; entryEdge = 3; break; // Exit right -> enter from left
+      case 2: cy++; entryEdge = 0; break; // Exit bottom -> enter from top
+      case 3: cx--; entryEdge = 1; break; // Exit left -> enter from right
+    }
+    
+    // Bounds check
+    if (cx < 0 || cx >= width - 1 || cy < 0 || cy >= height - 1) break;
+    
+    steps++;
+  } while ((cx !== startCellX || cy !== startCellY || entryEdge !== startEdge) && steps < maxSteps);
+  
+  console.log('[MarchingSquares] Traced', path.length, 'points in', steps, 'steps');
+  
+  return path.length >= 3 ? path : traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Get 4-bit cell code for marching squares
+ * Corner layout (standard):
+ *   TL(bit0) --- TR(bit1)
+ *      |           |
+ *   BL(bit3) --- BR(bit2)
+ */
+function getCellCode(mask: Uint8Array, width: number, height: number, cx: number, cy: number): number {
+  // Bounds check
+  if (cx < 0 || cx >= width - 1 || cy < 0 || cy >= height - 1) return 0;
+  
+  const tl = mask[cy * width + cx] === 1 ? 1 : 0;
+  const tr = mask[cy * width + (cx + 1)] === 1 ? 2 : 0;
+  const br = mask[(cy + 1) * width + (cx + 1)] === 1 ? 4 : 0;
+  const bl = mask[(cy + 1) * width + cx] === 1 ? 8 : 0;
+  
+  return tl | tr | br | bl;
+}
+
+/**
+ * Determine initial entry edge for a given cell code
+ * Returns which edge to start tracing from (must be one of the valid edges for this code)
+ * 
+ * Edges: 0=top, 1=right, 2=bottom, 3=left
+ */
+function getStartEdge(code: number): number {
+  // For each code, pick the first valid edge from the edge pair
+  // This must match the edge pairs in getExitEdge
+  const startEdges: Record<number, number> = {
+    1: 3,   // LEFT <-> TOP: start from LEFT
+    2: 0,   // TOP <-> RIGHT: start from TOP
+    3: 3,   // LEFT <-> RIGHT: start from LEFT
+    4: 1,   // RIGHT <-> BOTTOM: start from RIGHT
+    5: 3,   // Saddle LEFT<->BOTTOM: start from LEFT
+    6: 0,   // TOP <-> BOTTOM: start from TOP
+    7: 3,   // LEFT <-> BOTTOM: start from LEFT
+    8: 2,   // BOTTOM <-> LEFT: start from BOTTOM
+    9: 0,   // TOP <-> BOTTOM: start from TOP
+    10: 0,  // Saddle TOP<->LEFT: start from TOP
+    11: 1,  // RIGHT <-> BOTTOM: start from RIGHT
+    12: 1,  // RIGHT <-> LEFT: start from RIGHT
+    13: 0,  // TOP <-> RIGHT: start from TOP
+    14: 0,  // TOP <-> LEFT: start from TOP
+  };
+  return startEdges[code] ?? 0;
+}
+
+/**
+ * Standard marching squares exit edge lookup
+ * Given a cell code and entry edge, returns the exit edge
+ * 
+ * Edges: 0=top, 1=right, 2=bottom, 3=left
+ * 
+ * Each code 1-14 has exactly two edges that the boundary crosses.
+ * If you enter from edge A, you exit from edge B (and vice versa).
+ * 
+ * Canonical edge pairs per code:
+ * Code 1  (TL):        LEFT <-> TOP
+ * Code 2  (TR):        TOP <-> RIGHT
+ * Code 3  (TL+TR):     LEFT <-> RIGHT
+ * Code 4  (BR):        RIGHT <-> BOTTOM
+ * Code 5  (TL+BR):     Saddle - LEFT<->BOTTOM or TOP<->RIGHT
+ * Code 6  (TR+BR):     TOP <-> BOTTOM
+ * Code 7  (TL+TR+BR):  LEFT <-> BOTTOM
+ * Code 8  (BL):        BOTTOM <-> LEFT
+ * Code 9  (TL+BL):     TOP <-> BOTTOM
+ * Code 10 (TR+BL):     Saddle - TOP<->LEFT or RIGHT<->BOTTOM
+ * Code 11 (TL+TR+BL):  RIGHT <-> BOTTOM
+ * Code 12 (BR+BL):     RIGHT <-> LEFT
+ * Code 13 (TL+BR+BL):  TOP <-> RIGHT
+ * Code 14 (TR+BR+BL):  TOP <-> LEFT
+ */
+function getExitEdge(code: number, entryEdge: number): number {
+  // Edge pairs for each code: [edgeA, edgeB]
+  // Entering from edgeA exits from edgeB, and vice versa
+  const edgePairs: Record<number, [number, number]> = {
+    1:  [3, 0],  // LEFT <-> TOP
+    2:  [0, 1],  // TOP <-> RIGHT  
+    3:  [3, 1],  // LEFT <-> RIGHT
+    4:  [1, 2],  // RIGHT <-> BOTTOM
+    6:  [0, 2],  // TOP <-> BOTTOM
+    7:  [3, 2],  // LEFT <-> BOTTOM
+    8:  [2, 3],  // BOTTOM <-> LEFT
+    9:  [0, 2],  // TOP <-> BOTTOM
+    11: [1, 2],  // RIGHT <-> BOTTOM
+    12: [1, 3],  // RIGHT <-> LEFT
+    13: [0, 1],  // TOP <-> RIGHT
+    14: [0, 3],  // TOP <-> LEFT
+  };
+  
+  // Saddle cases need special handling based on entry direction
+  // Code 5: TL+BR - two disjoint boundaries (LEFT-BOTTOM and TOP-RIGHT)
+  // Code 10: TR+BL - two disjoint boundaries (TOP-LEFT and RIGHT-BOTTOM)
+  if (code === 5) {
+    // TL+BR saddle: LEFT<->BOTTOM or TOP<->RIGHT
+    if (entryEdge === 3) return 2;  // LEFT -> BOTTOM
+    if (entryEdge === 2) return 3;  // BOTTOM -> LEFT
+    if (entryEdge === 0) return 1;  // TOP -> RIGHT
+    if (entryEdge === 1) return 0;  // RIGHT -> TOP
+    return -1;
+  }
+  
+  if (code === 10) {
+    // TR+BL saddle: TOP<->LEFT or RIGHT<->BOTTOM
+    if (entryEdge === 0) return 3;  // TOP -> LEFT
+    if (entryEdge === 3) return 0;  // LEFT -> TOP
+    if (entryEdge === 1) return 2;  // RIGHT -> BOTTOM
+    if (entryEdge === 2) return 1;  // BOTTOM -> RIGHT
+    return -1;
+  }
+  
+  const pair = edgePairs[code];
+  if (!pair) return -1;
+  
+  const [edgeA, edgeB] = pair;
+  if (entryEdge === edgeA) return edgeB;
+  if (entryEdge === edgeB) return edgeA;
+  
+  return -1; // Invalid entry edge for this code
+}
+
+/**
+ * Get the midpoint of a cell edge
+ * Edges: 0=top, 1=right, 2=bottom, 3=left
+ */
+function getEdgeMidpoint(cx: number, cy: number, edge: number): Point {
+  switch (edge) {
+    case 0: return { x: cx + 0.5, y: cy };       // top edge midpoint
+    case 1: return { x: cx + 1, y: cy + 0.5 };   // right edge midpoint
+    case 2: return { x: cx + 0.5, y: cy + 1 };   // bottom edge midpoint
+    case 3: return { x: cx, y: cy + 0.5 };       // left edge midpoint
+    default: return { x: cx + 0.5, y: cy + 0.5 }; // center fallback
+  }
+}
+
+/**
+ * Simple Moore neighbor tracing (fallback)
+ */
+function traceBoundarySimple(mask: Uint8Array, width: number, height: number): Point[] {
   let startX = -1, startY = -1;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -742,6 +965,16 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   } while ((x !== startX || y !== startY) && steps < maxSteps);
   
   return path;
+}
+
+/**
+ * Main boundary tracing function
+ * Uses Moore neighbor tracing which works reliably with 4x upscaled masks
+ * The upscaling provides sufficient sub-pixel accuracy for smooth contours
+ */
+function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
+  // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
+  return traceBoundarySimple(mask, width, height);
 }
 
 // Ramer-Douglas-Peucker algorithm for path simplification
