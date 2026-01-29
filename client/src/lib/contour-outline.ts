@@ -1,6 +1,7 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
+import { fitCurvesToPath, smoothPathWithCurveFitting, type BezierSegment, type CurveFitResult } from "@/lib/potrace-adapter";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -748,6 +749,29 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   } while ((x !== startX || y !== startY) && steps < maxSteps);
   
   return path;
+}
+
+function traceBoundaryWithCurveFitting(
+  mask: Uint8Array, 
+  width: number, 
+  height: number
+): Point[] {
+  console.log('[CurveFit] Starting curve-fitted boundary trace, size:', width, 'x', height);
+  
+  const rawPath = traceBoundary(mask, width, height);
+  
+  if (rawPath.length < 10) {
+    return rawPath;
+  }
+  
+  try {
+    const result = fitCurvesToPath(rawPath, 0.5, 2.0);
+    console.log('[CurveFit] Converted', rawPath.length, 'points to', result.points.length, 'curve-fitted points');
+    return result.points.length > 0 ? result.points : rawPath;
+  } catch (error) {
+    console.error('[CurveFit] Error:', error);
+    return rawPath;
+  }
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {
