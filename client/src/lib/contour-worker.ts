@@ -319,9 +319,9 @@ function processContour(
   
   // RDP simplifies diagonal lines by removing unnecessary intermediate points
   // Higher tolerance = straighter diagonals with fewer jagged segments
-  // Use DPI-proportional tolerance: 0.02" deviation is invisible at print scale
-  // This scales correctly: at 150 DPI = 3px, at 300 DPI = 6px, at 600 DPI = 12px
-  const rdpToleranceInches = 0.02;
+  // Use DPI-proportional tolerance: 0.005" keeps curves intact
+  // This scales correctly: at 150 DPI = 0.75px, at 300 DPI = 1.5px, at 600 DPI = 3px
+  const rdpToleranceInches = 0.005;
   const rdpTolerance = rdpToleranceInches * effectiveDPI;
   let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
   console.log('[Worker] After RDP (tolerance', rdpTolerance.toFixed(2), 'px /', rdpToleranceInches, 'in):', smoothedPath.length, 'points');
@@ -350,8 +350,8 @@ function processContour(
   
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
   // Apply in BOTH preview and export modes so cached preview data matches PDF output
-  // 3 iterations for smoother curves, 60° sharp angle preservation
-  smoothedPath = smoothPolyChaikin(smoothedPath, 3, 60);
+  // 4 iterations for smooth curves, 80° threshold protects 90° corners
+  smoothedPath = smoothPolyChaikin(smoothedPath, 4, 80);
   console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   
   postProgress(90);
