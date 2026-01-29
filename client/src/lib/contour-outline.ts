@@ -2239,11 +2239,16 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use spline interpolation for smooth PDF output
-      // First subsample to reduce point count, then convert to smooth bezier curves
-      // 300 points is enough for accurate cutting while producing smooth curves
-      const subsampledPath = subsamplePolygon(smoothedPath, 300);
-      const pathSegments = polygonToSplinePath(subsampledPath, 0.5);
+      // Use direct line segments like the preview does - no bezier conversion
+      // The path already has enough points to appear smooth
+      const pathSegments: PathSegment[] = [];
+      if (smoothedPath.length > 0) {
+        pathSegments.push({ type: 'move', point: smoothedPath[0] });
+        for (let i = 1; i < smoothedPath.length; i++) {
+          pathSegments.push({ type: 'line', point: smoothedPath[i] });
+        }
+      }
+      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview)');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2796,11 +2801,16 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use spline interpolation for smooth PDF output
-      // First subsample to reduce point count, then convert to smooth bezier curves
-      // 300 points is enough for accurate cutting while producing smooth curves
-      const subsampledPath = subsamplePolygon(smoothedPath, 300);
-      const pathSegments = polygonToSplinePath(subsampledPath, 0.5);
+      // Use direct line segments like the preview does - no bezier conversion
+      // The path already has enough points to appear smooth
+      const pathSegments: PathSegment[] = [];
+      if (smoothedPath.length > 0) {
+        pathSegments.push({ type: 'move', point: smoothedPath[0] });
+        for (let i = 1; i < smoothedPath.length; i++) {
+          pathSegments.push({ type: 'line', point: smoothedPath[i] });
+        }
+      }
+      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview)');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
