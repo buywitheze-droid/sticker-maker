@@ -81,7 +81,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         const scaledDPI = effectiveDPI * scale;
         
         postProgress(15);
-        const result = processContour(scaledData, strokeSettings, scaledDPI);
+        const result = processContour(scaledData, strokeSettings, scaledDPI, previewMode);
         postProgress(90);
         
         // Upscale result back to original size
@@ -90,7 +90,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           Math.round(result.imageData.height / scale));
         contourData = result.contourData;
       } else {
-        const result = processContour(imageData, strokeSettings, effectiveDPI);
+        const result = processContour(imageData, strokeSettings, effectiveDPI, previewMode);
         processedData = result.imageData;
         contourData = result.contourData;
       }
@@ -205,14 +205,14 @@ function processContour(
     useCustomBackground: boolean;
   },
   effectiveDPI: number
-): ContourResult {
+, previewMode?: boolean): ContourResult {
   const width = imageData.width;
   const height = imageData.height;
   const data = imageData.data;
   
-  // 4x Super-sampling factor for sub-pixel precision tracing
-  // This eliminates staircase artifacts on diagonals by tracing at higher resolution
-  const SUPER_SAMPLE = 4;
+  // Super-sampling factor for sub-pixel precision tracing
+  // Preview: 2x for speed, Export: 4x for quality
+  const SUPER_SAMPLE = previewMode ? 2 : 4;
   
   // Holographic uses white as placeholder for preview (will be replaced with gradient in UI)
   // Export functions will treat holographic as transparent separately
@@ -345,9 +345,11 @@ function processContour(
   }
   
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
-  // Only affects shallow angles (<60°), preserves sharp diamond tips
-  smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
-  console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
+  // Only for export (not preview) - skip in preview mode for speed
+  if (!previewMode) {
+    smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
+    console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
+  }
   
   postProgress(90);
   
