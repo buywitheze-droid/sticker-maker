@@ -2140,8 +2140,9 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const straight2 = Math.abs((immDir2x * n2x + immDir2y * n2y) / immLen2);
       const bothStraight = straight1 > 0.85 && straight2 > 0.85;
       
-      // Sharp angle threshold: angle > 60 degrees AND both sides are straight
-      const isSharpAngle = angleDeg > 60 && bothStraight;
+      // Sharp angle threshold: angle > 25 degrees AND both sides are straight
+      // This includes 30° corners and sharper
+      const isSharpAngle = angleDeg > 25 && bothStraight;
       
       if (isSharpAngle) {
         // Create sharp corner: find intersection of the two edge lines
