@@ -25,13 +25,23 @@ interface Point {
 }
 
 /**
- * Convert an SVG path string to PDF path operators.
+ * Convert an SVG path string to PDF path operators with proper scaling and positioning.
  * Handles M (moveto), L (lineto), C (curveto), Z (closepath) commands.
- * @param svgPath - SVG path string (e.g., "M 10 20 L 30 40 C 50 60, 70 80, 90 100 Z")
- * @param scale - Scale factor to apply to coordinates (default 1)
+ * 
+ * @param svgPath - SVG path string (coordinates in inches)
+ * @param scaleX - X scale factor (pdfImageWidth / originalImageWidth in inches, then * 72 for points)
+ * @param scaleY - Y scale factor (pdfImageHeight / originalImageHeight in inches, then * 72 for points)
+ * @param offsetX - X offset in PDF points (image X position)
+ * @param offsetY - Y offset in PDF points (image Y position)
  * @returns PDF path operators string
  */
-function svgPathToPdfOps(svgPath: string, scale: number = 1): string {
+function svgPathToPdfOps(
+  svgPath: string, 
+  scaleX: number = 72, 
+  scaleY: number = 72,
+  offsetX: number = 0,
+  offsetY: number = 0
+): string {
   let result = '';
   
   // Parse SVG path commands
@@ -45,27 +55,28 @@ function svgPathToPdfOps(svgPath: string, scale: number = 1): string {
     switch (type) {
       case 'M': // moveto
         if (nums.length >= 2) {
-          const x = nums[0] * scale;
-          const y = nums[1] * scale;
-          result += `${x.toFixed(2)} ${y.toFixed(2)} m `;
+          // Apply scale and offset - use full floating point precision
+          const x = (nums[0] * scaleX) + offsetX;
+          const y = (nums[1] * scaleY) + offsetY;
+          result += `${x.toFixed(4)} ${y.toFixed(4)} m `;
         }
         break;
       case 'L': // lineto
         if (nums.length >= 2) {
-          const x = nums[0] * scale;
-          const y = nums[1] * scale;
-          result += `${x.toFixed(2)} ${y.toFixed(2)} l `;
+          const x = (nums[0] * scaleX) + offsetX;
+          const y = (nums[1] * scaleY) + offsetY;
+          result += `${x.toFixed(4)} ${y.toFixed(4)} l `;
         }
         break;
       case 'C': // curveto (cubic bezier)
         if (nums.length >= 6) {
-          const cp1x = nums[0] * scale;
-          const cp1y = nums[1] * scale;
-          const cp2x = nums[2] * scale;
-          const cp2y = nums[3] * scale;
-          const x = nums[4] * scale;
-          const y = nums[5] * scale;
-          result += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} c `;
+          const cp1x = (nums[0] * scaleX) + offsetX;
+          const cp1y = (nums[1] * scaleY) + offsetY;
+          const cp2x = (nums[2] * scaleX) + offsetX;
+          const cp2y = (nums[3] * scaleY) + offsetY;
+          const x = (nums[4] * scaleX) + offsetX;
+          const y = (nums[5] * scaleY) + offsetY;
+          result += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${x.toFixed(4)} ${y.toFixed(4)} c `;
         }
         break;
       case 'Z': // closepath
@@ -2300,10 +2311,22 @@ export async function downloadContourPDF(
       console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
                   optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
       
+      // Calculate scale factors for coordinate transformation
+      // The contour pathPoints are in inches (from the worker)
+      // We need to scale to PDF points (1 inch = 72 points)
+      // The coordinates already include proper positioning from the contour worker
+      const scaleX = 72; // inches to PDF points
+      const scaleY = 72; // inches to PDF points
+      const offsetX = 0; // contour already positioned correctly
+      const offsetY = 0;
+      
+      console.log('[PDF] Contour transform: scale=', scaleX.toFixed(2), 'pts/inch');
+      
       // Convert the optimized SVG path to PDF path operators
       // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
       // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
-      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, 72); // scale to 72 DPI
+      // Use 4 decimal places for floating point precision (no rounding to integers)
+      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, scaleX, scaleY, offsetX, offsetY);
       pathOps += pdfCutPath;
       pathOps += 'S\n';
       
@@ -2844,10 +2867,22 @@ export async function generateContourPDFBase64(
       console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
                   optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
       
+      // Calculate scale factors for coordinate transformation
+      // The contour pathPoints are in inches (from the worker)
+      // We need to scale to PDF points (1 inch = 72 points)
+      // The coordinates already include proper positioning from the contour worker
+      const scaleX = 72; // inches to PDF points
+      const scaleY = 72; // inches to PDF points
+      const offsetX = 0; // contour already positioned correctly
+      const offsetY = 0;
+      
+      console.log('[PDF] Contour transform: scale=', scaleX.toFixed(2), 'pts/inch');
+      
       // Convert the optimized SVG path to PDF path operators
       // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
       // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
-      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, 72); // scale to 72 DPI
+      // Use 4 decimal places for floating point precision (no rounding to integers)
+      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, scaleX, scaleY, offsetX, offsetY);
       pathOps += pdfCutPath;
       pathOps += 'S\n';
       
