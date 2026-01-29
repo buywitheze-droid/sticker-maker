@@ -2388,6 +2388,10 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   let resultRotated = [...rotated];
   const n = resultRotated.length;
   
+  // SAFEGUARD: Only apply smoothing that moves points OUTWARD, never inward
+  // In rotated space: top region should only move points more negative (up/out)
+  // bottom region should only move points more positive (down/out)
+  
   // Step 1: Apply moving average smoothing to baseline regions (in rotated space)
   const windowSize = Math.max(3, Math.floor(n / 150));
   
@@ -2413,16 +2417,25 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
       
       if (count > 1) {
         const avgY = sumY / count;
-        smoothedRotated[i] = {
-          x: resultRotated[i].x,
-          y: resultRotated[i].y * 0.5 + avgY * 0.5
-        };
+        const newY = resultRotated[i].y * 0.5 + avgY * 0.5;
+        
+        // SAFEGUARD: Only allow outward movement
+        // Top region: only allow newY <= currentY (moving up/outward)
+        // Bottom region: only allow newY >= currentY (moving down/outward)
+        const currentY = resultRotated[i].y;
+        if (inTopRegion && newY <= currentY) {
+          smoothedRotated[i] = { x: resultRotated[i].x, y: newY };
+        } else if (inBottomRegion && newY >= currentY) {
+          smoothedRotated[i] = { x: resultRotated[i].x, y: newY };
+        }
+        // Otherwise keep original point (don't move inward)
       }
     }
   }
   resultRotated = smoothedRotated;
   
   // Step 2: Apply baseline flattening in rotated space
+  // ONLY flatten if it moves outward
   const blendFactor = 0.4;
   
   if (topIsFlat) {
@@ -2432,10 +2445,11 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
       const idx = topIdxArray[i];
       const currentY = resultRotated[idx].y;
       if (currentY <= minY + baselineThickness * 0.4) {
-        resultRotated[idx] = {
-          x: resultRotated[idx].x,
-          y: currentY + (targetTopY - currentY) * blendFactor
-        };
+        const newY = currentY + (targetTopY - currentY) * blendFactor;
+        // Only apply if moving outward (more negative for top)
+        if (newY <= currentY) {
+          resultRotated[idx] = { x: resultRotated[idx].x, y: newY };
+        }
       }
     }
   }
@@ -2447,10 +2461,11 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
       const idx = bottomIdxArray[i];
       const currentY = resultRotated[idx].y;
       if (currentY >= maxY - baselineThickness * 0.4) {
-        resultRotated[idx] = {
-          x: resultRotated[idx].x,
-          y: currentY + (targetBottomY - currentY) * blendFactor
-        };
+        const newY = currentY + (targetBottomY - currentY) * blendFactor;
+        // Only apply if moving outward (more positive for bottom)
+        if (newY >= currentY) {
+          resultRotated[idx] = { x: resultRotated[idx].x, y: newY };
+        }
       }
     }
   }
