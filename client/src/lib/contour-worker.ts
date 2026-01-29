@@ -375,7 +375,7 @@ function processContour(
   smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation);
   
   // Second pass: gentler pass to catch remaining noise on lines
-  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation * 0.6);
+  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation * 0.5);
   console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
   
   // Apply minimal Chaikin smoothing - only 1 iteration with very high threshold
@@ -1072,12 +1072,21 @@ function straightenNoisyLines(points: Point[], cornerAngleThreshold: number = 25
       
       const startPt = points[segmentStart];
       const endPt = points[Math.min(nextEnd, n - 1)];
-      const lineLen = Math.sqrt((endPt.x - startPt.x) ** 2 + (endPt.y - startPt.y) ** 2);
+      const dx = endPt.x - startPt.x;
+      const dy = endPt.y - startPt.y;
+      const lineLen = Math.sqrt(dx * dx + dy * dy);
       
       if (lineLen < 0.0001) {
         segmentEnd++;
         continue;
       }
+      
+      // Check if segment is near-axis-aligned (stair-step prone)
+      // Use more generous tolerance for horizontal/vertical segments
+      const angleRad = Math.atan2(Math.abs(dy), Math.abs(dx));
+      const angleDeg = angleRad * 180 / Math.PI;
+      const isAxisAligned = angleDeg < 15 || angleDeg > 75; // Within 15° of horizontal or vertical
+      const effectiveDeviation = isAxisAligned ? maxDeviation * 1.5 : maxDeviation;
       
       // Check all intermediate points for collinearity
       let allCollinear = true;
@@ -1085,13 +1094,13 @@ function straightenNoisyLines(points: Point[], cornerAngleThreshold: number = 25
         const pt = points[checkIdx];
         // Calculate perpendicular distance from point to line
         const t = Math.max(0, Math.min(1, 
-          ((pt.x - startPt.x) * (endPt.x - startPt.x) + (pt.y - startPt.y) * (endPt.y - startPt.y)) / (lineLen * lineLen)
+          ((pt.x - startPt.x) * dx + (pt.y - startPt.y) * dy) / (lineLen * lineLen)
         ));
-        const projX = startPt.x + t * (endPt.x - startPt.x);
-        const projY = startPt.y + t * (endPt.y - startPt.y);
+        const projX = startPt.x + t * dx;
+        const projY = startPt.y + t * dy;
         const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
         
-        if (dist > maxDeviation) {
+        if (dist > effectiveDeviation) {
           allCollinear = false;
           break;
         }
@@ -1121,6 +1130,78 @@ function straightenNoisyLines(points: Point[], cornerAngleThreshold: number = 25
   
   console.log('[Worker] Straightened noisy lines:', points.length, '->', cleaned.length, 'points');
   return cleaned.length >= 3 ? cleaned : points;
+}
+
+// Moving average smoothing: reduces stair-step pixel noise on all edges
+// Applies a weighted moving average to smooth jittery contours
+// windowSize: number of neighboring points to average (default 3)
+// cornerThreshold: angle change (degrees) that indicates a corner to preserve (default 30)
+function movingAverageSmooth(points: Point[], windowSize: number = 3, cornerThreshold: number = 30): Point[] {
+  if (points.length < 5) return points;
+  
+  const n = points.length;
+  const halfWindow = Math.floor(windowSize / 2);
+  
+  // First, identify corners that should not be smoothed
+  const isCorner: boolean[] = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0.0001 && len2 > 0.0001) {
+      const dot = v1x * v2x + v1y * v2y;
+      const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+      const angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
+      const deviation = 180 - angleDegrees;
+      
+      if (deviation > cornerThreshold) {
+        isCorner[i] = true;
+      }
+    }
+  }
+  
+  // Apply weighted moving average, preserving corners
+  const result: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    // Preserve corners exactly
+    if (isCorner[i]) {
+      result.push(points[i]);
+      continue;
+    }
+    
+    // Calculate weighted average of neighboring points
+    let sumX = 0, sumY = 0, weightSum = 0;
+    
+    for (let j = -halfWindow; j <= halfWindow; j++) {
+      const idx = (i + j + n) % n;
+      // Don't average across corners
+      if (j !== 0 && isCorner[idx]) continue;
+      
+      // Weight: center point has highest weight, decreases with distance
+      const weight = 1 - Math.abs(j) / (halfWindow + 1);
+      sumX += points[idx].x * weight;
+      sumY += points[idx].y * weight;
+      weightSum += weight;
+    }
+    
+    if (weightSum > 0) {
+      result.push({ x: sumX / weightSum, y: sumY / weightSum });
+    } else {
+      result.push(points[i]);
+    }
+  }
+  
+  console.log('[Worker] Moving average smooth:', points.length, '->', result.length, 'points');
+  return result;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
