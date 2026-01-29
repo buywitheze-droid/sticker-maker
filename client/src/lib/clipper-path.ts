@@ -1,11 +1,10 @@
 import ClipperLib from 'js-clipper';
+import { CLIPPER_SCALE, calculateClipperTolerances } from './clipper-constants';
 
 interface Point {
   x: number;
   y: number;
 }
-
-const CLIPPER_SCALE = 100000;
 
 // Moving average smoothing to reduce jagged edges from alpha tracing
 export function smoothContourPoints(points: Point[], windowSize: number = 5): Point[] {
@@ -90,7 +89,7 @@ function clipperPathToPoints(path: ClipperLib.Path): Point[] {
   }));
 }
 
-export function cleanPathWithClipper(points: Point[]): Point[] {
+export function cleanPathWithClipper(points: Point[], offsetWidth: number = 0, dpi: number = 300): Point[] {
   if (points.length < 3) return points;
   
   console.log('[cleanPathWithClipper] Input points:', points.length);
@@ -121,8 +120,11 @@ export function cleanPathWithClipper(points: Point[]): Point[] {
   
   console.log('[cleanPathWithClipper] Largest polygon has', largestPath.length, 'points, area:', largestArea);
   
+  // Use shared tolerance calculation based on DPI and offset
+  const tolerances = calculateClipperTolerances(dpi, offsetWidth);
+  
   // Also clean up any micro-vertices that are very close together
-  const cleaned = ClipperLib.Clipper.CleanPolygon(largestPath, 2 * CLIPPER_SCALE / 100000);
+  const cleaned = ClipperLib.Clipper.CleanPolygon(largestPath, tolerances.simplifyTolerance * CLIPPER_SCALE);
   
   if (!cleaned || cleaned.length < 3) {
     console.log('[cleanPathWithClipper] CleanPolygon failed, returning largest');
@@ -133,14 +135,17 @@ export function cleanPathWithClipper(points: Point[]): Point[] {
   return clipperPathToPoints(cleaned);
 }
 
-export function offsetPathWithClipper(points: Point[], offsetAmount: number): Point[] {
+export function offsetPathWithClipper(points: Point[], offsetAmount: number, dpi: number = 300): Point[] {
   if (points.length < 3) return points;
   
   const clipperPath = pointsToClipperPath(points);
   
+  // Calculate tolerances based on DPI and offset size
+  const tolerances = calculateClipperTolerances(dpi, offsetAmount);
+  
   const co = new ClipperLib.ClipperOffset();
-  co.ArcTolerance = 0.25 * CLIPPER_SCALE;
-  co.MiterLimit = 2;
+  co.ArcTolerance = tolerances.arcTolerance;
+  co.MiterLimit = tolerances.miterLimit;
   
   co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
   
@@ -163,13 +168,17 @@ export function offsetPathWithClipper(points: Point[], offsetAmount: number): Po
   return clipperPathToPoints(largestPath);
 }
 
-export function simplifyPathWithClipper(points: Point[], tolerance: number): Point[] {
+export function simplifyPathWithClipper(points: Point[], tolerance: number, offsetWidth: number = 0, dpi: number = 300): Point[] {
   if (points.length < 3) return points;
   
   const clipperPath = pointsToClipperPath(points);
   
+  // Use shared tolerance calculation, then apply the user-specified tolerance as a multiplier
+  const tolerances = calculateClipperTolerances(dpi, offsetWidth);
+  const effectiveTolerance = Math.max(tolerance, tolerances.simplifyTolerance);
+  
   // CleanPolygon removes vertices closer than tolerance distance
-  const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, tolerance * CLIPPER_SCALE);
+  const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, effectiveTolerance * CLIPPER_SCALE);
   
   if (!simplified || simplified.length < 3) return points;
   

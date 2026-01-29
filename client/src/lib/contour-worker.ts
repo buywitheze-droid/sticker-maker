@@ -5,6 +5,9 @@ interface Point {
   y: number;
 }
 
+// IMPORTANT: Must stay in sync with client/src/lib/clipper-constants.ts
+// Web Workers can't import ES modules directly, so we duplicate the constant here
+// If you change CLIPPER_SCALE in clipper-constants.ts, update it here too!
 const CLIPPER_SCALE = 100000;
 
 interface WorkerMessage {

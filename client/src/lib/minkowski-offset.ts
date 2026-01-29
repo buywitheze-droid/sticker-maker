@@ -9,6 +9,7 @@
 
 // @ts-ignore - clipper-lib has no types
 import * as ClipperLib from 'clipper-lib';
+import { CLIPPER_SCALE, calculateClipperTolerances } from './clipper-constants';
 
 export interface Point {
   x: number;
@@ -16,9 +17,6 @@ export interface Point {
 }
 
 export type CornerMode = 'rounded' | 'sharp';
-
-// Clipper uses integer coordinates, so we scale by this factor for precision
-const CLIPPER_SCALE = 1000;
 
 /**
  * Offset a polygon by a given distance using Clipper library
@@ -31,7 +29,8 @@ export function offsetPolygon(
   polygon: Point[],
   offset: number,
   cornerMode: CornerMode = 'sharp',
-  miterLimit: number = 15.0
+  miterLimit: number = 15.0,
+  dpi: number = 300
 ): Point[] {
   if (polygon.length < 3 || offset === 0) return polygon;
   
@@ -42,8 +41,14 @@ export function offsetPolygon(
       Y: Math.round(p.y * CLIPPER_SCALE)
     }));
     
+    // Calculate tolerances based on DPI and offset size
+    const tolerances = calculateClipperTolerances(dpi, offset);
+    
+    // Use calculated arc tolerance, but allow miterLimit override
+    const effectiveMiterLimit = miterLimit !== 15.0 ? miterLimit : tolerances.miterLimit;
+    
     // Create ClipperOffset instance
-    const co = new ClipperLib.ClipperOffset(miterLimit, 0.25 * CLIPPER_SCALE);
+    const co = new ClipperLib.ClipperOffset(effectiveMiterLimit, tolerances.arcTolerance);
     
     // Choose join type based on corner mode
     const joinType = cornerMode === 'rounded' 
@@ -97,12 +102,17 @@ export function offsetPolygons(
   polygons: Point[][],
   offset: number,
   cornerMode: CornerMode = 'sharp',
-  miterLimit: number = 15.0
+  miterLimit: number = 15.0,
+  dpi: number = 300
 ): Point[][] {
   if (polygons.length === 0 || offset === 0) return polygons;
   
   try {
-    const co = new ClipperLib.ClipperOffset(miterLimit, 0.25 * CLIPPER_SCALE);
+    // Calculate tolerances based on DPI and offset size
+    const tolerances = calculateClipperTolerances(dpi, offset);
+    const effectiveMiterLimit = miterLimit !== 15.0 ? miterLimit : tolerances.miterLimit;
+    
+    const co = new ClipperLib.ClipperOffset(effectiveMiterLimit, tolerances.arcTolerance);
     
     const joinType = cornerMode === 'rounded' 
       ? ClipperLib.JoinType.jtRound 
@@ -137,8 +147,11 @@ export function offsetPolygons(
 
 /**
  * Simplify a polygon by removing collinear/near-collinear points
+ * @param polygon - Array of points
+ * @param tolerance - Base tolerance in pixels (will be scaled)
+ * @param offsetWidth - Optional offset width to scale tolerance (larger offsets = more tolerance)
  */
-export function simplifyPolygon(polygon: Point[], tolerance: number = 0.6): Point[] {
+export function simplifyPolygon(polygon: Point[], tolerance: number = 0.6, offsetWidth: number = 0, dpi: number = 300): Point[] {
   if (polygon.length < 3) return polygon;
   
   try {
@@ -147,7 +160,11 @@ export function simplifyPolygon(polygon: Point[], tolerance: number = 0.6): Poin
       Y: Math.round(p.y * CLIPPER_SCALE)
     }));
     
-    const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, tolerance * CLIPPER_SCALE);
+    // Use shared tolerance calculation, then apply user-specified tolerance as minimum
+    const tolerances = calculateClipperTolerances(dpi, offsetWidth);
+    const effectiveTolerance = Math.max(tolerance, tolerances.simplifyTolerance);
+    
+    const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, effectiveTolerance * CLIPPER_SCALE);
     
     if (simplified && simplified.length >= 3) {
       return simplified.map((p: any) => ({
