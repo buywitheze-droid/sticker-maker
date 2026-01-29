@@ -2303,32 +2303,27 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Optimize for vinyl cutting: curve fitting, de-speckle, precision sanitization
-      // minHoleArea in square pixels, sharpAngle = 30 degrees
-      const minHoleArea = 100; // Remove holes smaller than 100 square pixels
-      const optimized = optimizeForCutting(smoothedPath, [], minHoleArea, 30);
+      // Use the EXACT same approach as the preview worker: direct line segments
+      // No curve fitting or smoothing - this ensures PDF matches preview exactly
+      console.log('[PDF] Using direct line segments (matching preview worker)');
       
-      console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
-                  optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
+      // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
+      const scale = 72;
       
-      // Calculate scale factors for coordinate transformation
-      // The contour pathPoints are in inches (from the worker)
-      // We need to scale to PDF points (1 inch = 72 points)
-      // The coordinates already include proper positioning from the contour worker
-      const scaleX = 72; // inches to PDF points
-      const scaleY = 72; // inches to PDF points
-      const offsetX = 0; // contour already positioned correctly
-      const offsetY = 0;
+      // Build path operators directly from points - same as preview canvas
+      if (smoothedPath.length > 0) {
+        const first = smoothedPath[0];
+        pathOps += `${(first.x * scale).toFixed(4)} ${(first.y * scale).toFixed(4)} m `;
+        
+        for (let i = 1; i < smoothedPath.length; i++) {
+          const pt = smoothedPath[i];
+          pathOps += `${(pt.x * scale).toFixed(4)} ${(pt.y * scale).toFixed(4)} l `;
+        }
+        
+        pathOps += 'h S\n'; // close path and stroke
+      }
       
-      console.log('[PDF] Contour transform: scale=', scaleX.toFixed(2), 'pts/inch');
-      
-      // Convert the optimized SVG path to PDF path operators
-      // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
-      // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
-      // Use 4 decimal places for floating point precision (no rounding to integers)
-      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, scaleX, scaleY, offsetX, offsetY);
-      pathOps += pdfCutPath;
-      pathOps += 'S\n';
+      console.log('[PDF] Rendered', smoothedPath.length, 'line segments');
       
       const existingContents = page.node.Contents();
       if (existingContents) {
@@ -2859,32 +2854,27 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Optimize for vinyl cutting: curve fitting, de-speckle, precision sanitization
-      // minHoleArea in square pixels, sharpAngle = 30 degrees
-      const minHoleArea = 100; // Remove holes smaller than 100 square pixels
-      const optimized = optimizeForCutting(smoothedPath, [], minHoleArea, 30);
+      // Use the EXACT same approach as the preview worker: direct line segments
+      // No curve fitting or smoothing - this ensures PDF matches preview exactly
+      console.log('[PDF] Using direct line segments (matching preview worker)');
       
-      console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
-                  optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
+      // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
+      const scale = 72;
       
-      // Calculate scale factors for coordinate transformation
-      // The contour pathPoints are in inches (from the worker)
-      // We need to scale to PDF points (1 inch = 72 points)
-      // The coordinates already include proper positioning from the contour worker
-      const scaleX = 72; // inches to PDF points
-      const scaleY = 72; // inches to PDF points
-      const offsetX = 0; // contour already positioned correctly
-      const offsetY = 0;
+      // Build path operators directly from points - same as preview canvas
+      if (smoothedPath.length > 0) {
+        const first = smoothedPath[0];
+        pathOps += `${(first.x * scale).toFixed(4)} ${(first.y * scale).toFixed(4)} m `;
+        
+        for (let i = 1; i < smoothedPath.length; i++) {
+          const pt = smoothedPath[i];
+          pathOps += `${(pt.x * scale).toFixed(4)} ${(pt.y * scale).toFixed(4)} l `;
+        }
+        
+        pathOps += 'h S\n'; // close path and stroke
+      }
       
-      console.log('[PDF] Contour transform: scale=', scaleX.toFixed(2), 'pts/inch');
-      
-      // Convert the optimized SVG path to PDF path operators
-      // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
-      // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
-      // Use 4 decimal places for floating point precision (no rounding to integers)
-      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, scaleX, scaleY, offsetX, offsetY);
-      pathOps += pdfCutPath;
-      pathOps += 'S\n';
+      console.log('[PDF] Rendered', smoothedPath.length, 'line segments');
       
       const existingContents = page.node.Contents();
       if (existingContents) {
