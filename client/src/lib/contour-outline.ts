@@ -1,6 +1,7 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
+import { offsetPolygon, simplifyPolygon } from "@/lib/minkowski-offset";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -1651,21 +1652,33 @@ export function getContourPath(
     // Fill silhouette (matches worker)
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // User offset dilation (matches worker)
-    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    // Trace boundary from filled mask (BEFORE user offset)
+    const baseBoundaryPath = traceBoundary(filledMask, baseWidth, baseHeight);
+    
+    if (baseBoundaryPath.length < 3) return null;
+    
+    // Smooth the base boundary path first
+    let smoothedBasePath = smoothPath(baseBoundaryPath, 2);
+    
+    // Apply Clipper-based vector offset for sharp corners (instead of raster dilation)
+    // This preserves sharp corners with miter joins
+    const simplifiedPath = simplifyPolygon(smoothedBasePath, 0.6);
+    const offsetPath = offsetPolygon(simplifiedPath, userOffsetPixels, 'sharp', 15.0);
+    
+    // The offset path is now the final contour with sharp corners
+    // Adjust coordinates to account for the offset expansion
     const dilatedWidth = baseWidth + userOffsetPixels * 2;
     const dilatedHeight = baseHeight + userOffsetPixels * 2;
     
-    // Trace boundary (matches worker - NO bridgeTouchingContours)
-    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    // Shift path coordinates to account for offset expansion
+    let smoothedPath = offsetPath.map(p => ({
+      x: p.x + userOffsetPixels,
+      y: p.y + userOffsetPixels
+    }));
     
-    if (boundaryPath.length < 3) return null;
+    console.log('[getContourPath] After Clipper offset, path points:', smoothedPath.length);
     
-    // Smooth path (matches worker)
-    let smoothedPath = smoothPath(boundaryPath, 2);
-    console.log('[getContourPath] After smooth, path points:', smoothedPath.length);
-    
-    // Fix crossings (matches worker)
+    // Fix crossings that might occur after offset
     smoothedPath = fixOffsetCrossings(smoothedPath);
     console.log('[getContourPath] After fixOffsetCrossings, path points:', smoothedPath.length);
     
