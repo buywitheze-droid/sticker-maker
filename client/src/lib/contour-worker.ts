@@ -360,13 +360,21 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
-  // Straighten noisy lines - aggressive pass to reduce anchor points on straight edges
-  // 40° corner threshold = only protect true corners (not noise)
-  // 5px max deviation = aggressively merge noisy pixels into straight lines
-  smoothedPath = straightenNoisyLines(smoothedPath, 40, 5);
+  // Straighten noisy lines - DPI-proportional tolerance
+  // Scale deviation tolerance based on contour size to avoid over-simplification on small offsets
+  // At 300 DPI with large offset (>20px): use 3-4px tolerance (aggressive)
+  // At lower DPI or small offset: use 1.5-2px tolerance (gentle)
+  const baseDeviation = 0.01 * effectiveDPI; // 0.01" = 3px at 300 DPI, 1.5px at 150 DPI
+  const offsetScale = Math.min(1, totalOffsetPixels / 20); // Scale 0-1 based on offset size
+  const maxDeviation = Math.max(1.5, baseDeviation * (0.5 + 0.5 * offsetScale)); // Range: 1.5px to baseDeviation
   
-  // Second straightening pass to catch any remaining noisy segments
-  smoothedPath = straightenNoisyLines(smoothedPath, 40, 3);
+  console.log('[Worker] Straightening with maxDeviation:', maxDeviation.toFixed(2), 'px (offset:', totalOffsetPixels, 'px, DPI:', effectiveDPI, ')');
+  
+  // First pass: aggressive straightening with DPI-scaled tolerance
+  smoothedPath = straightenNoisyLines(smoothedPath, 35, maxDeviation);
+  
+  // Second pass: gentler pass to catch remaining noise
+  smoothedPath = straightenNoisyLines(smoothedPath, 35, maxDeviation * 0.6);
   console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
   
   // Apply minimal Chaikin smoothing - just 2 iterations to soften any remaining jaggies
