@@ -341,8 +341,15 @@ function processContour(
   
   postProgress(90);
   
-  const offsetX = padding - totalOffsetPixels;
-  const offsetY = padding - totalOffsetPixels;
+  // CRITICAL: With Clipper vector offset, the path coordinates extend to negative values
+  // The contour goes from approximately (-totalOffsetPixels, -totalOffsetPixels) to 
+  // (width+totalOffsetPixels, height+totalOffsetPixels)
+  // We need to shift by totalOffsetPixels to bring the left/top edge to (0,0),
+  // then add padding for the bleed margin
+  // Previous formula: offsetX = padding - totalOffsetPixels (assumed path starts at 0)
+  // New formula: offsetX = padding (path already extends to -totalOffsetPixels, adding padding puts it at positive coords)
+  const offsetX = padding;
+  const offsetY = padding;
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
@@ -373,9 +380,14 @@ function processContour(
   const heightInches = effectiveDilatedHeight / effectiveDPI + (bleedInches * 2);
   
   // Convert path to inches with proper coordinate transform for PDF
+  // CRITICAL: After Clipper offset, the contour extends from approximately 
+  // (-totalOffsetPixels, -totalOffsetPixels) to (width+totalOffsetPixels, height+totalOffsetPixels)
+  // We need to shift by totalOffsetPixels to bring the origin back to (0,0)
+  // Then add bleedInches for the page margin
+  const totalOffsetInches = totalOffsetPixels / effectiveDPI;
   const pathInInches = smoothedPath.map(p => ({
-    x: (p.x / effectiveDPI) + bleedInches,
-    y: heightInches - ((p.y / effectiveDPI) + bleedInches)
+    x: (p.x / effectiveDPI) + bleedInches + totalOffsetInches,
+    y: heightInches - ((p.y / effectiveDPI) + bleedInches + totalOffsetInches)
   }));
   
   return {
