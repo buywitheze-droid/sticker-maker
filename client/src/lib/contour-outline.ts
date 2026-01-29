@@ -1952,41 +1952,21 @@ export async function downloadContourPDF(
     let backgroundColor: string;
     let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
-    // Use cached contour data if available (from preview worker) for instant PDF export
-    if (cachedContourData && cachedContourData.pathPoints.length > 0) {
-      console.log('[downloadContourPDF] Using cached contour data');
-      
-      // The cached data is already generated with the correct DPI based on resize settings
-      // Use it directly without rescaling
-      pathPoints = cachedContourData.pathPoints;
-      widthInches = cachedContourData.widthInches;
-      heightInches = cachedContourData.heightInches;
-      imageOffsetX = cachedContourData.imageOffsetX;
-      imageOffsetY = cachedContourData.imageOffsetY;
-      backgroundColor = cachedContourData.backgroundColor;
-      useEdgeBleed = cachedContourData.useEdgeBleed ?? true;
-      
-      console.log('[downloadContourPDF] Using cached dimensions:', {
-        size: `${widthInches.toFixed(2)}x${heightInches.toFixed(2)}`,
-        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`,
-        useEdgeBleed
-      });
-    } else {
-      // Fallback: compute contour path (slower)
-      console.log('[downloadContourPDF] Computing contour path (no cache)');
-      const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-      if (!contourResult) {
-        console.error('Failed to generate contour path');
-        return;
-      }
-      pathPoints = contourResult.pathPoints;
-      widthInches = contourResult.widthInches;
-      heightInches = contourResult.heightInches;
-      imageOffsetX = contourResult.imageOffsetX;
-      imageOffsetY = contourResult.imageOffsetY;
-      backgroundColor = contourResult.backgroundColor;
-      useEdgeBleed = !strokeSettings.useCustomBackground;
+    // Always compute contour path using Clipper-based offset for accurate sharp corners
+    // (Cached worker data uses raster dilation which doesn't preserve sharp corners)
+    console.log('[downloadContourPDF] Computing contour path with Clipper offset');
+    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+    if (!contourResult) {
+      console.error('Failed to generate contour path');
+      return;
     }
+    pathPoints = contourResult.pathPoints;
+    widthInches = contourResult.widthInches;
+    heightInches = contourResult.heightInches;
+    imageOffsetX = contourResult.imageOffsetX;
+    imageOffsetY = contourResult.imageOffsetY;
+    backgroundColor = contourResult.backgroundColor;
+    useEdgeBleed = !strokeSettings.useCustomBackground;
     
     console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
     
