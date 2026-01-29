@@ -2139,9 +2139,10 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const immLen2 = Math.sqrt(immDir2x * immDir2x + immDir2y * immDir2y) || 1;
       
       // Dot product between immediate and extended directions (1 = straight, <1 = curved)
+      // Relaxed threshold from 0.85 to 0.70 to allow more corners to be sharp
       const straight1 = Math.abs((immDir1x * n1x + immDir1y * n1y) / immLen1);
       const straight2 = Math.abs((immDir2x * n2x + immDir2y * n2y) / immLen2);
-      const bothStraight = straight1 > 0.85 && straight2 > 0.85;
+      const bothStraight = straight1 > 0.70 && straight2 > 0.70;
       
       // Check if corner faces OUTWARD (convex) vs INWARD (concave)
       // Use cross product of incoming direction with vector to next point
@@ -2175,8 +2176,9 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       // Corner faces outward if the extension goes away from centroid
       const facesOutward = estCornerDistFromCentroid > midDistFromCentroid * 0.9;
       
-      // Sharp angle threshold: angle > 25 degrees AND both sides are straight AND faces outward
-      const isSharpAngle = angleDeg > 25 && bothStraight && facesOutward;
+      // Sharp angle threshold: angle > 20 degrees AND both sides are straight AND faces outward
+      // Lowered from 25 to 20 degrees to make corners 20% less rounded
+      const isSharpAngle = angleDeg > 20 && bothStraight && facesOutward;
       
       if (isSharpAngle) {
         // Create sharp corner: find intersection of the two edge lines
