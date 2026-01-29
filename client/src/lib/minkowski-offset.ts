@@ -210,7 +210,7 @@ export function offsetContour(
   contour: Point[],
   offsetInches: number,
   dpi: number = 300,
-  cornerMode: CornerMode = 'rounded'
+  cornerMode: CornerMode = 'sharp'
 ): Point[] {
   const offsetPixels = offsetInches * dpi;
   return offsetPolygon(contour, offsetPixels, cornerMode);
@@ -223,7 +223,7 @@ export function offsetContour(
 export function createMinkowskiContour(
   edgePixels: Point[],
   offsetPixels: number,
-  cornerMode: CornerMode = 'rounded'
+  cornerMode: CornerMode = 'sharp'
 ): Point[] {
   if (edgePixels.length < 10) return edgePixels;
   

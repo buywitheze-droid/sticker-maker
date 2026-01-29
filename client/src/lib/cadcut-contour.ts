@@ -3,13 +3,13 @@ import { offsetPolygon, simplifyPolygon, type CornerMode, type Point as Minkowsk
 
 export type ContourCornerMode = CornerMode;
 
-// Default miter limit for sharp corners (2.0 is standard)
-const DEFAULT_MITER_LIMIT = 2.0;
+// Default miter limit for sharp corners (10.0 preserves spikes)
+const DEFAULT_MITER_LIMIT = 10.0;
 
 export function createCadCutContour(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
-  cornerMode: ContourCornerMode = 'rounded'
+  cornerMode: ContourCornerMode = 'sharp'
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -75,7 +75,7 @@ export function createCadCutContour(
 export function getMinkowskiContourPoints(
   image: HTMLImageElement,
   offsetInches: number,
-  cornerMode: ContourCornerMode = 'rounded',
+  cornerMode: ContourCornerMode = 'sharp',
   dpi: number = 300
 ): MinkowskiPoint[] {
   const offsetPixels = Math.round(offsetInches * dpi);

@@ -35,7 +35,7 @@ export default function ImageEditor() {
     closeBigGaps: false, // Close gaps within 0.19" of each other
     backgroundColor: "#ffffff", // Default white background for contour
     useCustomBackground: true, // Default to solid background color
-    cornerMode: 'rounded', // Default to smooth rounded corners (Minkowski offset)
+    cornerMode: 'sharp', // Default to sharp corners with high miter limit
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -221,7 +221,7 @@ export default function ImageEditor() {
       closeBigGaps: false,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
-      cornerMode: 'rounded',
+      cornerMode: 'sharp',
     });
     
     // Apply detected shape or default settings
@@ -333,7 +333,7 @@ export default function ImageEditor() {
         closeBigGaps: false,
         backgroundColor: "#ffffff",
         useCustomBackground: true,
-        cornerMode: 'rounded',
+        cornerMode: 'sharp',
       });
       
       const newShapeSettings: ShapeSettings = {
@@ -413,7 +413,7 @@ export default function ImageEditor() {
       closeBigGaps: false,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
-      cornerMode: 'rounded',
+      cornerMode: 'sharp',
     });
     setShapeSettings({
       enabled: false,
