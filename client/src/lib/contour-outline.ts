@@ -2004,21 +2004,32 @@ export async function downloadContourPDF(
     let backgroundColor: string;
     let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
-    // Always compute contour path using Clipper-based offset for accurate sharp corners
-    // (Cached worker data uses raster dilation which doesn't preserve sharp corners)
-    console.log('[downloadContourPDF] Computing contour path with Clipper offset');
-    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-    if (!contourResult) {
-      console.error('Failed to generate contour path');
-      return;
+    // Use cached worker contour data if available - this matches the preview exactly
+    // Fall back to computing fresh path only if no cached data
+    if (cachedContourData && cachedContourData.pathPoints && cachedContourData.pathPoints.length > 0) {
+      console.log('[downloadContourPDF] Using cached worker contour data:', cachedContourData.pathPoints.length, 'points');
+      pathPoints = cachedContourData.pathPoints;
+      widthInches = cachedContourData.widthInches;
+      heightInches = cachedContourData.heightInches;
+      imageOffsetX = cachedContourData.imageOffsetX;
+      imageOffsetY = cachedContourData.imageOffsetY;
+      backgroundColor = cachedContourData.backgroundColor;
+      useEdgeBleed = cachedContourData.useEdgeBleed ?? !strokeSettings.useCustomBackground;
+    } else {
+      console.log('[downloadContourPDF] No cached data, computing contour path');
+      const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+      if (!contourResult) {
+        console.error('Failed to generate contour path');
+        return;
+      }
+      pathPoints = contourResult.pathPoints;
+      widthInches = contourResult.widthInches;
+      heightInches = contourResult.heightInches;
+      imageOffsetX = contourResult.imageOffsetX;
+      imageOffsetY = contourResult.imageOffsetY;
+      backgroundColor = contourResult.backgroundColor;
+      useEdgeBleed = !strokeSettings.useCustomBackground;
     }
-    pathPoints = contourResult.pathPoints;
-    widthInches = contourResult.widthInches;
-    heightInches = contourResult.heightInches;
-    imageOffsetX = contourResult.imageOffsetX;
-    imageOffsetY = contourResult.imageOffsetY;
-    backgroundColor = contourResult.backgroundColor;
-    useEdgeBleed = !strokeSettings.useCustomBackground;
     
     console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
     
