@@ -1,223 +1,6 @@
-// @ts-ignore - clipper-lib has no types
-import * as ClipperLib from 'clipper-lib';
-
 interface Point {
   x: number;
   y: number;
-}
-
-// Clipper scale factor for integer precision
-const CLIPPER_SCALE = 1000;
-
-/**
- * Potrace-style curve fitting algorithm with Sharp Logo configuration
- * Settings:
- * - optCurve: true (optimization ON to convert stair-steps to lines)
- * - alphamax: 1.3 (high value to preserve sharp corners)
- * - optTolerance: 0.2 (tight tolerance for line adherence)
- */
-function fitCurvesToPath(
-  path: Point[], 
-  optTolerance: number = 0.2,
-  alphamax: number = 1.3
-): Point[] {
-  if (path.length < 3) return path;
-  
-  // First pass: detect corners based on angle change (alphamax threshold)
-  // alphamax of 1.3 means angles > ~75 degrees are considered corners
-  const cornerThresholdRad = alphamax; // In radians, ~75 degrees
-  const corners: boolean[] = new Array(path.length).fill(false);
-  
-  for (let i = 0; i < path.length; i++) {
-    const prev = path[(i - 1 + path.length) % path.length];
-    const curr = path[i];
-    const next = path[(i + 1) % path.length];
-    
-    const angle = getAngleChange(prev, curr, next);
-    if (angle > cornerThresholdRad) {
-      corners[i] = true;
-    }
-  }
-  
-  // Second pass: optimize straight segments between corners
-  const result: Point[] = [];
-  let i = 0;
-  
-  while (i < path.length) {
-    result.push(path[i]);
-    
-    // If this is a corner, don't try to optimize past it
-    if (corners[i]) {
-      i++;
-      continue;
-    }
-    
-    // Try to find the longest straight line segment that doesn't cross corners
-    let bestEnd = i + 1;
-    
-    for (let j = i + 2; j < path.length && j < i + 100; j++) {
-      // Stop at corners - don't optimize past them
-      if (corners[j]) {
-        break;
-      }
-      
-      // Check if all points from i to j lie on a straight line within optTolerance
-      const start = path[i];
-      const end = path[j];
-      
-      let allOnLine = true;
-      let maxDist = 0;
-      
-      for (let k = i + 1; k < j; k++) {
-        const dist = pointToLineDistance(path[k], start, end);
-        maxDist = Math.max(maxDist, dist);
-        if (dist > optTolerance) {
-          allOnLine = false;
-          break;
-        }
-      }
-      
-      if (allOnLine) {
-        bestEnd = j;
-      } else {
-        break;
-      }
-    }
-    
-    i = bestEnd;
-  }
-  
-  // Ensure the path is closed
-  if (result.length >= 3) {
-    const first = result[0];
-    const last = result[result.length - 1];
-    if (Math.abs(first.x - last.x) > 0.5 || Math.abs(first.y - last.y) > 0.5) {
-      result.push({ x: first.x, y: first.y });
-    }
-  }
-  
-  return result;
-}
-
-/**
- * Calculate the angle change at a point (in radians)
- * Returns 0 for straight lines, PI for 180-degree turns
- */
-function getAngleChange(prev: Point, curr: Point, next: Point): number {
-  const dx1 = curr.x - prev.x;
-  const dy1 = curr.y - prev.y;
-  const dx2 = next.x - curr.x;
-  const dy2 = next.y - curr.y;
-  
-  const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-  const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-  
-  if (len1 === 0 || len2 === 0) return 0;
-  
-  // Dot product gives cos of angle between vectors
-  const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-  // Clamp to avoid floating point errors
-  const clampedDot = Math.max(-1, Math.min(1, dot));
-  
-  // Return the angle (0 = same direction, PI = opposite direction)
-  return Math.acos(clampedDot);
-}
-
-/**
- * Calculate perpendicular distance from point to line segment
- */
-function pointToLineDistance(point: Point, lineStart: Point, lineEnd: Point): number {
-  const dx = lineEnd.x - lineStart.x;
-  const dy = lineEnd.y - lineStart.y;
-  const lenSq = dx * dx + dy * dy;
-  
-  if (lenSq === 0) {
-    // Line segment is a point
-    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
-  }
-  
-  // Project point onto line and clamp to segment
-  const t = Math.max(0, Math.min(1, ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lenSq));
-  const projX = lineStart.x + t * dx;
-  const projY = lineStart.y + t * dy;
-  
-  return Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
-}
-
-// Simplify polygon using Clipper's CleanPolygon
-function simplifyPolygonClipper(polygon: Point[], tolerance: number = 1.0): Point[] {
-  if (polygon.length < 3) return polygon;
-  
-  try {
-    const clipperPath = polygon.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-    
-    const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, tolerance * CLIPPER_SCALE);
-    
-    if (simplified && simplified.length >= 3) {
-      return simplified.map((p: any) => ({
-        x: p.X / CLIPPER_SCALE,
-        y: p.Y / CLIPPER_SCALE
-      }));
-    }
-    
-    return polygon;
-  } catch (error) {
-    return polygon;
-  }
-}
-
-// Offset polygon using Clipper with miter joins (sharp corners)
-function offsetPolygonClipper(
-  polygon: Point[],
-  offset: number,
-  miterLimit: number = 10.0
-): Point[] {
-  if (polygon.length < 3 || offset === 0) return polygon;
-  
-  try {
-    const clipperPath = polygon.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-    
-    // Use miter join type for sharp corners, with high miter limit
-    const co = new ClipperLib.ClipperOffset(miterLimit, 0.25 * CLIPPER_SCALE);
-    co.AddPath(clipperPath, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
-    
-    const solution: any[][] = [];
-    co.Execute(solution, offset * CLIPPER_SCALE);
-    
-    // Find the largest path by area
-    if (solution.length > 0) {
-      let bestPath = solution[0];
-      let bestArea = 0;
-      
-      for (const path of solution) {
-        if (path.length >= 3) {
-          const area = Math.abs(ClipperLib.Clipper.Area(path));
-          if (area > bestArea) {
-            bestArea = area;
-            bestPath = path;
-          }
-        }
-      }
-      
-      if (bestPath && bestPath.length >= 3) {
-        return bestPath.map((p: any) => ({
-          x: p.X / CLIPPER_SCALE,
-          y: p.Y / CLIPPER_SCALE
-        }));
-      }
-    }
-    
-    return polygon;
-  } catch (error) {
-    console.error('[Worker] Clipper offset error:', error);
-    return polygon;
-  }
 }
 
 interface WorkerMessage {
@@ -474,55 +257,32 @@ function processContour(
   
   postProgress(40);
   
-  // Fill holes in the auto-bridged mask before tracing
-  const filledMask = fillSilhouette(autoBridgedMask, width, height);
+  const baseDilatedMask = dilateSilhouette(autoBridgedMask, width, height, baseOffsetPixels);
+  const baseWidth = width + baseOffsetPixels * 2;
+  const baseHeight = height + baseOffsetPixels * 2;
   
   postProgress(50);
   
-  // Trace boundary of the filled mask (NOT dilated - we'll use Clipper for offset)
-  const rawBoundaryPath = traceBoundary(filledMask, width, height);
-  
-  if (rawBoundaryPath.length < 3) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-  }
+  const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
   
   postProgress(60);
   
-  // Step 1: Apply Potrace-style curve fitting with Sharp Logo settings:
-  // - optTolerance: 0.2 (tight line adherence)
-  // - alphamax: 1.3 radians (~75 degrees) - preserve sharp corners
-  const fittedPath = fitCurvesToPath(rawBoundaryPath, 0.2, 1.3);
-  
-  // Step 2: Very light Clipper cleanup (0.02) to remove micro-duplicates only
-  const simplifiedPath = simplifyPolygonClipper(fittedPath, 0.02);
+  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+  const dilatedWidth = baseWidth + userOffsetPixels * 2;
+  const dilatedHeight = baseHeight + userOffsetPixels * 2;
   
   postProgress(70);
   
-  // Step 2: Apply Clipper offset with miter joins for sharp corners
-  // Total offset = base offset + user offset
-  const rawOffsetPath = offsetPolygonClipper(simplifiedPath, totalOffsetPixels, 10.0);
+  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
-  if (rawOffsetPath.length < 3) {
+  if (boundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  // Step 3: Translate offset path to match dilated coordinate space
-  // Clipper offset can produce negative coordinates, so we shift by totalOffsetPixels
-  // to align with the expected dilated mask coordinate system
-  const offsetPath = rawOffsetPath.map(p => ({
-    x: p.x + totalOffsetPixels,
-    y: p.y + totalOffsetPixels
-  }));
-  
   postProgress(80);
   
-  // Light smoothing to clean up any remaining artifacts
-  let smoothedPath = smoothPath(offsetPath, 1);
+  let smoothedPath = smoothPath(boundaryPath, 2);
   smoothedPath = fixOffsetCrossings(smoothedPath);
-  
-  // Calculate output dimensions based on Clipper offset
-  const dilatedWidth = width + totalOffsetPixels * 2;
-  const dilatedHeight = height + totalOffsetPixels * 2;
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
