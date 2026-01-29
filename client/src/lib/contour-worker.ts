@@ -344,6 +344,11 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
+  // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
+  // Only affects shallow angles (<60°), preserves sharp diamond tips
+  smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
+  console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
+  
   postProgress(90);
   
   const offsetX = padding - totalOffsetPixels;
@@ -844,6 +849,67 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   }
   
   console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points, orientation:', orientation ? 'CCW' : 'CW->CCW');
+  
+  return result;
+}
+
+// Chaikin's corner-cutting algorithm to smooth pixel-step jaggies
+// Replaces each shallow-angle corner with two points: Q (75% toward next) and R (25% toward next)
+// Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
+function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
+  if (points.length < 3) return points;
+  
+  let result = [...points];
+  
+  for (let iter = 0; iter < iterations; iter++) {
+    const newPoints: Point[] = [];
+    const n = result.length;
+    
+    for (let i = 0; i < n; i++) {
+      const prev = result[(i - 1 + n) % n];
+      const curr = result[i];
+      const next = result[(i + 1) % n];
+      
+      // Calculate angle at current point
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+      
+      const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      
+      // Calculate angle between vectors (0° = same direction, 180° = opposite)
+      let angleDegrees = 180; // default to straight line
+      if (len1 > 0.0001 && len2 > 0.0001) {
+        const dot = v1x * v2x + v1y * v2y;
+        const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+        angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
+      }
+      
+      // Deviation from straight line (0° = straight, 180° = U-turn)
+      const deviation = 180 - angleDegrees;
+      
+      // If sharp corner (deviation > threshold), preserve the original point
+      if (deviation > sharpAngleThreshold) {
+        newPoints.push(curr);
+      } else {
+        // Apply Chaikin's corner cutting for shallow angles
+        // Q = 0.75 * P_i + 0.25 * P_{i+1} (cut 25% from this point toward next)
+        const qx = 0.75 * curr.x + 0.25 * next.x;
+        const qy = 0.75 * curr.y + 0.25 * next.y;
+        
+        // R = 0.25 * P_i + 0.75 * P_{i+1} (cut 75% from this point toward next)
+        const rx = 0.25 * curr.x + 0.75 * next.x;
+        const ry = 0.25 * curr.y + 0.75 * next.y;
+        
+        newPoints.push({ x: qx, y: qy });
+        newPoints.push({ x: rx, y: ry });
+      }
+    }
+    
+    result = newPoints;
+  }
   
   return result;
 }
