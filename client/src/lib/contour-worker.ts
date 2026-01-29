@@ -2246,8 +2246,10 @@ function smoothBridgeAreas(points: Point[]): Point[] {
 }
 
 /**
- * Detect if path looks like horizontal text and gently flatten top/bottom baselines
- * Only affects the extreme top/bottom edges, preserving character details
+ * Detect if path looks like horizontal text and apply:
+ * 1. Baseline flattening for top/bottom edges
+ * 2. Moving average smoothing to reduce bumpiness along the text outline
+ * Only affects horizontal text designs, preserving other shapes
  */
 function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   if (points.length < 50) return points;
@@ -2265,33 +2267,33 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
     return points;
   }
   
-  // Define baseline regions (top and bottom 8% of height)
-  const baselineThickness = height * 0.08;
+  // Define baseline regions (top and bottom 10% of height)
+  const baselineThickness = height * 0.10;
   const topRegionMax = minY + baselineThickness;
   const bottomRegionMin = maxY - baselineThickness;
   
   // Find points in top and bottom regions
-  const topPoints: {idx: number, p: Point}[] = [];
-  const bottomPoints: {idx: number, p: Point}[] = [];
+  const topIndices = new Set<number>();
+  const bottomIndices = new Set<number>();
   
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (p.y <= topRegionMax) {
-      topPoints.push({idx: i, p});
+      topIndices.add(i);
     } else if (p.y >= bottomRegionMin) {
-      bottomPoints.push({idx: i, p});
+      bottomIndices.add(i);
     }
   }
   
   // Need enough points in each region to be text-like
   const minRegionPoints = Math.floor(points.length * 0.05);
-  if (topPoints.length < minRegionPoints || bottomPoints.length < minRegionPoints) {
+  if (topIndices.size < minRegionPoints || bottomIndices.size < minRegionPoints) {
     return points;
   }
   
   // Check if top/bottom regions are relatively flat (standard deviation check)
-  const topYValues = topPoints.map(tp => tp.p.y);
-  const bottomYValues = bottomPoints.map(bp => bp.p.y);
+  const topYValues = Array.from(topIndices).map(i => points[i].y);
+  const bottomYValues = Array.from(bottomIndices).map(i => points[i].y);
   
   const topMean = topYValues.reduce((a, b) => a + b, 0) / topYValues.length;
   const bottomMean = bottomYValues.reduce((a, b) => a + b, 0) / bottomYValues.length;
@@ -2299,10 +2301,10 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   const topStdDev = Math.sqrt(topYValues.reduce((sum, y) => sum + (y - topMean) ** 2, 0) / topYValues.length);
   const bottomStdDev = Math.sqrt(bottomYValues.reduce((sum, y) => sum + (y - bottomMean) ** 2, 0) / bottomYValues.length);
   
-  // Threshold: if std dev is less than 3% of height, it's already fairly flat text
-  const flatnessThreshold = height * 0.03;
-  const topIsFlat = topStdDev < flatnessThreshold * 2;
-  const bottomIsFlat = bottomStdDev < flatnessThreshold * 2;
+  // Threshold: if std dev is less than 6% of height, it's text-like
+  const flatnessThreshold = height * 0.06;
+  const topIsFlat = topStdDev < flatnessThreshold;
+  const bottomIsFlat = bottomStdDev < flatnessThreshold;
   
   if (!topIsFlat && !bottomIsFlat) {
     // Not text-like enough
@@ -2312,20 +2314,59 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   console.log('[Worker] Text baseline detection: width/height ratio', (width/height).toFixed(2), 
               'top stddev', topStdDev.toFixed(1), 'bottom stddev', bottomStdDev.toFixed(1));
   
-  // Apply gentle flattening - pull points toward the mean baseline
-  // Use a soft blend factor (0.3 = 30% toward flat line)
-  const blendFactor = 0.3;
-  const result = [...points];
+  let result = [...points];
+  const n = result.length;
+  
+  // Step 1: Apply moving average smoothing to baseline regions
+  // This reduces bumpiness without affecting character details
+  const windowSize = Math.max(3, Math.floor(n / 150)); // Adaptive window based on point count
+  
+  const smoothed = [...result];
+  for (let i = 0; i < n; i++) {
+    const inTopRegion = topIsFlat && topIndices.has(i);
+    const inBottomRegion = bottomIsFlat && bottomIndices.has(i);
+    
+    if (inTopRegion || inBottomRegion) {
+      // Apply moving average to Y coordinate only (preserve X for horizontal continuity)
+      let sumY = 0;
+      let count = 0;
+      
+      for (let j = -windowSize; j <= windowSize; j++) {
+        const idx = (i + j + n) % n;
+        // Only include neighbors that are also in the same baseline region
+        const neighborInSameRegion = (inTopRegion && topIndices.has(idx)) || 
+                                      (inBottomRegion && bottomIndices.has(idx));
+        if (neighborInSameRegion) {
+          sumY += result[idx].y;
+          count++;
+        }
+      }
+      
+      if (count > 1) {
+        const avgY = sumY / count;
+        // Blend 50% toward average for smoother result
+        smoothed[i] = {
+          x: result[i].x,
+          y: result[i].y * 0.5 + avgY * 0.5
+        };
+      }
+    }
+  }
+  result = smoothed;
+  
+  // Step 2: Apply baseline flattening - pull extreme edges toward mean
+  const blendFactor = 0.4;
   
   if (topIsFlat) {
-    // Find the most common (mode) Y value in top region for the baseline
     const targetTopY = topMean;
-    for (const tp of topPoints) {
-      const currentY = result[tp.idx].y;
-      // Only flatten points that are close to the edge (within baselineThickness/2)
-      if (currentY <= minY + baselineThickness / 2) {
-        result[tp.idx] = {
-          x: result[tp.idx].x,
+    const topIdxArray = Array.from(topIndices);
+    for (let i = 0; i < topIdxArray.length; i++) {
+      const idx = topIdxArray[i];
+      const currentY = result[idx].y;
+      // Flatten points close to the very top edge
+      if (currentY <= minY + baselineThickness * 0.4) {
+        result[idx] = {
+          x: result[idx].x,
           y: currentY + (targetTopY - currentY) * blendFactor
         };
       }
@@ -2334,19 +2375,21 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   
   if (bottomIsFlat) {
     const targetBottomY = bottomMean;
-    for (const bp of bottomPoints) {
-      const currentY = result[bp.idx].y;
-      // Only flatten points that are close to the edge (within baselineThickness/2)
-      if (currentY >= maxY - baselineThickness / 2) {
-        result[bp.idx] = {
-          x: result[bp.idx].x,
+    const bottomIdxArray = Array.from(bottomIndices);
+    for (let i = 0; i < bottomIdxArray.length; i++) {
+      const idx = bottomIdxArray[i];
+      const currentY = result[idx].y;
+      // Flatten points close to the very bottom edge
+      if (currentY >= maxY - baselineThickness * 0.4) {
+        result[idx] = {
+          x: result[idx].x,
           y: currentY + (targetBottomY - currentY) * blendFactor
         };
       }
     }
   }
   
-  console.log('[Worker] Applied text baseline flattening');
+  console.log('[Worker] Applied text baseline flattening with moving average smoothing');
   return result;
 }
 
