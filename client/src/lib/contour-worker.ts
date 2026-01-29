@@ -2143,9 +2143,40 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
       const straight2 = Math.abs((immDir2x * n2x + immDir2y * n2y) / immLen2);
       const bothStraight = straight1 > 0.85 && straight2 > 0.85;
       
-      // Sharp angle threshold: angle > 25 degrees AND both sides are straight
-      // This includes 30° corners and sharper
-      const isSharpAngle = angleDeg > 25 && bothStraight;
+      // Check if corner faces OUTWARD (convex) vs INWARD (concave)
+      // Use cross product of incoming direction with vector to next point
+      // For outward corners, the corner point would be OUTSIDE the line from p1 to p2
+      // Calculate cross product: dir1 x (p2 - p1)
+      const toP2x = p2.x - p1.x;
+      const toP2y = p2.y - p1.y;
+      const crossToP2 = dir1x * toP2y - dir1y * toP2x;
+      
+      // Also check where the intersection point would be relative to centroid
+      // Calculate shape centroid for reference
+      let centroidX = 0, centroidY = 0;
+      for (const p of points) {
+        centroidX += p.x;
+        centroidY += p.y;
+      }
+      centroidX /= points.length;
+      centroidY /= points.length;
+      
+      // The corner is outward-facing if the intersection point would be 
+      // further from centroid than the midpoint of p1-p2
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      const midDistFromCentroid = Math.sqrt((midX - centroidX) ** 2 + (midY - centroidY) ** 2);
+      
+      // Estimate where corner would be (using direction from p1)
+      const estCornerX = p1.x + dir1x * 0.5;
+      const estCornerY = p1.y + dir1y * 0.5;
+      const estCornerDistFromCentroid = Math.sqrt((estCornerX - centroidX) ** 2 + (estCornerY - centroidY) ** 2);
+      
+      // Corner faces outward if the extension goes away from centroid
+      const facesOutward = estCornerDistFromCentroid > midDistFromCentroid * 0.9;
+      
+      // Sharp angle threshold: angle > 25 degrees AND both sides are straight AND faces outward
+      const isSharpAngle = angleDeg > 25 && bothStraight && facesOutward;
       
       if (isSharpAngle) {
         // Create sharp corner: find intersection of the two edge lines
