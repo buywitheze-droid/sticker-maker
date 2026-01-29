@@ -70,7 +70,7 @@ export interface SpotColorData {
   spotGloss: boolean;
 }
 
-export type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace';
+export type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' | 'potrace-style';
 
 export interface ContourDebugSettings {
   enabled: boolean;

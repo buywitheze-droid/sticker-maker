@@ -265,7 +265,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 11;
+    const CONTOUR_CACHE_VERSION = 12;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
       const potraceKey = contourDebugSettings?.alphaTracingMethod === 'potrace' 
@@ -1160,6 +1160,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         {contourDebugSettings.alphaTracingMethod === 'moore-neighbor' && 'Moore-Neighbor'}
                         {contourDebugSettings.alphaTracingMethod === 'contour-following' && 'Contour Following'}
                         {contourDebugSettings.alphaTracingMethod === 'potrace' && 'Potrace'}
+                        {contourDebugSettings.alphaTracingMethod === 'potrace-style' && 'Potrace Style'}
                       </div>
                       <div className={contourDebugSettings.gaussianSmoothing ? '' : 'line-through opacity-50'}>Smoothing</div>
                       <div className={contourDebugSettings.cornerDetection ? '' : 'line-through opacity-50'}>Corners</div>

@@ -57,7 +57,7 @@ function detectPathCornerPointsWorker(points: Point[]): boolean[] {
   return isCorner;
 }
 
-type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace';
+type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' | 'potrace-style';
 
 interface PotraceSettings {
   alphaMax: number;      // Corner threshold (0-1.34, default 1.0)
@@ -695,6 +695,9 @@ function traceBoundary(mask: Uint8Array, width: number, height: number, method: 
     case 'potrace':
       result = traceBoundaryPotrace(mask, width, height, potraceSettings);
       break;
+    case 'potrace-style':
+      result = traceBoundaryPotraceStyle(mask, width, height);
+      break;
     default:
       result = traceBoundaryMooreNeighbor(mask, width, height);
   }
@@ -926,6 +929,343 @@ function traceBoundaryPotrace(mask: Uint8Array, width: number, height: number, s
     : fitBezierCurves(polygon, rawPath);
   
   return bezierPath;
+}
+
+// ============================================================================
+// POTRACE-STYLE CONTOUR TRACING
+// ============================================================================
+// Standalone implementation using minority/majority turn policy
+// Based on Peter Selinger's Potrace algorithm with 5-phase processing
+
+const POTRACE_STYLE_ALPHAMAX = 1.0;        // Maximum angle for corner detection
+const POTRACE_STYLE_OPTTOLERANCE = 0.2;    // Curve optimization tolerance
+
+function traceBoundaryPotraceStyle(mask: Uint8Array, width: number, height: number): Point[] {
+  console.log(`[PotraceStyle] Starting with ${width}x${height} mask`);
+  
+  // Phase 1: Get raw path using Moore-neighbor tracing
+  const rawPath = traceMooreNeighborPotraceStyle(mask, width, height);
+  console.log(`[PotraceStyle] Phase 1 (Moore-neighbor): ${rawPath.length} points`);
+  if (rawPath.length < 4) return rawPath;
+  
+  // Phase 2: Find straight segments and corners
+  const segments = segmentPathPotraceStyle(rawPath);
+  console.log(`[PotraceStyle] Phase 2 (Segmentation): ${segments.corners.length} corners found`);
+  
+  // Phase 3: Apply turn policy at ambiguous corners (minority policy)
+  const resolvedPath = applyTurnPolicyPotraceStyle(rawPath, segments, mask, width, height);
+  console.log(`[PotraceStyle] Phase 3 (Turn policy): ${resolvedPath.length} points`);
+  
+  // Phase 4: Optimize vertex positions for sub-pixel accuracy
+  const optimalPath = optimizeVerticesPotraceStyle(resolvedPath, mask, width, height);
+  console.log(`[PotraceStyle] Phase 4 (Vertex optimization): ${optimalPath.length} points`);
+  
+  // Phase 5: Fit Bezier curves with error tolerance
+  const smoothPath = fitCurvesWithTolerancePotraceStyle(optimalPath, POTRACE_STYLE_OPTTOLERANCE);
+  console.log(`[PotraceStyle] Phase 5 (Bezier fitting): ${smoothPath.length} points`);
+  
+  return smoothPath;
+}
+
+// Moore-neighbor boundary tracing for Potrace Style
+function traceMooreNeighborPotraceStyle(mask: Uint8Array, width: number, height: number): Point[] {
+  // Find starting point (first solid pixel from top-left)
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] > 0) {
+        startX = x;
+        startY = y;
+        break outer;
+      }
+    }
+  }
+  
+  if (startX === -1) return [];
+  
+  const path: Point[] = [];
+  
+  // Moore neighborhood: 8 directions starting from left, going clockwise
+  const dx = [-1, -1, 0, 1, 1, 1, 0, -1];
+  const dy = [0, -1, -1, -1, 0, 1, 1, 1];
+  
+  let x = startX;
+  let y = startY;
+  let dir = 0; // Start looking left
+  
+  const maxIterations = width * height * 4;
+  let iterations = 0;
+  
+  do {
+    path.push({ x: x + 0.5, y: y + 0.5 }); // Center of pixel
+    
+    // Look for next boundary pixel
+    let found = false;
+    const startDir = (dir + 5) % 8; // Start from backtrack direction + 1
+    
+    for (let i = 0; i < 8; i++) {
+      const checkDir = (startDir + i) % 8;
+      const nx = x + dx[checkDir];
+      const ny = y + dy[checkDir];
+      
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] > 0) {
+        x = nx;
+        y = ny;
+        dir = checkDir;
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) break;
+    iterations++;
+  } while ((x !== startX || y !== startY) && iterations < maxIterations);
+  
+  return path;
+}
+
+interface PotraceStyleSegmentInfo {
+  corners: number[];
+  isCorner: boolean[];
+}
+
+// Segment path into straight lines and curves
+function segmentPathPotraceStyle(path: Point[]): PotraceStyleSegmentInfo {
+  const n = path.length;
+  const isCorner = new Array(n).fill(false);
+  const corners: number[] = [];
+  
+  for (let i = 0; i < n; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    // Calculate direction vectors
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    // Calculate angle between directions using cross product
+    const cross = dx1 * dy2 - dy1 * dx2;
+    const dot = dx1 * dx2 + dy1 * dy2;
+    const angle = Math.abs(Math.atan2(cross, dot));
+    
+    // Mark as corner if angle exceeds threshold
+    if (angle > POTRACE_STYLE_ALPHAMAX * Math.PI / 4) {
+      isCorner[i] = true;
+      corners.push(i);
+    }
+  }
+  
+  return { corners, isCorner };
+}
+
+// Apply Potrace minority turn policy at ambiguous corners
+function applyTurnPolicyPotraceStyle(
+  path: Point[], 
+  segments: PotraceStyleSegmentInfo,
+  mask: Uint8Array,
+  width: number,
+  height: number
+): Point[] {
+  const n = path.length;
+  const result: Point[] = [];
+  
+  for (let i = 0; i < n; i++) {
+    const curr = path[i];
+    
+    if (segments.isCorner[i]) {
+      const prev = path[(i - 1 + n) % n];
+      const next = path[(i + 1) % n];
+      
+      const x = Math.floor(curr.x);
+      const y = Math.floor(curr.y);
+      
+      // Count pixels in diagonal quadrants (Potrace minority policy)
+      const diag1 = getPixelSafePotraceStyle(mask, width, height, x - 1, y - 1);
+      const diag2 = getPixelSafePotraceStyle(mask, width, height, x + 1, y - 1);
+      const diag3 = getPixelSafePotraceStyle(mask, width, height, x - 1, y + 1);
+      const diag4 = getPixelSafePotraceStyle(mask, width, height, x + 1, y + 1);
+      
+      const totalBlack = diag1 + diag2 + diag3 + diag4;
+      const minorityIsBlack = totalBlack < 2;
+      
+      // Calculate adjustment based on incoming and outgoing directions
+      const inDir = { x: curr.x - prev.x, y: curr.y - prev.y };
+      const outDir = { x: next.x - curr.x, y: next.y - curr.y };
+      
+      // Determine which way to bias the corner based on minority policy
+      const cross = inDir.x * outDir.y - inDir.y * outDir.x;
+      const turnRight = cross > 0;
+      
+      // Adjust corner position toward the minority color region
+      const adjustAmount = 0.15;
+      let adjustX = 0, adjustY = 0;
+      
+      if ((turnRight && minorityIsBlack) || (!turnRight && !minorityIsBlack)) {
+        const mag = Math.max(1, Math.hypot(outDir.y - inDir.y, outDir.x - inDir.x));
+        adjustX = -(outDir.y - inDir.y) * adjustAmount / mag;
+        adjustY = (outDir.x - inDir.x) * adjustAmount / mag;
+      }
+      
+      result.push({
+        x: curr.x + adjustX,
+        y: curr.y + adjustY
+      });
+    } else {
+      result.push(curr);
+    }
+  }
+  
+  return result;
+}
+
+function getPixelSafePotraceStyle(mask: Uint8Array, width: number, height: number, x: number, y: number): number {
+  if (x < 0 || x >= width || y < 0 || y >= height) return 0;
+  return mask[y * width + x] > 0 ? 1 : 0;
+}
+
+// Optimize vertex positions using Sobel-based gradient
+function optimizeVerticesPotraceStyle(path: Point[], mask: Uint8Array, width: number, height: number): Point[] {
+  if (path.length < 4) return path;
+  
+  const result: Point[] = [];
+  
+  for (const point of path) {
+    const x = Math.floor(point.x);
+    const y = Math.floor(point.y);
+    
+    // Calculate optimal sub-pixel position using Sobel-like gradient
+    if (x >= 1 && x < width - 1 && y >= 1 && y < height - 1) {
+      // Sobel gradient calculation
+      const tl = mask[(y - 1) * width + (x - 1)] > 0 ? 1 : 0;
+      const t  = mask[(y - 1) * width + x] > 0 ? 1 : 0;
+      const tr = mask[(y - 1) * width + (x + 1)] > 0 ? 1 : 0;
+      const l  = mask[y * width + (x - 1)] > 0 ? 1 : 0;
+      const r  = mask[y * width + (x + 1)] > 0 ? 1 : 0;
+      const bl = mask[(y + 1) * width + (x - 1)] > 0 ? 1 : 0;
+      const b  = mask[(y + 1) * width + x] > 0 ? 1 : 0;
+      const br = mask[(y + 1) * width + (x + 1)] > 0 ? 1 : 0;
+      
+      // Sobel gradients
+      const gx = (tr + 2 * r + br) - (tl + 2 * l + bl);
+      const gy = (bl + 2 * b + br) - (tl + 2 * t + tr);
+      
+      // Move toward edge (perpendicular to gradient)
+      const gradMag = Math.hypot(gx, gy);
+      if (gradMag > 0.01) {
+        const adjustX = -gx / gradMag * 0.3;
+        const adjustY = -gy / gradMag * 0.3;
+        
+        result.push({
+          x: point.x + adjustX,
+          y: point.y + adjustY
+        });
+      } else {
+        result.push(point);
+      }
+    } else {
+      result.push(point);
+    }
+  }
+  
+  return result;
+}
+
+// Fit Bezier curves with error tolerance
+function fitCurvesWithTolerancePotraceStyle(points: Point[], tolerance: number): Point[] {
+  if (points.length < 4) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  // Find corner points (significant direction changes)
+  const corners: number[] = [0]; // Always start at first point
+  for (let i = 1; i < n - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const cross = Math.abs(dx1 * dy2 - dy1 * dx2);
+    const len1 = Math.hypot(dx1, dy1);
+    const len2 = Math.hypot(dx2, dy2);
+    
+    // Corner if cross product is significant relative to segment lengths
+    if (cross > tolerance * len1 * len2 * 0.5) {
+      corners.push(i);
+    }
+  }
+  corners.push(n - 1); // Always end at last point
+  
+  // Fit Bezier curves between corners
+  for (let c = 0; c < corners.length - 1; c++) {
+    const startIdx = corners[c];
+    const endIdx = corners[c + 1];
+    const segmentLength = endIdx - startIdx;
+    
+    if (segmentLength <= 2) {
+      // Too short for curve, just add points
+      for (let i = startIdx; i <= endIdx; i++) {
+        result.push(points[i]);
+      }
+    } else {
+      // Fit cubic Bezier to this segment
+      const p0 = points[startIdx];
+      const p3 = points[endIdx];
+      
+      // Calculate tangent directions from neighboring points
+      const t0 = {
+        x: points[Math.min(startIdx + 1, n - 1)].x - p0.x,
+        y: points[Math.min(startIdx + 1, n - 1)].y - p0.y
+      };
+      const t3 = {
+        x: p3.x - points[Math.max(endIdx - 1, 0)].x,
+        y: p3.y - points[Math.max(endIdx - 1, 0)].y
+      };
+      
+      // Estimate curve length for control point distance
+      const chordLen = Math.hypot(p3.x - p0.x, p3.y - p0.y);
+      const scale = chordLen / 3;
+      
+      // Control points along tangent directions
+      const p1 = {
+        x: p0.x + t0.x * scale / Math.max(1, Math.hypot(t0.x, t0.y)),
+        y: p0.y + t0.y * scale / Math.max(1, Math.hypot(t0.x, t0.y))
+      };
+      const p2 = {
+        x: p3.x - t3.x * scale / Math.max(1, Math.hypot(t3.x, t3.y)),
+        y: p3.y - t3.y * scale / Math.max(1, Math.hypot(t3.x, t3.y))
+      };
+      
+      // Sample the Bezier curve
+      const samples = Math.max(4, Math.ceil(segmentLength / 2));
+      for (let t = 0; t <= samples; t++) {
+        const u = t / samples;
+        result.push(evaluateCubicBezierPotraceStyle(p0, p1, p2, p3, u));
+      }
+    }
+  }
+  
+  return result;
+}
+
+function evaluateCubicBezierPotraceStyle(p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point {
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+  
+  return {
+    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y
+  };
 }
 
 // Find optimal polygon that approximates the path
