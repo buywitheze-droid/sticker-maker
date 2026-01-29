@@ -371,15 +371,16 @@ function processContour(
   console.log('[Worker] Straightening with maxDeviation:', maxDeviation.toFixed(2), 'px (offset:', totalOffsetPixels, 'px, DPI:', effectiveDPI, ')');
   
   // First pass: aggressive straightening with DPI-scaled tolerance
-  smoothedPath = straightenNoisyLines(smoothedPath, 35, maxDeviation);
+  // 25° corner threshold = preserve corners sensitively (any angle >25° is a corner)
+  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation);
   
-  // Second pass: gentler pass to catch remaining noise
-  smoothedPath = straightenNoisyLines(smoothedPath, 35, maxDeviation * 0.6);
+  // Second pass: gentler pass to catch remaining noise on lines
+  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation * 0.6);
   console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
   
-  // Apply minimal Chaikin smoothing - just 2 iterations to soften any remaining jaggies
-  // High 85° threshold ensures corners stay sharp
-  smoothedPath = smoothPolyChaikin(smoothedPath, 2, 85);
+  // Apply minimal Chaikin smoothing - only 1 iteration with very high threshold
+  // 95° threshold = only smooth very shallow curves, preserve ALL corners
+  smoothedPath = smoothPolyChaikin(smoothedPath, 1, 95);
   console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   
   postProgress(90);
