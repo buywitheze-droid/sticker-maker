@@ -19,8 +19,8 @@ import type { ParsedPDFData } from "@/lib/pdf-parser";
 import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 import { useToast } from "@/hooks/use-toast";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, ContourDebugSettings } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, ContourDebugSettings } from "@/lib/types";
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 
 export default function ImageEditor() {
   const { toast } = useToast();
@@ -62,22 +62,6 @@ export default function ImageEditor() {
   const [detectedDimensions, setDetectedDimensions] = useState<{ width: number; height: number } | null>(null);
   const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
-  const [contourDebugSettings, setContourDebugSettings] = useState<ContourDebugSettings>({
-    enabled: false,
-    alphaTracingMethod: 'marching-squares',
-    gaussianSmoothing: true,
-    cornerDetection: true,
-    bezierCurveFitting: true,
-    autoBridging: true,
-    gapClosing: true,
-    holeFilling: true,
-    pathSimplification: true,
-    showRawContour: false,
-    potraceAlphaMax: 1.0,
-    potraceTurdSize: 2,
-    potraceOptCurve: true,
-    potraceOptTolerance: 0.2,
-  });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -85,7 +69,6 @@ export default function ImageEditor() {
   const debouncedStrokeSettings = useDebouncedValue(strokeSettings, 100);
   const debouncedResizeSettings = useDebouncedValue(resizeSettings, 250); // Higher debounce for size changes
   const debouncedShapeSettings = useDebouncedValue(shapeSettings, 100);
-  const debouncedContourDebugSettings = useDebouncedValue(contourDebugSettings, 100);
 
   // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
   const updateCadCutBounds = useCallback((
@@ -920,12 +903,10 @@ export default function ImageEditor() {
           resizeSettings={resizeSettings}
           shapeSettings={shapeSettings}
           stickerSize={stickerSize}
-          contourDebugSettings={contourDebugSettings}
           onStrokeChange={handleStrokeChange}
           onResizeChange={handleResizeChange}
           onShapeChange={handleShapeChange}
           onStickerSizeChange={handleStickerSizeChange}
-          onContourDebugChange={(settings) => setContourDebugSettings(prev => ({ ...prev, ...settings }))}
           onDownload={handleDownload}
           isProcessing={isProcessing}
           imageInfo={imageInfo}
@@ -987,7 +968,6 @@ export default function ImageEditor() {
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
-            contourDebugSettings={debouncedContourDebugSettings}
           />
         </div>
       </div>

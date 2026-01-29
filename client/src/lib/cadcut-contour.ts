@@ -430,114 +430,38 @@ function perpendicularDist(point: Point, lineStart: Point, lineEnd: Point): numb
   return Math.sqrt((point.x - nearestX) ** 2 + (point.y - nearestY) ** 2);
 }
 
-function calculateAngle(p1: Point, p2: Point): number {
-  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
-}
-
-function normalizeAngle(angle: number): number {
-  while (angle > Math.PI) angle -= 2 * Math.PI;
-  while (angle < -Math.PI) angle += 2 * Math.PI;
-  return angle;
-}
-
-function getSegmentLength(p1: Point, p2: Point): number {
-  const dx = p2.x - p1.x;
-  const dy = p2.y - p1.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-function detectCorners(contour: Point[]): boolean[] {
-  const n = contour.length;
-  if (n < 3) return new Array(n).fill(false);
-  
-  const isCorner: boolean[] = new Array(n).fill(false);
-  const angleDeltas: number[] = new Array(n).fill(0);
-  const segmentLengths: number[] = new Array(n).fill(0);
-  
-  for (let i = 0; i < n; i++) {
-    const prev = contour[(i - 1 + n) % n];
-    const curr = contour[i];
-    const next = contour[(i + 1) % n];
-    
-    const inAngle = calculateAngle(prev, curr);
-    const outAngle = calculateAngle(curr, next);
-    const delta = Math.abs(normalizeAngle(outAngle - inAngle));
-    angleDeltas[i] = delta;
-    segmentLengths[i] = getSegmentLength(curr, next);
-  }
-  
-  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
-  const medianDelta = sortedDeltas[Math.floor(n / 2)];
-  
-  for (let i = 0; i < n; i++) {
-    const currentDelta = angleDeltas[i];
-    
-    const windowSize = 2;
-    const neighbors: number[] = [];
-    for (let j = -windowSize; j <= windowSize; j++) {
-      if (j === 0) continue;
-      const idx = (i + j + n) % n;
-      neighbors.push(angleDeltas[idx]);
-    }
-    neighbors.sort((a, b) => a - b);
-    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
-    
-    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
-    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
-    const isSharpAngle = currentDelta > Math.PI / 8;
-    
-    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
-  }
-  
-  return isCorner;
-}
-
 function drawContour(ctx: CanvasRenderingContext2D, contour: Point[], color: string, offsetX: number, offsetY: number): void {
   if (contour.length < 3) return;
 
+  // Draw the contour outline
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'miter';
+  ctx.lineJoin = 'round';
   
+  // Add shadow for visibility on any background
   ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
   ctx.shadowBlur = 2;
   ctx.shadowOffsetX = 1;
   ctx.shadowOffsetY = 1;
 
-  const isCorner = detectCorners(contour);
-  const n = contour.length;
-
   ctx.beginPath();
   ctx.moveTo(contour[0].x + offsetX, contour[0].y + offsetY);
   
-  for (let i = 0; i < n; i++) {
-    const curr = contour[i];
-    const nextIdx = (i + 1) % n;
-    const next = contour[nextIdx];
-    const prevIdx = (i - 1 + n) % n;
-    const nextNextIdx = (i + 2) % n;
-    
-    const currIsCorner = isCorner[i];
-    const nextIsCorner = isCorner[nextIdx];
-    
-    if (currIsCorner || nextIsCorner) {
-      ctx.lineTo(next.x + offsetX, next.y + offsetY);
-    } else {
-      const nextNext = contour[nextNextIdx];
-      if (!isCorner[nextNextIdx]) {
-        const xc = (next.x + nextNext.x) / 2 + offsetX;
-        const yc = (next.y + nextNext.y) / 2 + offsetY;
-        ctx.quadraticCurveTo(next.x + offsetX, next.y + offsetY, xc, yc);
-      } else {
-        ctx.lineTo(next.x + offsetX, next.y + offsetY);
-      }
-    }
+  // Draw smooth curve through points
+  for (let i = 1; i < contour.length - 1; i++) {
+    const xc = (contour[i].x + contour[i + 1].x) / 2 + offsetX;
+    const yc = (contour[i].y + contour[i + 1].y) / 2 + offsetY;
+    ctx.quadraticCurveTo(contour[i].x + offsetX, contour[i].y + offsetY, xc, yc);
   }
   
+  // Connect to last point and close
+  const lastPoint = contour[contour.length - 1];
+  ctx.lineTo(lastPoint.x + offsetX, lastPoint.y + offsetY);
   ctx.closePath();
   ctx.stroke();
   
+  // Reset shadow
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
 }

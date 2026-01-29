@@ -3,87 +3,6 @@ interface Point {
   y: number;
 }
 
-function calculatePointAngleWorker(p1: Point, p2: Point): number {
-  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
-}
-
-function normalizePointAngleWorker(angle: number): number {
-  while (angle > Math.PI) angle -= 2 * Math.PI;
-  while (angle < -Math.PI) angle += 2 * Math.PI;
-  return angle;
-}
-
-function detectPathCornerPointsWorker(points: Point[]): boolean[] {
-  const n = points.length;
-  if (n < 3) return new Array(n).fill(false);
-  
-  const isCorner: boolean[] = new Array(n).fill(false);
-  const angleDeltas: number[] = new Array(n).fill(0);
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    const inAngle = calculatePointAngleWorker(prev, curr);
-    const outAngle = calculatePointAngleWorker(curr, next);
-    const delta = Math.abs(normalizePointAngleWorker(outAngle - inAngle));
-    angleDeltas[i] = delta;
-  }
-  
-  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
-  const medianDelta = sortedDeltas[Math.floor(n / 2)];
-  
-  for (let i = 0; i < n; i++) {
-    const currentDelta = angleDeltas[i];
-    
-    const windowSize = 2;
-    const neighbors: number[] = [];
-    for (let j = -windowSize; j <= windowSize; j++) {
-      if (j === 0) continue;
-      const idx = (i + j + n) % n;
-      neighbors.push(angleDeltas[idx]);
-    }
-    neighbors.sort((a, b) => a - b);
-    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
-    
-    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
-    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
-    const isSharpAngle = currentDelta > Math.PI / 8;
-    
-    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
-  }
-  
-  return isCorner;
-}
-
-type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' | 'potrace-style';
-
-interface PotraceSettings {
-  alphaMax: number;      // Corner threshold (0-1.34, default 1.0)
-  turdSize: number;      // Speckle suppression (pixels, default 2)
-  optCurve: boolean;     // Curve optimization enabled
-  optTolerance: number;  // Optimization tolerance (0-1, default 0.2)
-}
-
-interface DebugSettings {
-  enabled: boolean;
-  alphaTracingMethod: AlphaTracingMethod;
-  gaussianSmoothing: boolean;
-  cornerDetection: boolean;
-  bezierCurveFitting: boolean;
-  autoBridging: boolean;
-  gapClosing: boolean;
-  holeFilling: boolean;
-  pathSimplification: boolean;
-  showRawContour: boolean;
-  // Potrace-specific settings
-  potraceAlphaMax?: number;
-  potraceTurdSize?: number;
-  potraceOptCurve?: boolean;
-  potraceOptTolerance?: number;
-}
-
 interface WorkerMessage {
   type: 'process';
   imageData: ImageData;
@@ -99,7 +18,6 @@ interface WorkerMessage {
   };
   effectiveDPI: number;
   previewMode?: boolean;
-  debugSettings?: DebugSettings;
 }
 
 interface WorkerResponse {
@@ -124,7 +42,7 @@ interface WorkerResponse {
 const MAX_SAFE_DIMENSION = 4000;
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
-  const { type, imageData, strokeSettings, effectiveDPI, previewMode, debugSettings } = e.data;
+  const { type, imageData, strokeSettings, effectiveDPI, previewMode } = e.data;
   
   if (type === 'process') {
     try {
@@ -159,7 +77,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         const scaledDPI = effectiveDPI * scale;
         
         postProgress(15);
-        const result = processContour(scaledData, strokeSettings, scaledDPI, debugSettings);
+        const result = processContour(scaledData, strokeSettings, scaledDPI);
         postProgress(90);
         
         // Upscale result back to original size
@@ -168,7 +86,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           Math.round(result.imageData.height / scale));
         contourData = result.contourData;
       } else {
-        const result = processContour(imageData, strokeSettings, effectiveDPI, debugSettings);
+        const result = processContour(imageData, strokeSettings, effectiveDPI);
         processedData = result.imageData;
         contourData = result.contourData;
       }
@@ -282,8 +200,7 @@ function processContour(
     backgroundColor: string;
     useCustomBackground: boolean;
   },
-  effectiveDPI: number,
-  debugSettings?: DebugSettings
+  effectiveDPI: number
 ): ContourResult {
   const width = imageData.width;
   const height = imageData.height;
@@ -356,14 +273,7 @@ function processContour(
   
   postProgress(70);
   
-  const tracingMethod = debugSettings?.enabled ? debugSettings.alphaTracingMethod : 'marching-squares';
-  const potraceSettings: PotraceSettings = {
-    alphaMax: debugSettings?.potraceAlphaMax ?? 1.0,
-    turdSize: debugSettings?.potraceTurdSize ?? 2,
-    optCurve: debugSettings?.potraceOptCurve ?? true,
-    optTolerance: debugSettings?.potraceOptTolerance ?? 0.2,
-  };
-  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight, tracingMethod, potraceSettings);
+  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
   if (boundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -371,108 +281,17 @@ function processContour(
   
   postProgress(80);
   
-  // Check if debug mode wants raw contour (skip all processing)
-  const useRaw = debugSettings?.enabled && debugSettings.showRawContour;
+  let smoothedPath = smoothPath(boundaryPath, 2);
+  smoothedPath = fixOffsetCrossings(smoothedPath);
   
-  // Log debug settings for troubleshooting
-  if (debugSettings?.enabled) {
-    console.log('[ContourWorker] Debug settings:', {
-      method: debugSettings.alphaTracingMethod,
-      smoothing: debugSettings.gaussianSmoothing,
-      corners: debugSettings.cornerDetection,
-      bridging: debugSettings.autoBridging,
-      gaps: debugSettings.gapClosing,
-      raw: debugSettings.showRawContour
-    });
-  }
+  const gapThresholdPixels = strokeSettings.closeBigGaps 
+    ? Math.round(0.42 * effectiveDPI) 
+    : strokeSettings.closeSmallGaps 
+      ? Math.round(0.15 * effectiveDPI) 
+      : 0;
   
-  let smoothedPath = boundaryPath;
-  const initialPointCount = smoothedPath.length;
-  
-  if (!useRaw) {
-    // Apply Gaussian smoothing (if enabled or not in debug mode)
-    const applySmoothing = !debugSettings?.enabled || debugSettings.gaussianSmoothing;
-    if (applySmoothing) {
-      const before = smoothedPath.length;
-      smoothedPath = smoothPath(smoothedPath, 2);
-      console.log(`[Processing] Gaussian Smoothing: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Gaussian Smoothing: SKIPPED');
-    }
-    
-    // Apply corner detection - preserves sharp corners from being smoothed
-    const applyCornerDetection = !debugSettings?.enabled || debugSettings.cornerDetection;
-    if (applyCornerDetection) {
-      const before = smoothedPath.length;
-      smoothedPath = enhanceCorners(smoothedPath);
-      console.log(`[Processing] Corner Detection: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Corner Detection: SKIPPED');
-    }
-    
-    // Apply bezier curve fitting for smoother curves
-    const applyBezierFitting = !debugSettings?.enabled || debugSettings.bezierCurveFitting;
-    if (applyBezierFitting) {
-      const before = smoothedPath.length;
-      smoothedPath = applyBezierSmoothing(smoothedPath);
-      console.log(`[Processing] Bezier Fitting: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Bezier Fitting: SKIPPED');
-    }
-    
-    // Apply path fixing/crossing detection (part of bridging)
-    const applyBridging = !debugSettings?.enabled || debugSettings.autoBridging;
-    if (applyBridging) {
-      const before = smoothedPath.length;
-      smoothedPath = fixOffsetCrossings(smoothedPath);
-      console.log(`[Processing] Auto Bridging: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Auto Bridging: SKIPPED');
-    }
-    
-    // Apply gap closing
-    const applyGapClosing = !debugSettings?.enabled || debugSettings.gapClosing;
-    if (applyGapClosing) {
-      const gapThresholdPixels = strokeSettings.closeBigGaps 
-        ? Math.round(0.42 * effectiveDPI) 
-        : strokeSettings.closeSmallGaps 
-          ? Math.round(0.15 * effectiveDPI) 
-          : 0;
-      
-      if (gapThresholdPixels > 0) {
-        const before = smoothedPath.length;
-        smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-        console.log(`[Processing] Gap Closing: ${before} -> ${smoothedPath.length} points`);
-      } else {
-        console.log('[Processing] Gap Closing: no gaps to close');
-      }
-    } else {
-      console.log('[Processing] Gap Closing: SKIPPED');
-    }
-    
-    // Apply hole filling - closes interior gaps
-    const applyHoleFilling = !debugSettings?.enabled || debugSettings.holeFilling;
-    if (applyHoleFilling) {
-      const before = smoothedPath.length;
-      smoothedPath = fillInteriorHoles(smoothedPath);
-      console.log(`[Processing] Hole Filling: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Hole Filling: SKIPPED');
-    }
-    
-    // Apply path simplification - reduces number of points
-    const applySimplification = !debugSettings?.enabled || debugSettings.pathSimplification;
-    if (applySimplification) {
-      const before = smoothedPath.length;
-      smoothedPath = simplifyPath(smoothedPath, 0.5);
-      console.log(`[Processing] Path Simplification: ${before} -> ${smoothedPath.length} points`);
-    } else {
-      console.log('[Processing] Path Simplification: SKIPPED');
-    }
-    
-    console.log(`[Processing] Total: ${initialPointCount} -> ${smoothedPath.length} points`);
-  } else {
-    console.log('[Processing] RAW MODE - all processing skipped');
+  if (gapThresholdPixels > 0) {
+    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
   postProgress(90);
@@ -678,94 +497,14 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   return filled;
 }
 
-// Main boundary tracing dispatcher - selects algorithm based on method
-function traceBoundary(mask: Uint8Array, width: number, height: number, method: AlphaTracingMethod = 'marching-squares', potraceSettings?: PotraceSettings): Point[] {
-  let result: Point[];
-  
-  switch (method) {
-    case 'marching-squares':
-      result = traceBoundaryMarchingSquares(mask, width, height);
-      break;
-    case 'moore-neighbor':
-      result = traceBoundaryMooreNeighbor(mask, width, height);
-      break;
-    case 'contour-following':
-      result = traceBoundaryContourFollowing(mask, width, height);
-      break;
-    case 'potrace':
-      result = traceBoundaryPotrace(mask, width, height, potraceSettings);
-      break;
-    case 'potrace-style':
-      result = traceBoundaryPotraceStyle(mask, width, height);
-      break;
-    default:
-      result = traceBoundaryMooreNeighbor(mask, width, height);
-  }
-  
-  // Log result and fallback to Moore-Neighbor if algorithm fails
-  console.log(`[TraceBoundary] Method: ${method}, Points: ${result.length}`);
-  
-  if (result.length < 3 && method !== 'moore-neighbor') {
-    console.log(`[TraceBoundary] ${method} failed, falling back to moore-neighbor`);
-    result = traceBoundaryMooreNeighbor(mask, width, height);
-  }
-  
-  return result;
-}
-
-// MARCHING SQUARES: Simple implementation that produces smooth contours
-// Uses the classic 16-case lookup with edge midpoints
-function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: number): Point[] {
-  // Use Moore-Neighbor as base, then smooth the result for Marching Squares effect
-  // This provides reliable contours while still having different output characteristics
-  const moorePath = traceBoundaryMooreNeighbor(mask, width, height);
-  
-  if (moorePath.length < 3) return moorePath;
-  
-  // Apply marching squares smoothing - convert pixel centers to edge midpoints
-  const path: Point[] = [];
-  const n = moorePath.length;
-  
-  for (let i = 0; i < n; i++) {
-    const curr = moorePath[i];
-    const next = moorePath[(i + 1) % n];
-    
-    // Add current point
-    path.push(curr);
-    
-    // If there's a diagonal step, add intermediate edge points
-    const dx = next.x - curr.x;
-    const dy = next.y - curr.y;
-    
-    if (Math.abs(dx) > 0.5 && Math.abs(dy) > 0.5) {
-      // Diagonal - add midpoint to create smoother corner
-      path.push({ x: curr.x + dx / 2, y: curr.y + dy / 2 });
-    }
-  }
-  
-  return path;
-}
-
-// MOORE-NEIGHBOR: Classic boundary following using 8-connectivity
-// Starts from boundary pixel, outputs pixel centers (x+0.5, y+0.5) for consistency
-function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting boundary pixel (foreground with at least one background neighbor)
-  let startX = -1, startY = -1, startDir = 0;
+function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
+  let startX = -1, startY = -1;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        // Check if this is a boundary pixel
-        for (let d = 0; d < 8; d++) {
-          const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
-          const nx = x + dirs[d][0];
-          const ny = y + dirs[d][1];
-          if (nx < 0 || nx >= width || ny < 0 || ny >= height || mask[ny * width + nx] === 0) {
-            startX = x;
-            startY = y;
-            startDir = (d + 4) % 8; // Start searching from opposite of background
-            break outer;
-          }
-        }
+        startX = x;
+        startY = y;
+        break outer;
       }
     }
   }
@@ -774,27 +513,29 @@ function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: num
   
   const path: Point[] = [];
   const directions = [
-    [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]
+    { dx: 1, dy: 0 },
+    { dx: 1, dy: 1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: -1, dy: -1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: -1 }
   ];
   
   let x = startX, y = startY;
-  let dir = startDir;
+  let dir = 0;
   const maxSteps = width * height * 2;
   let steps = 0;
-  let firstStep = true;
   
   do {
-    // Output pixel center for coordinate consistency
-    path.push({ x: x + 0.5, y: y + 0.5 });
+    path.push({ x, y });
     
-    // Moore neighbor: search clockwise starting from backtrack + 1
-    const searchStart = (dir + 5) % 8;
     let found = false;
-    
     for (let i = 0; i < 8; i++) {
-      const checkDir = (searchStart + i) % 8;
-      const nx = x + directions[checkDir][0];
-      const ny = y + directions[checkDir][1];
+      const checkDir = (dir + 6 + i) % 8;
+      const nx = x + directions[checkDir].dx;
+      const ny = y + directions[checkDir].dy;
       
       if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
         x = nx;
@@ -807,1049 +548,31 @@ function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: num
     
     if (!found) break;
     steps++;
-    
-    if (firstStep) firstStep = false;
-  } while ((x !== startX || y !== startY || firstStep) && steps < maxSteps);
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
   
   return path;
-}
-
-// CONTOUR FOLLOWING: 4-connectivity boundary tracing
-// Produces a tighter contour by only using 4-connected neighbors
-// Results in more angular/blocky output compared to 8-connected Moore
-function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting boundary pixel
-  let startX = -1, startY = -1;
-  outer: for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] === 1 && isOnBoundary4(mask, width, height, x, y)) {
-        startX = x;
-        startY = y;
-        break outer;
-      }
-    }
-  }
-  
-  if (startX === -1) return [];
-  
-  const path: Point[] = [];
-  
-  // 4-directional neighbors: E, S, W, N
-  const dx = [1, 0, -1, 0];
-  const dy = [0, 1, 0, -1];
-  
-  let x = startX, y = startY;
-  let dir = 0; // Start looking East
-  const maxSteps = width * height * 4;
-  let steps = 0;
-  
-  // Add starting point
-  path.push({ x: x + 0.5, y: y + 0.5 });
-  
-  do {
-    // 4-connectivity tracing: turn right first, then straight, then left, then back
-    let found = false;
-    for (let turn = 0; turn < 4; turn++) {
-      const checkDir = (dir + 1 - turn + 4) % 4; // Right, forward, left, back
-      const nx = x + dx[checkDir];
-      const ny = y + dy[checkDir];
-      
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
-        // Before moving, check if we're leaving a boundary edge
-        const wasOnBoundary = isOnBoundary4(mask, width, height, x, y);
-        
-        x = nx;
-        y = ny;
-        dir = checkDir;
-        found = true;
-        
-        // Only add point if new position is on boundary
-        if (isOnBoundary4(mask, width, height, x, y)) {
-          path.push({ x: x + 0.5, y: y + 0.5 });
-        }
-        break;
-      }
-    }
-    
-    if (!found) break;
-    steps++;
-    
-    // Check if we've returned to start
-    if (x === startX && y === startY) break;
-    
-  } while (steps < maxSteps);
-  
-  return path;
-}
-
-// Check if pixel has at least one 4-connected background neighbor
-function isOnBoundary4(mask: Uint8Array, width: number, height: number, x: number, y: number): boolean {
-  const dx = [1, 0, -1, 0];
-  const dy = [0, 1, 0, -1];
-  for (let i = 0; i < 4; i++) {
-    const nx = x + dx[i];
-    const ny = y + dy[i];
-    if (nx < 0 || nx >= width || ny < 0 || ny >= height || mask[ny * width + nx] === 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// POTRACE: Industry-standard bitmap-to-vector tracing algorithm
-// Produces smooth bezier curves by fitting optimal paths to boundary points
-// Based on Peter Selinger's Potrace algorithm
-function traceBoundaryPotrace(mask: Uint8Array, width: number, height: number, settings?: PotraceSettings): Point[] {
-  const alphaMax = settings?.alphaMax ?? 1.0;
-  const turdSize = settings?.turdSize ?? 2;
-  const optCurve = settings?.optCurve ?? true;
-  const optTolerance = settings?.optTolerance ?? 0.2;
-  
-  console.log(`[Potrace] Settings: alphaMax=${alphaMax}, turdSize=${turdSize}, optCurve=${optCurve}, optTolerance=${optTolerance}`);
-  
-  // Step 1: Get raw boundary using Moore-Neighbor (high detail)
-  const rawPath = traceBoundaryMooreNeighbor(mask, width, height);
-  if (rawPath.length < 4) return rawPath;
-  
-  // Step 1.5: Remove small speckles (turdSize)
-  // For now, this mainly affects the minimum path length we accept
-  if (rawPath.length < turdSize * 4) {
-    console.log(`[Potrace] Path too small (${rawPath.length} points, turdSize=${turdSize}), skipping`);
-    return rawPath;
-  }
-  
-  // Step 2: Find straight segments and corners (Potrace "polygon" step)
-  // alphaMax controls corner threshold - lower = more corners preserved
-  const polygon = findOptimalPolygonPotrace(rawPath, alphaMax);
-  if (polygon.length < 3) return rawPath;
-  
-  // Step 3: Fit bezier curves between corners (Potrace "curve" step)
-  const bezierPath = optCurve 
-    ? fitBezierCurvesOptimized(polygon, rawPath, optTolerance)
-    : fitBezierCurves(polygon, rawPath);
-  
-  return bezierPath;
-}
-
-// ============================================================================
-// POTRACE-STYLE CONTOUR TRACING
-// ============================================================================
-// Standalone implementation using minority/majority turn policy
-// Based on Peter Selinger's Potrace algorithm with 5-phase processing
-
-const POTRACE_STYLE_ALPHAMAX = 1.0;        // Maximum angle for corner detection
-const POTRACE_STYLE_OPTTOLERANCE = 0.2;    // Curve optimization tolerance
-
-function traceBoundaryPotraceStyle(mask: Uint8Array, width: number, height: number): Point[] {
-  console.log(`[PotraceStyle] Starting with ${width}x${height} mask`);
-  
-  // Phase 1: Get raw path using Moore-neighbor tracing
-  const rawPath = traceMooreNeighborPotraceStyle(mask, width, height);
-  console.log(`[PotraceStyle] Phase 1 (Moore-neighbor): ${rawPath.length} points`);
-  if (rawPath.length < 4) return rawPath;
-  
-  // Phase 2: Find straight segments and corners
-  const segments = segmentPathPotraceStyle(rawPath);
-  console.log(`[PotraceStyle] Phase 2 (Segmentation): ${segments.corners.length} corners found`);
-  
-  // Phase 3: Apply turn policy at ambiguous corners (minority policy)
-  const resolvedPath = applyTurnPolicyPotraceStyle(rawPath, segments, mask, width, height);
-  console.log(`[PotraceStyle] Phase 3 (Turn policy): ${resolvedPath.length} points`);
-  
-  // Phase 4: Optimize vertex positions for sub-pixel accuracy
-  const optimalPath = optimizeVerticesPotraceStyle(resolvedPath, mask, width, height);
-  console.log(`[PotraceStyle] Phase 4 (Vertex optimization): ${optimalPath.length} points`);
-  
-  // Phase 5: Fit Bezier curves with error tolerance
-  const smoothPath = fitCurvesWithTolerancePotraceStyle(optimalPath, POTRACE_STYLE_OPTTOLERANCE);
-  console.log(`[PotraceStyle] Phase 5 (Bezier fitting): ${smoothPath.length} points`);
-  
-  return smoothPath;
-}
-
-// Moore-neighbor boundary tracing for Potrace Style
-function traceMooreNeighborPotraceStyle(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting point (first solid pixel from top-left)
-  let startX = -1, startY = -1;
-  outer: for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] > 0) {
-        startX = x;
-        startY = y;
-        break outer;
-      }
-    }
-  }
-  
-  if (startX === -1) return [];
-  
-  const path: Point[] = [];
-  
-  // Moore neighborhood: 8 directions starting from left, going clockwise
-  const dx = [-1, -1, 0, 1, 1, 1, 0, -1];
-  const dy = [0, -1, -1, -1, 0, 1, 1, 1];
-  
-  let x = startX;
-  let y = startY;
-  let dir = 0; // Start looking left
-  
-  const maxIterations = width * height * 4;
-  let iterations = 0;
-  
-  do {
-    path.push({ x: x + 0.5, y: y + 0.5 }); // Center of pixel
-    
-    // Look for next boundary pixel
-    let found = false;
-    const startDir = (dir + 5) % 8; // Start from backtrack direction + 1
-    
-    for (let i = 0; i < 8; i++) {
-      const checkDir = (startDir + i) % 8;
-      const nx = x + dx[checkDir];
-      const ny = y + dy[checkDir];
-      
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] > 0) {
-        x = nx;
-        y = ny;
-        dir = checkDir;
-        found = true;
-        break;
-      }
-    }
-    
-    if (!found) break;
-    iterations++;
-  } while ((x !== startX || y !== startY) && iterations < maxIterations);
-  
-  return path;
-}
-
-interface PotraceStyleSegmentInfo {
-  corners: number[];
-  isCorner: boolean[];
-}
-
-// Segment path into straight lines and curves
-function segmentPathPotraceStyle(path: Point[]): PotraceStyleSegmentInfo {
-  const n = path.length;
-  const isCorner = new Array(n).fill(false);
-  const corners: number[] = [];
-  
-  for (let i = 0; i < n; i++) {
-    const prev = path[(i - 1 + n) % n];
-    const curr = path[i];
-    const next = path[(i + 1) % n];
-    
-    // Calculate direction vectors
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    // Calculate angle between directions using cross product
-    const cross = dx1 * dy2 - dy1 * dx2;
-    const dot = dx1 * dx2 + dy1 * dy2;
-    const angle = Math.abs(Math.atan2(cross, dot));
-    
-    // Mark as corner if angle exceeds threshold
-    if (angle > POTRACE_STYLE_ALPHAMAX * Math.PI / 4) {
-      isCorner[i] = true;
-      corners.push(i);
-    }
-  }
-  
-  return { corners, isCorner };
-}
-
-// Apply Potrace minority turn policy at ambiguous corners
-function applyTurnPolicyPotraceStyle(
-  path: Point[], 
-  segments: PotraceStyleSegmentInfo,
-  mask: Uint8Array,
-  width: number,
-  height: number
-): Point[] {
-  const n = path.length;
-  const result: Point[] = [];
-  
-  for (let i = 0; i < n; i++) {
-    const curr = path[i];
-    
-    if (segments.isCorner[i]) {
-      const prev = path[(i - 1 + n) % n];
-      const next = path[(i + 1) % n];
-      
-      const x = Math.floor(curr.x);
-      const y = Math.floor(curr.y);
-      
-      // Count pixels in diagonal quadrants (Potrace minority policy)
-      const diag1 = getPixelSafePotraceStyle(mask, width, height, x - 1, y - 1);
-      const diag2 = getPixelSafePotraceStyle(mask, width, height, x + 1, y - 1);
-      const diag3 = getPixelSafePotraceStyle(mask, width, height, x - 1, y + 1);
-      const diag4 = getPixelSafePotraceStyle(mask, width, height, x + 1, y + 1);
-      
-      const totalBlack = diag1 + diag2 + diag3 + diag4;
-      const minorityIsBlack = totalBlack < 2;
-      
-      // Calculate adjustment based on incoming and outgoing directions
-      const inDir = { x: curr.x - prev.x, y: curr.y - prev.y };
-      const outDir = { x: next.x - curr.x, y: next.y - curr.y };
-      
-      // Determine which way to bias the corner based on minority policy
-      const cross = inDir.x * outDir.y - inDir.y * outDir.x;
-      const turnRight = cross > 0;
-      
-      // Adjust corner position toward the minority color region
-      const adjustAmount = 0.15;
-      let adjustX = 0, adjustY = 0;
-      
-      if ((turnRight && minorityIsBlack) || (!turnRight && !minorityIsBlack)) {
-        const mag = Math.max(1, Math.hypot(outDir.y - inDir.y, outDir.x - inDir.x));
-        adjustX = -(outDir.y - inDir.y) * adjustAmount / mag;
-        adjustY = (outDir.x - inDir.x) * adjustAmount / mag;
-      }
-      
-      result.push({
-        x: curr.x + adjustX,
-        y: curr.y + adjustY
-      });
-    } else {
-      result.push(curr);
-    }
-  }
-  
-  return result;
-}
-
-function getPixelSafePotraceStyle(mask: Uint8Array, width: number, height: number, x: number, y: number): number {
-  if (x < 0 || x >= width || y < 0 || y >= height) return 0;
-  return mask[y * width + x] > 0 ? 1 : 0;
-}
-
-// Optimize vertex positions using Sobel-based gradient
-function optimizeVerticesPotraceStyle(path: Point[], mask: Uint8Array, width: number, height: number): Point[] {
-  if (path.length < 4) return path;
-  
-  const result: Point[] = [];
-  
-  for (const point of path) {
-    const x = Math.floor(point.x);
-    const y = Math.floor(point.y);
-    
-    // Calculate optimal sub-pixel position using Sobel-like gradient
-    if (x >= 1 && x < width - 1 && y >= 1 && y < height - 1) {
-      // Sobel gradient calculation
-      const tl = mask[(y - 1) * width + (x - 1)] > 0 ? 1 : 0;
-      const t  = mask[(y - 1) * width + x] > 0 ? 1 : 0;
-      const tr = mask[(y - 1) * width + (x + 1)] > 0 ? 1 : 0;
-      const l  = mask[y * width + (x - 1)] > 0 ? 1 : 0;
-      const r  = mask[y * width + (x + 1)] > 0 ? 1 : 0;
-      const bl = mask[(y + 1) * width + (x - 1)] > 0 ? 1 : 0;
-      const b  = mask[(y + 1) * width + x] > 0 ? 1 : 0;
-      const br = mask[(y + 1) * width + (x + 1)] > 0 ? 1 : 0;
-      
-      // Sobel gradients
-      const gx = (tr + 2 * r + br) - (tl + 2 * l + bl);
-      const gy = (bl + 2 * b + br) - (tl + 2 * t + tr);
-      
-      // Move toward edge (perpendicular to gradient)
-      const gradMag = Math.hypot(gx, gy);
-      if (gradMag > 0.01) {
-        const adjustX = -gx / gradMag * 0.3;
-        const adjustY = -gy / gradMag * 0.3;
-        
-        result.push({
-          x: point.x + adjustX,
-          y: point.y + adjustY
-        });
-      } else {
-        result.push(point);
-      }
-    } else {
-      result.push(point);
-    }
-  }
-  
-  return result;
-}
-
-// Fit Bezier curves with error tolerance
-function fitCurvesWithTolerancePotraceStyle(points: Point[], tolerance: number): Point[] {
-  if (points.length < 4) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  
-  // Find corner points (significant direction changes)
-  const corners: number[] = [0]; // Always start at first point
-  for (let i = 1; i < n - 1; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const next = points[i + 1];
-    
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    const cross = Math.abs(dx1 * dy2 - dy1 * dx2);
-    const len1 = Math.hypot(dx1, dy1);
-    const len2 = Math.hypot(dx2, dy2);
-    
-    // Corner if cross product is significant relative to segment lengths
-    if (cross > tolerance * len1 * len2 * 0.5) {
-      corners.push(i);
-    }
-  }
-  corners.push(n - 1); // Always end at last point
-  
-  // Fit Bezier curves between corners
-  for (let c = 0; c < corners.length - 1; c++) {
-    const startIdx = corners[c];
-    const endIdx = corners[c + 1];
-    const segmentLength = endIdx - startIdx;
-    
-    if (segmentLength <= 2) {
-      // Too short for curve, just add points
-      for (let i = startIdx; i <= endIdx; i++) {
-        result.push(points[i]);
-      }
-    } else {
-      // Fit cubic Bezier to this segment
-      const p0 = points[startIdx];
-      const p3 = points[endIdx];
-      
-      // Calculate tangent directions from neighboring points
-      const t0 = {
-        x: points[Math.min(startIdx + 1, n - 1)].x - p0.x,
-        y: points[Math.min(startIdx + 1, n - 1)].y - p0.y
-      };
-      const t3 = {
-        x: p3.x - points[Math.max(endIdx - 1, 0)].x,
-        y: p3.y - points[Math.max(endIdx - 1, 0)].y
-      };
-      
-      // Estimate curve length for control point distance
-      const chordLen = Math.hypot(p3.x - p0.x, p3.y - p0.y);
-      const scale = chordLen / 3;
-      
-      // Control points along tangent directions
-      const p1 = {
-        x: p0.x + t0.x * scale / Math.max(1, Math.hypot(t0.x, t0.y)),
-        y: p0.y + t0.y * scale / Math.max(1, Math.hypot(t0.x, t0.y))
-      };
-      const p2 = {
-        x: p3.x - t3.x * scale / Math.max(1, Math.hypot(t3.x, t3.y)),
-        y: p3.y - t3.y * scale / Math.max(1, Math.hypot(t3.x, t3.y))
-      };
-      
-      // Sample the Bezier curve
-      const samples = Math.max(4, Math.ceil(segmentLength / 2));
-      for (let t = 0; t <= samples; t++) {
-        const u = t / samples;
-        result.push(evaluateCubicBezierPotraceStyle(p0, p1, p2, p3, u));
-      }
-    }
-  }
-  
-  return result;
-}
-
-function evaluateCubicBezierPotraceStyle(p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point {
-  const u = 1 - t;
-  const tt = t * t;
-  const uu = u * u;
-  const uuu = uu * u;
-  const ttt = tt * t;
-  
-  return {
-    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
-    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y
-  };
-}
-
-// Find optimal polygon that approximates the path
-// Uses dynamic programming approach inspired by Potrace
-function findOptimalPolygon(path: Point[]): number[] {
-  const n = path.length;
-  if (n < 4) return [0, 1, 2];
-  
-  // Compute cumulative sums for efficient line fitting
-  const x: number[] = [];
-  const y: number[] = [];
-  const xy: number[] = [];
-  const x2: number[] = [];
-  const y2: number[] = [];
-  
-  let sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
-  for (let i = 0; i < n; i++) {
-    sx += path[i].x;
-    sy += path[i].y;
-    sxy += path[i].x * path[i].y;
-    sx2 += path[i].x * path[i].x;
-    sy2 += path[i].y * path[i].y;
-    x.push(sx);
-    y.push(sy);
-    xy.push(sxy);
-    x2.push(sx2);
-    y2.push(sy2);
-  }
-  
-  // Penalty function for segment from i to j
-  const penalty = (i: number, j: number): number => {
-    const len = j - i + 1;
-    if (len < 2) return 0;
-    
-    // Get cumulative sums for range
-    const sumX = i === 0 ? x[j] : x[j] - x[i - 1];
-    const sumY = i === 0 ? y[j] : y[j] - y[i - 1];
-    const sumXY = i === 0 ? xy[j] : xy[j] - xy[i - 1];
-    const sumX2 = i === 0 ? x2[j] : x2[j] - x2[i - 1];
-    const sumY2 = i === 0 ? y2[j] : y2[j] - y2[i - 1];
-    
-    // Compute least-squares line fit error
-    const meanX = sumX / len;
-    const meanY = sumY / len;
-    const varX = sumX2 / len - meanX * meanX;
-    const varY = sumY2 / len - meanY * meanY;
-    const covXY = sumXY / len - meanX * meanY;
-    
-    // Total variance minus explained variance
-    const totalVar = varX + varY;
-    if (totalVar < 0.001) return 0;
-    
-    const r2 = (covXY * covXY) / Math.max(varX * varY, 0.001);
-    return totalVar * (1 - Math.min(r2, 1)) * len;
-  };
-  
-  // Find corner candidates using angle change
-  const corners: number[] = [0];
-  const threshold = Math.PI / 6; // 30 degrees
-  
-  for (let i = 1; i < n - 1; i++) {
-    const prev = path[(i - 1 + n) % n];
-    const curr = path[i];
-    const next = path[(i + 1) % n];
-    
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-    
-    if (len1 > 0.001 && len2 > 0.001) {
-      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-      
-      if (angle > threshold) {
-        corners.push(i);
-      }
-    }
-  }
-  
-  // Ensure we have enough corners
-  if (corners.length < 3) {
-    // Add evenly spaced corners
-    const step = Math.floor(n / 4);
-    corners.length = 0;
-    for (let i = 0; i < n; i += step) {
-      corners.push(i);
-    }
-  }
-  
-  return corners;
-}
-
-// Fit bezier curves between polygon corners
-function fitBezierCurves(cornerIndices: number[], path: Point[]): Point[] {
-  const n = path.length;
-  const result: Point[] = [];
-  const numCorners = cornerIndices.length;
-  
-  for (let c = 0; c < numCorners; c++) {
-    const startIdx = cornerIndices[c];
-    const endIdx = cornerIndices[(c + 1) % numCorners];
-    
-    // Get segment points
-    const segmentPoints: Point[] = [];
-    if (endIdx > startIdx) {
-      for (let i = startIdx; i <= endIdx; i++) {
-        segmentPoints.push(path[i]);
-      }
-    } else {
-      // Wraps around
-      for (let i = startIdx; i < n; i++) {
-        segmentPoints.push(path[i]);
-      }
-      for (let i = 0; i <= endIdx; i++) {
-        segmentPoints.push(path[i]);
-      }
-    }
-    
-    if (segmentPoints.length < 2) continue;
-    
-    // Fit cubic bezier and sample it
-    const bezierPoints = fitAndSampleBezier(segmentPoints);
-    
-    // Add to result (skip first point to avoid duplicates except for first segment)
-    const startAt = c === 0 ? 0 : 1;
-    for (let i = startAt; i < bezierPoints.length; i++) {
-      result.push(bezierPoints[i]);
-    }
-  }
-  
-  return result.length >= 3 ? result : path;
-}
-
-// Fit a cubic bezier curve to points and sample it
-function fitAndSampleBezier(points: Point[]): Point[] {
-  const n = points.length;
-  if (n < 2) return points;
-  if (n === 2) return points;
-  
-  // Start and end points
-  const p0 = points[0];
-  const p3 = points[n - 1];
-  
-  // Compute tangent directions
-  const t0 = { x: points[Math.min(1, n - 1)].x - p0.x, y: points[Math.min(1, n - 1)].y - p0.y };
-  const t3 = { x: p3.x - points[Math.max(0, n - 2)].x, y: p3.y - points[Math.max(0, n - 2)].y };
-  
-  // Normalize tangents
-  const len0 = Math.sqrt(t0.x * t0.x + t0.y * t0.y);
-  const len3 = Math.sqrt(t3.x * t3.x + t3.y * t3.y);
-  
-  if (len0 > 0.001) { t0.x /= len0; t0.y /= len0; }
-  if (len3 > 0.001) { t3.x /= len3; t3.y /= len3; }
-  
-  // Estimate control point distances (chord length parameterization)
-  const chordLen = Math.sqrt((p3.x - p0.x) ** 2 + (p3.y - p0.y) ** 2);
-  const scale = chordLen / 3;
-  
-  // Control points
-  const p1 = { x: p0.x + t0.x * scale, y: p0.y + t0.y * scale };
-  const p2 = { x: p3.x - t3.x * scale, y: p3.y - t3.y * scale };
-  
-  // Sample the bezier curve
-  const numSamples = Math.max(4, Math.ceil(chordLen / 2));
-  const result: Point[] = [];
-  
-  for (let i = 0; i <= numSamples; i++) {
-    const t = i / numSamples;
-    const mt = 1 - t;
-    
-    // Cubic bezier formula: B(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3
-    const x = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
-    const y = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
-    
-    result.push({ x: x + 0.5, y: y + 0.5 });
-  }
-  
-  return result;
-}
-
-// Potrace-style polygon finding with alphaMax parameter
-// alphaMax controls corner detection - lower values preserve more corners
-function findOptimalPolygonPotrace(path: Point[], alphaMax: number): number[] {
-  const n = path.length;
-  if (n < 4) return [0, 1, 2];
-  
-  // alphaMax maps to corner angle threshold
-  // alphaMax = 0 means preserve all corners (threshold = 0)
-  // alphaMax = 1.34 means smooth out most corners (threshold = ~75 degrees)
-  const threshold = (alphaMax / 1.34) * (Math.PI / 2.4);
-  
-  // Find corner candidates using angle change
-  const corners: number[] = [0];
-  
-  for (let i = 1; i < n - 1; i++) {
-    const prev = path[(i - 1 + n) % n];
-    const curr = path[i];
-    const next = path[(i + 1) % n];
-    
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-    
-    if (len1 > 0.001 && len2 > 0.001) {
-      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-      
-      // Lower alphaMax = lower threshold = more corners detected
-      if (angle > threshold) {
-        corners.push(i);
-      }
-    }
-  }
-  
-  // Ensure we have enough corners for a valid polygon
-  if (corners.length < 3) {
-    const step = Math.max(1, Math.floor(n / 4));
-    corners.length = 0;
-    for (let i = 0; i < n; i += step) {
-      corners.push(i);
-    }
-  }
-  
-  console.log(`[Potrace] Found ${corners.length} corners with alphaMax=${alphaMax}`);
-  return corners;
-}
-
-// Optimized bezier curve fitting with tolerance parameter
-function fitBezierCurvesOptimized(cornerIndices: number[], path: Point[], tolerance: number): Point[] {
-  const n = path.length;
-  const result: Point[] = [];
-  const numCorners = cornerIndices.length;
-  
-  for (let c = 0; c < numCorners; c++) {
-    const startIdx = cornerIndices[c];
-    const endIdx = cornerIndices[(c + 1) % numCorners];
-    
-    // Get segment points
-    const segmentPoints: Point[] = [];
-    if (endIdx > startIdx) {
-      for (let i = startIdx; i <= endIdx; i++) {
-        segmentPoints.push(path[i]);
-      }
-    } else {
-      for (let i = startIdx; i < n; i++) {
-        segmentPoints.push(path[i]);
-      }
-      for (let i = 0; i <= endIdx; i++) {
-        segmentPoints.push(path[i]);
-      }
-    }
-    
-    if (segmentPoints.length < 2) continue;
-    
-    // Fit bezier with optimization tolerance
-    const bezierPoints = fitAndSampleBezierOptimized(segmentPoints, tolerance);
-    
-    // Add to result
-    const startAt = c === 0 ? 0 : 1;
-    for (let i = startAt; i < bezierPoints.length; i++) {
-      result.push(bezierPoints[i]);
-    }
-  }
-  
-  return result.length >= 3 ? result : path;
-}
-
-// Bezier fitting with optimization tolerance
-function fitAndSampleBezierOptimized(points: Point[], tolerance: number): Point[] {
-  const n = points.length;
-  if (n < 2) return points;
-  if (n === 2) return points;
-  
-  const p0 = points[0];
-  const p3 = points[n - 1];
-  
-  // Compute tangent directions using more points for stability
-  const lookAhead = Math.min(3, Math.floor(n / 4));
-  const t0 = { 
-    x: points[Math.min(lookAhead, n - 1)].x - p0.x, 
-    y: points[Math.min(lookAhead, n - 1)].y - p0.y 
-  };
-  const t3 = { 
-    x: p3.x - points[Math.max(0, n - 1 - lookAhead)].x, 
-    y: p3.y - points[Math.max(0, n - 1 - lookAhead)].y 
-  };
-  
-  const len0 = Math.sqrt(t0.x * t0.x + t0.y * t0.y);
-  const len3 = Math.sqrt(t3.x * t3.x + t3.y * t3.y);
-  
-  if (len0 > 0.001) { t0.x /= len0; t0.y /= len0; }
-  if (len3 > 0.001) { t3.x /= len3; t3.y /= len3; }
-  
-  const chordLen = Math.sqrt((p3.x - p0.x) ** 2 + (p3.y - p0.y) ** 2);
-  
-  // Tolerance affects control point distance
-  // Higher tolerance = longer control points = smoother but less accurate curves
-  const scale = chordLen * (0.25 + tolerance * 0.2);
-  
-  const p1 = { x: p0.x + t0.x * scale, y: p0.y + t0.y * scale };
-  const p2 = { x: p3.x - t3.x * scale, y: p3.y - t3.y * scale };
-  
-  // Sample density based on tolerance - higher tolerance = fewer samples
-  const baseSamples = Math.max(4, Math.ceil(chordLen / 2));
-  const numSamples = Math.max(3, Math.ceil(baseSamples * (1 - tolerance * 0.5)));
-  const result: Point[] = [];
-  
-  for (let i = 0; i <= numSamples; i++) {
-    const t = i / numSamples;
-    const mt = 1 - t;
-    
-    const x = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
-    const y = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
-    
-    result.push({ x: x + 0.5, y: y + 0.5 });
-  }
-  
-  return result;
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {
   if (points.length < windowSize * 2 + 1) return points;
   
-  const isCorner = detectPathCornerPointsWorker(points);
   const result: Point[] = [];
   const n = points.length;
   
   for (let i = 0; i < n; i++) {
-    if (isCorner[i]) {
-      result.push(points[i]);
-      continue;
-    }
-    
     let sumX = 0, sumY = 0;
-    let count = 0;
     for (let j = -windowSize; j <= windowSize; j++) {
       const idx = (i + j + n) % n;
-      if (!isCorner[idx]) {
-        sumX += points[idx].x;
-        sumY += points[idx].y;
-        count++;
-      }
+      sumX += points[idx].x;
+      sumY += points[idx].y;
     }
-    
-    if (count > 0) {
-      result.push({
-        x: sumX / count,
-        y: sumY / count
-      });
-    } else {
-      result.push(points[i]);
-    }
+    result.push({
+      x: sumX / (windowSize * 2 + 1),
+      y: sumY / (windowSize * 2 + 1)
+    });
   }
   
   return result;
-}
-
-// Enhance corners by detecting and sharpening sharp angle changes
-function enhanceCorners(points: Point[]): Point[] {
-  if (points.length < 5) return points;
-  
-  const n = points.length;
-  const result: Point[] = [];
-  const cornerThreshold = Math.PI / 4; // 45 degrees
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    // Calculate angle change at this point
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-    
-    if (len1 > 0.001 && len2 > 0.001) {
-      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-      
-      // If this is a sharp corner, enhance it by pushing it outward
-      if (angle > cornerThreshold) {
-        // Calculate outward normal
-        const nx1 = -dy1 / len1;
-        const ny1 = dx1 / len1;
-        const nx2 = -dy2 / len2;
-        const ny2 = dx2 / len2;
-        
-        // Average normal direction
-        const avgNx = (nx1 + nx2) / 2;
-        const avgNy = (ny1 + ny2) / 2;
-        const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy);
-        
-        if (avgLen > 0.001) {
-          // Push corner outward slightly to sharpen it
-          const pushAmount = Math.min(2, angle / Math.PI);
-          result.push({
-            x: curr.x + (avgNx / avgLen) * pushAmount,
-            y: curr.y + (avgNy / avgLen) * pushAmount
-          });
-          continue;
-        }
-      }
-    }
-    
-    result.push(curr);
-  }
-  
-  return result;
-}
-
-// Apply bezier curve smoothing between corners
-function applyBezierSmoothing(points: Point[]): Point[] {
-  if (points.length < 6) return points;
-  
-  const n = points.length;
-  const result: Point[] = [];
-  
-  // Find corners first
-  const isCorner: boolean[] = new Array(n).fill(false);
-  const cornerThreshold = Math.PI / 5; // 36 degrees
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 2 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 2) % n];
-    
-    const dx1 = curr.x - prev.x;
-    const dy1 = curr.y - prev.y;
-    const dx2 = next.x - curr.x;
-    const dy2 = next.y - curr.y;
-    
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-    
-    if (len1 > 0.001 && len2 > 0.001) {
-      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-      isCorner[i] = angle > cornerThreshold;
-    }
-  }
-  
-  // Apply bezier smoothing between corners
-  let segmentStart = 0;
-  for (let i = 0; i <= n; i++) {
-    const idx = i % n;
-    if (isCorner[idx] || i === n) {
-      // Process segment from segmentStart to current corner
-      const segmentEnd = i === n ? n : idx;
-      const segmentLen = (segmentEnd - segmentStart + n) % n;
-      
-      if (segmentLen >= 4) {
-        // Apply bezier smoothing to this segment
-        const segmentPoints: Point[] = [];
-        for (let j = 0; j < segmentLen; j++) {
-          segmentPoints.push(points[(segmentStart + j) % n]);
-        }
-        
-        // Simple bezier approximation - average with neighbors
-        for (let j = 0; j < segmentLen; j++) {
-          const p0 = segmentPoints[(j - 1 + segmentLen) % segmentLen];
-          const p1 = segmentPoints[j];
-          const p2 = segmentPoints[(j + 1) % segmentLen];
-          
-          result.push({
-            x: p1.x * 0.6 + (p0.x + p2.x) * 0.2,
-            y: p1.y * 0.6 + (p0.y + p2.y) * 0.2
-          });
-        }
-      } else {
-        // Too short for bezier, just copy
-        for (let j = 0; j < segmentLen; j++) {
-          result.push(points[(segmentStart + j) % n]);
-        }
-      }
-      
-      // Add the corner point
-      if (i < n) {
-        result.push(points[idx]);
-        segmentStart = (idx + 1) % n;
-      }
-    }
-  }
-  
-  return result.length > 0 ? result : points;
-}
-
-// Fill interior holes by detecting and closing self-intersecting loops
-function fillInteriorHoles(points: Point[]): Point[] {
-  if (points.length < 10) return points;
-  
-  // Detect if the path doubles back on itself (creates holes)
-  // This is a simplified implementation - just removes tight loops
-  const n = points.length;
-  const result: Point[] = [];
-  const minLoopDistance = 3;
-  
-  let i = 0;
-  while (i < n) {
-    result.push(points[i]);
-    
-    // Look ahead for points that are very close to current (potential loop)
-    let skipTo = -1;
-    for (let j = i + minLoopDistance; j < Math.min(i + 20, n); j++) {
-      const dx = points[j].x - points[i].x;
-      const dy = points[j].y - points[i].y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      
-      if (dist < 2) {
-        // Found a loop - skip to this point
-        skipTo = j;
-        break;
-      }
-    }
-    
-    if (skipTo > 0) {
-      i = skipTo;
-    } else {
-      i++;
-    }
-  }
-  
-  return result;
-}
-
-// Simplify path by removing redundant points using Ramer-Douglas-Peucker algorithm
-function simplifyPath(points: Point[], tolerance: number): Point[] {
-  if (points.length < 3) return points;
-  
-  // Find the point with the maximum distance from the line between first and last
-  const first = points[0];
-  const last = points[points.length - 1];
-  
-  let maxDist = 0;
-  let maxIdx = 0;
-  
-  for (let i = 1; i < points.length - 1; i++) {
-    const dist = perpendicularDistance(points[i], first, last);
-    if (dist > maxDist) {
-      maxDist = dist;
-      maxIdx = i;
-    }
-  }
-  
-  // If max distance is greater than tolerance, recursively simplify
-  if (maxDist > tolerance) {
-    const left = simplifyPath(points.slice(0, maxIdx + 1), tolerance);
-    const right = simplifyPath(points.slice(maxIdx), tolerance);
-    
-    // Combine results (removing duplicate point at maxIdx)
-    return [...left.slice(0, -1), ...right];
-  } else {
-    // All points between first and last can be removed
-    return [first, last];
-  }
-}
-
-// Calculate perpendicular distance from point to line
-function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
-  const dx = lineEnd.x - lineStart.x;
-  const dy = lineEnd.y - lineStart.y;
-  const lineLenSq = dx * dx + dy * dy;
-  
-  if (lineLenSq === 0) {
-    // Line is a point
-    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
-  }
-  
-  // Calculate perpendicular distance using cross product
-  const num = Math.abs(dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x);
-  const den = Math.sqrt(lineLenSq);
-  
-  return num / den;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {

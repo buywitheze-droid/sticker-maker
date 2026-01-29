@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings, StickerSize, ContourDebugSettings } from "./image-editor";
+import { StrokeSettings, ResizeSettings, ImageInfo, ShapeSettings, StickerSize } from "./image-editor";
 import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
@@ -24,12 +24,10 @@ interface ControlsSectionProps {
   resizeSettings: ResizeSettings;
   shapeSettings: ShapeSettings;
   stickerSize: StickerSize;
-  contourDebugSettings?: ContourDebugSettings;
   onStrokeChange: (settings: Partial<StrokeSettings>) => void;
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
   onStickerSizeChange: (size: StickerSize) => void;
-  onContourDebugChange?: (settings: Partial<ContourDebugSettings>) => void;
   onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>, singleArtboard?: boolean) => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
@@ -45,12 +43,10 @@ export default function ControlsSection({
   resizeSettings,
   shapeSettings,
   stickerSize,
-  contourDebugSettings,
   onStrokeChange,
   onResizeChange,
   onShapeChange,
   onStickerSizeChange,
-  onContourDebugChange,
   onDownload,
   isProcessing,
   imageInfo,
@@ -63,7 +59,6 @@ export default function ControlsSection({
   const { toast } = useToast();
   const [showContourOptions, setShowContourOptions] = useState(true);
   const [showSpotColors, setShowSpotColors] = useState(false);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
   const [spotPreviewEnabled, setSpotPreviewEnabled] = useState(false);
   const [customerName, setCustomerName] = useState("");
@@ -976,302 +971,6 @@ export default function ControlsSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Contour Debug Panel - Temporary Development Tool */}
-      {contourDebugSettings && onContourDebugChange && (
-        <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border-2 border-dashed border-purple-300 overflow-hidden">
-          <button
-            onClick={() => setShowDebugPanel(!showDebugPanel)}
-            className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-purple-700 hover:bg-purple-100/50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🔬</span>
-              <span>Contour Algorithm Debug</span>
-              {contourDebugSettings.enabled && (
-                <span className="text-xs bg-purple-200 text-purple-700 px-2 py-0.5 rounded-full">ACTIVE</span>
-              )}
-            </div>
-            {showDebugPanel ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-
-          {showDebugPanel && (
-            <div className="px-4 pb-4 space-y-3">
-              {/* Master Enable */}
-              <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-purple-200">
-                <Checkbox
-                  id="debug-enabled"
-                  checked={contourDebugSettings.enabled}
-                  onCheckedChange={(checked) => onContourDebugChange({ enabled: !!checked })}
-                  className="border-purple-400 data-[state=checked]:bg-purple-600"
-                />
-                <div className="flex-1">
-                  <Label htmlFor="debug-enabled" className="text-sm font-semibold text-purple-800">
-                    Enable Debug Mode
-                  </Label>
-                  <p className="text-xs text-purple-600">Toggle individual processing steps below</p>
-                </div>
-              </div>
-
-              {contourDebugSettings.enabled && (
-                <div className="space-y-2">
-                  {/* Alpha Tracing Method */}
-                  <div className="p-2 bg-white rounded-lg border border-blue-200">
-                    <Label className="text-xs font-medium text-blue-700 uppercase tracking-wide block mb-2">
-                      Alpha Tracing Method
-                    </Label>
-                    <Select
-                      value={contourDebugSettings.alphaTracingMethod}
-                      onValueChange={(value) => onContourDebugChange({ alphaTracingMethod: value as 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' | 'potrace-style' })}
-                    >
-                      <SelectTrigger className="w-full h-8 text-xs bg-white border-blue-200">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="marching-squares">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Marching Squares</span>
-                            <span className="text-[10px] text-gray-400">Smooth edges, industry standard</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="moore-neighbor">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Moore-Neighbor</span>
-                            <span className="text-[10px] text-gray-400">Fast, simple boundary tracing</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="contour-following">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Contour Following</span>
-                            <span className="text-[10px] text-gray-400">Good for complex shapes</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="potrace">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Potrace</span>
-                            <span className="text-[10px] text-gray-400">Industry-standard bezier curves</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="potrace-style">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Potrace Style</span>
-                            <span className="text-[10px] text-gray-400">Minority/majority turn policy</span>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Show Raw Contour */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-raw"
-                      checked={contourDebugSettings.showRawContour}
-                      onCheckedChange={(checked) => onContourDebugChange({ showRawContour: !!checked })}
-                      className="border-orange-400 data-[state=checked]:bg-orange-500"
-                    />
-                    <Label htmlFor="debug-raw" className="text-xs text-gray-700 flex-1">
-                      Show Raw Contour (unprocessed edges)
-                    </Label>
-                  </div>
-
-                  <div className="text-xs font-medium text-purple-600 uppercase tracking-wide pt-2">Processing Steps</div>
-
-                  {/* Gaussian Smoothing */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-smoothing"
-                      checked={contourDebugSettings.gaussianSmoothing}
-                      onCheckedChange={(checked) => onContourDebugChange({ gaussianSmoothing: !!checked })}
-                    />
-                    <Label htmlFor="debug-smoothing" className="text-xs text-gray-700 flex-1">
-                      Gaussian Smoothing
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Reduces noise</span>
-                  </div>
-
-                  {/* Corner Detection */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-corners"
-                      checked={contourDebugSettings.cornerDetection}
-                      onCheckedChange={(checked) => onContourDebugChange({ cornerDetection: !!checked })}
-                    />
-                    <Label htmlFor="debug-corners" className="text-xs text-gray-700 flex-1">
-                      Corner Detection
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Preserves sharp turns</span>
-                  </div>
-
-                  {/* Bezier Curve Fitting */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-bezier"
-                      checked={contourDebugSettings.bezierCurveFitting}
-                      onCheckedChange={(checked) => onContourDebugChange({ bezierCurveFitting: !!checked })}
-                    />
-                    <Label htmlFor="debug-bezier" className="text-xs text-gray-700 flex-1">
-                      Bezier Curve Fitting
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Smooth curves</span>
-                  </div>
-
-                  {/* Auto Bridging */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-bridging"
-                      checked={contourDebugSettings.autoBridging}
-                      onCheckedChange={(checked) => onContourDebugChange({ autoBridging: !!checked })}
-                    />
-                    <Label htmlFor="debug-bridging" className="text-xs text-gray-700 flex-1">
-                      Auto Bridging
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Connects parts</span>
-                  </div>
-
-                  {/* Gap Closing */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-gaps"
-                      checked={contourDebugSettings.gapClosing}
-                      onCheckedChange={(checked) => onContourDebugChange({ gapClosing: !!checked })}
-                    />
-                    <Label htmlFor="debug-gaps" className="text-xs text-gray-700 flex-1">
-                      Gap Closing
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Fills small gaps</span>
-                  </div>
-
-                  {/* Hole Filling */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-holes"
-                      checked={contourDebugSettings.holeFilling}
-                      onCheckedChange={(checked) => onContourDebugChange({ holeFilling: !!checked })}
-                    />
-                    <Label htmlFor="debug-holes" className="text-xs text-gray-700 flex-1">
-                      Hole Filling
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Fills interior holes</span>
-                  </div>
-
-                  {/* Path Simplification */}
-                  <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
-                    <Checkbox
-                      id="debug-simplify"
-                      checked={contourDebugSettings.pathSimplification}
-                      onCheckedChange={(checked) => onContourDebugChange({ pathSimplification: !!checked })}
-                    />
-                    <Label htmlFor="debug-simplify" className="text-xs text-gray-700 flex-1">
-                      Path Simplification
-                    </Label>
-                    <span className="text-[10px] text-gray-400">Reduces points</span>
-                  </div>
-
-                  {/* Potrace Settings Section */}
-                  {contourDebugSettings.alphaTracingMethod === 'potrace' && (
-                    <>
-                      <div className="text-xs font-medium text-orange-600 uppercase tracking-wide pt-2">Potrace Settings</div>
-                      
-                      {/* Alpha Max (Corner Threshold) */}
-                      <div className="p-2 bg-orange-50 rounded-lg space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-700">Corner Threshold</Label>
-                          <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceAlphaMax.toFixed(2)}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1.34"
-                          step="0.01"
-                          value={contourDebugSettings.potraceAlphaMax}
-                          onChange={(e) => onContourDebugChange({ potraceAlphaMax: parseFloat(e.target.value) })}
-                          className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <span className="text-[10px] text-gray-400">Lower = more corners preserved (0-1.34)</span>
-                      </div>
-
-                      {/* Turd Size (Speckle Suppression) */}
-                      <div className="p-2 bg-orange-50 rounded-lg space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-gray-700">Speckle Suppression</Label>
-                          <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceTurdSize}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="10"
-                          step="1"
-                          value={contourDebugSettings.potraceTurdSize}
-                          onChange={(e) => onContourDebugChange({ potraceTurdSize: parseInt(e.target.value) })}
-                          className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <span className="text-[10px] text-gray-400">Remove artifacts smaller than this size</span>
-                      </div>
-
-                      {/* Curve Optimization Toggle */}
-                      <div className="flex items-center gap-3 p-2 bg-orange-50 rounded-lg">
-                        <Checkbox
-                          id="debug-potrace-opt"
-                          checked={contourDebugSettings.potraceOptCurve}
-                          onCheckedChange={(checked) => onContourDebugChange({ potraceOptCurve: !!checked })}
-                          className="border-orange-400 data-[state=checked]:bg-orange-500"
-                        />
-                        <Label htmlFor="debug-potrace-opt" className="text-xs text-gray-700 flex-1">
-                          Curve Optimization
-                        </Label>
-                        <span className="text-[10px] text-gray-400">Smoother output</span>
-                      </div>
-
-                      {/* Optimization Tolerance */}
-                      {contourDebugSettings.potraceOptCurve && (
-                        <div className="p-2 bg-orange-50 rounded-lg space-y-1">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs text-gray-700">Optimization Tolerance</Label>
-                            <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceOptTolerance.toFixed(2)}</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            value={contourDebugSettings.potraceOptTolerance}
-                            onChange={(e) => onContourDebugChange({ potraceOptTolerance: parseFloat(e.target.value) })}
-                            className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
-                          />
-                          <span className="text-[10px] text-gray-400">Higher = smoother but less precise</span>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Reset All Button */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onContourDebugChange({
-                      gaussianSmoothing: true,
-                      cornerDetection: true,
-                      bezierCurveFitting: true,
-                      autoBridging: true,
-                      gapClosing: true,
-                      holeFilling: true,
-                      pathSimplification: true,
-                      showRawContour: false,
-                      potraceAlphaMax: 1.0,
-                      potraceTurdSize: 2,
-                      potraceOptCurve: true,
-                      potraceOptTolerance: 0.2,
-                    })}
-                    className="w-full mt-2 text-purple-600 border-purple-200 hover:bg-purple-50"
-                  >
-                    Reset All to Default
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

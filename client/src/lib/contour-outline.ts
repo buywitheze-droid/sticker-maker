@@ -1,7 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
-import { fitCurvesToPath, smoothPathWithCurveFitting, type BezierSegment, type CurveFitResult } from "@/lib/potrace-adapter";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -22,60 +21,6 @@ export interface ContourPathResult {
 interface Point {
   x: number;
   y: number;
-}
-
-function calculatePointAngle(p1: Point, p2: Point): number {
-  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
-}
-
-function normalizePointAngle(angle: number): number {
-  while (angle > Math.PI) angle -= 2 * Math.PI;
-  while (angle < -Math.PI) angle += 2 * Math.PI;
-  return angle;
-}
-
-function detectPathCornerPoints(points: Point[]): boolean[] {
-  const n = points.length;
-  if (n < 3) return new Array(n).fill(false);
-  
-  const isCorner: boolean[] = new Array(n).fill(false);
-  const angleDeltas: number[] = new Array(n).fill(0);
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    const inAngle = calculatePointAngle(prev, curr);
-    const outAngle = calculatePointAngle(curr, next);
-    const delta = Math.abs(normalizePointAngle(outAngle - inAngle));
-    angleDeltas[i] = delta;
-  }
-  
-  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
-  const medianDelta = sortedDeltas[Math.floor(n / 2)];
-  
-  for (let i = 0; i < n; i++) {
-    const currentDelta = angleDeltas[i];
-    
-    const windowSize = 2;
-    const neighbors: number[] = [];
-    for (let j = -windowSize; j <= windowSize; j++) {
-      if (j === 0) continue;
-      const idx = (i + j + n) % n;
-      neighbors.push(angleDeltas[idx]);
-    }
-    neighbors.sort((a, b) => a - b);
-    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
-    
-    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
-    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
-    const isSharpAngle = currentDelta > Math.PI / 8;
-    
-    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
-  }
-  
-  return isCorner;
 }
 
 // Trace contour outlines from a binary mask using edge-following algorithm
@@ -751,61 +696,24 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return path;
 }
 
-function traceBoundaryWithCurveFitting(
-  mask: Uint8Array, 
-  width: number, 
-  height: number
-): Point[] {
-  console.log('[CurveFit] Starting curve-fitted boundary trace, size:', width, 'x', height);
-  
-  const rawPath = traceBoundary(mask, width, height);
-  
-  if (rawPath.length < 10) {
-    return rawPath;
-  }
-  
-  try {
-    const result = fitCurvesToPath(rawPath, 0.5, 2.0);
-    console.log('[CurveFit] Converted', rawPath.length, 'points to', result.points.length, 'curve-fitted points');
-    return result.points.length > 0 ? result.points : rawPath;
-  } catch (error) {
-    console.error('[CurveFit] Error:', error);
-    return rawPath;
-  }
-}
-
 function smoothPath(points: Point[], windowSize: number): Point[] {
+  // MATCHES WORKER EXACTLY - simple moving average smoothing
   if (points.length < windowSize * 2 + 1) return points;
   
-  const isCorner = detectPathCornerPoints(points);
   const result: Point[] = [];
   const n = points.length;
   
   for (let i = 0; i < n; i++) {
-    if (isCorner[i]) {
-      result.push(points[i]);
-      continue;
-    }
-    
     let sumX = 0, sumY = 0;
-    let count = 0;
     for (let j = -windowSize; j <= windowSize; j++) {
       const idx = (i + j + n) % n;
-      if (!isCorner[idx]) {
-        sumX += points[idx].x;
-        sumY += points[idx].y;
-        count++;
-      }
+      sumX += points[idx].x;
+      sumY += points[idx].y;
     }
-    
-    if (count > 0) {
-      result.push({
-        x: sumX / count,
-        y: sumY / count
-      });
-    } else {
-      result.push(points[i]);
-    }
+    result.push({
+      x: sumX / (windowSize * 2 + 1),
+      y: sumY / (windowSize * 2 + 1)
+    });
   }
   
   return result;
@@ -2253,33 +2161,25 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Light smoothing before curve fitting to reduce noise
+    // Smooth the contour to reduce jagged edges from alpha tracing
+    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
-    // Use new curve fitting algorithm for smoother bezier curves
-    const curveFitResult = fitCurvesToPath(smoothedPath, 0.7, 0.01);
-    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', smoothedPath.length, 'points');
-    
     // Guard for empty/degenerate paths
-    if (curveFitResult.segments.length < 1) {
+    if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts to', curveFitResult.segments.length, 'bezier segments');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Convert BezierSegment[] to PathSegment[] format
-      const pathSegments: PathSegment[] = [];
-      pathSegments.push({ type: 'move', point: curveFitResult.segments[0].start });
-      for (const seg of curveFitResult.segments) {
-        if (seg.type === 'line') {
-          pathSegments.push({ type: 'line', point: seg.end });
-        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2) {
-          pathSegments.push({ type: 'curve', cp1: seg.cp1, cp2: seg.cp2, end: seg.end });
-        }
-      }
+      // Use same curve detection as preview for consistency
+      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      const minDistanceInches = 70 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2818,33 +2718,25 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Light smoothing before curve fitting to reduce noise
+    // Smooth the contour to reduce jagged edges from alpha tracing
+    // Note: pathPoints are in inches, so sigma needs to be scaled accordingly
     const smoothedPath = gaussianSmoothContour(pathPoints, 2);
     
-    // Use new curve fitting algorithm for smoother bezier curves
-    const curveFitResult = fitCurvesToPath(smoothedPath, 0.7, 0.01);
-    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', smoothedPath.length, 'points');
-    
     // Guard for empty/degenerate paths
-    if (curveFitResult.segments.length < 1) {
+    if (smoothedPath.length < 3) {
       console.log('[PDF] Path too short, skipping CutContour');
     } else {
-      console.log('[PDF] CutContour path:', pathPoints.length, 'pts to', curveFitResult.segments.length, 'bezier segments');
+      console.log('[PDF] CutContour path:', pathPoints.length, 'pts smoothed to', smoothedPath.length, 'pts');
       
       let pathOps = '';
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Convert BezierSegment[] to PathSegment[] format
-      const pathSegments: PathSegment[] = [];
-      pathSegments.push({ type: 'move', point: curveFitResult.segments[0].start });
-      for (const seg of curveFitResult.segments) {
-        if (seg.type === 'line') {
-          pathSegments.push({ type: 'line', point: seg.end });
-        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2) {
-          pathSegments.push({ type: 'curve', cp1: seg.cp1, cp2: seg.cp2, end: seg.end });
-        }
-      }
+      // Use same curve detection as preview for consistency
+      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      const minDistanceInches = 70 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {

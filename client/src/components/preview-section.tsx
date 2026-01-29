@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, ContourDebugSettings } from "./image-editor";
+import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker } from "@/lib/contour-worker-manager";
@@ -20,11 +20,10 @@ interface PreviewSectionProps {
   cadCutBounds?: CadCutBounds | null;
   spotPreviewData?: SpotPreviewData;
   showCutLineInfo?: boolean;
-  contourDebugSettings?: ContourDebugSettings;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, contourDebugSettings }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -265,17 +264,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 12;
+    const CONTOUR_CACHE_VERSION = 7;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      const potraceKey = contourDebugSettings?.alphaTracingMethod === 'potrace' 
-        ? `-pt-${contourDebugSettings.potraceAlphaMax}-${contourDebugSettings.potraceTurdSize}-${contourDebugSettings.potraceOptCurve}-${contourDebugSettings.potraceOptTolerance}`
-        : '';
-      const debugKey = contourDebugSettings?.enabled 
-        ? `-dbg-${contourDebugSettings.alphaTracingMethod}-${contourDebugSettings.gaussianSmoothing}-${contourDebugSettings.cornerDetection}-${contourDebugSettings.bezierCurveFitting}-${contourDebugSettings.autoBridging}-${contourDebugSettings.gapClosing}-${contourDebugSettings.holeFilling}-${contourDebugSettings.pathSimplification}-${contourDebugSettings.showRawContour}${potraceKey}`
-        : '';
-      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}${debugKey}`;
-    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches, contourDebugSettings]);
+      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
       // Clear any pending debounce
@@ -290,12 +283,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const cacheKey = generateContourCacheKey();
-      console.log('[Preview] Cache key:', cacheKey.slice(-100), 'Current:', contourCacheRef.current?.key?.slice(-100));
-      if (contourCacheRef.current?.key === cacheKey) {
-        console.log('[Preview] Cache hit - skipping reprocess');
-        return;
-      }
-      console.log('[Preview] Cache miss - reprocessing');
+      if (contourCacheRef.current?.key === cacheKey) return;
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {
@@ -319,8 +307,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             if (processingIdRef.current === currentId) {
               setProcessingProgress(progress);
             }
-          },
-          contourDebugSettings
+          }
         ).then((contourCanvas) => {
           if (processingIdRef.current === currentId) {
             contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
@@ -339,7 +326,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           clearTimeout(contourDebounceRef.current);
         }
       };
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey, contourDebugSettings]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey]);
 
     useEffect(() => {
       if (!canvasRef.current || !imageInfo) return;
@@ -1146,32 +1133,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     <div className="text-center">
                       <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
                       <p className="text-white text-sm">Processing... {processingProgress}%</p>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Debug Mode Indicator */}
-                {contourDebugSettings?.enabled && imageInfo && strokeSettings.enabled && (
-                  <div className="absolute top-2 left-2 z-30 bg-purple-900/90 text-white text-[10px] px-2 py-1 rounded-md font-mono max-w-[160px]">
-                    <div className="font-semibold text-purple-200 mb-0.5">DEBUG MODE</div>
-                    <div className="space-y-0.5 text-purple-100">
-                      <div className="text-blue-300 font-semibold border-b border-blue-400/30 pb-0.5 mb-0.5">
-                        {contourDebugSettings.alphaTracingMethod === 'marching-squares' && 'Marching Squares'}
-                        {contourDebugSettings.alphaTracingMethod === 'moore-neighbor' && 'Moore-Neighbor'}
-                        {contourDebugSettings.alphaTracingMethod === 'contour-following' && 'Contour Following'}
-                        {contourDebugSettings.alphaTracingMethod === 'potrace' && 'Potrace'}
-                        {contourDebugSettings.alphaTracingMethod === 'potrace-style' && 'Potrace Style'}
-                      </div>
-                      <div className={contourDebugSettings.gaussianSmoothing ? '' : 'line-through opacity-50'}>Smoothing</div>
-                      <div className={contourDebugSettings.cornerDetection ? '' : 'line-through opacity-50'}>Corners</div>
-                      <div className={contourDebugSettings.bezierCurveFitting ? '' : 'line-through opacity-50'}>Bezier</div>
-                      <div className={contourDebugSettings.autoBridging ? '' : 'line-through opacity-50'}>Bridging</div>
-                      <div className={contourDebugSettings.gapClosing ? '' : 'line-through opacity-50'}>Gap Close</div>
-                      <div className={contourDebugSettings.holeFilling ? '' : 'line-through opacity-50'}>Hole Fill</div>
-                      <div className={contourDebugSettings.pathSimplification ? '' : 'line-through opacity-50'}>Simplify</div>
-                      {contourDebugSettings.showRawContour && (
-                        <div className="text-orange-300 font-semibold">RAW MODE</div>
-                      )}
                     </div>
                   </div>
                 )}

@@ -1,5 +1,4 @@
 import ContourWorker from './contour-worker?worker';
-import type { ContourDebugSettings } from './types';
 
 // Maximum dimension for processing - images larger than this will be downsampled
 // 4000px provides high quality contours while preventing memory issues with huge files
@@ -84,7 +83,6 @@ interface ProcessRequest {
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
   previewMode?: boolean;
-  debugSettings?: ContourDebugSettings;
 }
 
 type ProgressCallback = (progress: number) => void;
@@ -186,8 +184,7 @@ class ContourWorkerManager {
       useCustomBackground: boolean;
     },
     resizeSettings: ResizeSettings,
-    onProgress?: ProgressCallback,
-    debugSettings?: ContourDebugSettings
+    onProgress?: ProgressCallback
   ): Promise<HTMLCanvasElement> {
     if (!this.worker) {
       return this.processFallback(image, strokeSettings, resizeSettings);
@@ -218,8 +215,7 @@ class ContourWorkerManager {
       strokeSettings,
       effectiveDPI: effectiveDPI,
       resizeSettings: { ...resizeSettings, outputDPI: effectiveDPI },
-      previewMode: true,
-      debugSettings
+      previewMode: true
     };
 
     const result = await this.processInWorker(request, onProgress);
@@ -249,8 +245,7 @@ class ContourWorkerManager {
         imageData: request.imageData,
         strokeSettings: request.strokeSettings,
         effectiveDPI: request.effectiveDPI,
-        previewMode: request.previewMode ?? true,
-        debugSettings: request.debugSettings
+        previewMode: request.previewMode ?? true
       }, [request.imageData.data.buffer]);
     });
   }
@@ -330,9 +325,8 @@ export async function processContourInWorker(
     useCustomBackground: boolean;
   },
   resizeSettings: ResizeSettings,
-  onProgress?: ProgressCallback,
-  debugSettings?: ContourDebugSettings
+  onProgress?: ProgressCallback
 ): Promise<HTMLCanvasElement> {
   const manager = getContourWorkerManager();
-  return manager.process(image, strokeSettings, resizeSettings, onProgress, debugSettings);
+  return manager.process(image, strokeSettings, resizeSettings, onProgress);
 }

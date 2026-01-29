@@ -69,23 +69,3 @@ export interface SpotColorData {
   spotWhite: boolean;
   spotGloss: boolean;
 }
-
-export type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace' | 'potrace-style';
-
-export interface ContourDebugSettings {
-  enabled: boolean;
-  alphaTracingMethod: AlphaTracingMethod;
-  gaussianSmoothing: boolean;
-  cornerDetection: boolean;
-  bezierCurveFitting: boolean;
-  autoBridging: boolean;
-  gapClosing: boolean;
-  holeFilling: boolean;
-  pathSimplification: boolean;
-  showRawContour: boolean;
-  // Potrace-specific settings
-  potraceAlphaMax: number; // Corner threshold (0-1.34, default 1.0) - lower = more corners preserved
-  potraceTurdSize: number; // Speckle suppression (pixels, default 2) - removes small artifacts
-  potraceOptCurve: boolean; // Curve optimization enabled
-  potraceOptTolerance: number; // Optimization tolerance (0-1, default 0.2)
-}

@@ -2,114 +2,6 @@ import { StrokeSettings, ResizeSettings, ShapeSettings } from "@/components/imag
 import { PDFDocument, PDFPage, rgb, PDFName, PDFArray, PDFDict, PDFStream, PDFRef } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
 
-interface PathPoint {
-  x: number;
-  y: number;
-}
-
-function calculatePathAngle(p1: PathPoint, p2: PathPoint): number {
-  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
-}
-
-function normalizePathAngle(angle: number): number {
-  while (angle > Math.PI) angle -= 2 * Math.PI;
-  while (angle < -Math.PI) angle += 2 * Math.PI;
-  return angle;
-}
-
-function detectPathCorners(points: PathPoint[]): boolean[] {
-  const n = points.length;
-  if (n < 3) return new Array(n).fill(false);
-  
-  const isCorner: boolean[] = new Array(n).fill(false);
-  const angleDeltas: number[] = new Array(n).fill(0);
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    const inAngle = calculatePathAngle(prev, curr);
-    const outAngle = calculatePathAngle(curr, next);
-    const delta = Math.abs(normalizePathAngle(outAngle - inAngle));
-    angleDeltas[i] = delta;
-  }
-  
-  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
-  const medianDelta = sortedDeltas[Math.floor(n / 2)];
-  
-  for (let i = 0; i < n; i++) {
-    const currentDelta = angleDeltas[i];
-    
-    const windowSize = 2;
-    const neighbors: number[] = [];
-    for (let j = -windowSize; j <= windowSize; j++) {
-      if (j === 0) continue;
-      const idx = (i + j + n) % n;
-      neighbors.push(angleDeltas[idx]);
-    }
-    neighbors.sort((a, b) => a - b);
-    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
-    
-    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
-    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
-    const isSharpAngle = currentDelta > Math.PI / 8;
-    
-    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
-  }
-  
-  return isCorner;
-}
-
-function buildCornerAwarePdfPath(pathPoints: PathPoint[], scaleFactor: number = 72): string {
-  if (pathPoints.length < 3) return '';
-  
-  const isCorner = detectPathCorners(pathPoints);
-  const n = pathPoints.length;
-  
-  let pathOps = '';
-  
-  const startX = pathPoints[0].x * scaleFactor;
-  const startY = pathPoints[0].y * scaleFactor;
-  pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
-  
-  for (let i = 0; i < n; i++) {
-    const currIdx = i;
-    const nextIdx = (i + 1) % n;
-    const nextNextIdx = (i + 2) % n;
-    
-    const curr = pathPoints[currIdx];
-    const next = pathPoints[nextIdx];
-    
-    const endX = next.x * scaleFactor;
-    const endY = next.y * scaleFactor;
-    
-    const currIsCorner = isCorner[currIdx];
-    const nextIsCorner = isCorner[nextIdx];
-    const nextNextIsCorner = isCorner[nextNextIdx];
-    
-    if (currIsCorner || nextIsCorner || nextNextIsCorner) {
-      pathOps += `${endX.toFixed(4)} ${endY.toFixed(4)} l\n`;
-    } else {
-      const prevIdx = (i - 1 + n) % n;
-      const p0 = pathPoints[prevIdx];
-      const p1 = curr;
-      const p2 = next;
-      const p3 = pathPoints[nextNextIdx];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * scaleFactor;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * scaleFactor;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * scaleFactor;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * scaleFactor;
-      
-      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
-    }
-  }
-  
-  return pathOps;
-}
-
 export interface ContourPathResult {
   pathPoints: Array<{ x: number; y: number }>; // Points in inches
   widthInches: number;
@@ -2515,10 +2407,39 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // Build path operators with corner-aware path generation
-    let pathOps = '/CutContour CS 1 SCN\n';
+    // Build path operators
+    let pathOps = '';
+    
+    // Set spot color for stroking: /CutContour CS 1 SCN
+    pathOps += '/CutContour CS 1 SCN\n';
+    
+    // Set line width (0.5 points = thin line for cutting)
     pathOps += '0.5 w\n';
-    pathOps += buildCornerAwarePdfPath(pathPoints, 72);
+    
+    // Move to first point (convert to points, Y already flipped in path data)
+    const startX = pathPoints[0].x * 72;
+    const startY = pathPoints[0].y * 72;
+    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    // Draw smooth bezier curves
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+      const endX = p2.x * 72;
+      const endY = p2.y * 72;
+      
+      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    
+    // Close and stroke
     pathOps += 'h S\n';
     
     // Append to page content stream
@@ -2830,9 +2751,31 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    let pathOps = '/CutContour CS 1 SCN\n';
+    let pathOps = '';
+    pathOps += '/CutContour CS 1 SCN\n';
     pathOps += '0.5 w\n';
-    pathOps += buildCornerAwarePdfPath(pathPoints, 72);
+    
+    const startX = pathPoints[0].x * 72;
+    const startY = pathPoints[0].y * 72;
+    pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
+    
+    for (let i = 0; i < pathPoints.length; i++) {
+      const p0 = pathPoints[(i - 1 + pathPoints.length) % pathPoints.length];
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[(i + 1) % pathPoints.length];
+      const p3 = pathPoints[(i + 2) % pathPoints.length];
+      
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+      const endX = p2.x * 72;
+      const endY = p2.y * 72;
+      
+      pathOps += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${endX.toFixed(4)} ${endY.toFixed(4)} c\n`;
+    }
+    
     pathOps += 'h S\n';
     
     const existingContents = page.node.Contents();
