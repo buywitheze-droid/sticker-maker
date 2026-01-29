@@ -73,6 +73,10 @@ export default function ImageEditor() {
     holeFilling: true,
     pathSimplification: true,
     showRawContour: false,
+    potraceAlphaMax: 1.0,
+    potraceTurdSize: 2,
+    potraceOptCurve: true,
+    potraceOptTolerance: 0.2,
   });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);

@@ -1161,6 +1161,83 @@ export default function ControlsSection({
                     <span className="text-[10px] text-gray-400">Reduces points</span>
                   </div>
 
+                  {/* Potrace Settings Section */}
+                  {contourDebugSettings.alphaTracingMethod === 'potrace' && (
+                    <>
+                      <div className="text-xs font-medium text-orange-600 uppercase tracking-wide pt-2">Potrace Settings</div>
+                      
+                      {/* Alpha Max (Corner Threshold) */}
+                      <div className="p-2 bg-orange-50 rounded-lg space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs text-gray-700">Corner Threshold</Label>
+                          <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceAlphaMax.toFixed(2)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1.34"
+                          step="0.01"
+                          value={contourDebugSettings.potraceAlphaMax}
+                          onChange={(e) => onContourDebugChange({ potraceAlphaMax: parseFloat(e.target.value) })}
+                          className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="text-[10px] text-gray-400">Lower = more corners preserved (0-1.34)</span>
+                      </div>
+
+                      {/* Turd Size (Speckle Suppression) */}
+                      <div className="p-2 bg-orange-50 rounded-lg space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs text-gray-700">Speckle Suppression</Label>
+                          <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceTurdSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          step="1"
+                          value={contourDebugSettings.potraceTurdSize}
+                          onChange={(e) => onContourDebugChange({ potraceTurdSize: parseInt(e.target.value) })}
+                          className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="text-[10px] text-gray-400">Remove artifacts smaller than this size</span>
+                      </div>
+
+                      {/* Curve Optimization Toggle */}
+                      <div className="flex items-center gap-3 p-2 bg-orange-50 rounded-lg">
+                        <Checkbox
+                          id="debug-potrace-opt"
+                          checked={contourDebugSettings.potraceOptCurve}
+                          onCheckedChange={(checked) => onContourDebugChange({ potraceOptCurve: !!checked })}
+                          className="border-orange-400 data-[state=checked]:bg-orange-500"
+                        />
+                        <Label htmlFor="debug-potrace-opt" className="text-xs text-gray-700 flex-1">
+                          Curve Optimization
+                        </Label>
+                        <span className="text-[10px] text-gray-400">Smoother output</span>
+                      </div>
+
+                      {/* Optimization Tolerance */}
+                      {contourDebugSettings.potraceOptCurve && (
+                        <div className="p-2 bg-orange-50 rounded-lg space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-gray-700">Optimization Tolerance</Label>
+                            <span className="text-xs font-mono text-orange-600">{contourDebugSettings.potraceOptTolerance.toFixed(2)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={contourDebugSettings.potraceOptTolerance}
+                            onChange={(e) => onContourDebugChange({ potraceOptTolerance: parseFloat(e.target.value) })}
+                            className="w-full h-2 bg-orange-200 rounded-lg appearance-none cursor-pointer"
+                          />
+                          <span className="text-[10px] text-gray-400">Higher = smoother but less precise</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   {/* Reset All Button */}
                   <Button
                     variant="outline"
@@ -1174,6 +1251,10 @@ export default function ControlsSection({
                       holeFilling: true,
                       pathSimplification: true,
                       showRawContour: false,
+                      potraceAlphaMax: 1.0,
+                      potraceTurdSize: 2,
+                      potraceOptCurve: true,
+                      potraceOptTolerance: 0.2,
                     })}
                     className="w-full mt-2 text-purple-600 border-purple-200 hover:bg-purple-50"
                   >

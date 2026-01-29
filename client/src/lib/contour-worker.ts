@@ -57,7 +57,14 @@ function detectPathCornerPointsWorker(points: Point[]): boolean[] {
   return isCorner;
 }
 
-type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following';
+type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following' | 'potrace';
+
+interface PotraceSettings {
+  alphaMax: number;      // Corner threshold (0-1.34, default 1.0)
+  turdSize: number;      // Speckle suppression (pixels, default 2)
+  optCurve: boolean;     // Curve optimization enabled
+  optTolerance: number;  // Optimization tolerance (0-1, default 0.2)
+}
 
 interface DebugSettings {
   enabled: boolean;
@@ -70,6 +77,11 @@ interface DebugSettings {
   holeFilling: boolean;
   pathSimplification: boolean;
   showRawContour: boolean;
+  // Potrace-specific settings
+  potraceAlphaMax?: number;
+  potraceTurdSize?: number;
+  potraceOptCurve?: boolean;
+  potraceOptTolerance?: number;
 }
 
 interface WorkerMessage {
@@ -345,7 +357,13 @@ function processContour(
   postProgress(70);
   
   const tracingMethod = debugSettings?.enabled ? debugSettings.alphaTracingMethod : 'marching-squares';
-  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight, tracingMethod);
+  const potraceSettings: PotraceSettings = {
+    alphaMax: debugSettings?.potraceAlphaMax ?? 1.0,
+    turdSize: debugSettings?.potraceTurdSize ?? 2,
+    optCurve: debugSettings?.potraceOptCurve ?? true,
+    optTolerance: debugSettings?.potraceOptTolerance ?? 0.2,
+  };
+  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight, tracingMethod, potraceSettings);
   
   if (boundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -602,7 +620,7 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
 }
 
 // Main boundary tracing dispatcher - selects algorithm based on method
-function traceBoundary(mask: Uint8Array, width: number, height: number, method: AlphaTracingMethod = 'marching-squares'): Point[] {
+function traceBoundary(mask: Uint8Array, width: number, height: number, method: AlphaTracingMethod = 'marching-squares', potraceSettings?: PotraceSettings): Point[] {
   let result: Point[];
   
   switch (method) {
@@ -616,7 +634,7 @@ function traceBoundary(mask: Uint8Array, width: number, height: number, method: 
       result = traceBoundaryContourFollowing(mask, width, height);
       break;
     case 'potrace':
-      result = traceBoundaryPotrace(mask, width, height);
+      result = traceBoundaryPotrace(mask, width, height, potraceSettings);
       break;
     default:
       result = traceBoundaryMooreNeighbor(mask, width, height);
@@ -819,17 +837,34 @@ function isOnBoundary4(mask: Uint8Array, width: number, height: number, x: numbe
 // POTRACE: Industry-standard bitmap-to-vector tracing algorithm
 // Produces smooth bezier curves by fitting optimal paths to boundary points
 // Based on Peter Selinger's Potrace algorithm
-function traceBoundaryPotrace(mask: Uint8Array, width: number, height: number): Point[] {
+function traceBoundaryPotrace(mask: Uint8Array, width: number, height: number, settings?: PotraceSettings): Point[] {
+  const alphaMax = settings?.alphaMax ?? 1.0;
+  const turdSize = settings?.turdSize ?? 2;
+  const optCurve = settings?.optCurve ?? true;
+  const optTolerance = settings?.optTolerance ?? 0.2;
+  
+  console.log(`[Potrace] Settings: alphaMax=${alphaMax}, turdSize=${turdSize}, optCurve=${optCurve}, optTolerance=${optTolerance}`);
+  
   // Step 1: Get raw boundary using Moore-Neighbor (high detail)
   const rawPath = traceBoundaryMooreNeighbor(mask, width, height);
   if (rawPath.length < 4) return rawPath;
   
+  // Step 1.5: Remove small speckles (turdSize)
+  // For now, this mainly affects the minimum path length we accept
+  if (rawPath.length < turdSize * 4) {
+    console.log(`[Potrace] Path too small (${rawPath.length} points, turdSize=${turdSize}), skipping`);
+    return rawPath;
+  }
+  
   // Step 2: Find straight segments and corners (Potrace "polygon" step)
-  const polygon = findOptimalPolygon(rawPath);
+  // alphaMax controls corner threshold - lower = more corners preserved
+  const polygon = findOptimalPolygonPotrace(rawPath, alphaMax);
   if (polygon.length < 3) return rawPath;
   
   // Step 3: Fit bezier curves between corners (Potrace "curve" step)
-  const bezierPath = fitBezierCurves(polygon, rawPath);
+  const bezierPath = optCurve 
+    ? fitBezierCurvesOptimized(polygon, rawPath, optTolerance)
+    : fitBezierCurves(polygon, rawPath);
   
   return bezierPath;
 }
@@ -1007,6 +1042,150 @@ function fitAndSampleBezier(points: Point[]): Point[] {
     const mt = 1 - t;
     
     // Cubic bezier formula: B(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3
+    const x = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
+    const y = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
+    
+    result.push({ x: x + 0.5, y: y + 0.5 });
+  }
+  
+  return result;
+}
+
+// Potrace-style polygon finding with alphaMax parameter
+// alphaMax controls corner detection - lower values preserve more corners
+function findOptimalPolygonPotrace(path: Point[], alphaMax: number): number[] {
+  const n = path.length;
+  if (n < 4) return [0, 1, 2];
+  
+  // alphaMax maps to corner angle threshold
+  // alphaMax = 0 means preserve all corners (threshold = 0)
+  // alphaMax = 1.34 means smooth out most corners (threshold = ~75 degrees)
+  const threshold = (alphaMax / 1.34) * (Math.PI / 2.4);
+  
+  // Find corner candidates using angle change
+  const corners: number[] = [0];
+  
+  for (let i = 1; i < n - 1; i++) {
+    const prev = path[(i - 1 + n) % n];
+    const curr = path[i];
+    const next = path[(i + 1) % n];
+    
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    
+    if (len1 > 0.001 && len2 > 0.001) {
+      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      // Lower alphaMax = lower threshold = more corners detected
+      if (angle > threshold) {
+        corners.push(i);
+      }
+    }
+  }
+  
+  // Ensure we have enough corners for a valid polygon
+  if (corners.length < 3) {
+    const step = Math.max(1, Math.floor(n / 4));
+    corners.length = 0;
+    for (let i = 0; i < n; i += step) {
+      corners.push(i);
+    }
+  }
+  
+  console.log(`[Potrace] Found ${corners.length} corners with alphaMax=${alphaMax}`);
+  return corners;
+}
+
+// Optimized bezier curve fitting with tolerance parameter
+function fitBezierCurvesOptimized(cornerIndices: number[], path: Point[], tolerance: number): Point[] {
+  const n = path.length;
+  const result: Point[] = [];
+  const numCorners = cornerIndices.length;
+  
+  for (let c = 0; c < numCorners; c++) {
+    const startIdx = cornerIndices[c];
+    const endIdx = cornerIndices[(c + 1) % numCorners];
+    
+    // Get segment points
+    const segmentPoints: Point[] = [];
+    if (endIdx > startIdx) {
+      for (let i = startIdx; i <= endIdx; i++) {
+        segmentPoints.push(path[i]);
+      }
+    } else {
+      for (let i = startIdx; i < n; i++) {
+        segmentPoints.push(path[i]);
+      }
+      for (let i = 0; i <= endIdx; i++) {
+        segmentPoints.push(path[i]);
+      }
+    }
+    
+    if (segmentPoints.length < 2) continue;
+    
+    // Fit bezier with optimization tolerance
+    const bezierPoints = fitAndSampleBezierOptimized(segmentPoints, tolerance);
+    
+    // Add to result
+    const startAt = c === 0 ? 0 : 1;
+    for (let i = startAt; i < bezierPoints.length; i++) {
+      result.push(bezierPoints[i]);
+    }
+  }
+  
+  return result.length >= 3 ? result : path;
+}
+
+// Bezier fitting with optimization tolerance
+function fitAndSampleBezierOptimized(points: Point[], tolerance: number): Point[] {
+  const n = points.length;
+  if (n < 2) return points;
+  if (n === 2) return points;
+  
+  const p0 = points[0];
+  const p3 = points[n - 1];
+  
+  // Compute tangent directions using more points for stability
+  const lookAhead = Math.min(3, Math.floor(n / 4));
+  const t0 = { 
+    x: points[Math.min(lookAhead, n - 1)].x - p0.x, 
+    y: points[Math.min(lookAhead, n - 1)].y - p0.y 
+  };
+  const t3 = { 
+    x: p3.x - points[Math.max(0, n - 1 - lookAhead)].x, 
+    y: p3.y - points[Math.max(0, n - 1 - lookAhead)].y 
+  };
+  
+  const len0 = Math.sqrt(t0.x * t0.x + t0.y * t0.y);
+  const len3 = Math.sqrt(t3.x * t3.x + t3.y * t3.y);
+  
+  if (len0 > 0.001) { t0.x /= len0; t0.y /= len0; }
+  if (len3 > 0.001) { t3.x /= len3; t3.y /= len3; }
+  
+  const chordLen = Math.sqrt((p3.x - p0.x) ** 2 + (p3.y - p0.y) ** 2);
+  
+  // Tolerance affects control point distance
+  // Higher tolerance = longer control points = smoother but less accurate curves
+  const scale = chordLen * (0.25 + tolerance * 0.2);
+  
+  const p1 = { x: p0.x + t0.x * scale, y: p0.y + t0.y * scale };
+  const p2 = { x: p3.x - t3.x * scale, y: p3.y - t3.y * scale };
+  
+  // Sample density based on tolerance - higher tolerance = fewer samples
+  const baseSamples = Math.max(4, Math.ceil(chordLen / 2));
+  const numSamples = Math.max(3, Math.ceil(baseSamples * (1 - tolerance * 0.5)));
+  const result: Point[] = [];
+  
+  for (let i = 0; i <= numSamples; i++) {
+    const t = i / numSamples;
+    const mt = 1 - t;
+    
     const x = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
     const y = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
     

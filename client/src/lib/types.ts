@@ -83,4 +83,9 @@ export interface ContourDebugSettings {
   holeFilling: boolean;
   pathSimplification: boolean;
   showRawContour: boolean;
+  // Potrace-specific settings
+  potraceAlphaMax: number; // Corner threshold (0-1.34, default 1.0) - lower = more corners preserved
+  potraceTurdSize: number; // Speckle suppression (pixels, default 2) - removes small artifacts
+  potraceOptCurve: boolean; // Curve optimization enabled
+  potraceOptTolerance: number; // Optimization tolerance (0-1, default 0.2)
 }

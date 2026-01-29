@@ -265,11 +265,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 9;
+    const CONTOUR_CACHE_VERSION = 10;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
+      const potraceKey = contourDebugSettings?.alphaTracingMethod === 'potrace' 
+        ? `-pt-${contourDebugSettings.potraceAlphaMax}-${contourDebugSettings.potraceTurdSize}-${contourDebugSettings.potraceOptCurve}-${contourDebugSettings.potraceOptTolerance}`
+        : '';
       const debugKey = contourDebugSettings?.enabled 
-        ? `-dbg-${contourDebugSettings.alphaTracingMethod}-${contourDebugSettings.gaussianSmoothing}-${contourDebugSettings.cornerDetection}-${contourDebugSettings.bezierCurveFitting}-${contourDebugSettings.autoBridging}-${contourDebugSettings.gapClosing}-${contourDebugSettings.holeFilling}-${contourDebugSettings.pathSimplification}-${contourDebugSettings.showRawContour}`
+        ? `-dbg-${contourDebugSettings.alphaTracingMethod}-${contourDebugSettings.gaussianSmoothing}-${contourDebugSettings.cornerDetection}-${contourDebugSettings.bezierCurveFitting}-${contourDebugSettings.autoBridging}-${contourDebugSettings.gapClosing}-${contourDebugSettings.holeFilling}-${contourDebugSettings.pathSimplification}-${contourDebugSettings.showRawContour}${potraceKey}`
         : '';
       return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}${debugKey}`;
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches, contourDebugSettings]);
