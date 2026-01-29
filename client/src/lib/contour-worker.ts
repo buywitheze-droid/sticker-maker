@@ -379,10 +379,13 @@ function processContour(
   smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation * 0.5);
   console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
   
-  // Apply minimal Chaikin smoothing - only 1 iteration with very high threshold
-  // 95° threshold = only smooth very shallow curves, preserve ALL corners
-  smoothedPath = smoothPolyChaikin(smoothedPath, 1, 95);
-  console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
+  // Round sharp corners using Clipper's JT_ROUND buffer-and-shrink technique
+  // Radius of 10 pixels gives nice rounded corners while keeping straight edges straight
+  // Scale radius with DPI for consistent physical rounding
+  const cornerRadiusInches = 0.03; // 0.03" corner radius
+  const cornerRadiusPixels = cornerRadiusInches * effectiveDPI;
+  smoothedPath = roundCorners(smoothedPath, cornerRadiusPixels);
+  console.log('[Worker] After corner rounding:', smoothedPath.length, 'points');
   
   postProgress(90);
   
@@ -973,6 +976,88 @@ function traceBoundarySimple(mask: Uint8Array, width: number, height: number): P
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
   // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
   return traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Round sharp corners using Clipper's JT_ROUND join type
+ * Uses "buffer and shrink" technique:
+ * 1. Offset outward by radius with JT_ROUND (rounds outer corners)
+ * 2. Offset inward by radius with JT_ROUND (rounds inner corners, returns to original size)
+ * 
+ * Result: Rounded corners while keeping straight edges perfectly straight
+ * 
+ * @param points - input polygon points
+ * @param radius - corner rounding radius in pixels
+ * @returns polygon with rounded corners
+ */
+function roundCorners(points: Point[], radius: number): Point[] {
+  if (points.length < 3 || radius <= 0) return points;
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  const scaledRadius = radius * CLIPPER_SCALE;
+  
+  // Create ClipperOffset object
+  const co = new ClipperLib.ClipperOffset();
+  
+  // Set arc tolerance for smooth round corners
+  // Lower value = smoother curves, higher = more angular
+  co.ArcTolerance = CLIPPER_SCALE * 0.25; // 0.25px tolerance for smooth arcs
+  co.MiterLimit = 2.0;
+  
+  // Step 1: Offset OUT by radius with JT_ROUND
+  co.Clear();
+  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  
+  const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
+  co.Execute(expandedPaths, scaledRadius);
+  
+  if (expandedPaths.length === 0 || expandedPaths[0].length < 3) {
+    console.log('[Worker] roundCorners: expand step failed, returning original');
+    return points;
+  }
+  
+  // Step 2: Offset IN by radius with JT_ROUND (shrink back)
+  co.Clear();
+  co.AddPath(expandedPaths[0], ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  
+  const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
+  co.Execute(shrunkPaths, -scaledRadius);
+  
+  if (shrunkPaths.length === 0 || shrunkPaths[0].length < 3) {
+    console.log('[Worker] roundCorners: shrink step failed, returning expanded');
+    // Return expanded result if shrink fails
+    return expandedPaths[0].map(p => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+  }
+  
+  // Find the largest polygon if multiple were created
+  let resultPath = shrunkPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[0]));
+  
+  for (let i = 1; i < shrunkPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = shrunkPaths[i];
+    }
+  }
+  
+  // Convert back to Point format
+  const result = resultPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] roundCorners: radius =', radius.toFixed(2), 'px, points:', points.length, '->', result.length);
+  
+  return result;
 }
 
 /**
