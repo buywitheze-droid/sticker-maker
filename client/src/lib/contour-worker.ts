@@ -278,33 +278,26 @@ function processContour(
   // 4. Use ClipperOffset with JT_ROUND for perfect vector offsetting
   // =============================================================================
   
-  // Step 1: Apply AUTO-BRIDGE to merge narrow gaps < 0.02" (always runs)
-  // This unites separate objects/letters without permanently expanding the shape
-  // Dilate → Fill → Sample back to original size
-  const autoBridgeInchesFixed = 0.02; // Always bridge gaps < 0.02"
-  const autoBridgePixelsHiRes = Math.round(autoBridgeInchesFixed * effectiveDPI * SUPER_SAMPLE);
-  const halfAutoBridgeHiRes = Math.round(autoBridgePixelsHiRes / 2);
+  // Step 1: Apply morphological closing to unite separate objects
+  // Dilate → Fill → then compensate with reduced Clipper offset
+  // Use a generous bridge to capture small letters/details near the main design
+  const minBridgeInches = 0.08; // Bridge objects within 0.08" (~2mm) of each other
+  const bridgeInches = Math.max(autoBridgeInches, minBridgeInches);
+  const bridgePixelsHiRes = Math.round(bridgeInches * effectiveDPI * SUPER_SAMPLE);
+  const bridgePixels1x = bridgeInches * effectiveDPI; // 1x scale for Clipper compensation
   
-  console.log('[Worker] Applying auto-bridge to merge narrow gaps, radius:', halfAutoBridgeHiRes, 'px (hi-res)');
+  console.log('[Worker] Applying morphological closing to unite objects, bridge radius:', bridgePixelsHiRes, 'px (hi-res)');
   
   // Dilate to bridge nearby objects
-  const dilatedMask = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, halfAutoBridgeHiRes);
-  const dilatedWidth = hiResWidth + halfAutoBridgeHiRes * 2;
-  const dilatedHeight = hiResHeight + halfAutoBridgeHiRes * 2;
+  const dilatedMask = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, bridgePixelsHiRes);
+  const dilatedWidth = hiResWidth + bridgePixelsHiRes * 2;
+  const dilatedHeight = hiResHeight + bridgePixelsHiRes * 2;
   
   // Fill all interior holes in the dilated mask
   const filledDilatedMask = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
   
-  // Sample back to original size (extract center portion) - this restores original dimensions
-  const autoBridgedMask = new Uint8Array(hiResWidth * hiResHeight);
-  for (let y = 0; y < hiResHeight; y++) {
-    for (let x = 0; x < hiResWidth; x++) {
-      autoBridgedMask[y * hiResWidth + x] = filledDilatedMask[(y + halfAutoBridgeHiRes) * dilatedWidth + (x + halfAutoBridgeHiRes)];
-    }
-  }
-  
-  // Trace the unified contour from the auto-bridged mask (at original hi-res size)
-  const originalContour = traceBoundary(autoBridgedMask, hiResWidth, hiResHeight);
+  // Trace the unified contour from the filled dilated mask
+  const originalContour = traceBoundary(filledDilatedMask, dilatedWidth, dilatedHeight);
   
   if (originalContour.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -313,15 +306,15 @@ function processContour(
   postProgress(40);
   
   // Downscale to 1x coordinates for vector processing
-  // No offset compensation needed - mask is at original size
+  // Account for the dilation offset: subtract bridgePixelsHiRes to get back to original image coordinates
   let tightContour = originalContour.map(p => ({
-    x: p.x / SUPER_SAMPLE,
-    y: p.y / SUPER_SAMPLE
+    x: (p.x - bridgePixelsHiRes) / SUPER_SAMPLE,
+    y: (p.y - bridgePixelsHiRes) / SUPER_SAMPLE
   }));
   
-  console.log('[Worker] Unified contour after auto-bridge:', tightContour.length, 'points');
+  console.log('[Worker] Unified contour after morphological closing:', tightContour.length, 'points');
   
-  // Skip RDP simplification - it can cut across concave areas
+  // Step 2: Skip RDP simplification - it can cut across concave areas
   // Clipper's JT_ROUND already produces clean vector output
   // Only do minimal deduplication to remove exact duplicates
   tightContour = deduplicatePoints(tightContour);
@@ -332,11 +325,14 @@ function processContour(
   
   postProgress(50);
   
-  // Step 2: Apply VECTOR OFFSET using Clipper with JT_ROUND
-  // No compensation needed - the traced contour is at original size
-  console.log('[Worker] Applying Clipper vector offset:', totalOffsetPixels.toFixed(1), 'px');
-  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
-  console.log('[Worker] After Clipper vector offset:', vectorOffsetPath.length, 'points');
+  // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
+  // Compensate for the dilation: the traced contour is already expanded by bridgePixels1x
+  // So we offset by (totalOffsetPixels - bridgePixels1x) to get the correct final size
+  // This can be negative (shrinking) if user offset is smaller than bridge radius
+  const effectiveOffset = totalOffsetPixels - bridgePixels1x;
+  console.log('[Worker] Offset calculation: total=', totalOffsetPixels.toFixed(1), 'bridge=', bridgePixels1x.toFixed(1), 'effective=', effectiveOffset.toFixed(1));
+  const vectorOffsetPath = clipperVectorOffset(tightContour, effectiveOffset);
+  console.log('[Worker] After Clipper vector offset (', effectiveOffset.toFixed(1), 'px):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
