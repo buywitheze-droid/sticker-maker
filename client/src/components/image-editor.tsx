@@ -982,6 +982,7 @@ export default function ImageEditor() {
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
+            contourDebugSettings={debouncedContourDebugSettings}
           />
         </div>
       </div>
