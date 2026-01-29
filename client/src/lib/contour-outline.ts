@@ -2023,6 +2023,14 @@ export async function downloadContourPDF(
     console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
     
     console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
+    
+    // Debug: log path bounds to verify coordinates
+    const pathXs = pathPoints.map(p => p.x);
+    const pathYs = pathPoints.map(p => p.y);
+    console.log('[downloadContourPDF] Path bounds (inches): X:', Math.min(...pathXs).toFixed(3), 'to', Math.max(...pathXs).toFixed(3), 
+                'Y:', Math.min(...pathYs).toFixed(3), 'to', Math.max(...pathYs).toFixed(3));
+    console.log('[downloadContourPDF] Page size (inches):', widthInches.toFixed(3), 'x', heightInches.toFixed(3));
+    console.log('[downloadContourPDF] Image offset (inches):', imageOffsetX.toFixed(3), 'x', imageOffsetY.toFixed(3));
   
     const widthPts = widthInches * 72;
     const heightPts = heightInches * 72;
