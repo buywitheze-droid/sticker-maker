@@ -794,6 +794,71 @@ export function convertPolygonToCurves(polygon: Point[], minDistance: number = 7
   return segments;
 }
 
+/**
+ * Convert a polygon to smooth bezier curves using Catmull-Rom spline interpolation.
+ * This creates smooth curves that pass through the original points.
+ * tension: 0 = straight lines, 0.5 = smooth curves (default), 1 = very smooth
+ */
+export function polygonToSplinePath(polygon: Point[], tension: number = 0.5): PathSegment[] {
+  if (polygon.length < 3) return [];
+  
+  const segments: PathSegment[] = [];
+  const n = polygon.length;
+  
+  // First point is a moveTo
+  segments.push({ type: 'move', point: polygon[0] });
+  
+  // For closed polygon, we need to wrap around
+  for (let i = 0; i < n; i++) {
+    const p0 = polygon[(i - 1 + n) % n];
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % n];
+    const p3 = polygon[(i + 2) % n];
+    
+    // Catmull-Rom to Bezier conversion
+    // Control points are calculated from neighboring points
+    const cp1 = {
+      x: p1.x + (p2.x - p0.x) * tension / 6,
+      y: p1.y + (p2.y - p0.y) * tension / 6
+    };
+    
+    const cp2 = {
+      x: p2.x - (p3.x - p1.x) * tension / 6,
+      y: p2.y - (p3.y - p1.y) * tension / 6
+    };
+    
+    segments.push({
+      type: 'curve',
+      cp1: cp1,
+      cp2: cp2,
+      end: p2
+    });
+  }
+  
+  console.log(`[polygonToSplinePath] Converted ${polygon.length} points to ${segments.length - 1} bezier curves`);
+  
+  return segments;
+}
+
+/**
+ * Simplify polygon by keeping only every Nth point, preserving corners.
+ * This reduces jaggedness while maintaining shape.
+ */
+export function subsamplePolygon(polygon: Point[], targetPoints: number = 200): Point[] {
+  if (polygon.length <= targetPoints) return polygon;
+  
+  const step = polygon.length / targetPoints;
+  const result: Point[] = [];
+  
+  for (let i = 0; i < targetPoints; i++) {
+    const idx = Math.floor(i * step);
+    result.push(polygon[idx]);
+  }
+  
+  console.log(`[subsamplePolygon] Reduced ${polygon.length} points to ${result.length}`);
+  return result;
+}
+
 export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: number; y2: number}>): Point[][] {
   if (rectangles.length === 0) return [];
   

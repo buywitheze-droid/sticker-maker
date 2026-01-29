@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
+import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, polygonToSplinePath, subsamplePolygon, type PathSegment } from "@/lib/clipper-path";
 import { offsetPolygon, simplifyPolygon } from "@/lib/minkowski-offset";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
@@ -2228,13 +2228,11 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so distances need to be in inches too
-      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
-      // 10 pixels at 300 DPI = 10/300 = ~0.033 inches (min chord for arc detection)
-      const minDistanceInches = 70 / 300;
-      const minChordInches = 10 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches, minChordInches);
+      // Use spline interpolation for smooth PDF output
+      // First subsample to reduce point count, then convert to smooth bezier curves
+      // 300 points is enough for accurate cutting while producing smooth curves
+      const subsampledPath = subsamplePolygon(smoothedPath, 300);
+      const pathSegments = polygonToSplinePath(subsampledPath, 0.5);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2787,13 +2785,11 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so distances need to be in inches too
-      // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
-      // 10 pixels at 300 DPI = 10/300 = ~0.033 inches (min chord for arc detection)
-      const minDistanceInches = 70 / 300;
-      const minChordInches = 10 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches, minChordInches);
+      // Use spline interpolation for smooth PDF output
+      // First subsample to reduce point count, then convert to smooth bezier curves
+      // 300 points is enough for accurate cutting while producing smooth curves
+      const subsampledPath = subsamplePolygon(smoothedPath, 300);
+      const pathSegments = polygonToSplinePath(subsampledPath, 0.5);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
