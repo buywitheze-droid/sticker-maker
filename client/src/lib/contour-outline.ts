@@ -437,9 +437,11 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
-    // This "pulls the line tight" instead of creating waves like moving average
-    let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
+    // Use RDP to straighten edges - DPI-proportional tolerance for consistent smoothness
+    // 0.005" deviation is invisible at print scale but removes jagged pixel steps
+    const rdpToleranceInches = 0.005;
+    const rdpTolerance = rdpToleranceInches * effectiveDPI;
+    let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
     // Prune short segments that create tiny jogs on flat edges
     smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
     
@@ -1834,10 +1836,12 @@ export function getContourPath(
     
     console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
     
-    // Use RDP algorithm to straighten edges while preserving detail (tolerance 0.5px)
-    // This "pulls the line tight" instead of creating waves like moving average
-    let smoothedBasePath = rdpSimplifyPolygon(boundaryPath, 0.5);
-    console.log('[getContourPath] After RDP simplify:', smoothedBasePath.length, 'points');
+    // Use RDP algorithm to straighten edges - DPI-proportional tolerance for consistent smoothness
+    // 0.005" deviation is invisible at print scale but removes jagged pixel steps
+    const rdpToleranceInches = 0.005;
+    const rdpTolerance = rdpToleranceInches * effectiveDPI;
+    let smoothedBasePath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
+    console.log('[getContourPath] After RDP simplify (tolerance', rdpTolerance.toFixed(2), 'px):', smoothedBasePath.length, 'points');
     
     // Prune short segments that create tiny jogs on flat edges
     smoothedBasePath = pruneShortSegments(smoothedBasePath, 4, 30);
