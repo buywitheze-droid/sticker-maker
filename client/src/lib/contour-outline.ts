@@ -2004,24 +2004,32 @@ export async function downloadContourPDF(
     let backgroundColor: string;
     let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
-    // Always compute high-resolution contour for PDF export
-    // The preview cache is low-res (400px) which looks smooth on screen but jagged in print
-    // We need full resolution (1200px+) for accurate vector cutting paths
-    console.log('[downloadContourPDF] Computing high-resolution contour path for PDF');
-    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-    if (!contourResult) {
-      console.error('Failed to generate contour path');
-      return;
+    // Use cached worker contour data that matches the preview exactly
+    // Spline smoothing will convert these points to smooth bezier curves for PDF
+    if (cachedContourData && cachedContourData.pathPoints && cachedContourData.pathPoints.length > 0) {
+      console.log('[downloadContourPDF] Using cached worker contour data:', cachedContourData.pathPoints.length, 'points');
+      pathPoints = cachedContourData.pathPoints;
+      widthInches = cachedContourData.widthInches;
+      heightInches = cachedContourData.heightInches;
+      imageOffsetX = cachedContourData.imageOffsetX;
+      imageOffsetY = cachedContourData.imageOffsetY;
+      backgroundColor = cachedContourData.backgroundColor;
+      useEdgeBleed = cachedContourData.useEdgeBleed ?? !strokeSettings.useCustomBackground;
+    } else {
+      console.log('[downloadContourPDF] No cached data, computing contour path');
+      const contourResult = getContourPath(image, strokeSettings, resizeSettings);
+      if (!contourResult) {
+        console.error('Failed to generate contour path');
+        return;
+      }
+      pathPoints = contourResult.pathPoints;
+      widthInches = contourResult.widthInches;
+      heightInches = contourResult.heightInches;
+      imageOffsetX = contourResult.imageOffsetX;
+      imageOffsetY = contourResult.imageOffsetY;
+      backgroundColor = contourResult.backgroundColor;
+      useEdgeBleed = !strokeSettings.useCustomBackground;
     }
-    pathPoints = contourResult.pathPoints;
-    widthInches = contourResult.widthInches;
-    heightInches = contourResult.heightInches;
-    imageOffsetX = contourResult.imageOffsetX;
-    imageOffsetY = contourResult.imageOffsetY;
-    backgroundColor = contourResult.backgroundColor;
-    useEdgeBleed = !strokeSettings.useCustomBackground;
-    
-    console.log('[downloadContourPDF] High-res path has', pathPoints.length, 'points');
     
     console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
     
@@ -2231,16 +2239,10 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use direct line segments like the preview does - no bezier conversion
-      // The path already has enough points to appear smooth
-      const pathSegments: PathSegment[] = [];
-      if (smoothedPath.length > 0) {
-        pathSegments.push({ type: 'move', point: smoothedPath[0] });
-        for (let i = 1; i < smoothedPath.length; i++) {
-          pathSegments.push({ type: 'line', point: smoothedPath[i] });
-        }
-      }
-      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview)');
+      // Apply spline smoothing to convert points to smooth bezier curves
+      // This ensures smooth curves in the PDF while matching the preview's contour shape
+      const pathSegments = polygonToSplinePath(smoothedPath, 0.5);
+      console.log('[PDF] Converted', smoothedPath.length, 'points to', pathSegments.length - 1, 'bezier curves');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2793,16 +2795,10 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use direct line segments like the preview does - no bezier conversion
-      // The path already has enough points to appear smooth
-      const pathSegments: PathSegment[] = [];
-      if (smoothedPath.length > 0) {
-        pathSegments.push({ type: 'move', point: smoothedPath[0] });
-        for (let i = 1; i < smoothedPath.length; i++) {
-          pathSegments.push({ type: 'line', point: smoothedPath[i] });
-        }
-      }
-      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview)');
+      // Apply spline smoothing to convert points to smooth bezier curves
+      // This ensures smooth curves in the PDF while matching the preview's contour shape
+      const pathSegments = polygonToSplinePath(smoothedPath, 0.5);
+      console.log('[PDF] Converted', smoothedPath.length, 'points to', pathSegments.length - 1, 'bezier curves');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
