@@ -2253,9 +2253,12 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
+    // Light smoothing before curve fitting to reduce noise
+    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    
     // Use new curve fitting algorithm for smoother bezier curves
-    const curveFitResult = fitCurvesToPath(pathPoints, 0.4, 0.01);
-    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', pathPoints.length, 'points');
+    const curveFitResult = fitCurvesToPath(smoothedPath, 0.7, 0.01);
+    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', smoothedPath.length, 'points');
     
     // Guard for empty/degenerate paths
     if (curveFitResult.segments.length < 1) {
@@ -2815,9 +2818,12 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
+    // Light smoothing before curve fitting to reduce noise
+    const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+    
     // Use new curve fitting algorithm for smoother bezier curves
-    const curveFitResult = fitCurvesToPath(pathPoints, 0.4, 0.01);
-    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', pathPoints.length, 'points');
+    const curveFitResult = fitCurvesToPath(smoothedPath, 0.7, 0.01);
+    console.log('[CurveFit] PDF export:', curveFitResult.segments.length, 'segments from', smoothedPath.length, 'points');
     
     // Guard for empty/degenerate paths
     if (curveFitResult.segments.length < 1) {

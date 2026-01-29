@@ -18,7 +18,7 @@ export interface CurveFitResult {
 
 export function fitCurvesToPath(
   points: Point[],
-  cornerThreshold: number = 0.5,
+  cornerThreshold: number = 0.7,
   curveError: number = 2.0
 ): CurveFitResult {
   if (points.length < 3) {
@@ -27,7 +27,7 @@ export function fitCurvesToPath(
   
   console.log('[CurveFit] Fitting curves to', points.length, 'points');
   
-  const corners = detectCorners(points, cornerThreshold);
+  const corners = detectCornersImproved(points, cornerThreshold);
   console.log('[CurveFit] Detected', corners.length, 'corners');
   
   const segments: BezierSegment[] = [];
@@ -78,9 +78,11 @@ export function fitCurvesToPath(
   return { points: outputPoints, segments };
 }
 
-function detectCorners(points: Point[], threshold: number): number[] {
+function detectCornersImproved(points: Point[], threshold: number): number[] {
   const n = points.length;
-  const corners: number[] = [];
+  if (n < 5) return [];
+  
+  const angles: number[] = new Array(n).fill(0);
   
   for (let i = 0; i < n; i++) {
     const prev = points[(i - 1 + n) % n];
@@ -95,13 +97,33 @@ function detectCorners(points: Point[], threshold: number): number[] {
     const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
     const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
     
-    if (len1 < 0.001 || len2 < 0.001) continue;
+    if (len1 < 0.001 || len2 < 0.001) {
+      angles[i] = 0;
+      continue;
+    }
     
     const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    angles[i] = Math.acos(Math.max(-1, Math.min(1, dot)));
+  }
+  
+  const sortedAngles = [...angles].sort((a, b) => a - b);
+  const medianAngle = sortedAngles[Math.floor(n / 2)];
+  
+  const corners: number[] = [];
+  const minSpacing = Math.max(5, Math.floor(n / 20));
+  
+  for (let i = 0; i < n; i++) {
+    const angle = angles[i];
     
-    if (angle > threshold) {
-      corners.push(i);
+    const isAbsolute = angle > threshold;
+    const isRelative = angle > medianAngle * 2.5 && angle > 0.3;
+    
+    if (isAbsolute || isRelative) {
+      if (corners.length === 0 || i - corners[corners.length - 1] >= minSpacing) {
+        corners.push(i);
+      } else if (angle > angles[corners[corners.length - 1]]) {
+        corners[corners.length - 1] = i;
+      }
     }
   }
   
