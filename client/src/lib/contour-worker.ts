@@ -319,9 +319,9 @@ function processContour(
   
   // RDP simplifies diagonal lines by removing unnecessary intermediate points
   // Higher tolerance = straighter diagonals with fewer jagged segments
-  // Use DPI-proportional tolerance: 0.01" deviation is invisible at print scale
-  // This scales correctly: at 150 DPI = 1.5px, at 300 DPI = 3px, at 600 DPI = 6px
-  const rdpToleranceInches = 0.01;
+  // Use DPI-proportional tolerance: 0.02" deviation is invisible at print scale
+  // This scales correctly: at 150 DPI = 3px, at 300 DPI = 6px, at 600 DPI = 12px
+  const rdpToleranceInches = 0.02;
   const rdpTolerance = rdpToleranceInches * effectiveDPI;
   let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
   console.log('[Worker] After RDP (tolerance', rdpTolerance.toFixed(2), 'px /', rdpToleranceInches, 'in):', smoothedPath.length, 'points');
