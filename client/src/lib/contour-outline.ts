@@ -1088,10 +1088,9 @@ function fixOffsetCrossings(points: Point[]): Point[] {
   // Ensure consistent winding direction (clockwise for cutting)
   result = ensureClockwise(result);
   
-  // Merge very close points (< 0.5px apart)
-  result = mergeClosePathPoints(result);
+  // NOTE: Removed mergeClosePathPoints - it was too aggressive and destroying paths
   
-  console.log('[fixOffsetCrossings] AFTER cleanup - checking for intersections');
+  console.log('[fixOffsetCrossings] AFTER cleanup, points:', result.length);
   const afterCheck = detectSelfIntersections(result);
   
   if (afterCheck.hasLoops) {
