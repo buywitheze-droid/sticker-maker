@@ -328,10 +328,11 @@ function processContour(
   // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
   // Compensate for the dilation: the traced contour is already expanded by bridgePixels1x
   // So we offset by (totalOffsetPixels - bridgePixels1x) to get the correct final size
-  // If user offset is smaller than bridge, we still need the bridge for unification (clamp to 0)
-  const effectiveOffset = Math.max(0, totalOffsetPixels - bridgePixels1x);
+  // This can be negative (shrinking) if user offset is smaller than bridge radius
+  const effectiveOffset = totalOffsetPixels - bridgePixels1x;
+  console.log('[Worker] Offset calculation: total=', totalOffsetPixels.toFixed(1), 'bridge=', bridgePixels1x.toFixed(1), 'effective=', effectiveOffset.toFixed(1));
   const vectorOffsetPath = clipperVectorOffset(tightContour, effectiveOffset);
-  console.log('[Worker] After Clipper vector offset (+', effectiveOffset.toFixed(1), 'px, compensated from', totalOffsetPixels, '):', vectorOffsetPath.length, 'points');
+  console.log('[Worker] After Clipper vector offset (', effectiveOffset.toFixed(1), 'px):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
@@ -1021,7 +1022,8 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
  * @returns offset polygon with rounded corners
  */
 function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
-  if (points.length < 3 || offsetPixels <= 0) return points;
+  if (points.length < 3) return points;
+  if (offsetPixels === 0) return points;
   
   // Convert to Clipper format with scaling
   const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
@@ -1029,6 +1031,7 @@ function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
     Y: Math.round(p.y * CLIPPER_SCALE)
   }));
   
+  // Clipper supports negative offsets for shrinking (inward offset)
   const scaledOffset = offsetPixels * CLIPPER_SCALE;
   
   // Create ClipperOffset object

@@ -1,0 +1,122 @@
+// ============================================
+// AUTOMATIC AUTO-BRIDGE (always runs)
+// Merges narrow gaps < 0.02 inches automatically
+// ============================================
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+// Configuration - adjust DPI to match your app
+const effectiveDPI = 300;
+const autoBridgeInches = 0.02;  // ~6 pixels at 300 DPI
+const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
+
+// Apply auto-bridging to a binary mask
+function applyAutoBridge(
+  silhouetteMask: Uint8Array, 
+  width: number, 
+  height: number
+): Uint8Array {
+  if (autoBridgePixels <= 0) return silhouetteMask;
+  
+  const halfAutoBridge = Math.round(autoBridgePixels / 2);
+  
+  // Step 1: Dilate - expands mask, closing narrow gaps
+  const dilatedMask = dilateSilhouette(silhouetteMask, width, height, halfAutoBridge);
+  const dilatedWidth = width + halfAutoBridge * 2;
+  const dilatedHeight = height + halfAutoBridge * 2;
+  
+  // Step 2: Fill - makes merged areas solid
+  const filledMask = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+  
+  // Step 3: Sample back to original size
+  const result = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      result[y * width + x] = filledMask[(y + halfAutoBridge) * dilatedWidth + (x + halfAutoBridge)];
+    }
+  }
+  
+  return result;
+}
+
+// Dilate: expand mask outward by circular radius
+function dilateSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const newWidth = width + radius * 2;
+  const newHeight = height + radius * 2;
+  const result = new Uint8Array(newWidth * newHeight);
+  
+  const radiusSq = radius * radius;
+  const offsets: number[] = [];
+  
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy <= radiusSq) {
+        offsets.push(dy * newWidth + dx);
+      }
+    }
+  }
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] === 1) {
+        const centerIdx = (y + radius) * newWidth + (x + radius);
+        for (const offset of offsets) {
+          result[centerIdx + offset] = 1;
+        }
+      }
+    }
+  }
+  
+  return result;
+}
+
+// Fill: flood-fill from edges, then invert to fill interior holes
+function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const filled = new Uint8Array(mask);
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [];
+  
+  // Seed queue with edge pixels that are empty
+  for (let x = 0; x < width; x++) {
+    if (mask[x] === 0) { queue.push(x); visited[x] = 1; }
+    const bottom = (height - 1) * width + x;
+    if (mask[bottom] === 0) { queue.push(bottom); visited[bottom] = 1; }
+  }
+  for (let y = 0; y < height; y++) {
+    const left = y * width;
+    if (mask[left] === 0) { queue.push(left); visited[left] = 1; }
+    const right = y * width + width - 1;
+    if (mask[right] === 0) { queue.push(right); visited[right] = 1; }
+  }
+  
+  // Flood fill exterior
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    
+    const neighbors = [
+      y > 0 ? idx - width : -1,
+      y < height - 1 ? idx + width : -1,
+      x > 0 ? idx - 1 : -1,
+      x < width - 1 ? idx + 1 : -1
+    ];
+    
+    for (const n of neighbors) {
+      if (n >= 0 && visited[n] === 0 && mask[n] === 0) {
+        visited[n] = 1;
+        queue.push(n);
+      }
+    }
+  }
+  
+  // Interior (not visited) becomes solid
+  for (let i = 0; i < filled.length; i++) {
+    if (visited[i] === 0) filled[i] = 1;
+  }
+  
+  return filled;
+}
