@@ -57,6 +57,21 @@ function detectPathCornerPointsWorker(points: Point[]): boolean[] {
   return isCorner;
 }
 
+type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following';
+
+interface DebugSettings {
+  enabled: boolean;
+  alphaTracingMethod: AlphaTracingMethod;
+  gaussianSmoothing: boolean;
+  cornerDetection: boolean;
+  bezierCurveFitting: boolean;
+  autoBridging: boolean;
+  gapClosing: boolean;
+  holeFilling: boolean;
+  pathSimplification: boolean;
+  showRawContour: boolean;
+}
+
 interface WorkerMessage {
   type: 'process';
   imageData: ImageData;
@@ -72,6 +87,7 @@ interface WorkerMessage {
   };
   effectiveDPI: number;
   previewMode?: boolean;
+  debugSettings?: DebugSettings;
 }
 
 interface WorkerResponse {
@@ -96,7 +112,7 @@ interface WorkerResponse {
 const MAX_SAFE_DIMENSION = 4000;
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
-  const { type, imageData, strokeSettings, effectiveDPI, previewMode } = e.data;
+  const { type, imageData, strokeSettings, effectiveDPI, previewMode, debugSettings } = e.data;
   
   if (type === 'process') {
     try {
@@ -131,7 +147,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         const scaledDPI = effectiveDPI * scale;
         
         postProgress(15);
-        const result = processContour(scaledData, strokeSettings, scaledDPI);
+        const result = processContour(scaledData, strokeSettings, scaledDPI, debugSettings);
         postProgress(90);
         
         // Upscale result back to original size
@@ -140,7 +156,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           Math.round(result.imageData.height / scale));
         contourData = result.contourData;
       } else {
-        const result = processContour(imageData, strokeSettings, effectiveDPI);
+        const result = processContour(imageData, strokeSettings, effectiveDPI, debugSettings);
         processedData = result.imageData;
         contourData = result.contourData;
       }
@@ -254,7 +270,8 @@ function processContour(
     backgroundColor: string;
     useCustomBackground: boolean;
   },
-  effectiveDPI: number
+  effectiveDPI: number,
+  debugSettings?: DebugSettings
 ): ContourResult {
   const width = imageData.width;
   const height = imageData.height;
@@ -327,7 +344,8 @@ function processContour(
   
   postProgress(70);
   
-  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+  const tracingMethod = debugSettings?.enabled ? debugSettings.alphaTracingMethod : 'marching-squares';
+  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight, tracingMethod);
   
   if (boundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -551,7 +569,149 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   return filled;
 }
 
-function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
+// Main boundary tracing dispatcher - selects algorithm based on method
+function traceBoundary(mask: Uint8Array, width: number, height: number, method: AlphaTracingMethod = 'marching-squares'): Point[] {
+  switch (method) {
+    case 'marching-squares':
+      return traceBoundaryMarchingSquares(mask, width, height);
+    case 'moore-neighbor':
+      return traceBoundaryMooreNeighbor(mask, width, height);
+    case 'contour-following':
+      return traceBoundaryContourFollowing(mask, width, height);
+    default:
+      return traceBoundaryMarchingSquares(mask, width, height);
+  }
+}
+
+// MARCHING SQUARES: Industry-standard algorithm for smooth contours
+// Creates sub-pixel accurate edges by interpolating cell corners
+function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: number): Point[] {
+  const path: Point[] = [];
+  
+  // Find starting edge point
+  let startX = -1, startY = -1, startEdge = -1;
+  outer: for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width - 1; x++) {
+      const cell = getMarchingSquaresCell(mask, width, height, x, y);
+      if (cell > 0 && cell < 15) {
+        startX = x;
+        startY = y;
+        startEdge = getFirstEdge(cell);
+        break outer;
+      }
+    }
+  }
+  
+  if (startX === -1) return [];
+  
+  let x = startX, y = startY, edge = startEdge;
+  const visited = new Set<string>();
+  const maxSteps = width * height * 4;
+  let steps = 0;
+  
+  do {
+    const key = `${x},${y},${edge}`;
+    if (visited.has(key)) break;
+    visited.add(key);
+    
+    // Get interpolated point on this edge
+    const pt = getEdgePoint(x, y, edge);
+    path.push(pt);
+    
+    // Move to next cell and edge
+    const next = getNextMarchingSquaresEdge(mask, width, height, x, y, edge);
+    x = next.x;
+    y = next.y;
+    edge = next.edge;
+    
+    steps++;
+  } while ((x !== startX || y !== startY || edge !== startEdge) && steps < maxSteps);
+  
+  return path;
+}
+
+// Get the 4-bit cell configuration for marching squares
+function getMarchingSquaresCell(mask: Uint8Array, width: number, height: number, x: number, y: number): number {
+  const tl = (x >= 0 && y >= 0 && mask[y * width + x] === 1) ? 1 : 0;
+  const tr = (x + 1 < width && y >= 0 && mask[y * width + x + 1] === 1) ? 2 : 0;
+  const br = (x + 1 < width && y + 1 < height && mask[(y + 1) * width + x + 1] === 1) ? 4 : 0;
+  const bl = (x >= 0 && y + 1 < height && mask[(y + 1) * width + x] === 1) ? 8 : 0;
+  return tl | tr | br | bl;
+}
+
+// Get first edge from a cell configuration (0=top, 1=right, 2=bottom, 3=left)
+function getFirstEdge(cell: number): number {
+  // Map cell configs to their first edge
+  const edgeMap: { [key: number]: number } = {
+    1: 0, 2: 1, 3: 1, 4: 2, 5: 0, 6: 2, 7: 2,
+    8: 3, 9: 0, 10: 1, 11: 1, 12: 3, 13: 0, 14: 3
+  };
+  return edgeMap[cell] ?? 0;
+}
+
+// Get interpolated point on an edge (0=top, 1=right, 2=bottom, 3=left)
+function getEdgePoint(x: number, y: number, edge: number): Point {
+  switch (edge) {
+    case 0: return { x: x + 0.5, y: y };        // Top
+    case 1: return { x: x + 1, y: y + 0.5 };    // Right
+    case 2: return { x: x + 0.5, y: y + 1 };    // Bottom
+    case 3: return { x: x, y: y + 0.5 };        // Left
+    default: return { x: x + 0.5, y: y + 0.5 };
+  }
+}
+
+// Get next edge following marching squares algorithm
+function getNextMarchingSquaresEdge(mask: Uint8Array, width: number, height: number, x: number, y: number, edge: number): { x: number; y: number; edge: number } {
+  // Move to adjacent cell based on current edge
+  let nx = x, ny = y;
+  switch (edge) {
+    case 0: ny = y - 1; break; // Exit top -> enter from bottom
+    case 1: nx = x + 1; break; // Exit right -> enter from left
+    case 2: ny = y + 1; break; // Exit bottom -> enter from top
+    case 3: nx = x - 1; break; // Exit left -> enter from right
+  }
+  
+  // Clamp to valid range
+  nx = Math.max(0, Math.min(width - 2, nx));
+  ny = Math.max(0, Math.min(height - 2, ny));
+  
+  // Get cell configuration and determine exit edge
+  const cell = getMarchingSquaresCell(mask, width, height, nx, ny);
+  const entryEdge = (edge + 2) % 4; // Opposite of exit edge
+  
+  // Determine next exit edge based on cell config and entry
+  const nextEdge = getExitEdge(cell, entryEdge);
+  
+  return { x: nx, y: ny, edge: nextEdge };
+}
+
+// Determine exit edge based on cell config and entry edge
+function getExitEdge(cell: number, entry: number): number {
+  // Simplified marching squares exit logic
+  const exits: { [key: number]: { [key: number]: number } } = {
+    1:  { 0: 3, 3: 0 },
+    2:  { 0: 1, 1: 0 },
+    3:  { 1: 3, 3: 1 },
+    4:  { 1: 2, 2: 1 },
+    5:  { 0: 2, 2: 0, 1: 3, 3: 1 }, // Saddle point
+    6:  { 0: 2, 2: 0 },
+    7:  { 2: 3, 3: 2 },
+    8:  { 2: 3, 3: 2 },
+    9:  { 0: 2, 2: 0 },
+    10: { 0: 3, 3: 0, 1: 2, 2: 1 }, // Saddle point
+    11: { 1: 2, 2: 1 },
+    12: { 1: 3, 3: 1 },
+    13: { 0: 1, 1: 0 },
+    14: { 0: 3, 3: 0 }
+  };
+  
+  return exits[cell]?.[entry] ?? ((entry + 2) % 4);
+}
+
+// MOORE-NEIGHBOR: Classic boundary following using 8-connectivity
+// Fast and simple, traces actual pixel boundaries
+function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: number): Point[] {
+  // Find starting point (first foreground pixel)
   let startX = -1, startY = -1;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -566,28 +726,31 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   if (startX === -1) return [];
   
   const path: Point[] = [];
+  
+  // 8-directional neighbors (clockwise from East)
   const directions = [
-    { dx: 1, dy: 0 },
-    { dx: 1, dy: 1 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 1 },
-    { dx: -1, dy: 0 },
-    { dx: -1, dy: -1 },
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: -1 }
+    { dx: 1, dy: 0 },   // 0: E
+    { dx: 1, dy: 1 },   // 1: SE
+    { dx: 0, dy: 1 },   // 2: S
+    { dx: -1, dy: 1 },  // 3: SW
+    { dx: -1, dy: 0 },  // 4: W
+    { dx: -1, dy: -1 }, // 5: NW
+    { dx: 0, dy: -1 },  // 6: N
+    { dx: 1, dy: -1 }   // 7: NE
   ];
   
   let x = startX, y = startY;
-  let dir = 0;
+  let dir = 0; // Start looking East
   const maxSteps = width * height * 2;
   let steps = 0;
   
   do {
     path.push({ x, y });
     
+    // Moore neighbor tracing: start from backtrack direction + 1
     let found = false;
     for (let i = 0; i < 8; i++) {
-      const checkDir = (dir + 6 + i) % 8;
+      const checkDir = (dir + 6 + i) % 8; // Start from backtrack + 1
       const nx = x + directions[checkDir].dx;
       const ny = y + directions[checkDir].dy;
       
@@ -605,6 +768,107 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   } while ((x !== startX || y !== startY) && steps < maxSteps);
   
   return path;
+}
+
+// CONTOUR FOLLOWING: Edge-based tracing using 4-connectivity
+// Good for complex shapes, follows actual boundary edges between pixels
+function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: number): Point[] {
+  // Find starting boundary pixel (foreground with background neighbor)
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] === 1 && isOnBoundary(mask, width, height, x, y)) {
+        startX = x;
+        startY = y;
+        break outer;
+      }
+    }
+  }
+  
+  if (startX === -1) return [];
+  
+  const path: Point[] = [];
+  
+  // 4-directional neighbors (clockwise from North)
+  const directions = [
+    { dx: 0, dy: -1 },  // 0: N
+    { dx: 1, dy: 0 },   // 1: E
+    { dx: 0, dy: 1 },   // 2: S
+    { dx: -1, dy: 0 }   // 3: W
+  ];
+  
+  let x = startX, y = startY;
+  let dir = 0; // Start looking North
+  const maxSteps = width * height * 4;
+  let steps = 0;
+  const visited = new Set<string>();
+  
+  do {
+    const key = `${x},${y}`;
+    if (visited.has(key) && steps > 1) break;
+    visited.add(key);
+    
+    // Add edge midpoints for smoother path
+    path.push({ x: x + 0.5, y: y + 0.5 });
+    
+    // Find next boundary pixel (prefer continuing in same direction)
+    let found = false;
+    for (let i = 0; i < 4; i++) {
+      const checkDir = (dir + 3 + i) % 4; // Start from left of current direction
+      const nx = x + directions[checkDir].dx;
+      const ny = y + directions[checkDir].dy;
+      
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
+          mask[ny * width + nx] === 1 && isOnBoundary(mask, width, height, nx, ny)) {
+        x = nx;
+        y = ny;
+        dir = checkDir;
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) {
+      // Fall back to any foreground neighbor
+      for (let i = 0; i < 4; i++) {
+        const checkDir = (dir + i) % 4;
+        const nx = x + directions[checkDir].dx;
+        const ny = y + directions[checkDir].dy;
+        
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
+          x = nx;
+          y = ny;
+          dir = checkDir;
+          found = true;
+          break;
+        }
+      }
+    }
+    
+    if (!found) break;
+    steps++;
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
+  
+  return path;
+}
+
+// Check if a pixel is on the boundary (has at least one background 4-neighbor)
+function isOnBoundary(mask: Uint8Array, width: number, height: number, x: number, y: number): boolean {
+  const neighbors = [
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 }
+  ];
+  
+  for (const { dx, dy } of neighbors) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx >= width || ny < 0 || ny >= height || mask[ny * width + nx] === 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {

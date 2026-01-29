@@ -311,7 +311,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             if (processingIdRef.current === currentId) {
               setProcessingProgress(progress);
             }
-          }
+          },
+          contourDebugSettings
         ).then((contourCanvas) => {
           if (processingIdRef.current === currentId) {
             contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
