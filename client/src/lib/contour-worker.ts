@@ -2589,6 +2589,55 @@ function optimizePathPoints(points: Point[], dpi: number): Point[] {
   const reduction = ((n - result.length) / n * 100).toFixed(1);
   console.log('[Worker] Point optimization: reduced from', n, 'to', result.length, 'points (' + reduction + '% reduction)');
   
+  // Apply smoothing pass to eliminate zigzags
+  const smoothed = smoothPathForCutting(result);
+  
+  return smoothed;
+}
+
+/**
+ * Smooth the path to eliminate zigzags for clean cutting
+ * Uses Chaikin's corner cutting algorithm for smooth curves
+ */
+function smoothPathForCutting(points: Point[]): Point[] {
+  if (points.length < 4) return points;
+  
+  // Apply Chaikin smoothing twice for smoother result
+  let smoothed = chaikinSmooth(points);
+  smoothed = chaikinSmooth(smoothed);
+  
+  // Then apply a light moving average to further smooth any remaining zigzags
+  smoothed = movingAverageSmooth(smoothed, 3);
+  
+  console.log('[Worker] Path smoothing: final point count', smoothed.length);
+  return smoothed;
+}
+
+/**
+ * Chaikin's corner cutting algorithm
+ * Creates smoother curves by cutting corners
+ */
+function chaikinSmooth(points: Point[]): Point[] {
+  if (points.length < 3) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    
+    // Create two new points at 25% and 75% along each segment
+    result.push({
+      x: p0.x * 0.75 + p1.x * 0.25,
+      y: p0.y * 0.75 + p1.y * 0.25
+    });
+    result.push({
+      x: p0.x * 0.25 + p1.x * 0.75,
+      y: p0.y * 0.25 + p1.y * 0.75
+    });
+  }
+  
   return result;
 }
 
