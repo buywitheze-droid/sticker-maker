@@ -829,10 +829,10 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   
   // Step 2: Force correct winding orientation (Counter-Clockwise for outer shapes)
   // Clipper uses positive area = counter-clockwise convention
-  const orientation = ClipperLib.Clipper.Orientation(largestPath);
-  if (!orientation) {
-    // Path is clockwise, reverse it to make counter-clockwise
-    ClipperLib.Clipper.ReversePath(largestPath);
+  const area = ClipperLib.Clipper.Area(largestPath);
+  if (area < 0) {
+    // Negative area = clockwise, reverse it to make counter-clockwise
+    largestPath.reverse();
     console.log('[Worker] Reversed path to counter-clockwise orientation');
   }
   
@@ -881,7 +881,9 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
       const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
       const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
       
-      // Calculate angle between vectors (0° = same direction, 180° = opposite)
+      // Calculate the turning angle at this vertex
+      // angleDegrees = angle between the two edge vectors
+      // 180° = straight line (no turn), 90° = right angle turn, 0° = complete reversal
       let angleDegrees = 180; // default to straight line
       if (len1 > 0.0001 && len2 > 0.0001) {
         const dot = v1x * v2x + v1y * v2y;
@@ -889,14 +891,14 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
         angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
       }
       
-      // Deviation from straight line (0° = straight, 180° = U-turn)
-      const deviation = 180 - angleDegrees;
-      
-      // If sharp corner (deviation > threshold), preserve the original point
-      if (deviation > sharpAngleThreshold) {
+      // angleDegrees: 180° = straight, 90° = right angle, 0° = hairpin
+      // We want to PRESERVE sharp corners (small angles like diamond tips < 60°)
+      // We want to SMOOTH gentle turns (large angles like 90° pixel steps)
+      if (angleDegrees < sharpAngleThreshold) {
+        // Sharp corner (like diamond tip) - keep original point
         newPoints.push(curr);
       } else {
-        // Apply Chaikin's corner cutting for shallow angles
+        // Gentle turn or pixel step - apply Chaikin corner cutting
         // Q = 0.75 * P_i + 0.25 * P_{i+1} (cut 25% from this point toward next)
         const qx = 0.75 * curr.x + 0.25 * next.x;
         const qy = 0.75 * curr.y + 0.25 * next.y;
