@@ -350,7 +350,8 @@ function processContour(
   
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
   // Apply in BOTH preview and export modes so cached preview data matches PDF output
-  smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
+  // 3 iterations for smoother curves, 60° sharp angle preservation
+  smoothedPath = smoothPolyChaikin(smoothedPath, 3, 60);
   console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   
   postProgress(90);
