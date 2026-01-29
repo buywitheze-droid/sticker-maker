@@ -227,16 +227,16 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
   return result;
 }
 
-// Surgical angle-based corner rounding - only modifies acute angles
-// Replaces sharp V-shaped vertices with small arc segments
-// Now corner-aware: only rounds very acute angles (<20°) that are likely artifacts
+// Surgical angle-based corner rounding - only modifies very acute angles (<20°)
+// These are likely artifacts from path tracing, not intentional design corners
 export function roundSharpCorners(points: Point[], radiusPixels: number): Point[] {
   if (points.length < 3 || radiusPixels <= 0) return points;
   
   const result: Point[] = [];
   const n = points.length;
-  const minAngleDegrees = 20; // Only round very acute angles (likely artifacts)
-  const minAngleCos = Math.cos((180 - minAngleDegrees) * Math.PI / 180);
+  // Only round internal angles < 20° (likely artifacts)
+  // dot = cos(internal_angle), so for angle < 20°, dot > cos(20°) ≈ 0.94
+  const maxDotForRounding = Math.cos(20 * Math.PI / 180); // ≈ 0.94
   
   let sharpCornersFound = 0;
   
@@ -265,7 +265,8 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
     
     const dot = n1x * n2x + n1y * n2y;
     
-    if (dot > minAngleCos) {
+    // Only round if internal angle < 20° (very acute, likely artifact)
+    if (dot > maxDotForRounding) {
       sharpCornersFound++;
       
       const chamferDist = Math.min(radiusPixels, len1 * 0.3, len2 * 0.3);
@@ -283,7 +284,7 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
     }
   }
   
-  console.log('[roundSharpCorners] Found', sharpCornersFound, 'very acute corners, path:', points.length, '→', result.length, 'points');
+  console.log('[roundSharpCorners] Found', sharpCornersFound, 'very acute corners (<20°), path:', points.length, '→', result.length, 'points');
   
   return result.length >= 3 ? result : points;
 }
