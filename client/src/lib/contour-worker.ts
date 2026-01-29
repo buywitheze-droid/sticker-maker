@@ -2602,8 +2602,10 @@ function optimizePathPoints(points: Point[], dpi: number): Point[] {
 function smoothPathForCutting(points: Point[]): Point[] {
   if (points.length < 4) return points;
   
-  // Apply Chaikin smoothing twice for smoother result
-  let smoothed = chaikinSmooth(points);
+  // Apply rope pulling to smooth small deviations without moving overall position
+  let smoothed = ropePullSmooth(points, 3); // 3 passes
+  
+  // Apply Chaikin smoothing for additional curve refinement
   smoothed = chaikinSmooth(smoothed);
   
   // Then apply a light moving average to further smooth any remaining zigzags
@@ -2611,6 +2613,59 @@ function smoothPathForCutting(points: Point[]): Point[] {
   
   console.log('[Worker] Path smoothing: final point count', smoothed.length);
   return smoothed;
+}
+
+/**
+ * Rope pulling smoothing - gently pulls points toward the line between neighbors
+ * Only affects small deviations, preserving the overall shape
+ * Like pulling a rope taut - removes slack without changing endpoints
+ */
+function ropePullSmooth(points: Point[], passes: number): Point[] {
+  if (points.length < 5) return points;
+  
+  let result = [...points];
+  const n = result.length;
+  
+  for (let pass = 0; pass < passes; pass++) {
+    const newPoints = [...result];
+    
+    for (let i = 0; i < n; i++) {
+      const prev = result[(i - 1 + n) % n];
+      const curr = result[i];
+      const next = result[(i + 1) % n];
+      
+      // Calculate the ideal position (midpoint between neighbors on the line)
+      const idealX = (prev.x + next.x) / 2;
+      const idealY = (prev.y + next.y) / 2;
+      
+      // Calculate deviation from the ideal straight line
+      const deviationX = curr.x - idealX;
+      const deviationY = curr.y - idealY;
+      const deviation = Math.sqrt(deviationX * deviationX + deviationY * deviationY);
+      
+      // Calculate the distance between prev and next (segment length)
+      const segmentLen = Math.sqrt((next.x - prev.x) ** 2 + (next.y - prev.y) ** 2);
+      
+      // Only smooth if deviation is small relative to segment length
+      // This preserves intentional corners and curves
+      const maxDeviationRatio = 0.15; // Max 15% deviation from straight line
+      
+      if (deviation < segmentLen * maxDeviationRatio && deviation > 0.1) {
+        // Pull toward the ideal position with decreasing strength
+        // Smaller deviations get pulled more strongly
+        const pullStrength = 0.3 * (1 - deviation / (segmentLen * maxDeviationRatio));
+        
+        newPoints[i] = {
+          x: curr.x - deviationX * pullStrength,
+          y: curr.y - deviationY * pullStrength
+        };
+      }
+    }
+    
+    result = newPoints;
+  }
+  
+  return result;
 }
 
 /**
