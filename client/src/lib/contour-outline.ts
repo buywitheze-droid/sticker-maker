@@ -2247,10 +2247,17 @@ export async function downloadContourPDF(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // CRITICAL: Calculate image dimensions from cached contour data to match the contour path
+  // The contour was computed at a specific DPI, so we must use consistent dimensions
+  // imageOffset already includes bleed + totalOffset, so:
+  // image = page - 2*imageOffset (gives centered image with correct margins)
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
+  const imageWidthPts = (widthInches * 72) - (imageOffsetX * 72 * 2);
+  const imageHeightPts = (heightInches * 72) - (imageOffsetY * 72 * 2);
+  
+  console.log('[PDF] Image dimensions (from contour data):', 
+    imageWidthPts.toFixed(2), 'x', imageHeightPts.toFixed(2), 'pts');
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -2811,10 +2818,14 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
+  // CRITICAL: Calculate image dimensions from cached contour data to match the contour path
   const imageXPts = imageOffsetX * 72;
-  const imageWidthPts = resizeSettings.widthInches * 72;
-  const imageHeightPts = resizeSettings.heightInches * 72;
   const imageYPts = imageOffsetY * 72;
+  const imageWidthPts = (widthInches * 72) - (imageOffsetX * 72 * 2);
+  const imageHeightPts = (heightInches * 72) - (imageOffsetY * 72 * 2);
+  
+  console.log('[PDF] Image dimensions (from contour data):', 
+    imageWidthPts.toFixed(2), 'x', imageHeightPts.toFixed(2), 'pts');
   
   page.drawImage(pngImage, {
     x: imageXPts,
