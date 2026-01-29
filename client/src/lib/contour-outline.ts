@@ -2239,10 +2239,15 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Apply spline smoothing to convert points to smooth bezier curves
-      // This ensures smooth curves in the PDF while matching the preview's contour shape
-      const pathSegments = polygonToSplinePath(smoothedPath, 0.5);
-      console.log('[PDF] Converted', smoothedPath.length, 'points to', pathSegments.length - 1, 'bezier curves');
+      // Use direct line segments exactly like the preview worker does
+      const pathSegments: PathSegment[] = [];
+      if (smoothedPath.length > 0) {
+        pathSegments.push({ type: 'move', point: smoothedPath[0] });
+        for (let i = 1; i < smoothedPath.length; i++) {
+          pathSegments.push({ type: 'line', point: smoothedPath[i] });
+        }
+      }
+      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview worker)');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2795,10 +2800,15 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Apply spline smoothing to convert points to smooth bezier curves
-      // This ensures smooth curves in the PDF while matching the preview's contour shape
-      const pathSegments = polygonToSplinePath(smoothedPath, 0.5);
-      console.log('[PDF] Converted', smoothedPath.length, 'points to', pathSegments.length - 1, 'bezier curves');
+      // Use direct line segments exactly like the preview worker does
+      const pathSegments: PathSegment[] = [];
+      if (smoothedPath.length > 0) {
+        pathSegments.push({ type: 'move', point: smoothedPath[0] });
+        for (let i = 1; i < smoothedPath.length; i++) {
+          pathSegments.push({ type: 'line', point: smoothedPath[i] });
+        }
+      }
+      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview worker)');
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
