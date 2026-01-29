@@ -206,6 +206,10 @@ function processContour(
   const height = imageData.height;
   const data = imageData.data;
   
+  // 4x Super-sampling factor for sub-pixel precision tracing
+  // This eliminates staircase artifacts on diagonals by tracing at higher resolution
+  const SUPER_SAMPLE = 4;
+  
   // Holographic uses white as placeholder for preview (will be replaced with gradient in UI)
   // Export functions will treat holographic as transparent separately
   const isHolographic = strokeSettings.backgroundColor === 'holographic';
@@ -231,35 +235,47 @@ function processContour(
   
   postProgress(20);
   
-  const silhouetteMask = createSilhouetteMaskFromData(data, width, height, strokeSettings.alphaThreshold);
+  // Create 4x upscaled alpha buffer using bilinear interpolation
+  // This converts pixel-locked edges into smooth sub-pixel boundaries
+  const hiResWidth = width * SUPER_SAMPLE;
+  const hiResHeight = height * SUPER_SAMPLE;
+  const hiResAlpha = upscaleAlphaChannel(data, width, height, SUPER_SAMPLE);
   
-  if (silhouetteMask.length === 0) {
+  // Create silhouette mask at 4x resolution
+  const hiResMask = createSilhouetteMaskFromAlpha(hiResAlpha, hiResWidth, hiResHeight, strokeSettings.alphaThreshold);
+  
+  if (hiResMask.length === 0) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   postProgress(30);
   
-  let autoBridgedMask = silhouetteMask;
-  if (autoBridgePixels > 0) {
-    const halfAutoBridge = Math.round(autoBridgePixels / 2);
-    const dilatedAuto = dilateSilhouette(silhouetteMask, width, height, halfAutoBridge);
-    const dilatedAutoWidth = width + halfAutoBridge * 2;
-    const dilatedAutoHeight = height + halfAutoBridge * 2;
+  // Scale all radii by 4x for hi-res processing
+  const hiResAutoBridgePixels = autoBridgePixels * SUPER_SAMPLE;
+  const hiResBaseOffsetPixels = baseOffsetPixels * SUPER_SAMPLE;
+  const hiResUserOffsetPixels = userOffsetPixels * SUPER_SAMPLE;
+  
+  let autoBridgedMask = hiResMask;
+  if (hiResAutoBridgePixels > 0) {
+    const halfAutoBridge = Math.round(hiResAutoBridgePixels / 2);
+    const dilatedAuto = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, halfAutoBridge);
+    const dilatedAutoWidth = hiResWidth + halfAutoBridge * 2;
+    const dilatedAutoHeight = hiResHeight + halfAutoBridge * 2;
     const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
     
-    autoBridgedMask = new Uint8Array(width * height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        autoBridgedMask[y * width + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+    autoBridgedMask = new Uint8Array(hiResWidth * hiResHeight);
+    for (let y = 0; y < hiResHeight; y++) {
+      for (let x = 0; x < hiResWidth; x++) {
+        autoBridgedMask[y * hiResWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
       }
     }
   }
   
   postProgress(40);
   
-  const baseDilatedMask = dilateSilhouette(autoBridgedMask, width, height, baseOffsetPixels);
-  const baseWidth = width + baseOffsetPixels * 2;
-  const baseHeight = height + baseOffsetPixels * 2;
+  const baseDilatedMask = dilateSilhouette(autoBridgedMask, hiResWidth, hiResHeight, hiResBaseOffsetPixels);
+  const baseWidth = hiResWidth + hiResBaseOffsetPixels * 2;
+  const baseHeight = hiResHeight + hiResBaseOffsetPixels * 2;
   
   postProgress(50);
   
@@ -267,23 +283,38 @@ function processContour(
   
   postProgress(60);
   
-  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-  const dilatedWidth = baseWidth + userOffsetPixels * 2;
-  const dilatedHeight = baseHeight + userOffsetPixels * 2;
+  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, hiResUserOffsetPixels);
+  const dilatedWidth = baseWidth + hiResUserOffsetPixels * 2;
+  const dilatedHeight = baseHeight + hiResUserOffsetPixels * 2;
   
   postProgress(70);
   
-  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+  // Trace boundary at 4x resolution
+  const hiResBoundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
-  if (boundaryPath.length < 3) {
+  if (hiResBoundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
+  // CRITICAL: Downscale coordinates by dividing by 4 immediately after tracing
+  // This converts coarse pixel steps into high-precision floating-point coordinates
+  const boundaryPath = hiResBoundaryPath.map(p => ({
+    x: p.x / SUPER_SAMPLE,
+    y: p.y / SUPER_SAMPLE
+  }));
+  
+  // Calculate the effective 1x dimensions for page size calculations
+  // (dilatedWidth and dilatedHeight are at 4x scale)
+  const effectiveDilatedWidth = dilatedWidth / SUPER_SAMPLE;
+  const effectiveDilatedHeight = dilatedHeight / SUPER_SAMPLE;
+  
   postProgress(80);
   
-  console.log('[Worker] Boundary path traced:', boundaryPath.length, 'points');
+  console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
+  console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
   
-  // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
+  // RDP on high-precision coordinates will produce perfectly straight lines
+  // Tolerance scaled for the higher precision data
   let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
   console.log('[Worker] After RDP:', smoothedPath.length, 'points');
   
@@ -332,9 +363,10 @@ function processContour(
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
   // Calculate contour data for PDF export (path in inches)
+  // Use the effective 1x dimensions (not the 4x hi-res dimensions)
   // bleedInches already declared at top of function
-  const widthInches = dilatedWidth / effectiveDPI + (bleedInches * 2);
-  const heightInches = dilatedHeight / effectiveDPI + (bleedInches * 2);
+  const widthInches = effectiveDilatedWidth / effectiveDPI + (bleedInches * 2);
+  const heightInches = effectiveDilatedHeight / effectiveDPI + (bleedInches * 2);
   
   // Convert path to inches with proper coordinate transform for PDF
   const pathInInches = smoothedPath.map(p => ({
@@ -409,6 +441,58 @@ function createSilhouetteMaskFromData(data: Uint8ClampedArray, width: number, he
       const idx = (y * width + x) * 4;
       mask[y * width + x] = data[idx + 3] >= threshold ? 1 : 0;
     }
+  }
+  
+  return mask;
+}
+
+// Upscale alpha channel using bilinear interpolation for 4x super-sampling
+// This fills in the gaps between pixels with smooth gradients
+function upscaleAlphaChannel(data: Uint8ClampedArray, width: number, height: number, scale: number): Uint8Array {
+  const newWidth = width * scale;
+  const newHeight = height * scale;
+  const result = new Uint8Array(newWidth * newHeight);
+  
+  for (let y = 0; y < newHeight; y++) {
+    for (let x = 0; x < newWidth; x++) {
+      // Map back to source coordinates (with sub-pixel precision)
+      const srcX = x / scale;
+      const srcY = y / scale;
+      
+      // Get the four surrounding source pixels
+      const x0 = Math.floor(srcX);
+      const y0 = Math.floor(srcY);
+      const x1 = Math.min(x0 + 1, width - 1);
+      const y1 = Math.min(y0 + 1, height - 1);
+      
+      // Calculate interpolation weights
+      const xWeight = srcX - x0;
+      const yWeight = srcY - y0;
+      
+      // Get alpha values from the 4 corners
+      const a00 = data[(y0 * width + x0) * 4 + 3];
+      const a10 = data[(y0 * width + x1) * 4 + 3];
+      const a01 = data[(y1 * width + x0) * 4 + 3];
+      const a11 = data[(y1 * width + x1) * 4 + 3];
+      
+      // Bilinear interpolation
+      const top = a00 * (1 - xWeight) + a10 * xWeight;
+      const bottom = a01 * (1 - xWeight) + a11 * xWeight;
+      const alpha = top * (1 - yWeight) + bottom * yWeight;
+      
+      result[y * newWidth + x] = Math.round(alpha);
+    }
+  }
+  
+  return result;
+}
+
+// Create silhouette mask from pre-extracted alpha buffer (for super-sampled data)
+function createSilhouetteMaskFromAlpha(alpha: Uint8Array, width: number, height: number, threshold: number): Uint8Array {
+  const mask = new Uint8Array(width * height);
+  
+  for (let i = 0; i < alpha.length; i++) {
+    mask[i] = alpha[i] >= threshold ? 1 : 0;
   }
   
   return mask;

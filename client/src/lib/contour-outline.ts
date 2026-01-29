@@ -2320,8 +2320,8 @@ export async function downloadContourPDF(
       // Debug: Log coordinate transform details
       console.log('[PDF] Coordinate system check:');
       console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
-      console.log('  - Image position (pts):', imageOffsetX * 72, ',', imageOffsetY * 72);
-      console.log('  - Image size (pts):', resizeSettings.widthInches * 72, 'x', resizeSettings.heightInches * 72);
+      console.log('  - Image position (pts):', imageXPts, ',', imageYPts);
+      console.log('  - Image size (pts):', imageWidthPts, 'x', imageHeightPts);
       if (smoothedPath.length > 0) {
         const xs = smoothedPath.map(p => p.x);
         const ys = smoothedPath.map(p => p.y);
@@ -2888,8 +2888,8 @@ export async function generateContourPDFBase64(
       // Debug: Log coordinate transform details
       console.log('[PDF] Coordinate system check:');
       console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
-      console.log('  - Image position (pts):', imageOffsetX * 72, ',', imageOffsetY * 72);
-      console.log('  - Image size (pts):', resizeSettings.widthInches * 72, 'x', resizeSettings.heightInches * 72);
+      console.log('  - Image position (pts):', imageXPts, ',', imageYPts);
+      console.log('  - Image size (pts):', imageWidthPts, 'x', imageHeightPts);
       if (smoothedPath.length > 0) {
         const xs = smoothedPath.map(p => p.x);
         const ys = smoothedPath.map(p => p.y);
