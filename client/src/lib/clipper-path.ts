@@ -666,13 +666,13 @@ function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point }
 }
 
 // Check if a segment is a valid arc with consistent curvature
-function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
+function isValidArc(points: Point[], minDevRatio: number = 0.03, minChord: number = 10): boolean {
   if (points.length < 5) return false;
   
   const start = points[0];
   const end = points[points.length - 1];
   const chordDist = pointDistance(start, end);
-  if (chordDist < 10) return false; // Minimum chord length
+  if (chordDist < minChord) return false; // Minimum chord length (units depend on coordinate system)
   
   // Find max deviation from chord
   let maxDev = 0;
@@ -728,7 +728,7 @@ function isValidArc(points: Point[], minDevRatio: number = 0.03): boolean {
 }
 
 // minDistance is the minimum distance (in pixels/points) between curve start and end
-export function convertPolygonToCurves(polygon: Point[], minDistance: number = 70): PathSegment[] {
+export function convertPolygonToCurves(polygon: Point[], minDistance: number = 70, minChord: number = 10): PathSegment[] {
   if (polygon.length < 3) return [];
   
   const segments: PathSegment[] = [];
@@ -757,7 +757,8 @@ export function convertPolygonToCurves(polygon: Point[], minDistance: number = 7
       if (dist >= minDistance) {
         const segment = polygon.slice(i - 1, j + 1);
         
-        if (isValidArc(segment, 0.03)) {
+        // Pass minChord for coordinate-system-aware arc validation
+        if (isValidArc(segment, 0.03, minChord)) {
           bestEnd = j;
           bestSegment = segment;
           break; // Found longest valid arc, use it

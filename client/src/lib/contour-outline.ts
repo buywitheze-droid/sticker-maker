@@ -2229,10 +2229,12 @@ export async function downloadContourPDF(
       pathOps += '0.5 w\n';
       
       // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // Note: pathPoints are in inches, so distances need to be in inches too
       // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      // 10 pixels at 300 DPI = 10/300 = ~0.033 inches (min chord for arc detection)
       const minDistanceInches = 70 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
+      const minChordInches = 10 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches, minChordInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
@@ -2786,10 +2788,12 @@ export async function generateContourPDFBase64(
       pathOps += '0.5 w\n';
       
       // Use same curve detection as preview for consistency
-      // Note: pathPoints are in inches, so minDistance needs to be in inches too
+      // Note: pathPoints are in inches, so distances need to be in inches too
       // 70 pixels at 300 DPI = 70/300 = ~0.23 inches
+      // 10 pixels at 300 DPI = 10/300 = ~0.033 inches (min chord for arc detection)
       const minDistanceInches = 70 / 300;
-      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches);
+      const minChordInches = 10 / 300;
+      const pathSegments = convertPolygonToCurves(smoothedPath, minDistanceInches, minChordInches);
       
       for (const seg of pathSegments) {
         if (seg.type === 'move' && seg.point) {
