@@ -297,11 +297,11 @@ function processContour(
   
   console.log('[Worker] Original tight contour:', tightContour.length, 'points');
   
-  // Step 2: Simplify the tight contour to remove pixel stair-steps
-  // Use moderate epsilon to get clean base contour
-  const tightEpsilon = 0.001;
-  tightContour = approxPolyDP(tightContour, tightEpsilon);
-  console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
+  // Step 2: Skip RDP simplification - it can cut across concave areas
+  // Clipper's JT_ROUND already produces clean vector output
+  // Only do minimal deduplication to remove exact duplicates
+  tightContour = deduplicatePoints(tightContour);
+  console.log('[Worker] After deduplication:', tightContour.length, 'points');
   
   // Sanitize to fix any self-intersections
   tightContour = sanitizePolygonForOffset(tightContour);
@@ -1137,6 +1137,25 @@ function roundCorners(points: Point[], radius: number): Point[] {
   
   console.log('[Worker] roundCorners: radius =', radius.toFixed(2), 'px, points:', points.length, '->', result.length);
   
+  return result;
+}
+
+/**
+ * Remove exact duplicate consecutive points from a path
+ * Keeps the contour shape intact, just removes redundant duplicates
+ */
+function deduplicatePoints(points: Point[]): Point[] {
+  if (points.length < 2) return points;
+  
+  const result: Point[] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const prev = result[result.length - 1];
+    const curr = points[i];
+    // Keep point if it's different from the previous one
+    if (Math.abs(curr.x - prev.x) > 0.01 || Math.abs(curr.y - prev.y) > 0.01) {
+      result.push(curr);
+    }
+  }
   return result;
 }
 
