@@ -71,7 +71,6 @@
     "passport-local": "^1.0.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.530",
-    "potrace-js": "^0.0.6",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",

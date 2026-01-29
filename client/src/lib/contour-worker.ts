@@ -1,5 +1,4 @@
 import ClipperLib from 'js-clipper';
-import { traceBitmapToPoints, sampleBezierCurve, PotraceResult } from './potrace-bundle';
 
 interface Point {
   x: number;
@@ -306,51 +305,19 @@ function processContour(
   
   postProgress(70);
   
-  // Use Potrace for high-quality vector tracing with smooth Bezier curves
-  // Potrace produces much smoother curves than Moore neighbor tracing
-  console.log('[Worker] Starting Potrace tracing at', dilatedWidth, 'x', dilatedHeight);
+  // Trace boundary at 4x resolution
+  const hiResBoundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
-  const potraceResults = traceBitmapToPoints(finalDilatedMask, dilatedWidth, dilatedHeight, {
-    turnpolicy: 'minority',
-    turdsize: 2,
-    optcurve: true,
-    alphamax: 1.0,
-    opttolerance: 0.2
-  });
-  
-  // Find the outer contour (largest area, not a hole)
-  // Results are already sorted by area descending
-  let outerContour = potraceResults.find(r => !r.isHole && r.points.length >= 3);
-  
-  // If no non-hole found (inverted mask), use largest area path regardless
-  if (!outerContour && potraceResults.length > 0) {
-    const largestPath = potraceResults.find(r => r.points.length >= 3);
-    if (largestPath) {
-      console.log('[Worker] No non-hole contour found, using largest area path (possibly inverted mask)');
-      outerContour = largestPath;
-    }
+  if (hiResBoundaryPath.length < 3) {
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  if (!outerContour) {
-    console.log('[Worker] Potrace returned no valid paths, falling back to Moore tracing');
-    const fallbackPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
-    if (fallbackPath.length < 3) {
-      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-    }
-    var boundaryPath = fallbackPath.map(p => ({
-      x: p.x / SUPER_SAMPLE,
-      y: p.y / SUPER_SAMPLE
-    }));
-  } else {
-    console.log('[Worker] Potrace traced outer contour:', outerContour.points.length, 'points,', 
-                outerContour.curves.length, 'curve segments, area:', outerContour.area);
-    
-    // Convert Potrace output to our point format, downscaling by SUPER_SAMPLE
-    var boundaryPath = outerContour.points.map(p => ({
-      x: p.x / SUPER_SAMPLE,
-      y: p.y / SUPER_SAMPLE
-    }));
-  }
+  // CRITICAL: Downscale coordinates by dividing by 4 immediately after tracing
+  // This converts coarse pixel steps into high-precision floating-point coordinates
+  const boundaryPath = hiResBoundaryPath.map(p => ({
+    x: p.x / SUPER_SAMPLE,
+    y: p.y / SUPER_SAMPLE
+  }));
   
   // Calculate the effective 1x dimensions for page size calculations
   // (dilatedWidth and dilatedHeight are at 4x scale)
@@ -359,11 +326,21 @@ function processContour(
   
   postProgress(80);
   
-  console.log('[Worker] Boundary path has', boundaryPath.length, 'points');
+  console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
+  console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
   
-  // Potrace already produces smooth curves, so we can skip RDP and pruning
-  // Just do light cleanup to ensure path validity
-  let smoothedPath = boundaryPath;
+  // RDP simplifies diagonal lines by removing unnecessary intermediate points
+  // Higher tolerance = straighter diagonals with fewer jagged segments
+  // Use DPI-proportional tolerance: 0.005" keeps curves intact
+  // This scales correctly: at 150 DPI = 0.75px, at 300 DPI = 1.5px, at 600 DPI = 3px
+  const rdpToleranceInches = 0.005;
+  const rdpTolerance = rdpToleranceInches * effectiveDPI;
+  let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
+  console.log('[Worker] After RDP (tolerance', rdpTolerance.toFixed(2), 'px /', rdpToleranceInches, 'in):', smoothedPath.length, 'points');
+  
+  // Prune short segments that create tiny jogs on flat edges
+  smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
+  console.log('[Worker] After prune:', smoothedPath.length, 'points');
   
   // CRITICAL: Sanitize path to fix self-intersections (bow-ties) that cause offset to fail
   // This must happen BEFORE any offset operations

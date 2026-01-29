@@ -32,7 +32,7 @@ Preferred communication style: Simple, everyday language.
 ### Key Features and Design Decisions
 - **Image Processing Pipeline**: Drag-and-drop upload, real-time canvas preview, customizable stroke (width, color, enable/disable), shape backgrounds (square, rectangle, circle, oval with fill colors and strokes), and high-resolution export.
 - **Canvas Rendering**: Custom stroke algorithms using Clipper.js library for mathematically correct polygon offsetting, real-time preview, high-resolution export canvas.
-- **Contour Generation**: Potrace algorithm for smooth Bezier curve fitting (with Moore neighbor fallback), true alpha channel edge detection, CadCut-style bounds detection, vector contour tracing using Clipper.js-based Minkowski sum offset, support for interior holes with adjustable margins, single continuous outline generation for multi-object images, advanced alpha threshold control.
+- **Contour Generation**: True alpha channel edge detection, CadCut-style bounds detection, vector contour tracing using Clipper.js-based Minkowski sum offset with proper boundary tracing (Moore neighbor algorithm), support for interior holes with adjustable margins, single continuous outline generation for multi-object images, advanced alpha threshold control.
 - **Corner Modes**: Rounded corners (arc insertion at convex vertices) and sharp corners (miter joins with bevel fallback) for contour offset styling.
 - **Download System**: Multiple download modes (Standard, High-res, Vector Quality, CutContour), true vector export formats (PDF, EPS, SVG) with edge tracing, CutContour export with magenta spot color.
 - **UI/UX**: Dark grey application theme, toast notifications, form validation, draggable and responsive controls, zoom functionality with "Fit to View", manual position control for design placement.
@@ -47,7 +47,6 @@ Preferred communication style: Simple, everyday language.
 - **sharp**: High-performance image processing
 - **multer**: File upload middleware
 - **clipper-lib**: Angus Johnson's Clipper library for robust polygon offsetting (Minkowski sum)
-- **potrace-js**: Peter Selinger's Potrace algorithm for bitmap to vector tracing with Bezier curves
 - **@radix-ui**: Accessible UI primitives
 - **tailwindcss**: Utility-first CSS framework
 - **lucide-react**: Icon library
