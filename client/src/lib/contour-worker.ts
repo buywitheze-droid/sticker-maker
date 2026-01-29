@@ -360,6 +360,11 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
+  // Straighten noisy lines before smoothing
+  // Detects nearly-collinear points caused by rough pixels and snaps them to straight lines
+  // 25° corner threshold preserves true turns, 1.5px max deviation for collinearity
+  smoothedPath = straightenNoisyLines(smoothedPath, 25, 1.5);
+  
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
   // Apply in BOTH preview and export modes so cached preview data matches PDF output
   // 4 iterations for smooth curves, 80° threshold protects 90° corners
@@ -984,6 +989,126 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
   }
   
   return result;
+}
+
+// Straighten noisy lines: detect sequences of nearly-collinear points and snap them to straight lines
+// This fixes rough/noisy pixels that create zigzag patterns instead of clean straight edges
+// cornerAngleThreshold: angles greater than this are preserved as corners (degrees)
+// maxDeviation: maximum perpendicular distance from line to be considered collinear (pixels)
+function straightenNoisyLines(points: Point[], cornerAngleThreshold: number = 25, maxDeviation: number = 1.5): Point[] {
+  if (points.length < 4) return points;
+  
+  const n = points.length;
+  
+  // First, identify corner points that must be preserved
+  const isCorner: boolean[] = new Array(n).fill(false);
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate angle at current point
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0.0001 && len2 > 0.0001) {
+      const dot = v1x * v2x + v1y * v2y;
+      const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+      const angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
+      const deviation = 180 - angleDegrees;
+      
+      // Mark as corner if angle deviation exceeds threshold
+      if (deviation > cornerAngleThreshold) {
+        isCorner[i] = true;
+      }
+    }
+  }
+  
+  // Simple greedy algorithm: process linearly, extending straight segments
+  // when points remain collinear
+  const result: Point[] = [];
+  let segmentStart = 0;
+  
+  while (segmentStart < n) {
+    // Always add the segment start point
+    result.push(points[segmentStart]);
+    
+    // If this is a corner, just move to next point
+    if (isCorner[segmentStart]) {
+      segmentStart++;
+      continue;
+    }
+    
+    // Try to extend the straight line as far as possible
+    let segmentEnd = segmentStart + 1;
+    
+    while (segmentEnd < n) {
+      // Stop at corners - they break the segment
+      if (isCorner[segmentEnd]) {
+        break;
+      }
+      
+      // Check if all points from segmentStart to segmentEnd+1 are collinear
+      const nextEnd = segmentEnd + 1;
+      if (nextEnd > n) break;
+      
+      const startPt = points[segmentStart];
+      const endPt = points[Math.min(nextEnd, n - 1)];
+      const lineLen = Math.sqrt((endPt.x - startPt.x) ** 2 + (endPt.y - startPt.y) ** 2);
+      
+      if (lineLen < 0.0001) {
+        segmentEnd++;
+        continue;
+      }
+      
+      // Check all intermediate points for collinearity
+      let allCollinear = true;
+      for (let checkIdx = segmentStart + 1; checkIdx <= segmentEnd; checkIdx++) {
+        const pt = points[checkIdx];
+        // Calculate perpendicular distance from point to line
+        const t = Math.max(0, Math.min(1, 
+          ((pt.x - startPt.x) * (endPt.x - startPt.x) + (pt.y - startPt.y) * (endPt.y - startPt.y)) / (lineLen * lineLen)
+        ));
+        const projX = startPt.x + t * (endPt.x - startPt.x);
+        const projY = startPt.y + t * (endPt.y - startPt.y);
+        const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
+        
+        if (dist > maxDeviation) {
+          allCollinear = false;
+          break;
+        }
+      }
+      
+      if (allCollinear) {
+        segmentEnd++;
+      } else {
+        break;
+      }
+    }
+    
+    // Move to the end of the collinear segment (skip intermediate points)
+    segmentStart = segmentEnd;
+  }
+  
+  // Remove duplicate consecutive points
+  const cleaned: Point[] = [];
+  for (let i = 0; i < result.length; i++) {
+    const prev = i > 0 ? result[i - 1] : result[result.length - 1];
+    const curr = result[i];
+    const dist = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+    if (dist > 0.5 || cleaned.length === 0) {
+      cleaned.push(curr);
+    }
+  }
+  
+  console.log('[Worker] Straightened noisy lines:', points.length, '->', cleaned.length, 'points');
+  return cleaned.length >= 3 ? cleaned : points;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
