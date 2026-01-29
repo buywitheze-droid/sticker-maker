@@ -40,6 +40,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Store the last rendered image position for spot overlay alignment
     const lastImageRenderRef = useRef<{x: number; y: number; width: number; height: number} | null>(null);
+    const [previewDims, setPreviewDims] = useState({ width: 360, height: 360 });
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -124,16 +125,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     // Fit to View: calculate zoom to fit canvas within container and reset pan
     const fitToView = useCallback(() => {
       if (!containerRef.current) return;
-      const containerWidth = containerRef.current.clientWidth - 40; // padding
-      const containerHeight = containerRef.current.clientHeight - 40;
-      const canvasSize = 400; // fixed canvas size
-      const scaleX = containerWidth / canvasSize;
-      const scaleY = containerHeight / canvasSize;
+      const viewPadding = Math.max(4, Math.round(Math.min(previewDims.width, previewDims.height) * 0.03));
+      const containerWidth = containerRef.current.clientWidth - viewPadding * 2;
+      const containerHeight = containerRef.current.clientHeight - viewPadding * 2;
+      const scaleX = containerWidth / previewDims.width;
+      const scaleY = containerHeight / previewDims.height;
       const fitZoom = Math.min(scaleX, scaleY, 1); // max at 100%
       setZoom(Math.max(0.2, Math.round(fitZoom * 20) / 20)); // round to 5% steps
       setPanX(0);
       setPanY(0);
-    }, []);
+    }, [previewDims.height, previewDims.width]);
     
     // Reset view to default zoom and pan
     const resetView = useCallback(() => {
@@ -169,6 +170,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         setZoom(1);
       }
     }, [imageInfo]);
+
+    useEffect(() => {
+      if (!containerRef.current) return;
+      const updateSize = () => {
+        const width = containerRef.current?.clientWidth || 0;
+        const height = containerRef.current?.clientHeight || 0;
+        const safeWidth = Math.max(220, Math.min(720, width));
+        const safeHeight = Math.max(220, Math.min(720, height));
+        setPreviewDims({
+          width: safeWidth || 360,
+          height: safeHeight || 360
+        });
+      };
+      updateSize();
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(containerRef.current);
+      return () => observer.disconnect();
+    }, []);
     
     // Check if image content extends close to the edges (minimal empty space)
     const checkImageHasMinimalEmptySpace = (image: HTMLImageElement): boolean => {
@@ -336,9 +355,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!ctx) return;
 
       // Square canvas to match square container - image will be centered inside
-      const canvasSize = 360;
-      canvas.width = canvasSize;
-      canvas.height = canvasSize;
+      const canvasWidth = previewDims.width;
+      const canvasHeight = previewDims.height;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
 
       // Determine which background color to use:
       // - For PDFs with CutContour, use strokeSettings.backgroundColor
@@ -352,7 +372,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (hasPdfCutContour && imageInfo.pdfCutContourInfo) {
         const cutContourInfo = imageInfo.pdfCutContourInfo;
         const hasExtractedPaths = cutContourInfo.cutContourPoints && cutContourInfo.cutContourPoints.length > 0;
-        const viewPadding = 6;
+        const viewPadding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
         const availableWidth = canvas.width - (viewPadding * 2);
         const availableHeight = canvas.height - (viewPadding * 2);
         
@@ -593,7 +613,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width]);
 
     // Helper function to create spot color overlay canvas from original image
     const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {
@@ -692,7 +712,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       );
 
       const bleedInches = 0.10; // 0.10" bleed around the shape
-      const padding = 6;
+      const padding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
       const availableWidth = canvasWidth - (padding * 2);
       const availableHeight = canvasHeight - (padding * 2);
       const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
@@ -921,7 +941,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      const viewPadding = 6;
+      const viewPadding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
       const availableWidth = canvasWidth - (viewPadding * 2);
       const availableHeight = canvasHeight - (viewPadding * 2);
       
@@ -1062,14 +1082,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     return (
       <div className="w-full">
         <Card className="bg-white border-gray-100 shadow-sm rounded-2xl overflow-hidden">
-          <CardContent className="p-4">
+          <CardContent className="p-3 sm:p-4">
             {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
             {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-              <div className="mb-4 flex items-center space-x-3 bg-gray-50 p-3 rounded-xl">
+              <div className="mb-3 flex items-center gap-3 bg-gray-50/70 p-2 rounded-lg">
                 <Palette className="w-4 h-4 text-gray-500" />
-                <span className="text-sm text-gray-600">Preview:</span>
+                <span className="text-sm text-gray-600">Preview</span>
                 <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                  <SelectTrigger className="w-28 h-8 text-sm bg-white border-gray-200 rounded-lg">
+                  <SelectTrigger className="w-28 h-8 text-sm bg-white border-gray-200 rounded-md">
                     <SelectValue>{getColorName(backgroundColor)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -1087,7 +1107,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             )}
 
             <div className="flex flex-col items-start">
-              <div className="flex">
+              <div className="flex w-full">
                 <div 
                   ref={containerRef}
                   onWheel={handleWheel}
@@ -1098,10 +1118,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
                   onTouchEnd={handleTouchEnd}
-                  className={`relative rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                   style={{ 
-                    width: '380px',
-                    height: '380px',
+                    width: '100%',
+                    height: '100%',
+                    aspectRatio: imageInfo ? `${imageInfo.image.width} / ${imageInfo.image.height}` : '1 / 1',
+                    maxHeight: '70vh',
                     backgroundColor: getBackgroundColor(),
                     overflow: 'hidden',
                     userSelect: 'none',
@@ -1112,8 +1134,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   ref={canvasRef}
                   className="relative z-10 block transition-all duration-200"
                   style={{ 
-                    maxWidth: '98%',
-                    maxHeight: '98%',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
                     transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
                     transformOrigin: 'center'
                   }}
@@ -1139,7 +1161,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </div>
                 
                 {zoom !== 1 && (
-                  <div className="hidden md:flex w-2 flex-col ml-1" style={{ height: '380px' }}>
+                  <div className="hidden md:flex w-2 flex-col ml-1" style={{ height: `${previewDims.height}px` }}>
                     <div 
                       className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
                       onClick={(e) => {
@@ -1177,7 +1199,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               
               <div className="flex">
                 {zoom !== 1 && (
-                  <div className="hidden md:flex h-2 mt-1" style={{ width: '380px' }}>
+                  <div className="hidden md:flex h-2 mt-1" style={{ width: `${previewDims.width}px` }}>
                     <div 
                       className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
                       onClick={(e) => {
