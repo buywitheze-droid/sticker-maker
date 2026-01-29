@@ -9,6 +9,83 @@ interface Point {
 // Clipper scale factor for integer precision
 const CLIPPER_SCALE = 1000;
 
+/**
+ * Potrace-style curve fitting algorithm
+ * Detects straight lines from stair-step pixel paths by:
+ * 1. Finding segments where all points lie within tolerance of the line between endpoints
+ * 2. Replacing those segments with clean straight lines
+ * 3. Preserving true corners where direction changes significantly
+ */
+function fitCurvesToPath(path: Point[], lineTolerance: number = 1.0, cornerAngleThreshold: number = 30): Point[] {
+  if (path.length < 3) return path;
+  
+  const result: Point[] = [];
+  let i = 0;
+  
+  while (i < path.length) {
+    result.push(path[i]);
+    
+    // Try to find the longest straight line segment starting from i
+    let bestEnd = i + 1;
+    
+    for (let j = i + 2; j < path.length; j++) {
+      // Check if all points from i to j lie on a straight line within tolerance
+      const start = path[i];
+      const end = path[j];
+      
+      let allOnLine = true;
+      for (let k = i + 1; k < j; k++) {
+        const dist = pointToLineDistance(path[k], start, end);
+        if (dist > lineTolerance) {
+          allOnLine = false;
+          break;
+        }
+      }
+      
+      if (allOnLine) {
+        bestEnd = j;
+      } else {
+        break;
+      }
+    }
+    
+    // Move to the end of the detected line segment
+    i = bestEnd;
+  }
+  
+  // Ensure the path is closed
+  if (result.length >= 3) {
+    const first = result[0];
+    const last = result[result.length - 1];
+    if (Math.abs(first.x - last.x) > 0.5 || Math.abs(first.y - last.y) > 0.5) {
+      result.push({ x: first.x, y: first.y });
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Calculate perpendicular distance from point to line segment
+ */
+function pointToLineDistance(point: Point, lineStart: Point, lineEnd: Point): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq === 0) {
+    // Line segment is a point
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  // Project point onto line and clamp to segment
+  const t = Math.max(0, Math.min(1, ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lenSq));
+  const projX = lineStart.x + t * dx;
+  const projY = lineStart.y + t * dy;
+  
+  return Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
+}
+
 // Simplify polygon using Clipper's CleanPolygon
 function simplifyPolygonClipper(polygon: Point[], tolerance: number = 1.0): Point[] {
   if (polygon.length < 3) return polygon;
@@ -353,9 +430,13 @@ function processContour(
   
   postProgress(60);
   
-  // Step 1: Simplify the stair-stepped boundary BEFORE offset
-  // Tolerance 0.25 balances smoothing pixel stair-steps while preserving sharp corners
-  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.25);
+  // Step 1: Apply Potrace-style curve fitting to detect straight lines from stair-step pixels
+  // This converts jagged pixel edges into clean diagonal/straight lines while preserving true corners
+  // Line tolerance of 1.5 pixels allows diagonal stair-steps to be detected as lines
+  const fittedPath = fitCurvesToPath(rawBoundaryPath, 1.5);
+  
+  // Step 2: Light cleanup with Clipper to remove any remaining micro-artifacts
+  const simplifiedPath = simplifyPolygonClipper(fittedPath, 0.1);
   
   postProgress(70);
   
