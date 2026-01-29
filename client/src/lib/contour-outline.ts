@@ -373,9 +373,9 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Use RDP to straighten edges and reduce points (tolerance 1.5px)
+    // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
     // This "pulls the line tight" instead of creating waves like moving average
-    let smoothedPath = rdpSimplifyPolygon(boundaryPath, 1.5);
+    let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
     
     // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
     smoothedPath = fixOffsetCrossings(smoothedPath);
@@ -1654,9 +1654,9 @@ export function getContourPath(
     
     console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
     
-    // Use RDP algorithm to straighten edges and reduce points (tolerance 1.5px)
+    // Use RDP algorithm to straighten edges while preserving detail (tolerance 0.5px)
     // This "pulls the line tight" instead of creating waves like moving average
-    const smoothedBasePath = rdpSimplifyPolygon(boundaryPath, 1.5);
+    const smoothedBasePath = rdpSimplifyPolygon(boundaryPath, 0.5);
     console.log('[getContourPath] After RDP simplify:', smoothedBasePath.length, 'points');
     
     // Apply TOTAL offset using Clipper (base + user offset combined)

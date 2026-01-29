@@ -281,8 +281,8 @@ function processContour(
   
   postProgress(80);
   
-  // Use RDP to straighten edges (tolerance 1.5px) - matches PDF export
-  let smoothedPath = rdpSimplifyPolygon(boundaryPath, 1.5);
+  // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
+  let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
