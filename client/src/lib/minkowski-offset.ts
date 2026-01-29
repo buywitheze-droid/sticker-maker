@@ -138,7 +138,7 @@ export function offsetPolygons(
 /**
  * Simplify a polygon by removing collinear/near-collinear points
  */
-export function simplifyPolygon(polygon: Point[], tolerance: number = 0.8): Point[] {
+export function simplifyPolygon(polygon: Point[], tolerance: number = 0.6): Point[] {
   if (polygon.length < 3) return polygon;
   
   try {
