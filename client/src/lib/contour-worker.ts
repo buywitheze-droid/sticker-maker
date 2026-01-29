@@ -380,9 +380,9 @@ function processContour(
   console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
   
   // Round sharp corners using Clipper's JT_ROUND buffer-and-shrink technique
-  // Radius of 10 pixels gives nice rounded corners while keeping straight edges straight
+  // This also smooths out rough/jagged edges on straight lines
   // Scale radius with DPI for consistent physical rounding
-  const cornerRadiusInches = 0.03; // 0.03" corner radius
+  const cornerRadiusInches = 0.05; // 0.05" corner radius (increased to smooth rough lines)
   const cornerRadiusPixels = cornerRadiusInches * effectiveDPI;
   smoothedPath = roundCorners(smoothedPath, cornerRadiusPixels);
   console.log('[Worker] After corner rounding:', smoothedPath.length, 'points');
