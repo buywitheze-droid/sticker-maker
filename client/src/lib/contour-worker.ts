@@ -387,30 +387,47 @@ function processContour(
   }
   
   let smoothedPath = boundaryPath;
+  const initialPointCount = smoothedPath.length;
   
   if (!useRaw) {
     // Apply Gaussian smoothing (if enabled or not in debug mode)
     const applySmoothing = !debugSettings?.enabled || debugSettings.gaussianSmoothing;
     if (applySmoothing) {
+      const before = smoothedPath.length;
       smoothedPath = smoothPath(smoothedPath, 2);
+      console.log(`[Processing] Gaussian Smoothing: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Gaussian Smoothing: SKIPPED');
     }
     
     // Apply corner detection - preserves sharp corners from being smoothed
     const applyCornerDetection = !debugSettings?.enabled || debugSettings.cornerDetection;
     if (applyCornerDetection) {
+      const before = smoothedPath.length;
       smoothedPath = enhanceCorners(smoothedPath);
+      console.log(`[Processing] Corner Detection: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Corner Detection: SKIPPED');
     }
     
     // Apply bezier curve fitting for smoother curves
     const applyBezierFitting = !debugSettings?.enabled || debugSettings.bezierCurveFitting;
     if (applyBezierFitting) {
+      const before = smoothedPath.length;
       smoothedPath = applyBezierSmoothing(smoothedPath);
+      console.log(`[Processing] Bezier Fitting: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Bezier Fitting: SKIPPED');
     }
     
     // Apply path fixing/crossing detection (part of bridging)
     const applyBridging = !debugSettings?.enabled || debugSettings.autoBridging;
     if (applyBridging) {
+      const before = smoothedPath.length;
       smoothedPath = fixOffsetCrossings(smoothedPath);
+      console.log(`[Processing] Auto Bridging: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Auto Bridging: SKIPPED');
     }
     
     // Apply gap closing
@@ -423,21 +440,39 @@ function processContour(
           : 0;
       
       if (gapThresholdPixels > 0) {
+        const before = smoothedPath.length;
         smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+        console.log(`[Processing] Gap Closing: ${before} -> ${smoothedPath.length} points`);
+      } else {
+        console.log('[Processing] Gap Closing: no gaps to close');
       }
+    } else {
+      console.log('[Processing] Gap Closing: SKIPPED');
     }
     
     // Apply hole filling - closes interior gaps
     const applyHoleFilling = !debugSettings?.enabled || debugSettings.holeFilling;
     if (applyHoleFilling) {
+      const before = smoothedPath.length;
       smoothedPath = fillInteriorHoles(smoothedPath);
+      console.log(`[Processing] Hole Filling: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Hole Filling: SKIPPED');
     }
     
     // Apply path simplification - reduces number of points
     const applySimplification = !debugSettings?.enabled || debugSettings.pathSimplification;
     if (applySimplification) {
+      const before = smoothedPath.length;
       smoothedPath = simplifyPath(smoothedPath, 0.5);
+      console.log(`[Processing] Path Simplification: ${before} -> ${smoothedPath.length} points`);
+    } else {
+      console.log('[Processing] Path Simplification: SKIPPED');
     }
+    
+    console.log(`[Processing] Total: ${initialPointCount} -> ${smoothedPath.length} points`);
+  } else {
+    console.log('[Processing] RAW MODE - all processing skipped');
   }
   
   postProgress(90);

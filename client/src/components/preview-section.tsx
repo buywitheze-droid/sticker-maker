@@ -265,7 +265,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 10;
+    const CONTOUR_CACHE_VERSION = 11;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
       const potraceKey = contourDebugSettings?.alphaTracingMethod === 'potrace' 
