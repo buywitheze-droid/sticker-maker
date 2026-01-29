@@ -29,6 +29,8 @@ export interface StrokeSettings {
   backgroundColor: string;
   useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
   cornerMode: ContourCornerMode; // 'rounded' for smooth arcs, 'sharp' for miter corners
+  autoBridging: boolean; // If true, close narrow gaps/caves in contour
+  autoBridgingThreshold: number; // Gap threshold in inches (default 0.02)
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

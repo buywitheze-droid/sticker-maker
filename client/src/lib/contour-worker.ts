@@ -19,6 +19,8 @@ interface WorkerMessage {
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    autoBridging: boolean;
+    autoBridgingThreshold: number;
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -203,6 +205,8 @@ function processContour(
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    autoBridging: boolean;
+    autoBridgingThreshold: number;
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -224,7 +228,8 @@ function processContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  const autoBridgeInches = 0.02;
+  // Auto-bridging: close narrow gaps/caves using configurable threshold
+  const autoBridgeInches = strokeSettings.autoBridging ? strokeSettings.autoBridgingThreshold : 0;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
   
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);

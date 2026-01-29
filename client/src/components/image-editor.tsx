@@ -36,6 +36,8 @@ export default function ImageEditor() {
     backgroundColor: "#ffffff", // Default white background for contour
     useCustomBackground: true, // Default to solid background color
     cornerMode: 'sharp', // Default to sharp corners with high miter limit
+    autoBridging: true, // Auto-bridge narrow gaps in contour
+    autoBridgingThreshold: 0.02, // Gap threshold in inches
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -222,6 +224,8 @@ export default function ImageEditor() {
       backgroundColor: "#ffffff",
       useCustomBackground: true,
       cornerMode: 'sharp',
+      autoBridging: true,
+      autoBridgingThreshold: 0.02,
     });
     
     // Apply detected shape or default settings
@@ -334,6 +338,8 @@ export default function ImageEditor() {
         backgroundColor: "#ffffff",
         useCustomBackground: true,
         cornerMode: 'sharp',
+        autoBridging: true,
+        autoBridgingThreshold: 0.02,
       });
       
       const newShapeSettings: ShapeSettings = {
@@ -414,6 +420,8 @@ export default function ImageEditor() {
       backgroundColor: "#ffffff",
       useCustomBackground: true,
       cornerMode: 'sharp',
+      autoBridging: true,
+      autoBridgingThreshold: 0.02,
     });
     setShapeSettings({
       enabled: false,

@@ -79,6 +79,9 @@ interface ProcessRequest {
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    autoBridging: boolean;
+    autoBridgingThreshold: number;
+    cornerMode: 'rounded' | 'sharp';
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -182,6 +185,9 @@ class ContourWorkerManager {
       closeBigGaps: boolean;
       backgroundColor: string;
       useCustomBackground: boolean;
+      autoBridging: boolean;
+      autoBridgingThreshold: number;
+      cornerMode: 'rounded' | 'sharp';
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -261,6 +267,9 @@ class ContourWorkerManager {
       closeBigGaps: boolean;
       backgroundColor: string;
       useCustomBackground: boolean;
+      autoBridging: boolean;
+      autoBridgingThreshold: number;
+      cornerMode: 'rounded' | 'sharp';
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -323,6 +332,9 @@ export async function processContourInWorker(
     closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
+    autoBridging: boolean;
+    autoBridgingThreshold: number;
+    cornerMode: 'rounded' | 'sharp';
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback

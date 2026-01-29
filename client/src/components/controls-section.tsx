@@ -466,27 +466,42 @@ export default function ControlsSection({
                 )}
               </div>
               
-              {/* Hidden for now - may add back later
-              <div className="space-y-2 pt-2 border-t border-gray-200">
-                <div className="flex items-center gap-2">
-                  <Checkbox 
-                    id="close-small-gaps"
-                    checked={strokeSettings.closeSmallGaps}
-                    onCheckedChange={(checked) => onStrokeChange({ closeSmallGaps: checked as boolean })}
-                  />
-                  <Label htmlFor="close-small-gaps" className="text-xs text-gray-600 cursor-pointer">Close small gaps</Label>
+              {/* Auto-bridging toggle */}
+              <div className="pt-2 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label htmlFor="auto-bridging" className="text-sm font-medium text-gray-700 cursor-pointer">Auto Bridging</Label>
+                    <p className="text-xs text-gray-500">Close narrow gaps in contour</p>
+                  </div>
+                  <div 
+                    onClick={() => onStrokeChange({ autoBridging: !strokeSettings.autoBridging })}
+                    className={`relative w-11 h-6 rounded-full cursor-pointer transition-all ${
+                      strokeSettings.autoBridging ? 'bg-blue-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md bg-white ${
+                      strokeSettings.autoBridging ? 'right-0.5' : 'left-0.5'
+                    }`} />
+                  </div>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                  <Checkbox 
-                    id="close-big-gaps"
-                    checked={strokeSettings.closeBigGaps}
-                    onCheckedChange={(checked) => onStrokeChange({ closeBigGaps: checked as boolean })}
-                  />
-                  <Label htmlFor="close-big-gaps" className="text-xs text-gray-600 cursor-pointer">Close big gaps</Label>
-                </div>
+                {strokeSettings.autoBridging && (
+                  <div className="mt-2">
+                    <Label className="text-xs text-gray-600">Gap Threshold</Label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Input
+                        type="number"
+                        value={strokeSettings.autoBridgingThreshold}
+                        onChange={(e) => onStrokeChange({ autoBridgingThreshold: parseFloat(e.target.value) || 0.02 })}
+                        step={0.01}
+                        min={0.01}
+                        max={0.1}
+                        className="w-20 h-8 text-sm"
+                      />
+                      <span className="text-xs text-gray-500">inches</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              */}
               </div>
             )}
           </div>
