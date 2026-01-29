@@ -278,17 +278,25 @@ function processContour(
   // 4. Use ClipperOffset with JT_ROUND for perfect vector offsetting
   // =============================================================================
   
-  // Step 1: Apply morphological closing to unite separate objects
-  // Dilate → Fill → then compensate with reduced Clipper offset
-  // Use a generous bridge to capture small letters/details near the main design
-  const minBridgeInches = 0.08; // Bridge objects within 0.08" (~2mm) of each other
+  // Step 1: Detect if design is solid (single connected shape) vs multi-part
+  // Solid designs use smaller bridge, multi-part designs use larger bridge to unite
+  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
+  const isSolidDesign = checkIfSolidDesign(hiResMask, filledOriginalMask, hiResWidth, hiResHeight);
+  
+  // Use appropriate bridge distance based on design type
+  // Solid designs: 0.06" (just closes small internal gaps)
+  // Multi-part designs: 0.08" (unites separate objects)
+  const solidBridgeInches = 0.06;
+  const multiPartBridgeInches = 0.08;
+  const minBridgeInches = isSolidDesign ? solidBridgeInches : multiPartBridgeInches;
   const bridgeInches = Math.max(autoBridgeInches, minBridgeInches);
   const bridgePixelsHiRes = Math.round(bridgeInches * effectiveDPI * SUPER_SAMPLE);
   const bridgePixels1x = bridgeInches * effectiveDPI; // 1x scale for Clipper compensation
   
-  console.log('[Worker] Applying morphological closing to unite objects, bridge radius:', bridgePixelsHiRes, 'px (hi-res)');
+  console.log('[Worker] Design type:', isSolidDesign ? 'SOLID' : 'MULTI-PART', 
+              'bridge radius:', bridgePixelsHiRes, 'px (hi-res),', bridgeInches.toFixed(3), 'inches');
   
-  // Dilate to bridge nearby objects
+  // Dilate to bridge nearby objects (or just close small gaps for solid designs)
   const dilatedMask = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, bridgePixelsHiRes);
   const dilatedWidth = hiResWidth + bridgePixelsHiRes * 2;
   const dilatedHeight = hiResHeight + bridgePixelsHiRes * 2;
@@ -721,6 +729,59 @@ function fillSilhouette(mask: Uint8Array, width: number, height: number): Uint8A
   }
   
   return filled;
+}
+
+/**
+ * Check if a design is solid (single connected component) vs multi-part
+ * A solid design doesn't need aggressive bridging - just internal gap filling
+ * A multi-part design has separate objects that need to be united
+ */
+function checkIfSolidDesign(originalMask: Uint8Array, filledMask: Uint8Array, width: number, height: number): boolean {
+  // Count connected components in the original mask using flood fill
+  const visited = new Uint8Array(width * height);
+  let componentCount = 0;
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (originalMask[idx] === 1 && visited[idx] === 0) {
+        // Found a new component, flood fill to mark all connected pixels
+        componentCount++;
+        const queue: number[] = [idx];
+        visited[idx] = 1;
+        
+        while (queue.length > 0) {
+          const currentIdx = queue.shift()!;
+          const cx = currentIdx % width;
+          const cy = Math.floor(currentIdx / width);
+          
+          // Check 4-connected neighbors
+          const neighbors = [
+            cy > 0 ? currentIdx - width : -1,
+            cy < height - 1 ? currentIdx + width : -1,
+            cx > 0 ? currentIdx - 1 : -1,
+            cx < width - 1 ? currentIdx + 1 : -1
+          ];
+          
+          for (const nIdx of neighbors) {
+            if (nIdx >= 0 && originalMask[nIdx] === 1 && visited[nIdx] === 0) {
+              visited[nIdx] = 1;
+              queue.push(nIdx);
+            }
+          }
+        }
+        
+        // If we find more than 1 component, it's multi-part
+        if (componentCount > 1) {
+          console.log('[Worker] Detected MULTI-PART design:', componentCount, 'components');
+          return false;
+        }
+      }
+    }
+  }
+  
+  console.log('[Worker] Detected SOLID design:', componentCount, 'component(s)');
+  return componentCount <= 1;
 }
 
 /**
