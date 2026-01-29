@@ -1594,14 +1594,10 @@ export function getContourPath(
   
   console.log('[getContourPath] Scale:', scale.toFixed(2), 'processSize:', processWidth, 'x', processHeight, 'effectiveDPI:', effectiveDPI.toFixed(0));
   
+  // Calculate total offset in pixels (base margin + user-specified width)
   const baseOffsetInches = 0.015;
-  const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
-  
-  const autoBridgeInches = 0.02;
-  const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
-  
-  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
-  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
+  const userOffsetInches = strokeSettings.width;
+  const totalOffsetPixels = Math.round((baseOffsetInches + userOffsetInches) * effectiveDPI);
   
   try {
     // Create scaled canvas for faster processing
@@ -1618,7 +1614,7 @@ export function getContourPath(
     const imageData = tempCtx.getImageData(0, 0, processWidth, processHeight);
     const data = imageData.data;
     
-    // Create silhouette mask with alpha threshold (matches worker)
+    // Create silhouette mask with alpha threshold
     const silhouetteMask = new Uint8Array(processWidth * processHeight);
     const threshold = strokeSettings.alphaThreshold || 128;
     for (let i = 0; i < silhouetteMask.length; i++) {
@@ -1627,75 +1623,54 @@ export function getContourPath(
     
     if (silhouetteMask.length === 0) return null;
     
-    // Auto bridge step (matches worker) - uses processWidth/Height for speed
-    let autoBridgedMask = silhouetteMask;
-    if (autoBridgePixels > 0) {
-      const halfAutoBridge = Math.round(autoBridgePixels / 2);
-      const dilatedAuto = dilateSilhouette(silhouetteMask, processWidth, processHeight, halfAutoBridge);
-      const dilatedAutoWidth = processWidth + halfAutoBridge * 2;
-      const dilatedAutoHeight = processHeight + halfAutoBridge * 2;
-      const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
-      
-      autoBridgedMask = new Uint8Array(processWidth * processHeight);
-      for (let y = 0; y < processHeight; y++) {
-        for (let x = 0; x < processWidth; x++) {
-          autoBridgedMask[y * processWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
-        }
-      }
-    }
+    // PURE VECTOR PIPELINE: No raster dilation - trace original mask directly
+    // Then apply ALL offsets using Clipper for mathematically correct sharp corners
     
-    // Base dilation (matches worker - NO gap closing through mask dilation)
-    const baseDilatedMask = dilateSilhouette(autoBridgedMask, processWidth, processHeight, baseOffsetPixels);
-    const baseWidth = processWidth + baseOffsetPixels * 2;
-    const baseHeight = processHeight + baseOffsetPixels * 2;
+    // Fill any interior holes in the silhouette (keeps original size)
+    const filledMask = fillSilhouette(silhouetteMask, processWidth, processHeight);
     
-    // Fill silhouette (matches worker)
-    const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
+    // Trace boundary from the ORIGINAL filled mask (no dilation)
+    const boundaryPath = traceBoundary(filledMask, processWidth, processHeight);
     
-    // Trace boundary from filled mask (BEFORE user offset)
-    const baseBoundaryPath = traceBoundary(filledMask, baseWidth, baseHeight);
+    if (boundaryPath.length < 3) return null;
     
-    if (baseBoundaryPath.length < 3) return null;
+    console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
     
-    // Smooth the base boundary path first
-    let smoothedBasePath = smoothPath(baseBoundaryPath, 2);
+    // Light smoothing to reduce noise from pixel-level tracing
+    let smoothedBasePath = smoothPath(boundaryPath, 2);
     
-    // Apply Clipper-based vector offset for sharp corners (instead of raster dilation)
-    // This preserves sharp corners with miter joins
-    const simplifiedPath = simplifyPolygon(smoothedBasePath, 0.6);
-    const offsetPath = offsetPolygon(simplifiedPath, userOffsetPixels, 'sharp', 15.0);
+    // Pre-process with CleanPolygon before offset (removes near-collinear points)
+    const cleanedPath = simplifyPolygon(smoothedBasePath, 0.6);
+    console.log('[getContourPath] After CleanPolygon:', cleanedPath.length, 'points');
     
-    // The offset path is now the final contour with sharp corners
-    // Adjust coordinates to account for the offset expansion
-    const dilatedWidth = baseWidth + userOffsetPixels * 2;
-    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    // Apply TOTAL offset using Clipper (base + user offset combined)
+    // This preserves sharp corners with miter joins (miterLimit = 15.0)
+    const offsetPath = offsetPolygon(cleanedPath, totalOffsetPixels, 'sharp', 15.0);
+    
+    console.log('[getContourPath] After Clipper offset (total:', totalOffsetPixels, 'px):', offsetPath.length, 'points');
     
     // Shift path coordinates to account for offset expansion
     let smoothedPath = offsetPath.map(p => ({
-      x: p.x + userOffsetPixels,
-      y: p.y + userOffsetPixels
+      x: p.x + totalOffsetPixels,
+      y: p.y + totalOffsetPixels
     }));
     
-    console.log('[getContourPath] After Clipper offset, path points:', smoothedPath.length);
+    // Final dimensions after offset
+    const dilatedWidth = processWidth + totalOffsetPixels * 2;
+    const dilatedHeight = processHeight + totalOffsetPixels * 2;
     
-    // Fix crossings that might occur after offset
+    // Fix any self-intersections that might occur after offset
     smoothedPath = fixOffsetCrossings(smoothedPath);
-    console.log('[getContourPath] After fixOffsetCrossings, path points:', smoothedPath.length);
+    console.log('[getContourPath] After fixOffsetCrossings:', smoothedPath.length, 'points');
     
-    // OPTIMIZATION: Simplify path BEFORE gap closing to reduce point count
-    // This dramatically speeds up gap detection
-    if (smoothedPath.length > 500) {
-      const targetPoints = 400;
-      const step = smoothedPath.length / targetPoints;
-      const simplified: Point[] = [];
-      for (let i = 0; i < targetPoints; i++) {
-        simplified.push(smoothedPath[Math.floor(i * step)]);
-      }
-      smoothedPath = simplified;
-      console.log('[getContourPath] Simplified path to', smoothedPath.length, 'points for gap closing');
+    // Use CleanPolygon for point reduction instead of blind downsampling
+    // This preserves shape accuracy while reducing point count
+    if (smoothedPath.length > 800) {
+      smoothedPath = simplifyPolygon(smoothedPath, 0.25);
+      console.log('[getContourPath] After final CleanPolygon:', smoothedPath.length, 'points');
     }
     
-    // Apply gap closing using U/N shapes based on settings (matches worker)
+    // Apply gap closing using U/N shapes based on settings
     const gapThresholdPixels = strokeSettings.closeBigGaps 
       ? Math.round(0.42 * effectiveDPI) 
       : strokeSettings.closeSmallGaps 
