@@ -385,10 +385,28 @@ function processContour(
   // We need to shift by totalOffsetPixels to bring the origin back to (0,0)
   // Then add bleedInches for the page margin
   const totalOffsetInches = totalOffsetPixels / effectiveDPI;
+  
+  // Debug: Log actual path bounds from Clipper
+  const pathXs = smoothedPath.map(p => p.x);
+  const pathYs = smoothedPath.map(p => p.y);
+  console.log('[Worker] Path bounds (pixels): X:', Math.min(...pathXs).toFixed(1), 'to', Math.max(...pathXs).toFixed(1),
+              'Y:', Math.min(...pathYs).toFixed(1), 'to', Math.max(...pathYs).toFixed(1));
+  console.log('[Worker] Expected bounds: X:', -totalOffsetPixels, 'to', width + totalOffsetPixels,
+              'Y:', -totalOffsetPixels, 'to', height + totalOffsetPixels);
+  console.log('[Worker] totalOffsetPixels:', totalOffsetPixels, 'bleedPixels:', bleedPixels, 'DPI:', effectiveDPI);
+  
   const pathInInches = smoothedPath.map(p => ({
     x: (p.x / effectiveDPI) + bleedInches + totalOffsetInches,
     y: heightInches - ((p.y / effectiveDPI) + bleedInches + totalOffsetInches)
   }));
+  
+  // Debug: Log converted path bounds
+  const pathXsInches = pathInInches.map(p => p.x);
+  const pathYsInches = pathInInches.map(p => p.y);
+  console.log('[Worker] Path bounds (inches): X:', Math.min(...pathXsInches).toFixed(4), 'to', Math.max(...pathXsInches).toFixed(4),
+              'Y:', Math.min(...pathYsInches).toFixed(4), 'to', Math.max(...pathYsInches).toFixed(4));
+  console.log('[Worker] Page size (inches):', widthInches.toFixed(4), 'x', heightInches.toFixed(4));
+  console.log('[Worker] Image offset (inches):', ((bleedPixels + totalOffsetPixels) / effectiveDPI).toFixed(4));
   
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
