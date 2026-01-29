@@ -395,7 +395,19 @@ function processContour(
       smoothedPath = smoothPath(smoothedPath, 2);
     }
     
-    // Apply path fixing/crossing detection (part of bezier/bridging)
+    // Apply corner detection - preserves sharp corners from being smoothed
+    const applyCornerDetection = !debugSettings?.enabled || debugSettings.cornerDetection;
+    if (applyCornerDetection) {
+      smoothedPath = enhanceCorners(smoothedPath);
+    }
+    
+    // Apply bezier curve fitting for smoother curves
+    const applyBezierFitting = !debugSettings?.enabled || debugSettings.bezierCurveFitting;
+    if (applyBezierFitting) {
+      smoothedPath = applyBezierSmoothing(smoothedPath);
+    }
+    
+    // Apply path fixing/crossing detection (part of bridging)
     const applyBridging = !debugSettings?.enabled || debugSettings.autoBridging;
     if (applyBridging) {
       smoothedPath = fixOffsetCrossings(smoothedPath);
@@ -413,6 +425,18 @@ function processContour(
       if (gapThresholdPixels > 0) {
         smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
       }
+    }
+    
+    // Apply hole filling - closes interior gaps
+    const applyHoleFilling = !debugSettings?.enabled || debugSettings.holeFilling;
+    if (applyHoleFilling) {
+      smoothedPath = fillInteriorHoles(smoothedPath);
+    }
+    
+    // Apply path simplification - reduces number of points
+    const applySimplification = !debugSettings?.enabled || debugSettings.pathSimplification;
+    if (applySimplification) {
+      smoothedPath = simplifyPath(smoothedPath, 0.5);
     }
   }
   
@@ -1230,6 +1254,227 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   }
   
   return result;
+}
+
+// Enhance corners by detecting and sharpening sharp angle changes
+function enhanceCorners(points: Point[]): Point[] {
+  if (points.length < 5) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const cornerThreshold = Math.PI / 4; // 45 degrees
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate angle change at this point
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    
+    if (len1 > 0.001 && len2 > 0.001) {
+      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      
+      // If this is a sharp corner, enhance it by pushing it outward
+      if (angle > cornerThreshold) {
+        // Calculate outward normal
+        const nx1 = -dy1 / len1;
+        const ny1 = dx1 / len1;
+        const nx2 = -dy2 / len2;
+        const ny2 = dx2 / len2;
+        
+        // Average normal direction
+        const avgNx = (nx1 + nx2) / 2;
+        const avgNy = (ny1 + ny2) / 2;
+        const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy);
+        
+        if (avgLen > 0.001) {
+          // Push corner outward slightly to sharpen it
+          const pushAmount = Math.min(2, angle / Math.PI);
+          result.push({
+            x: curr.x + (avgNx / avgLen) * pushAmount,
+            y: curr.y + (avgNy / avgLen) * pushAmount
+          });
+          continue;
+        }
+      }
+    }
+    
+    result.push(curr);
+  }
+  
+  return result;
+}
+
+// Apply bezier curve smoothing between corners
+function applyBezierSmoothing(points: Point[]): Point[] {
+  if (points.length < 6) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  
+  // Find corners first
+  const isCorner: boolean[] = new Array(n).fill(false);
+  const cornerThreshold = Math.PI / 5; // 36 degrees
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 2 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 2) % n];
+    
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    
+    if (len1 > 0.001 && len2 > 0.001) {
+      const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      isCorner[i] = angle > cornerThreshold;
+    }
+  }
+  
+  // Apply bezier smoothing between corners
+  let segmentStart = 0;
+  for (let i = 0; i <= n; i++) {
+    const idx = i % n;
+    if (isCorner[idx] || i === n) {
+      // Process segment from segmentStart to current corner
+      const segmentEnd = i === n ? n : idx;
+      const segmentLen = (segmentEnd - segmentStart + n) % n;
+      
+      if (segmentLen >= 4) {
+        // Apply bezier smoothing to this segment
+        const segmentPoints: Point[] = [];
+        for (let j = 0; j < segmentLen; j++) {
+          segmentPoints.push(points[(segmentStart + j) % n]);
+        }
+        
+        // Simple bezier approximation - average with neighbors
+        for (let j = 0; j < segmentLen; j++) {
+          const p0 = segmentPoints[(j - 1 + segmentLen) % segmentLen];
+          const p1 = segmentPoints[j];
+          const p2 = segmentPoints[(j + 1) % segmentLen];
+          
+          result.push({
+            x: p1.x * 0.6 + (p0.x + p2.x) * 0.2,
+            y: p1.y * 0.6 + (p0.y + p2.y) * 0.2
+          });
+        }
+      } else {
+        // Too short for bezier, just copy
+        for (let j = 0; j < segmentLen; j++) {
+          result.push(points[(segmentStart + j) % n]);
+        }
+      }
+      
+      // Add the corner point
+      if (i < n) {
+        result.push(points[idx]);
+        segmentStart = (idx + 1) % n;
+      }
+    }
+  }
+  
+  return result.length > 0 ? result : points;
+}
+
+// Fill interior holes by detecting and closing self-intersecting loops
+function fillInteriorHoles(points: Point[]): Point[] {
+  if (points.length < 10) return points;
+  
+  // Detect if the path doubles back on itself (creates holes)
+  // This is a simplified implementation - just removes tight loops
+  const n = points.length;
+  const result: Point[] = [];
+  const minLoopDistance = 3;
+  
+  let i = 0;
+  while (i < n) {
+    result.push(points[i]);
+    
+    // Look ahead for points that are very close to current (potential loop)
+    let skipTo = -1;
+    for (let j = i + minLoopDistance; j < Math.min(i + 20, n); j++) {
+      const dx = points[j].x - points[i].x;
+      const dy = points[j].y - points[i].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < 2) {
+        // Found a loop - skip to this point
+        skipTo = j;
+        break;
+      }
+    }
+    
+    if (skipTo > 0) {
+      i = skipTo;
+    } else {
+      i++;
+    }
+  }
+  
+  return result;
+}
+
+// Simplify path by removing redundant points using Ramer-Douglas-Peucker algorithm
+function simplifyPath(points: Point[], tolerance: number): Point[] {
+  if (points.length < 3) return points;
+  
+  // Find the point with the maximum distance from the line between first and last
+  const first = points[0];
+  const last = points[points.length - 1];
+  
+  let maxDist = 0;
+  let maxIdx = 0;
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const dist = perpendicularDistance(points[i], first, last);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
+    }
+  }
+  
+  // If max distance is greater than tolerance, recursively simplify
+  if (maxDist > tolerance) {
+    const left = simplifyPath(points.slice(0, maxIdx + 1), tolerance);
+    const right = simplifyPath(points.slice(maxIdx), tolerance);
+    
+    // Combine results (removing duplicate point at maxIdx)
+    return [...left.slice(0, -1), ...right];
+  } else {
+    // All points between first and last can be removed
+    return [first, last];
+  }
+}
+
+// Calculate perpendicular distance from point to line
+function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const lineLenSq = dx * dx + dy * dy;
+  
+  if (lineLenSq === 0) {
+    // Line is a point
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  // Calculate perpendicular distance using cross product
+  const num = Math.abs(dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x);
+  const den = Math.sqrt(lineLenSq);
+  
+  return num / den;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
