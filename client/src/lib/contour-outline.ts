@@ -2310,6 +2310,19 @@ export async function downloadContourPDF(
       // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
       const scale = 72;
       
+      // Debug: Log coordinate transform details
+      console.log('[PDF] Coordinate system check:');
+      console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
+      console.log('  - Image position (pts):', imageOffsetX * 72, ',', imageOffsetY * 72);
+      console.log('  - Image size (pts):', resizeSettings.widthInches * 72, 'x', resizeSettings.heightInches * 72);
+      if (smoothedPath.length > 0) {
+        const xs = smoothedPath.map(p => p.x);
+        const ys = smoothedPath.map(p => p.y);
+        console.log('  - Path X range (inches):', Math.min(...xs).toFixed(4), 'to', Math.max(...xs).toFixed(4));
+        console.log('  - Path Y range (inches):', Math.min(...ys).toFixed(4), 'to', Math.max(...ys).toFixed(4));
+        console.log('  - First point (pts):', smoothedPath[0].x * 72, ',', smoothedPath[0].y * 72);
+      }
+      
       // Build path operators directly from points - same as preview canvas
       if (smoothedPath.length > 0) {
         const first = smoothedPath[0];
@@ -2860,6 +2873,19 @@ export async function generateContourPDFBase64(
       
       // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
       const scale = 72;
+      
+      // Debug: Log coordinate transform details
+      console.log('[PDF] Coordinate system check:');
+      console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
+      console.log('  - Image position (pts):', imageOffsetX * 72, ',', imageOffsetY * 72);
+      console.log('  - Image size (pts):', resizeSettings.widthInches * 72, 'x', resizeSettings.heightInches * 72);
+      if (smoothedPath.length > 0) {
+        const xs = smoothedPath.map(p => p.x);
+        const ys = smoothedPath.map(p => p.y);
+        console.log('  - Path X range (inches):', Math.min(...xs).toFixed(4), 'to', Math.max(...xs).toFixed(4));
+        console.log('  - Path Y range (inches):', Math.min(...ys).toFixed(4), 'to', Math.max(...ys).toFixed(4));
+        console.log('  - First point (pts):', smoothedPath[0].x * 72, ',', smoothedPath[0].y * 72);
+      }
       
       // Build path operators directly from points - same as preview canvas
       if (smoothedPath.length > 0) {
