@@ -1100,6 +1100,8 @@ export interface PotraceResult {
     c2x?: number;
     c2y?: number;
   }>;
+  area: number;
+  isHole: boolean;
 }
 
 export function traceBitmapToPoints(
@@ -1159,8 +1161,11 @@ export function traceBitmapToPoints(
       }
     }
     
-    results.push({ points, curves });
+    results.push({ points, curves, area: Math.abs(path.area), isHole: path.isHole });
   }
+  
+  // Sort by area descending so the largest (outer) contour is first
+  results.sort((a, b) => b.area - a.area);
   
   return results;
 }

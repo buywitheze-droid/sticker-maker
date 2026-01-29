@@ -318,7 +318,20 @@ function processContour(
     opttolerance: 0.2
   });
   
-  if (potraceResults.length === 0 || potraceResults[0].points.length < 3) {
+  // Find the outer contour (largest area, not a hole)
+  // Results are already sorted by area descending
+  let outerContour = potraceResults.find(r => !r.isHole && r.points.length >= 3);
+  
+  // If no non-hole found (inverted mask), use largest area path regardless
+  if (!outerContour && potraceResults.length > 0) {
+    const largestPath = potraceResults.find(r => r.points.length >= 3);
+    if (largestPath) {
+      console.log('[Worker] No non-hole contour found, using largest area path (possibly inverted mask)');
+      outerContour = largestPath;
+    }
+  }
+  
+  if (!outerContour) {
     console.log('[Worker] Potrace returned no valid paths, falling back to Moore tracing');
     const fallbackPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
     if (fallbackPath.length < 3) {
@@ -329,13 +342,11 @@ function processContour(
       y: p.y / SUPER_SAMPLE
     }));
   } else {
-    // Take the first (outer) path from Potrace
-    // Potrace returns multiple paths for holes, we only want the outer contour
-    const potraceResult = potraceResults[0];
-    console.log('[Worker] Potrace traced:', potraceResult.points.length, 'points,', potraceResult.curves.length, 'curve segments');
+    console.log('[Worker] Potrace traced outer contour:', outerContour.points.length, 'points,', 
+                outerContour.curves.length, 'curve segments, area:', outerContour.area);
     
     // Convert Potrace output to our point format, downscaling by SUPER_SAMPLE
-    var boundaryPath = potraceResult.points.map(p => ({
+    var boundaryPath = outerContour.points.map(p => ({
       x: p.x / SUPER_SAMPLE,
       y: p.y / SUPER_SAMPLE
     }));
