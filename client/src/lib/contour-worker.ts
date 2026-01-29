@@ -335,7 +335,7 @@ function processContour(
   // approxPolyDP: Simplify contour using Douglas-Peucker with perimeter-based epsilon
   // epsilon = 0.0008 * perimeter automatically scales with image size
   // This removes stair-step aliasing while preserving overall shape
-  const epsilonFactor = 0.01; // "rope tension" - higher = straighter/sharper lines
+  const epsilonFactor = 0.0009; // "rope tension" - higher = straighter/sharper lines
   let smoothedPath = approxPolyDP(boundaryPath, epsilonFactor);
   console.log('[Worker] After approxPolyDP:', smoothedPath.length, 'points');
   
