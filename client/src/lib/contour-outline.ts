@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, polygonToSplinePath, subsamplePolygon, type PathSegment } from "@/lib/clipper-path";
+import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, polygonToSplinePath, subsamplePolygon, optimizeForCutting, type PathSegment, type CuttingOptimizedResult } from "@/lib/clipper-path";
 import { offsetPolygon, simplifyPolygon } from "@/lib/minkowski-offset";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
@@ -22,6 +22,59 @@ export interface ContourPathResult {
 interface Point {
   x: number;
   y: number;
+}
+
+/**
+ * Convert an SVG path string to PDF path operators.
+ * Handles M (moveto), L (lineto), C (curveto), Z (closepath) commands.
+ * @param svgPath - SVG path string (e.g., "M 10 20 L 30 40 C 50 60, 70 80, 90 100 Z")
+ * @param scale - Scale factor to apply to coordinates (default 1)
+ * @returns PDF path operators string
+ */
+function svgPathToPdfOps(svgPath: string, scale: number = 1): string {
+  let result = '';
+  
+  // Parse SVG path commands
+  // Split by command letters while keeping them
+  const commands = svgPath.match(/[MLCZ][^MLCZ]*/gi) || [];
+  
+  for (const cmd of commands) {
+    const type = cmd[0].toUpperCase();
+    const nums = cmd.slice(1).trim().split(/[\s,]+/).filter(s => s.length > 0).map(parseFloat);
+    
+    switch (type) {
+      case 'M': // moveto
+        if (nums.length >= 2) {
+          const x = nums[0] * scale;
+          const y = nums[1] * scale;
+          result += `${x.toFixed(2)} ${y.toFixed(2)} m `;
+        }
+        break;
+      case 'L': // lineto
+        if (nums.length >= 2) {
+          const x = nums[0] * scale;
+          const y = nums[1] * scale;
+          result += `${x.toFixed(2)} ${y.toFixed(2)} l `;
+        }
+        break;
+      case 'C': // curveto (cubic bezier)
+        if (nums.length >= 6) {
+          const cp1x = nums[0] * scale;
+          const cp1y = nums[1] * scale;
+          const cp2x = nums[2] * scale;
+          const cp2y = nums[3] * scale;
+          const x = nums[4] * scale;
+          const y = nums[5] * scale;
+          result += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} c `;
+        }
+        break;
+      case 'Z': // closepath
+        result += 'h ';
+        break;
+    }
+  }
+  
+  return result;
 }
 
 // Trace contour outlines from a binary mask using edge-following algorithm
@@ -2239,37 +2292,20 @@ export async function downloadContourPDF(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use direct line segments exactly like the preview worker does
-      const pathSegments: PathSegment[] = [];
-      if (smoothedPath.length > 0) {
-        pathSegments.push({ type: 'move', point: smoothedPath[0] });
-        for (let i = 1; i < smoothedPath.length; i++) {
-          pathSegments.push({ type: 'line', point: smoothedPath[i] });
-        }
-      }
-      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview worker)');
+      // Optimize for vinyl cutting: curve fitting, de-speckle, precision sanitization
+      // minHoleArea in square pixels, sharpAngle = 30 degrees
+      const minHoleArea = 100; // Remove holes smaller than 100 square pixels
+      const optimized = optimizeForCutting(smoothedPath, [], minHoleArea, 30);
       
-      for (const seg of pathSegments) {
-        if (seg.type === 'move' && seg.point) {
-          const px = seg.point.x * 72;
-          const py = seg.point.y * 72;
-          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
-        } else if (seg.type === 'line' && seg.point) {
-          const px = seg.point.x * 72;
-          const py = seg.point.y * 72;
-          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
-        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-          const cp1x = seg.cp1.x * 72;
-          const cp1y = seg.cp1.y * 72;
-          const cp2x = seg.cp2.x * 72;
-          const cp2y = seg.cp2.y * 72;
-          const endx = seg.end.x * 72;
-          const endy = seg.end.y * 72;
-          pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
-        }
-      }
+      console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
+                  optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
       
-      pathOps += 'h S\n';
+      // Convert the optimized SVG path to PDF path operators
+      // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
+      // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
+      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, 72); // scale to 72 DPI
+      pathOps += pdfCutPath;
+      pathOps += 'S\n';
       
       const existingContents = page.node.Contents();
       if (existingContents) {
@@ -2800,37 +2836,20 @@ export async function generateContourPDFBase64(
       pathOps += '/CutContour CS 1 SCN\n';
       pathOps += '0.5 w\n';
       
-      // Use direct line segments exactly like the preview worker does
-      const pathSegments: PathSegment[] = [];
-      if (smoothedPath.length > 0) {
-        pathSegments.push({ type: 'move', point: smoothedPath[0] });
-        for (let i = 1; i < smoothedPath.length; i++) {
-          pathSegments.push({ type: 'line', point: smoothedPath[i] });
-        }
-      }
-      console.log('[PDF] Using', smoothedPath.length, 'line segments (matching preview worker)');
+      // Optimize for vinyl cutting: curve fitting, de-speckle, precision sanitization
+      // minHoleArea in square pixels, sharpAngle = 30 degrees
+      const minHoleArea = 100; // Remove holes smaller than 100 square pixels
+      const optimized = optimizeForCutting(smoothedPath, [], minHoleArea, 30);
       
-      for (const seg of pathSegments) {
-        if (seg.type === 'move' && seg.point) {
-          const px = seg.point.x * 72;
-          const py = seg.point.y * 72;
-          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} m `;
-        } else if (seg.type === 'line' && seg.point) {
-          const px = seg.point.x * 72;
-          const py = seg.point.y * 72;
-          pathOps += `${px.toFixed(2)} ${py.toFixed(2)} l `;
-        } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-          const cp1x = seg.cp1.x * 72;
-          const cp1y = seg.cp1.y * 72;
-          const cp2x = seg.cp2.x * 72;
-          const cp2y = seg.cp2.y * 72;
-          const endx = seg.end.x * 72;
-          const endy = seg.end.y * 72;
-          pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endx.toFixed(2)} ${endy.toFixed(2)} c `;
-        }
-      }
+      console.log('[PDF] Optimized for cutting:', optimized.stats.curveSegments, 'curves,', 
+                  optimized.stats.lineSegments, 'lines,', optimized.stats.holesRemoved, 'holes removed');
       
-      pathOps += 'h S\n';
+      // Convert the optimized SVG path to PDF path operators
+      // SVG uses: M (moveto), L (lineto), C (curveto), Z (close)
+      // PDF uses: m (moveto), l (lineto), c (curveto), h (close), S (stroke)
+      const pdfCutPath = svgPathToPdfOps(optimized.svgPath, 72); // scale to 72 DPI
+      pathOps += pdfCutPath;
+      pathOps += 'S\n';
       
       const existingContents = page.node.Contents();
       if (existingContents) {

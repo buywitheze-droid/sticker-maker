@@ -891,3 +891,227 @@ export function unionRectangles(rectangles: Array<{x1: number; y1: number; x2: n
   
   return result;
 }
+
+/**
+ * Optimize contour path for vinyl cutting machines.
+ * 
+ * 1. Curve Fitting: Convert short line segments into cubic beziers, preserve sharp corners (>30°)
+ * 2. De-Speckle: Remove tiny holes (area < minHoleArea)
+ * 3. Sanitize Precision: Round coordinates to 2 decimal places
+ * 
+ * @param paths - Array of contour paths (outer contour + holes)
+ * @param minHoleArea - Minimum hole area to keep (default 100 square units)
+ * @param sharpAngleThreshold - Angle in degrees above which corners are kept sharp (default 30)
+ * @returns SVG path string with C commands for curves and L for sharp edges
+ */
+export interface CuttingOptimizedResult {
+  svgPath: string;
+  outerPath: Point[];
+  holes: Point[][];
+  stats: {
+    originalPoints: number;
+    curveSegments: number;
+    lineSegments: number;
+    holesRemoved: number;
+  };
+}
+
+export function optimizeForCutting(
+  outerPath: Point[],
+  holes: Point[][] = [],
+  minHoleArea: number = 100,
+  sharpAngleThreshold: number = 30
+): CuttingOptimizedResult {
+  const stats = {
+    originalPoints: outerPath.length + holes.reduce((sum, h) => sum + h.length, 0),
+    curveSegments: 0,
+    lineSegments: 0,
+    holesRemoved: 0
+  };
+
+  // Step 1: De-Speckle - Remove tiny holes
+  const filteredHoles = holes.filter(hole => {
+    const area = Math.abs(polygonArea(hole));
+    if (area < minHoleArea) {
+      stats.holesRemoved++;
+      return false;
+    }
+    return true;
+  });
+
+  console.log(`[optimizeForCutting] Removed ${stats.holesRemoved} tiny holes (area < ${minHoleArea})`);
+
+  // Step 2: Curve Fitting + Precision Sanitization for outer path
+  const outerResult = fitCurvesAndSanitize(outerPath, sharpAngleThreshold);
+  stats.curveSegments += outerResult.curveCount;
+  stats.lineSegments += outerResult.lineCount;
+
+  // Step 3: Process remaining holes
+  const holeResults = filteredHoles.map(hole => fitCurvesAndSanitize(hole, sharpAngleThreshold));
+  holeResults.forEach(r => {
+    stats.curveSegments += r.curveCount;
+    stats.lineSegments += r.lineCount;
+  });
+
+  // Build SVG path string
+  let svgPath = outerResult.svgPath;
+  holeResults.forEach(r => {
+    svgPath += ' ' + r.svgPath;
+  });
+
+  console.log(`[optimizeForCutting] Result: ${stats.curveSegments} curves, ${stats.lineSegments} lines`);
+
+  return {
+    svgPath,
+    outerPath: outerResult.points,
+    holes: holeResults.map(r => r.points),
+    stats
+  };
+}
+
+function polygonArea(points: Point[]): number {
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += points[i].x * points[j].y;
+    area -= points[j].x * points[i].y;
+  }
+  return area / 2;
+}
+
+function angleBetweenVectors(v1: Point, v2: Point): number {
+  const dot = v1.x * v2.x + v1.y * v2.y;
+  const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+  const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+  if (mag1 === 0 || mag2 === 0) return 0;
+  const cos = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));
+  return Math.acos(cos) * (180 / Math.PI);
+}
+
+function roundTo2Decimals(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+interface FitResult {
+  svgPath: string;
+  points: Point[];
+  curveCount: number;
+  lineCount: number;
+}
+
+function fitCurvesAndSanitize(points: Point[], sharpAngleThreshold: number): FitResult {
+  if (points.length < 3) {
+    return { svgPath: '', points: [], curveCount: 0, lineCount: 0 };
+  }
+
+  // Sanitize precision first
+  const sanitized = points.map(p => ({
+    x: roundTo2Decimals(p.x),
+    y: roundTo2Decimals(p.y)
+  }));
+
+  // Find sharp corners (angle > threshold)
+  const isSharpCorner: boolean[] = new Array(sanitized.length).fill(false);
+  
+  for (let i = 0; i < sanitized.length; i++) {
+    const prev = sanitized[(i - 1 + sanitized.length) % sanitized.length];
+    const curr = sanitized[i];
+    const next = sanitized[(i + 1) % sanitized.length];
+    
+    const v1 = { x: curr.x - prev.x, y: curr.y - prev.y };
+    const v2 = { x: next.x - curr.x, y: next.y - curr.y };
+    
+    const angle = angleBetweenVectors(v1, v2);
+    isSharpCorner[i] = angle > sharpAngleThreshold;
+  }
+
+  // Build path segments - curves between sharp corners, lines at sharp corners
+  let svgPath = `M ${sanitized[0].x} ${sanitized[0].y}`;
+  let curveCount = 0;
+  let lineCount = 0;
+  
+  let i = 0;
+  while (i < sanitized.length) {
+    // Find run of non-sharp points
+    const runStart = i;
+    let runEnd = i;
+    
+    // Skip to next sharp corner or back to start
+    while (runEnd < sanitized.length) {
+      const nextIdx = (runEnd + 1) % sanitized.length;
+      if (isSharpCorner[nextIdx] || nextIdx === 0) {
+        break;
+      }
+      runEnd++;
+    }
+    
+    const runLength = runEnd - runStart + 1;
+    
+    if (runLength >= 4 && !isSharpCorner[runStart]) {
+      // Fit bezier curve to this run
+      const segment = sanitized.slice(runStart, runEnd + 2).map(p => ({ ...p }));
+      if (runEnd + 1 >= sanitized.length) {
+        segment.push({ ...sanitized[0] });
+      }
+      
+      if (segment.length >= 4) {
+        const bezier = fitBezierToSegment(segment);
+        if (bezier) {
+          svgPath += ` C ${bezier.cp1.x} ${bezier.cp1.y}, ${bezier.cp2.x} ${bezier.cp2.y}, ${bezier.end.x} ${bezier.end.y}`;
+          curveCount++;
+          i = runEnd + 1;
+          continue;
+        }
+      }
+    }
+    
+    // Fall back to line segment
+    const nextIdx = (i + 1) % sanitized.length;
+    if (nextIdx !== 0) {
+      svgPath += ` L ${sanitized[nextIdx].x} ${sanitized[nextIdx].y}`;
+      lineCount++;
+    }
+    i++;
+  }
+  
+  svgPath += ' Z';
+  
+  return {
+    svgPath,
+    points: sanitized,
+    curveCount,
+    lineCount
+  };
+}
+
+function fitBezierToSegment(points: Point[]): { cp1: Point; cp2: Point; end: Point } | null {
+  if (points.length < 2) return null;
+  
+  const start = points[0];
+  const end = points[points.length - 1];
+  
+  // Use 1/3 and 2/3 points as control point guides
+  const t1 = Math.floor(points.length / 3);
+  const t2 = Math.floor((2 * points.length) / 3);
+  
+  const guide1 = points[Math.max(1, t1)];
+  const guide2 = points[Math.min(points.length - 2, t2)];
+  
+  // Compute control points that pull curve toward guide points
+  const cp1 = {
+    x: roundTo2Decimals(start.x + (guide1.x - start.x) * 1.5),
+    y: roundTo2Decimals(start.y + (guide1.y - start.y) * 1.5)
+  };
+  
+  const cp2 = {
+    x: roundTo2Decimals(end.x + (guide2.x - end.x) * 1.5),
+    y: roundTo2Decimals(end.y + (guide2.y - end.y) * 1.5)
+  };
+  
+  return {
+    cp1,
+    cp2,
+    end: { x: roundTo2Decimals(end.x), y: roundTo2Decimals(end.y) }
+  };
+}
