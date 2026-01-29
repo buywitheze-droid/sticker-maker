@@ -1076,22 +1076,145 @@ function calculatePerimeter(points: Point[]): number {
 }
 
 /**
- * cv2.approxPolyDP equivalent - simplify contour using Douglas-Peucker
- * with epsilon automatically scaled by perimeter
+ * Calculate the angle at a vertex (in degrees)
+ * Returns the absolute angle change at the vertex (0-180)
+ */
+function calculateVertexAngle(prev: Point, curr: Point, next: Point): number {
+  // Vector from prev to curr
+  const v1x = curr.x - prev.x;
+  const v1y = curr.y - prev.y;
+  // Vector from curr to next
+  const v2x = next.x - curr.x;
+  const v2y = next.y - curr.y;
+  
+  const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+  const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+  
+  if (len1 < 0.001 || len2 < 0.001) return 0;
+  
+  // Dot product gives cos of angle between vectors
+  const dot = v1x * v2x + v1y * v2y;
+  const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+  
+  // Angle in degrees (0 = straight line, 180 = complete reversal)
+  const angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
+  
+  return angleDegrees;
+}
+
+/**
+ * Find critical corners in the polygon (angle change > threshold)
+ * Returns array of indices that are sharp corners
+ */
+function findCriticalCorners(points: Point[], angleThreshold: number = 45): number[] {
+  if (points.length < 3) return [];
+  
+  const corners: number[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const angle = calculateVertexAngle(prev, curr, next);
+    
+    // Angle > threshold means significant corner (not a straight continuation)
+    if (angle > angleThreshold) {
+      corners.push(i);
+    }
+  }
+  
+  return corners;
+}
+
+/**
+ * cv2.approxPolyDP equivalent with corner preservation
+ * 
+ * Algorithm:
+ * 1. Find all vertices with angle change > 45° (critical corners)
+ * 2. Keep these as fixed anchors
+ * 3. Apply RDP simplification only on segments between anchors
+ * 4. Reconstruct path by connecting smoothed segments with anchors
+ * 
+ * This ensures straight lines remain straight, and corners stay sharp and fixed
  * 
  * @param points - input polygon points
  * @param epsilonFactor - multiplier for perimeter (default 0.001 = "rope tension")
- * @returns simplified polygon
+ * @param cornerThreshold - angle threshold for critical corners (default 45°)
+ * @returns simplified polygon with preserved corners
  */
-function approxPolyDP(points: Point[], epsilonFactor: number = 0.001): Point[] {
+function approxPolyDP(points: Point[], epsilonFactor: number = 0.001, cornerThreshold: number = 45): Point[] {
   if (points.length < 3) return points;
   
   const perimeter = calculatePerimeter(points);
   const epsilon = epsilonFactor * perimeter;
   
-  console.log('[Worker] approxPolyDP: perimeter =', perimeter.toFixed(2), 'px, epsilon =', epsilon.toFixed(3), 'px (factor:', epsilonFactor, ')');
+  // Step 1: Find critical corners (angle > threshold)
+  const cornerIndices = findCriticalCorners(points, cornerThreshold);
   
-  return rdpSimplifyPolygon(points, epsilon);
+  console.log('[Worker] approxPolyDP: perimeter =', perimeter.toFixed(2), 'px, epsilon =', epsilon.toFixed(3), 'px');
+  console.log('[Worker] approxPolyDP: found', cornerIndices.length, 'critical corners (>', cornerThreshold, '°)');
+  
+  // If no corners or too few points, just apply RDP to the whole thing
+  if (cornerIndices.length < 2) {
+    return rdpSimplifyPolygon(points, epsilon);
+  }
+  
+  // Step 2: Process each segment between consecutive corners
+  const result: Point[] = [];
+  const n = points.length;
+  const numCorners = cornerIndices.length;
+  
+  for (let c = 0; c < numCorners; c++) {
+    const startIdx = cornerIndices[c];
+    const endIdx = cornerIndices[(c + 1) % numCorners];
+    
+    // Add the anchor point (corner) first
+    result.push({ ...points[startIdx] });
+    
+    // Extract segment between this corner and the next
+    const segment: Point[] = [];
+    
+    if (endIdx > startIdx) {
+      // Normal case: segment goes forward
+      for (let i = startIdx + 1; i < endIdx; i++) {
+        segment.push(points[i]);
+      }
+    } else {
+      // Wrap-around case: segment goes past the end of array
+      for (let i = startIdx + 1; i < n; i++) {
+        segment.push(points[i]);
+      }
+      for (let i = 0; i < endIdx; i++) {
+        segment.push(points[i]);
+      }
+    }
+    
+    // Step 3: Apply RDP only to the segment between corners (not including corners)
+    if (segment.length > 0) {
+      // For open segment simplification, we need to include endpoints for RDP
+      // but we don't want to duplicate the corner points
+      const segmentWithEnds = [
+        points[startIdx],  // Start anchor
+        ...segment,
+        points[endIdx]     // End anchor
+      ];
+      
+      // Apply Douglas-Peucker to the segment
+      const simplified = douglasPeucker(segmentWithEnds, epsilon);
+      
+      // Add simplified points (skip first point which is the start anchor we already added)
+      // Also skip last point which is the next anchor (will be added in next iteration)
+      for (let i = 1; i < simplified.length - 1; i++) {
+        result.push(simplified[i]);
+      }
+    }
+  }
+  
+  console.log('[Worker] approxPolyDP: preserved', cornerIndices.length, 'corners, result:', result.length, 'points');
+  
+  return result;
 }
 
 // Ramer-Douglas-Peucker algorithm for path simplification
