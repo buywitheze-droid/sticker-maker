@@ -1000,19 +1000,27 @@ interface FitResult {
   lineCount: number;
 }
 
+/**
+ * Smart polygon-to-bezier conversion using Catmull-Rom splines.
+ * - Sharp corners (angle > threshold): Use LineTo commands
+ * - Smooth curves (angle <= threshold): Use Catmull-Rom interpolated cubic beziers
+ * 
+ * This preserves diamond tips while smoothing bubble letter curves.
+ */
 function fitCurvesAndSanitize(points: Point[], sharpAngleThreshold: number): FitResult {
   if (points.length < 3) {
     return { svgPath: '', points: [], curveCount: 0, lineCount: 0 };
   }
 
-  // Sanitize precision first
+  // Step 1: Sanitize precision
   const sanitized = points.map(p => ({
     x: roundTo2Decimals(p.x),
     y: roundTo2Decimals(p.y)
   }));
 
-  // Find sharp corners (angle > threshold)
-  const isSharpCorner: boolean[] = new Array(sanitized.length).fill(false);
+  // Step 2: Calculate vertex angles and mark sharp corners
+  const vertexAngles: number[] = [];
+  const isSharpCorner: boolean[] = [];
   
   for (let i = 0; i < sanitized.length; i++) {
     const prev = sanitized[(i - 1 + sanitized.length) % sanitized.length];
@@ -1023,60 +1031,111 @@ function fitCurvesAndSanitize(points: Point[], sharpAngleThreshold: number): Fit
     const v2 = { x: next.x - curr.x, y: next.y - curr.y };
     
     const angle = angleBetweenVectors(v1, v2);
-    isSharpCorner[i] = angle > sharpAngleThreshold;
+    vertexAngles.push(angle);
+    isSharpCorner.push(angle > sharpAngleThreshold);
   }
 
-  // Build path segments - curves between sharp corners, lines at sharp corners
+  // Step 3: Find runs of smooth points between sharp corners
+  const runs: { start: number; end: number; isSmooth: boolean }[] = [];
+  let runStart = 0;
+  
+  for (let i = 0; i < sanitized.length; i++) {
+    if (isSharpCorner[i]) {
+      // End current smooth run (if any)
+      if (i > runStart) {
+        runs.push({ start: runStart, end: i - 1, isSmooth: true });
+      }
+      // Add sharp corner as single-point run
+      runs.push({ start: i, end: i, isSmooth: false });
+      runStart = i + 1;
+    }
+  }
+  
+  // Handle wrap-around for closed polygon
+  if (runStart < sanitized.length) {
+    // Check if this run connects to the first run
+    if (runs.length > 0 && runs[0].isSmooth && !isSharpCorner[0]) {
+      // Merge with first run (they're connected)
+      runs[0].start = runStart;
+    } else {
+      runs.push({ start: runStart, end: sanitized.length - 1, isSmooth: true });
+    }
+  }
+
+  // Step 4: Build SVG path
   let svgPath = `M ${sanitized[0].x} ${sanitized[0].y}`;
   let curveCount = 0;
   let lineCount = 0;
-  
-  let i = 0;
-  while (i < sanitized.length) {
-    // Find run of non-sharp points
-    const runStart = i;
-    let runEnd = i;
+  let currentIdx = 0;
+
+  // Process each point in order
+  for (let i = 1; i < sanitized.length; i++) {
+    const prev = sanitized[i - 1];
+    const curr = sanitized[i];
     
-    // Skip to next sharp corner or back to start
-    while (runEnd < sanitized.length) {
-      const nextIdx = (runEnd + 1) % sanitized.length;
-      if (isSharpCorner[nextIdx] || nextIdx === 0) {
-        break;
-      }
-      runEnd++;
-    }
-    
-    const runLength = runEnd - runStart + 1;
-    
-    if (runLength >= 4 && !isSharpCorner[runStart]) {
-      // Fit bezier curve to this run
-      const segment = sanitized.slice(runStart, runEnd + 2).map(p => ({ ...p }));
-      if (runEnd + 1 >= sanitized.length) {
-        segment.push({ ...sanitized[0] });
-      }
-      
-      if (segment.length >= 4) {
-        const bezier = fitBezierToSegment(segment);
-        if (bezier) {
-          svgPath += ` C ${bezier.cp1.x} ${bezier.cp1.y}, ${bezier.cp2.x} ${bezier.cp2.y}, ${bezier.end.x} ${bezier.end.y}`;
-          curveCount++;
-          i = runEnd + 1;
-          continue;
-        }
-      }
-    }
-    
-    // Fall back to line segment
-    const nextIdx = (i + 1) % sanitized.length;
-    if (nextIdx !== 0) {
-      svgPath += ` L ${sanitized[nextIdx].x} ${sanitized[nextIdx].y}`;
+    if (isSharpCorner[i]) {
+      // Sharp corner: use LineTo
+      svgPath += ` L ${curr.x} ${curr.y}`;
       lineCount++;
+    } else {
+      // Smooth section: use Catmull-Rom to cubic bezier conversion
+      // Get the 4 points needed for Catmull-Rom: p0, p1, p2, p3
+      const p0 = sanitized[(i - 2 + sanitized.length) % sanitized.length];
+      const p1 = prev;
+      const p2 = curr;
+      const p3 = sanitized[(i + 1) % sanitized.length];
+      
+      // Convert Catmull-Rom segment to cubic bezier
+      // Catmull-Rom to Bezier conversion factor (tension = 0.5 for standard CR)
+      const tension = 0.5;
+      
+      const cp1 = {
+        x: roundTo2Decimals(p1.x + (p2.x - p0.x) * tension / 3),
+        y: roundTo2Decimals(p1.y + (p2.y - p0.y) * tension / 3)
+      };
+      
+      const cp2 = {
+        x: roundTo2Decimals(p2.x - (p3.x - p1.x) * tension / 3),
+        y: roundTo2Decimals(p2.y - (p3.y - p1.y) * tension / 3)
+      };
+      
+      svgPath += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p2.x} ${p2.y}`;
+      curveCount++;
     }
-    i++;
   }
   
-  svgPath += ' Z';
+  // Close the path - handle last segment to first point
+  const lastPt = sanitized[sanitized.length - 1];
+  const firstPt = sanitized[0];
   
+  if (isSharpCorner[0]) {
+    // First point is sharp: close with line
+    svgPath += ' Z';
+  } else {
+    // First point is smooth: use Catmull-Rom for closing segment
+    const p0 = sanitized[sanitized.length - 2];
+    const p1 = lastPt;
+    const p2 = firstPt;
+    const p3 = sanitized[1];
+    
+    const tension = 0.5;
+    
+    const cp1 = {
+      x: roundTo2Decimals(p1.x + (p2.x - p0.x) * tension / 3),
+      y: roundTo2Decimals(p1.y + (p2.y - p0.y) * tension / 3)
+    };
+    
+    const cp2 = {
+      x: roundTo2Decimals(p2.x - (p3.x - p1.x) * tension / 3),
+      y: roundTo2Decimals(p2.y - (p3.y - p1.y) * tension / 3)
+    };
+    
+    svgPath += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p2.x} ${p2.y} Z`;
+    curveCount++;
+  }
+
+  console.log(`[polygonToBeziers] ${sanitized.length} pts → ${curveCount} curves, ${lineCount} lines (${isSharpCorner.filter(x => x).length} sharp corners)`);
+
   return {
     svgPath,
     points: sanitized,
@@ -1085,33 +1144,16 @@ function fitCurvesAndSanitize(points: Point[], sharpAngleThreshold: number): Fit
   };
 }
 
-function fitBezierToSegment(points: Point[]): { cp1: Point; cp2: Point; end: Point } | null {
-  if (points.length < 2) return null;
-  
-  const start = points[0];
-  const end = points[points.length - 1];
-  
-  // Use 1/3 and 2/3 points as control point guides
-  const t1 = Math.floor(points.length / 3);
-  const t2 = Math.floor((2 * points.length) / 3);
-  
-  const guide1 = points[Math.max(1, t1)];
-  const guide2 = points[Math.min(points.length - 2, t2)];
-  
-  // Compute control points that pull curve toward guide points
-  const cp1 = {
-    x: roundTo2Decimals(start.x + (guide1.x - start.x) * 1.5),
-    y: roundTo2Decimals(start.y + (guide1.y - start.y) * 1.5)
-  };
-  
-  const cp2 = {
-    x: roundTo2Decimals(end.x + (guide2.x - end.x) * 1.5),
-    y: roundTo2Decimals(end.y + (guide2.y - end.y) * 1.5)
-  };
-  
-  return {
-    cp1,
-    cp2,
-    end: { x: roundTo2Decimals(end.x), y: roundTo2Decimals(end.y) }
-  };
+/**
+ * Exported function for direct polygon-to-bezier conversion.
+ * @param points - Polygon vertices
+ * @param sharpAngleThreshold - Angle in degrees above which corners are kept sharp (default 30)
+ * @returns SVG path string with C commands for curves and L for sharp edges
+ */
+export function polygonToBeziers(
+  points: Point[],
+  sharpAngleThreshold: number = 30
+): string {
+  const result = fitCurvesAndSanitize(points, sharpAngleThreshold);
+  return result.svgPath;
 }
