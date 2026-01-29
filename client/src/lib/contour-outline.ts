@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
+import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, type PathSegment } from "@/lib/clipper-path";
 import { offsetPolygon, simplifyPolygon } from "@/lib/minkowski-offset";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
@@ -1001,20 +1001,22 @@ function removeSpikesFromPath(points: Point[]): Point[] {
 }
 
 // Fix crossings that occur in offset contours at sharp corners
-// Uses Clipper.js for robust loop removal
+// Uses Clipper.js SimplifyPolygon for self-intersection removal only
+// Does NOT round corners or simplify for die cutting - preserves sharp corners
 function fixOffsetCrossings(points: Point[]): Point[] {
   if (points.length < 6) return points;
   
   console.log('[fixOffsetCrossings] BEFORE cleanup - checking for intersections');
   const beforeCheck = detectSelfIntersections(points);
   
-  // Use Clipper.js to remove all self-intersections and loops
-  let result = removeLoopsWithClipper(points);
+  // Use Clipper's SimplifyPolygon to remove self-intersections only
+  // This preserves sharp corners unlike removeLoopsWithClipper which rounds them
+  let result = cleanPathWithClipper(points);
   
   // Ensure consistent winding direction (clockwise for cutting)
   result = ensureClockwise(result);
   
-  // Additional cleanup pass with legacy method for any remaining issues
+  // Merge very close points (< 0.5px apart)
   result = mergeClosePathPoints(result);
   
   console.log('[fixOffsetCrossings] AFTER cleanup - checking for intersections');
