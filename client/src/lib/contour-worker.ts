@@ -381,14 +381,11 @@ function processContour(
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
   drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
-  // Calculate contour data for PDF export (path in inches)
-  // Use the effective 1x dimensions (not the 4x hi-res dimensions)
-  // bleedInches already declared at top of function
-  const widthInches = effectiveDilatedWidth / effectiveDPI + (bleedInches * 2);
-  const heightInches = effectiveDilatedHeight / effectiveDPI + (bleedInches * 2);
+  // Calculate contour data for PDF export
+  // Store raw pixel coordinates and let PDF export handle the conversion
+  // This ensures preview and PDF use the exact same path data
   
-  // Convert path to inches with proper coordinate transform for PDF
-  // Get actual path bounds from Clipper output
+  // Get actual path bounds
   const pathXs = smoothedPath.map(p => p.x);
   const pathYs = smoothedPath.map(p => p.y);
   const minPathX = Math.min(...pathXs);
@@ -398,44 +395,52 @@ function processContour(
   
   console.log('[Worker] Path bounds (pixels): X:', minPathX.toFixed(1), 'to', maxPathX.toFixed(1),
               'Y:', minPathY.toFixed(1), 'to', maxPathY.toFixed(1));
-  console.log('[Worker] totalOffsetPixels:', totalOffsetPixels, 'bleedPixels:', bleedPixels, 'DPI:', effectiveDPI);
+  console.log('[Worker] Canvas offset used:', offsetX.toFixed(1), offsetY.toFixed(1));
+  console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
   
-  // The path coordinates need to be shifted so the minimum is at bleedInches
-  // Then Y needs to be flipped for PDF coordinate system
-  const shiftX = bleedInches - (minPathX / effectiveDPI);
-  const shiftY = bleedInches - (minPathY / effectiveDPI);
+  // Calculate page dimensions based on actual path bounds
+  const pathWidthPixels = maxPathX - minPathX;
+  const pathHeightPixels = maxPathY - minPathY;
+  const pathWidthInches = pathWidthPixels / effectiveDPI;
+  const pathHeightInches = pathHeightPixels / effectiveDPI;
+  const pageWidthInches = pathWidthInches + (bleedInches * 2);
+  const pageHeightInches = pathHeightInches + (bleedInches * 2);
   
-  // Recalculate page dimensions based on actual path bounds
-  const pathWidthInches = (maxPathX - minPathX) / effectiveDPI;
-  const pathHeightInches = (maxPathY - minPathY) / effectiveDPI;
-  const actualWidthInches = pathWidthInches + (bleedInches * 2);
-  const actualHeightInches = pathHeightInches + (bleedInches * 2);
-  
+  // Convert path to inches for PDF, matching exactly how preview draws it
+  // Preview draws at: canvas(px + offsetX, py + offsetY) 
+  // For PDF, we map: contour left edge -> bleedInches from page left
+  //                  contour top edge -> bleedInches from page top (but Y-flipped)
   const pathInInches = smoothedPath.map(p => ({
-    x: (p.x / effectiveDPI) + shiftX,
-    y: actualHeightInches - ((p.y / effectiveDPI) + shiftY)
+    // X: shift so minPathX maps to bleedInches
+    x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
+    // Y: shift and flip (PDF Y=0 is at bottom)
+    y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
   }));
   
-  // Debug: Log converted path bounds
+  // Image offset in the PDF coordinate system
+  // The image inner edge in pixel space is at approximately (0, 0) of the original image
+  // After Clipper offset, this is at (minPathX + totalOffsetPixels, minPathY + totalOffsetPixels) approximately
+  // But more accurately, the original image occupies the center of the contour
+  // Image left edge in PDF = ((0 - minPathX) / DPI) + bleedInches (if original image started at x=0)
+  // But with Clipper, minPathX ≈ -totalOffsetPixels, so image left ≈ totalOffsetInches + bleedInches
+  const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
+  const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
+  
+  console.log('[Worker] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
+  console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
+  
+  // Debug: verify path bounds in inches
   const pathXsInches = pathInInches.map(p => p.x);
   const pathYsInches = pathInInches.map(p => p.y);
   console.log('[Worker] Path bounds (inches): X:', Math.min(...pathXsInches).toFixed(4), 'to', Math.max(...pathXsInches).toFixed(4),
               'Y:', Math.min(...pathYsInches).toFixed(4), 'to', Math.max(...pathYsInches).toFixed(4));
-  console.log('[Worker] Page size (inches):', actualWidthInches.toFixed(4), 'x', actualHeightInches.toFixed(4));
-  
-  // Image offset: distance from page edge to image
-  // The image inner edge should align with the contour inner edge
-  // Contour inner edge is approximately at minPath + totalOffset (the original image boundary)
-  const imageOffsetXCalc = ((minPathX + totalOffsetPixels) / effectiveDPI) + shiftX;
-  const imageOffsetYCalc = ((minPathY + totalOffsetPixels) / effectiveDPI) + shiftY;
-  console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
   
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
     contourData: {
       pathPoints: pathInInches,
-      widthInches: actualWidthInches,
-      heightInches: actualHeightInches,
+      widthInches: pageWidthInches,
+      heightInches: pageHeightInches,
       imageOffsetX: imageOffsetXCalc,
       imageOffsetY: imageOffsetYCalc,
       backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
