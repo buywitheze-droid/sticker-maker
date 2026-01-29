@@ -360,6 +360,9 @@ function processContour(
   // Apply text baseline flattening for horizontal text designs
   smoothedPath = flattenTextBaselines(smoothedPath, effectiveDPI);
   
+  // Apply smart point reduction to sharpen lines and smooth curves
+  smoothedPath = optimizePathPoints(smoothedPath, effectiveDPI);
+  
   postProgress(70);
   
   // Calculate effective dimensions for page size
@@ -2479,6 +2482,113 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   }));
   
   console.log('[Worker] Applied text baseline flattening with moving average smoothing (tilted text support)');
+  return result;
+}
+
+/**
+ * Smart point optimization that:
+ * 1. Removes redundant points on straight lines (sharper lines)
+ * 2. Preserves optimal point spacing on curves (smoother curves)
+ * Uses curvature analysis to decide which points to keep
+ */
+function optimizePathPoints(points: Point[], dpi: number): Point[] {
+  if (points.length < 20) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  
+  // Curvature threshold: points with curvature below this are on "straight" segments
+  // Points with curvature above this are on curves
+  const straightThreshold = 0.02; // Low curvature = straight line
+  
+  // Calculate curvature at each point
+  const curvatures: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y) || 0.001;
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y) || 0.001;
+    
+    // Normalize
+    const n1x = v1x / len1, n1y = v1y / len1;
+    const n2x = v2x / len2, n2y = v2y / len2;
+    
+    // Cross product magnitude = sin(angle) = curvature indicator
+    const cross = Math.abs(n1x * n2y - n1y * n2x);
+    curvatures.push(cross);
+  }
+  
+  // Mark points to keep
+  const keep = new Array(n).fill(false);
+  
+  // Always keep first point
+  keep[0] = true;
+  
+  let lastKeptIdx = 0;
+  
+  for (let i = 1; i < n; i++) {
+    const curvature = curvatures[i];
+    const distFromLastKept = Math.sqrt(
+      (points[i].x - points[lastKeptIdx].x) ** 2 + 
+      (points[i].y - points[lastKeptIdx].y) ** 2
+    );
+    
+    // Minimum distance between points (in pixels) - adaptive based on DPI
+    const minDistStraight = dpi * 0.03; // ~9 pixels at 300 DPI for straight lines
+    const minDistCurve = dpi * 0.008;   // ~2.4 pixels at 300 DPI for curves
+    
+    if (curvature > straightThreshold) {
+      // This is a curve point - keep it if far enough from last kept
+      if (distFromLastKept >= minDistCurve) {
+        keep[i] = true;
+        lastKeptIdx = i;
+      }
+    } else {
+      // This is a straight segment point - keep only if far enough
+      // Also check if the next high-curvature point is coming up
+      let nearCurve = false;
+      for (let j = i + 1; j < Math.min(i + 5, n); j++) {
+        if (curvatures[j] > straightThreshold * 2) {
+          nearCurve = true;
+          break;
+        }
+      }
+      
+      if (nearCurve && distFromLastKept >= minDistCurve) {
+        // Near a curve, use tighter spacing
+        keep[i] = true;
+        lastKeptIdx = i;
+      } else if (distFromLastKept >= minDistStraight) {
+        // On a straight segment, use wider spacing
+        keep[i] = true;
+        lastKeptIdx = i;
+      }
+    }
+  }
+  
+  // Collect kept points
+  for (let i = 0; i < n; i++) {
+    if (keep[i]) {
+      result.push(points[i]);
+    }
+  }
+  
+  // Ensure we didn't remove too many points
+  if (result.length < 10) {
+    return points; // Fallback if too aggressive
+  }
+  
+  const reduction = ((n - result.length) / n * 100).toFixed(1);
+  console.log('[Worker] Point optimization: reduced from', n, 'to', result.length, 'points (' + reduction + '% reduction)');
+  
   return result;
 }
 
