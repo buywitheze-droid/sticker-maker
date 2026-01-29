@@ -281,11 +281,18 @@ function processContour(
   
   postProgress(80);
   
+  console.log('[Worker] Boundary path traced:', boundaryPath.length, 'points');
+  
   // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
   let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
+  console.log('[Worker] After RDP:', smoothedPath.length, 'points');
+  
   // Prune short segments that create tiny jogs on flat edges
   smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
+  console.log('[Worker] After prune:', smoothedPath.length, 'points');
+  
   smoothedPath = fixOffsetCrossings(smoothedPath);
+  console.log('[Worker] After fix crossings:', smoothedPath.length, 'points');
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
