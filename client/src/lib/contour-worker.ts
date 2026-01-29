@@ -2246,41 +2246,79 @@ function smoothBridgeAreas(points: Point[]): Point[] {
 }
 
 /**
- * Detect if path looks like horizontal text and apply:
- * 1. Baseline flattening for top/bottom edges
+ * Detect if path looks like aligned text (horizontal OR tilted) and apply:
+ * 1. Baseline flattening for top/bottom edges along the principal axis
  * 2. Moving average smoothing to reduce bumpiness along the text outline
- * Only affects horizontal text designs, preserving other shapes
+ * Works for tilted text by detecting the principal axis of the shape
  */
 function flattenTextBaselines(points: Point[], dpi: number): Point[] {
   if (points.length < 50) return points;
   
-  // Get bounding box
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  // Calculate centroid
+  let cx = 0, cy = 0;
+  for (const p of points) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= points.length;
+  cy /= points.length;
+  
+  // Calculate covariance matrix for PCA to find principal axis
+  let cxx = 0, cyy = 0, cxy = 0;
+  for (const p of points) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    cxx += dx * dx;
+    cyy += dy * dy;
+    cxy += dx * dy;
+  }
+  cxx /= points.length;
+  cyy /= points.length;
+  cxy /= points.length;
+  
+  // Calculate principal axis angle using eigenvalue decomposition
+  // theta = 0.5 * atan2(2*cxy, cxx - cyy)
+  const theta = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+  
+  // Rotate all points to align principal axis with X
+  const rotated: Point[] = points.map(p => ({
+    x: (p.x - cx) * cosT + (p.y - cy) * sinT,
+    y: -(p.x - cx) * sinT + (p.y - cy) * cosT
+  }));
+  
+  // Get bounding box in rotated space
+  const rxs = rotated.map(p => p.x);
+  const rys = rotated.map(p => p.y);
+  const minX = Math.min(...rxs), maxX = Math.max(...rxs);
+  const minY = Math.min(...rys), maxY = Math.max(...rys);
   const width = maxX - minX;
   const height = maxY - minY;
   
-  // Only apply to horizontal text (width > 1.5x height)
-  if (width < height * 1.5) {
+  // Only apply to elongated shapes (width > 1.3x height after rotation)
+  // Lower threshold to catch more text-like shapes
+  if (width < height * 1.3) {
     return points;
   }
   
-  // Define baseline regions (top and bottom 10% of height)
+  console.log('[Worker] Text detection: principal axis angle', (theta * 180 / Math.PI).toFixed(1), 
+              'degrees, aspect ratio', (width/height).toFixed(2));
+  
+  // Define baseline regions in rotated space (top and bottom 10% of height)
   const baselineThickness = height * 0.10;
   const topRegionMax = minY + baselineThickness;
   const bottomRegionMin = maxY - baselineThickness;
   
-  // Find points in top and bottom regions
+  // Find points in top and bottom regions using ROTATED coordinates
   const topIndices = new Set<number>();
   const bottomIndices = new Set<number>();
   
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    if (p.y <= topRegionMax) {
+  for (let i = 0; i < rotated.length; i++) {
+    const rp = rotated[i];
+    if (rp.y <= topRegionMax) {
       topIndices.add(i);
-    } else if (p.y >= bottomRegionMin) {
+    } else if (rp.y >= bottomRegionMin) {
       bottomIndices.add(i);
     }
   }
@@ -2291,9 +2329,9 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
     return points;
   }
   
-  // Check if top/bottom regions are relatively flat (standard deviation check)
-  const topYValues = Array.from(topIndices).map(i => points[i].y);
-  const bottomYValues = Array.from(bottomIndices).map(i => points[i].y);
+  // Check if top/bottom regions are relatively flat in rotated space
+  const topYValues = Array.from(topIndices).map(i => rotated[i].y);
+  const bottomYValues = Array.from(bottomIndices).map(i => rotated[i].y);
   
   const topMean = topYValues.reduce((a, b) => a + b, 0) / topYValues.length;
   const bottomMean = bottomYValues.reduce((a, b) => a + b, 0) / bottomYValues.length;
@@ -2311,50 +2349,49 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
     return points;
   }
   
-  console.log('[Worker] Text baseline detection: width/height ratio', (width/height).toFixed(2), 
+  console.log('[Worker] Text baseline detection: angle', (theta * 180 / Math.PI).toFixed(1), 'deg,',
+              'ratio', (width/height).toFixed(2), 
               'top stddev', topStdDev.toFixed(1), 'bottom stddev', bottomStdDev.toFixed(1));
   
-  let result = [...points];
-  const n = result.length;
+  // Work in rotated space for smoothing
+  let resultRotated = [...rotated];
+  const n = resultRotated.length;
   
-  // Step 1: Apply moving average smoothing to baseline regions
-  // This reduces bumpiness without affecting character details
-  const windowSize = Math.max(3, Math.floor(n / 150)); // Adaptive window based on point count
+  // Step 1: Apply moving average smoothing to baseline regions (in rotated space)
+  const windowSize = Math.max(3, Math.floor(n / 150));
   
-  const smoothed = [...result];
+  const smoothedRotated = [...resultRotated];
   for (let i = 0; i < n; i++) {
     const inTopRegion = topIsFlat && topIndices.has(i);
     const inBottomRegion = bottomIsFlat && bottomIndices.has(i);
     
     if (inTopRegion || inBottomRegion) {
-      // Apply moving average to Y coordinate only (preserve X for horizontal continuity)
+      // Apply moving average to rotated Y coordinate
       let sumY = 0;
       let count = 0;
       
       for (let j = -windowSize; j <= windowSize; j++) {
         const idx = (i + j + n) % n;
-        // Only include neighbors that are also in the same baseline region
         const neighborInSameRegion = (inTopRegion && topIndices.has(idx)) || 
                                       (inBottomRegion && bottomIndices.has(idx));
         if (neighborInSameRegion) {
-          sumY += result[idx].y;
+          sumY += resultRotated[idx].y;
           count++;
         }
       }
       
       if (count > 1) {
         const avgY = sumY / count;
-        // Blend 50% toward average for smoother result
-        smoothed[i] = {
-          x: result[i].x,
-          y: result[i].y * 0.5 + avgY * 0.5
+        smoothedRotated[i] = {
+          x: resultRotated[i].x,
+          y: resultRotated[i].y * 0.5 + avgY * 0.5
         };
       }
     }
   }
-  result = smoothed;
+  resultRotated = smoothedRotated;
   
-  // Step 2: Apply baseline flattening - pull extreme edges toward mean
+  // Step 2: Apply baseline flattening in rotated space
   const blendFactor = 0.4;
   
   if (topIsFlat) {
@@ -2362,11 +2399,10 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
     const topIdxArray = Array.from(topIndices);
     for (let i = 0; i < topIdxArray.length; i++) {
       const idx = topIdxArray[i];
-      const currentY = result[idx].y;
-      // Flatten points close to the very top edge
+      const currentY = resultRotated[idx].y;
       if (currentY <= minY + baselineThickness * 0.4) {
-        result[idx] = {
-          x: result[idx].x,
+        resultRotated[idx] = {
+          x: resultRotated[idx].x,
           y: currentY + (targetTopY - currentY) * blendFactor
         };
       }
@@ -2378,18 +2414,23 @@ function flattenTextBaselines(points: Point[], dpi: number): Point[] {
     const bottomIdxArray = Array.from(bottomIndices);
     for (let i = 0; i < bottomIdxArray.length; i++) {
       const idx = bottomIdxArray[i];
-      const currentY = result[idx].y;
-      // Flatten points close to the very bottom edge
+      const currentY = resultRotated[idx].y;
       if (currentY >= maxY - baselineThickness * 0.4) {
-        result[idx] = {
-          x: result[idx].x,
+        resultRotated[idx] = {
+          x: resultRotated[idx].x,
           y: currentY + (targetBottomY - currentY) * blendFactor
         };
       }
     }
   }
   
-  console.log('[Worker] Applied text baseline flattening with moving average smoothing');
+  // Step 3: Rotate back to original coordinate space
+  const result: Point[] = resultRotated.map(rp => ({
+    x: rp.x * cosT - rp.y * sinT + cx,
+    y: rp.x * sinT + rp.y * cosT + cy
+  }));
+  
+  console.log('[Worker] Applied text baseline flattening with moving average smoothing (tilted text support)');
   return result;
 }
 
