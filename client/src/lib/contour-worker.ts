@@ -360,15 +360,18 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
-  // Straighten noisy lines before smoothing
-  // Detects nearly-collinear points caused by rough pixels and snaps them to straight lines
-  // 25° corner threshold preserves true turns, 1.5px max deviation for collinearity
-  smoothedPath = straightenNoisyLines(smoothedPath, 25, 1.5);
+  // Straighten noisy lines - aggressive pass to reduce anchor points on straight edges
+  // 40° corner threshold = only protect true corners (not noise)
+  // 5px max deviation = aggressively merge noisy pixels into straight lines
+  smoothedPath = straightenNoisyLines(smoothedPath, 40, 5);
   
-  // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
-  // Apply in BOTH preview and export modes so cached preview data matches PDF output
-  // 4 iterations for smooth curves, 80° threshold protects 90° corners
-  smoothedPath = smoothPolyChaikin(smoothedPath, 4, 80);
+  // Second straightening pass to catch any remaining noisy segments
+  smoothedPath = straightenNoisyLines(smoothedPath, 40, 3);
+  console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
+  
+  // Apply minimal Chaikin smoothing - just 2 iterations to soften any remaining jaggies
+  // High 85° threshold ensures corners stay sharp
+  smoothedPath = smoothPolyChaikin(smoothedPath, 2, 85);
   console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   
   postProgress(90);
