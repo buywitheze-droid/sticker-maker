@@ -389,6 +389,22 @@ export default function ControlsSection({
                   </SelectContent>
                 </Select>
               </div>
+              
+              <div>
+                <Label className="text-xs text-gray-500 font-medium">Corner Style</Label>
+                <Select
+                  value={strokeSettings.cornerMode || 'rounded'}
+                  onValueChange={(value: 'rounded' | 'sharp') => onStrokeChange({ cornerMode: value })}
+                >
+                  <SelectTrigger className="mt-2 bg-gray-50 border-gray-200 text-gray-900 text-sm rounded-lg">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rounded">Rounded (smooth curves)</SelectItem>
+                    <SelectItem value="sharp">Sharp (pointed corners)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Fill Color</Label>

@@ -17,6 +17,8 @@ export interface ImageInfo {
   originalPdfData?: ArrayBuffer;
 }
 
+export type ContourCornerMode = 'rounded' | 'sharp';
+
 export interface StrokeSettings {
   width: number;
   color: string;
@@ -26,6 +28,7 @@ export interface StrokeSettings {
   closeBigGaps: boolean;
   backgroundColor: string;
   useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
+  cornerMode: ContourCornerMode; // 'rounded' for smooth arcs, 'sharp' for miter corners
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

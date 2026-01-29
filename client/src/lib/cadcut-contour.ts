@@ -1,8 +1,12 @@
 import { StrokeSettings } from "@/components/image-editor";
+import { offsetPolygon, type CornerMode, type Point as MinkowskiPoint } from "./minkowski-offset";
+
+export type ContourCornerMode = CornerMode;
 
 export function createCadCutContour(
   image: HTMLImageElement,
-  strokeSettings: StrokeSettings
+  strokeSettings: StrokeSettings,
+  cornerMode: ContourCornerMode = 'rounded'
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -23,28 +27,33 @@ export function createCadCutContour(
     const mask = createAlphaMask(image);
     if (mask.length === 0) return canvas;
     
-    // Step 2: Dilate the mask by offset pixels (morphological dilation)
-    const dilatedMask = dilateMask(mask, image.width, image.height, offsetPixels);
-    const dilatedWidth = image.width + offsetPixels * 2;
-    const dilatedHeight = image.height + offsetPixels * 2;
-    
-    // Step 3: Find edge pixels of the dilated mask
-    const edgePixels = findEdgePixels(dilatedMask, dilatedWidth, dilatedHeight);
+    // Step 2: Find edge pixels of the original mask (no dilation yet)
+    const edgePixels = findEdgePixels(mask, image.width, image.height);
     
     if (edgePixels.length < 10) {
-      // Just draw the image centered if not enough edge pixels
       ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
-    // Step 4: Create ordered contour path from edge pixels
-    const contourPath = createOrderedContour(edgePixels, dilatedWidth, dilatedHeight);
+    // Step 3: Order edge pixels into a contour
+    const orderedContour = createOrderedContour(edgePixels, image.width, image.height);
     
-    // Step 5: Draw the contour outline (offset to account for canvas padding difference)
-    const offsetX = padding - offsetPixels;
-    const offsetY = padding - offsetPixels;
+    // Step 4: Apply Minkowski Sum offset for mathematically correct expansion
+    // Arc segments based on offset size for smooth curves
+    const arcSegments = Math.max(4, Math.min(16, Math.round(offsetPixels / 5)));
+    const offsetContour = offsetPolygon(orderedContour, offsetPixels, cornerMode, arcSegments);
     
-    drawContour(ctx, contourPath, strokeSettings.color || '#FFFFFF', offsetX, offsetY);
+    if (offsetContour.length < 3) {
+      ctx.drawImage(image, padding, padding);
+      return canvas;
+    }
+    
+    // Step 5: Draw the offset contour
+    // Offset coordinates to account for padding
+    const drawOffsetX = padding;
+    const drawOffsetY = padding;
+    
+    drawContour(ctx, offsetContour, strokeSettings.color || '#FFFFFF', drawOffsetX, drawOffsetY);
     
     // Step 6: Draw the original image on top, centered in the canvas
     ctx.drawImage(image, padding, padding);
@@ -56,6 +65,32 @@ export function createCadCutContour(
   }
   
   return canvas;
+}
+
+/**
+ * Get raw contour points using Minkowski offset (for PDF/vector export)
+ */
+export function getMinkowskiContourPoints(
+  image: HTMLImageElement,
+  offsetInches: number,
+  cornerMode: ContourCornerMode = 'rounded',
+  dpi: number = 300
+): MinkowskiPoint[] {
+  const offsetPixels = Math.round(offsetInches * dpi);
+  
+  // Create mask and find edges
+  const mask = createAlphaMask(image);
+  if (mask.length === 0) return [];
+  
+  const edgePixels = findEdgePixels(mask, image.width, image.height);
+  if (edgePixels.length < 10) return [];
+  
+  // Order into contour
+  const orderedContour = createOrderedContour(edgePixels, image.width, image.height);
+  
+  // Apply Minkowski offset
+  const arcSegments = Math.max(4, Math.min(16, Math.round(offsetPixels / 5)));
+  return offsetPolygon(orderedContour, offsetPixels, cornerMode, arcSegments);
 }
 
 // Performance threshold for high-detail image optimization
