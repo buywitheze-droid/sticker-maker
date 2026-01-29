@@ -332,14 +332,12 @@ function processContour(
   console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
   console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
   
-  // RDP simplifies diagonal lines by removing unnecessary intermediate points
-  // Higher tolerance = straighter diagonals with fewer jagged segments
-  // Use DPI-proportional tolerance: 0.005" keeps curves intact
-  // This scales correctly: at 150 DPI = 0.75px, at 300 DPI = 1.5px, at 600 DPI = 3px
-  const rdpToleranceInches = 0.005;
-  const rdpTolerance = rdpToleranceInches * effectiveDPI;
-  let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
-  console.log('[Worker] After RDP (tolerance', rdpTolerance.toFixed(2), 'px /', rdpToleranceInches, 'in):', smoothedPath.length, 'points');
+  // approxPolyDP: Simplify contour using Douglas-Peucker with perimeter-based epsilon
+  // epsilon = 0.001 * perimeter automatically scales with image size
+  // This removes stair-step aliasing while preserving overall shape
+  const epsilonFactor = 0.001; // "rope tension" - higher = more aggressive smoothing
+  let smoothedPath = approxPolyDP(boundaryPath, epsilonFactor);
+  console.log('[Worker] After approxPolyDP:', smoothedPath.length, 'points');
   
   // Prune short segments that create tiny jogs on flat edges
   smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
@@ -975,6 +973,40 @@ function traceBoundarySimple(mask: Uint8Array, width: number, height: number): P
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
   // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
   return traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Calculate the perimeter (arc length) of a closed polygon
+ */
+function calculatePerimeter(points: Point[]): number {
+  if (points.length < 2) return 0;
+  
+  let perimeter = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % points.length];
+    perimeter += Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+  }
+  return perimeter;
+}
+
+/**
+ * cv2.approxPolyDP equivalent - simplify contour using Douglas-Peucker
+ * with epsilon automatically scaled by perimeter
+ * 
+ * @param points - input polygon points
+ * @param epsilonFactor - multiplier for perimeter (default 0.001 = "rope tension")
+ * @returns simplified polygon
+ */
+function approxPolyDP(points: Point[], epsilonFactor: number = 0.001): Point[] {
+  if (points.length < 3) return points;
+  
+  const perimeter = calculatePerimeter(points);
+  const epsilon = epsilonFactor * perimeter;
+  
+  console.log('[Worker] approxPolyDP: perimeter =', perimeter.toFixed(2), 'px, epsilon =', epsilon.toFixed(3), 'px (factor:', epsilonFactor, ')');
+  
+  return rdpSimplifyPolygon(points, epsilon);
 }
 
 // Ramer-Douglas-Peucker algorithm for path simplification
