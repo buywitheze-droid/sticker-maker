@@ -353,17 +353,37 @@ function processContour(
   
   postProgress(80);
   
-  let smoothedPath = smoothPath(boundaryPath, 2);
-  smoothedPath = fixOffsetCrossings(smoothedPath);
+  // Check if debug mode wants raw contour (skip all processing)
+  const useRaw = debugSettings?.enabled && debugSettings.showRawContour;
   
-  const gapThresholdPixels = strokeSettings.closeBigGaps 
-    ? Math.round(0.42 * effectiveDPI) 
-    : strokeSettings.closeSmallGaps 
-      ? Math.round(0.15 * effectiveDPI) 
-      : 0;
+  let smoothedPath = boundaryPath;
   
-  if (gapThresholdPixels > 0) {
-    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+  if (!useRaw) {
+    // Apply Gaussian smoothing (if enabled or not in debug mode)
+    const applySmoothing = !debugSettings?.enabled || debugSettings.gaussianSmoothing;
+    if (applySmoothing) {
+      smoothedPath = smoothPath(smoothedPath, 2);
+    }
+    
+    // Apply path fixing/crossing detection (part of bezier/bridging)
+    const applyBridging = !debugSettings?.enabled || debugSettings.autoBridging;
+    if (applyBridging) {
+      smoothedPath = fixOffsetCrossings(smoothedPath);
+    }
+    
+    // Apply gap closing
+    const applyGapClosing = !debugSettings?.enabled || debugSettings.gapClosing;
+    if (applyGapClosing) {
+      const gapThresholdPixels = strokeSettings.closeBigGaps 
+        ? Math.round(0.42 * effectiveDPI) 
+        : strokeSettings.closeSmallGaps 
+          ? Math.round(0.15 * effectiveDPI) 
+          : 0;
+      
+      if (gapThresholdPixels > 0) {
+        smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+      }
+    }
   }
   
   postProgress(90);
