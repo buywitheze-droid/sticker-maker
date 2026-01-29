@@ -330,6 +330,12 @@ function processContour(
   smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
   console.log('[Worker] After prune:', smoothedPath.length, 'points');
   
+  // Remove collinear points - points that lie on a straight line between neighbors
+  // This cleans up staircases and makes rounded shapes smoother
+  // Sharp corners (>15° deviation) are preserved
+  smoothedPath = removeCollinearPoints(smoothedPath, 15);
+  console.log('[Worker] After collinear removal:', smoothedPath.length, 'points');
+  
   // CRITICAL: Sanitize path to fix self-intersections (bow-ties) that cause offset to fail
   // This must happen BEFORE any offset operations
   smoothedPath = sanitizePolygonForOffset(smoothedPath);
@@ -743,6 +749,53 @@ function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
   }
   
   return simplified;
+}
+
+// Remove collinear points - points that lie on a straight line between neighbors
+// This collapses A→B→C→D into A→D if they're all roughly collinear
+// Sharp corners (deviation > threshold) are preserved
+function removeCollinearPoints(points: Point[], deviationThresholdDegrees: number = 15): Point[] {
+  if (points.length < 4) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  const thresholdRad = deviationThresholdDegrees * Math.PI / 180;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = result.length > 0 ? result[result.length - 1] : points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    // Skip if segments are too short
+    if (len1 < 0.001 || len2 < 0.001) {
+      result.push(curr);
+      continue;
+    }
+    
+    // Calculate angle between vectors using cross product
+    // Cross product gives sin(angle), which is small for collinear points
+    const cross = v1x * v2y - v1y * v2x;
+    const dot = v1x * v2x + v1y * v2y;
+    const angle = Math.abs(Math.atan2(cross, dot));
+    
+    // If angle deviation is greater than threshold, keep the point (it's a corner)
+    // Otherwise, it's roughly collinear and can be removed
+    if (angle > thresholdRad) {
+      result.push(curr);
+    }
+    // else: point is collinear, skip it
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 // Prune short segments that create tiny "jogs" on flat edges
