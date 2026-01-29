@@ -283,6 +283,8 @@ function processContour(
   
   // Use RDP to straighten edges while preserving detail (tolerance 0.5px)
   let smoothedPath = rdpSimplifyPolygon(boundaryPath, 0.5);
+  // Prune short segments that create tiny jogs on flat edges
+  smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -631,6 +633,53 @@ function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
   }
   
   return simplified;
+}
+
+// Prune short segments that create tiny "jogs" on flat edges
+// Only removes segments if the angle change is shallow (preserves sharp corners)
+function pruneShortSegments(points: Point[], minLength: number = 4, maxAngleDegrees: number = 30): Point[] {
+  if (points.length < 4) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = result.length > 0 ? result[result.length - 1] : points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate segment length from prev to curr
+    const segmentLength = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+    
+    // If segment is short, check if we can skip this point
+    if (segmentLength < minLength && result.length > 0) {
+      // Vector from prev to curr
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      // Vector from curr to next
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+      
+      const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      
+      if (len1 > 0.001 && len2 > 0.001) {
+        // Angle at the current point (between incoming and outgoing vectors)
+        const dot = v1x * v2x + v1y * v2y;
+        const cosAngle = dot / (len1 * len2);
+        const angleDegrees = Math.acos(Math.max(-1, Math.min(1, cosAngle))) * 180 / Math.PI;
+        
+        // If the angle is shallow (close to 180 = straight line), skip this point
+        if (angleDegrees > (180 - maxAngleDegrees)) {
+          continue;
+        }
+      }
+    }
+    
+    result.push(curr);
+  }
+  
+  return result.length >= 3 ? result : points;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
