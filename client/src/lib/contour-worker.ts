@@ -279,11 +279,12 @@ function processContour(
   // =============================================================================
   
   // Step 1: Apply morphological closing to unite separate objects
-  // Dilate → Fill → creates a unified shape from all parts of the design
-  // Use autoBridging threshold (scaled to 4x hi-res) or minimum 0.02" bridge
-  const minBridgeInches = 0.02; // Always bridge objects within 0.02" of each other
+  // Dilate → Fill → then compensate with reduced Clipper offset
+  // Use a generous bridge to capture small letters/details near the main design
+  const minBridgeInches = 0.08; // Bridge objects within 0.08" (~2mm) of each other
   const bridgeInches = Math.max(autoBridgeInches, minBridgeInches);
   const bridgePixelsHiRes = Math.round(bridgeInches * effectiveDPI * SUPER_SAMPLE);
+  const bridgePixels1x = bridgeInches * effectiveDPI; // 1x scale for Clipper compensation
   
   console.log('[Worker] Applying morphological closing to unite objects, bridge radius:', bridgePixelsHiRes, 'px (hi-res)');
   
@@ -306,7 +307,6 @@ function processContour(
   
   // Downscale to 1x coordinates for vector processing
   // Account for the dilation offset: subtract bridgePixelsHiRes to get back to original image coordinates
-  const bridgePixels1x = bridgePixelsHiRes / SUPER_SAMPLE;
   let tightContour = originalContour.map(p => ({
     x: (p.x - bridgePixelsHiRes) / SUPER_SAMPLE,
     y: (p.y - bridgePixelsHiRes) / SUPER_SAMPLE
@@ -326,9 +326,12 @@ function processContour(
   postProgress(50);
   
   // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
-  // This guarantees: straight lines stay straight, corners are perfectly rounded
-  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
-  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
+  // Compensate for the dilation: the traced contour is already expanded by bridgePixels1x
+  // So we offset by (totalOffsetPixels - bridgePixels1x) to get the correct final size
+  // If user offset is smaller than bridge, we still need the bridge for unification (clamp to 0)
+  const effectiveOffset = Math.max(0, totalOffsetPixels - bridgePixels1x);
+  const vectorOffsetPath = clipperVectorOffset(tightContour, effectiveOffset);
+  console.log('[Worker] After Clipper vector offset (+', effectiveOffset.toFixed(1), 'px, compensated from', totalOffsetPixels, '):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
