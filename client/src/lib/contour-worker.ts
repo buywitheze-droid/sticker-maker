@@ -1,6 +1,88 @@
+// @ts-ignore - clipper-lib has no types
+import * as ClipperLib from 'clipper-lib';
+
 interface Point {
   x: number;
   y: number;
+}
+
+// Clipper scale factor for integer precision
+const CLIPPER_SCALE = 1000;
+
+// Simplify polygon using Clipper's CleanPolygon
+function simplifyPolygonClipper(polygon: Point[], tolerance: number = 1.0): Point[] {
+  if (polygon.length < 3) return polygon;
+  
+  try {
+    const clipperPath = polygon.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    
+    const simplified = ClipperLib.Clipper.CleanPolygon(clipperPath, tolerance * CLIPPER_SCALE);
+    
+    if (simplified && simplified.length >= 3) {
+      return simplified.map((p: any) => ({
+        x: p.X / CLIPPER_SCALE,
+        y: p.Y / CLIPPER_SCALE
+      }));
+    }
+    
+    return polygon;
+  } catch (error) {
+    return polygon;
+  }
+}
+
+// Offset polygon using Clipper with miter joins (sharp corners)
+function offsetPolygonClipper(
+  polygon: Point[],
+  offset: number,
+  miterLimit: number = 10.0
+): Point[] {
+  if (polygon.length < 3 || offset === 0) return polygon;
+  
+  try {
+    const clipperPath = polygon.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    
+    // Use miter join type for sharp corners, with high miter limit
+    const co = new ClipperLib.ClipperOffset(miterLimit, 0.25 * CLIPPER_SCALE);
+    co.AddPath(clipperPath, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
+    
+    const solution: any[][] = [];
+    co.Execute(solution, offset * CLIPPER_SCALE);
+    
+    // Find the largest path by area
+    if (solution.length > 0) {
+      let bestPath = solution[0];
+      let bestArea = 0;
+      
+      for (const path of solution) {
+        if (path.length >= 3) {
+          const area = Math.abs(ClipperLib.Clipper.Area(path));
+          if (area > bestArea) {
+            bestArea = area;
+            bestPath = path;
+          }
+        }
+      }
+      
+      if (bestPath && bestPath.length >= 3) {
+        return bestPath.map((p: any) => ({
+          x: p.X / CLIPPER_SCALE,
+          y: p.Y / CLIPPER_SCALE
+        }));
+      }
+    }
+    
+    return polygon;
+  } catch (error) {
+    console.error('[Worker] Clipper offset error:', error);
+    return polygon;
+  }
 }
 
 interface WorkerMessage {
@@ -257,32 +339,51 @@ function processContour(
   
   postProgress(40);
   
-  const baseDilatedMask = dilateSilhouette(autoBridgedMask, width, height, baseOffsetPixels);
-  const baseWidth = width + baseOffsetPixels * 2;
-  const baseHeight = height + baseOffsetPixels * 2;
+  // Fill holes in the auto-bridged mask before tracing
+  const filledMask = fillSilhouette(autoBridgedMask, width, height);
   
   postProgress(50);
   
-  const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
+  // Trace boundary of the filled mask (NOT dilated - we'll use Clipper for offset)
+  const rawBoundaryPath = traceBoundary(filledMask, width, height);
   
-  postProgress(60);
-  
-  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-  const dilatedWidth = baseWidth + userOffsetPixels * 2;
-  const dilatedHeight = baseHeight + userOffsetPixels * 2;
-  
-  postProgress(70);
-  
-  const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
-  
-  if (boundaryPath.length < 3) {
+  if (rawBoundaryPath.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
+  postProgress(60);
+  
+  // Step 1: Simplify the stair-stepped boundary BEFORE offset
+  // This removes the jagged pixel edges and creates proper diagonal lines
+  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.5);
+  
+  postProgress(70);
+  
+  // Step 2: Apply Clipper offset with miter joins for sharp corners
+  // Total offset = base offset + user offset
+  const rawOffsetPath = offsetPolygonClipper(simplifiedPath, totalOffsetPixels, 10.0);
+  
+  if (rawOffsetPath.length < 3) {
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+  }
+  
+  // Step 3: Translate offset path to match dilated coordinate space
+  // Clipper offset can produce negative coordinates, so we shift by totalOffsetPixels
+  // to align with the expected dilated mask coordinate system
+  const offsetPath = rawOffsetPath.map(p => ({
+    x: p.x + totalOffsetPixels,
+    y: p.y + totalOffsetPixels
+  }));
+  
   postProgress(80);
   
-  let smoothedPath = smoothPath(boundaryPath, 2);
+  // Light smoothing to clean up any remaining artifacts
+  let smoothedPath = smoothPath(offsetPath, 1);
   smoothedPath = fixOffsetCrossings(smoothedPath);
+  
+  // Calculate output dimensions based on Clipper offset
+  const dilatedWidth = width + totalOffsetPixels * 2;
+  const dilatedHeight = height + totalOffsetPixels * 2;
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
