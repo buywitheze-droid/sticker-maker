@@ -831,11 +831,20 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   }
   
   // Step 2: Force correct winding orientation (Counter-Clockwise for outer shapes)
-  // Clipper uses positive area = counter-clockwise convention
-  const orientation = ClipperLib.Clipper.Orientation(largestPath);
-  if (!orientation) {
+  // Use standard shoelace formula: sum of (x_i * y_{i+1} - x_{i+1} * y_i)
+  // Positive area = CCW, Negative area = CW (in standard Y-up coordinates)
+  // Canvas uses Y-down, so signs are inverted: Positive = CW, Negative = CCW
+  let signedArea = 0;
+  let wasReversed = false;
+  for (let i = 0; i < largestPath.length; i++) {
+    const j = (i + 1) % largestPath.length;
+    signedArea += largestPath[i].X * largestPath[j].Y - largestPath[j].X * largestPath[i].Y;
+  }
+  // In Y-down canvas coords: negative area = CCW (what we want), positive = CW (needs reverse)
+  if (signedArea > 0) {
     // Path is clockwise, reverse it to make counter-clockwise
-    ClipperLib.Clipper.ReversePath(largestPath);
+    largestPath.reverse();
+    wasReversed = true;
     console.log('[Worker] Reversed path to counter-clockwise orientation');
   }
   
@@ -853,7 +862,7 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
     return points;
   }
   
-  console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points, orientation:', orientation ? 'CCW' : 'CW->CCW');
+  console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points');
   
   return result;
 }
