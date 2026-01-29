@@ -3,8 +3,8 @@ import { offsetPolygon, simplifyPolygon, type CornerMode, type Point as Minkowsk
 
 export type ContourCornerMode = CornerMode;
 
-// Default miter limit for sharp corners (10.0 preserves spikes)
-const DEFAULT_MITER_LIMIT = 10.0;
+// Default miter limit for sharp corners (15.0 preserves sharp spikes)
+const DEFAULT_MITER_LIMIT = 15.0;
 
 export function createCadCutContour(
   image: HTMLImageElement,

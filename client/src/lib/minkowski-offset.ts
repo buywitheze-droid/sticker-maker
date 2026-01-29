@@ -25,13 +25,13 @@ const CLIPPER_SCALE = 1000;
  * @param polygon - Array of points forming a closed polygon
  * @param offset - Offset distance in pixels (positive = outward, negative = inward)
  * @param cornerMode - 'rounded' for arc corners, 'sharp' for miter corners
- * @param miterLimit - Maximum miter distance for sharp corners (default 10.0)
+ * @param miterLimit - Maximum miter distance for sharp corners (default 15.0)
  */
 export function offsetPolygon(
   polygon: Point[],
   offset: number,
   cornerMode: CornerMode = 'sharp',
-  miterLimit: number = 10.0
+  miterLimit: number = 15.0
 ): Point[] {
   if (polygon.length < 3 || offset === 0) return polygon;
   
@@ -97,7 +97,7 @@ export function offsetPolygons(
   polygons: Point[][],
   offset: number,
   cornerMode: CornerMode = 'sharp',
-  miterLimit: number = 10.0
+  miterLimit: number = 15.0
 ): Point[][] {
   if (polygons.length === 0 || offset === 0) return polygons;
   
