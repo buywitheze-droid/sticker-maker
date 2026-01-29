@@ -69,3 +69,15 @@ export interface SpotColorData {
   spotWhite: boolean;
   spotGloss: boolean;
 }
+
+export interface ContourDebugSettings {
+  enabled: boolean;
+  gaussianSmoothing: boolean;
+  cornerDetection: boolean;
+  bezierCurveFitting: boolean;
+  autoBridging: boolean;
+  gapClosing: boolean;
+  holeFilling: boolean;
+  pathSimplification: boolean;
+  showRawContour: boolean;
+}
