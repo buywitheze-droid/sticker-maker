@@ -354,8 +354,8 @@ function processContour(
   postProgress(60);
   
   // Step 1: Simplify the stair-stepped boundary BEFORE offset
-  // Use very low tolerance (0.05) to preserve sharp corners while removing pixel stair-steps
-  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.05);
+  // Tolerance 0.25 balances smoothing pixel stair-steps while preserving sharp corners
+  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.25);
   
   postProgress(70);
   
