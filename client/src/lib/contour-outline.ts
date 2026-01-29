@@ -805,7 +805,8 @@ function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
 // Chaikin's corner-cutting algorithm to smooth pixel-step jaggies in PDF export
 // Replaces each shallow-angle corner with two points for smooth curves
 // Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
-function smoothPolyChaikinForPDF(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
+// Threshold of 120° means only very sharp corners (like 60° tips) are preserved
+function smoothPolyChaikinForPDF(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 120): Point[] {
   if (points.length < 3) return points;
   
   let result = [...points];
@@ -838,10 +839,15 @@ function smoothPolyChaikinForPDF(points: Point[], iterations: number = 2, sharpA
         angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
       }
       
-      // angleDegrees: 180° = straight, 90° = right angle, 0° = hairpin
-      // We want to PRESERVE sharp corners (small angles like diamond tips < 60°)
-      // We want to SMOOTH gentle turns (large angles like 90° pixel steps)
-      if (angleDegrees < sharpAngleThreshold) {
+      // angleDegrees = angle BETWEEN the two edge vectors:
+      // 0° = straight line (vectors same direction)
+      // 90° = right angle turn
+      // 180° = U-turn (vectors opposite)
+      // For a sharp corner (30° tip), vectors are nearly opposite → angleDegrees ≈ 150°
+      // For a gentle curve, vectors align → angleDegrees ≈ 10-30°
+      // We PRESERVE sharp corners (large angleDegrees > 120°)
+      // We SMOOTH gentle turns and pixel steps (angleDegrees < 120°)
+      if (angleDegrees > sharpAngleThreshold) {
         // Sharp corner (like diamond tip) - keep original point
         newPoints.push(curr);
       } else {
@@ -2361,7 +2367,7 @@ export async function downloadContourPDF(
     
     // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
     // This removes staircase artifacts while preserving sharp corners (>60°)
-    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
+    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 120);
     console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths
@@ -2930,7 +2936,7 @@ export async function generateContourPDFBase64(
     
     // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
     // This removes staircase artifacts while preserving sharp corners (>60°)
-    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 60);
+    const smoothedPath = smoothPolyChaikinForPDF(pathPoints, 2, 120);
     console.log('[PDF] After Chaikin smooth:', pathPoints.length, '->', smoothedPath.length, 'pts');
     
     // Guard for empty/degenerate paths

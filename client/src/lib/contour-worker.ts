@@ -226,6 +226,16 @@ function processContour(
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
+  console.log('[Worker] Offset calculation:', {
+    effectiveDPI,
+    baseOffsetInches,
+    baseOffsetPixels,
+    userOffsetInches: strokeSettings.width,
+    userOffsetPixels,
+    totalOffsetPixels,
+    SUPER_SAMPLE
+  });
+  
   // Add bleed to padding so expanded background isn't clipped
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
@@ -292,7 +302,10 @@ function processContour(
   // Trace boundary at 4x resolution
   const hiResBoundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
+  console.log('[Worker] Boundary trace result:', hiResBoundaryPath.length, 'points');
+  
   if (hiResBoundaryPath.length < 3) {
+    console.log('[Worker] Boundary too short, returning fallback');
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
@@ -343,7 +356,7 @@ function processContour(
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
   // Only for export (not preview) - skip in preview mode for speed
   if (!previewMode) {
-    smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
+    smoothedPath = smoothPolyChaikin(smoothedPath, 2, 120);
     console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   }
   
@@ -795,7 +808,9 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
 // Chaikin's corner-cutting algorithm to smooth pixel-step jaggies
 // Replaces each shallow-angle corner with two points: Q (75% toward next) and R (25% toward next)
 // Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
-function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
+// Threshold of 120° means only very sharp corners (like 60° tips) are preserved
+// 90° right angles and gentler curves get smoothed
+function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 120): Point[] {
   if (points.length < 3) return points;
   
   let result = [...points];
@@ -828,10 +843,15 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
         angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
       }
       
-      // angleDegrees: 180° = straight, 90° = right angle, 0° = hairpin
-      // We want to PRESERVE sharp corners (small angles like diamond tips < 60°)
-      // We want to SMOOTH gentle turns (large angles like 90° pixel steps)
-      if (angleDegrees < sharpAngleThreshold) {
+      // angleDegrees = angle BETWEEN the two edge vectors:
+      // 0° = straight line (vectors same direction)
+      // 90° = right angle turn
+      // 180° = U-turn (vectors opposite)
+      // For a sharp corner (30° tip), vectors are nearly opposite → angleDegrees ≈ 150°
+      // For a gentle curve, vectors align → angleDegrees ≈ 10-30°
+      // We PRESERVE sharp corners (large angleDegrees > 120°)
+      // We SMOOTH gentle turns and pixel steps (angleDegrees < 120°)
+      if (angleDegrees > sharpAngleThreshold) {
         // Sharp corner (like diamond tip) - keep original point
         newPoints.push(curr);
       } else {
