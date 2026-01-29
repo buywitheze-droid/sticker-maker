@@ -1,7 +1,11 @@
+import ClipperLib from 'js-clipper';
+
 interface Point {
   x: number;
   y: number;
 }
+
+const CLIPPER_SCALE = 100000;
 
 interface WorkerMessage {
   type: 'process';
@@ -226,16 +230,6 @@ function processContour(
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
-  console.log('[Worker] Offset calculation:', {
-    effectiveDPI,
-    baseOffsetInches,
-    baseOffsetPixels,
-    userOffsetInches: strokeSettings.width,
-    userOffsetPixels,
-    totalOffsetPixels,
-    SUPER_SAMPLE
-  });
-  
   // Add bleed to padding so expanded background isn't clipped
   const bleedInches = 0.10;
   const bleedPixels = Math.round(bleedInches * effectiveDPI);
@@ -302,10 +296,7 @@ function processContour(
   // Trace boundary at 4x resolution
   const hiResBoundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
   
-  console.log('[Worker] Boundary trace result:', hiResBoundaryPath.length, 'points');
-  
   if (hiResBoundaryPath.length < 3) {
-    console.log('[Worker] Boundary too short, returning fallback');
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
@@ -356,7 +347,7 @@ function processContour(
   // Apply Chaikin's corner-cutting algorithm to smooth pixel steps
   // Only for export (not preview) - skip in preview mode for speed
   if (!previewMode) {
-    smoothedPath = smoothPolyChaikin(smoothedPath, 2, 120);
+    smoothedPath = smoothPolyChaikin(smoothedPath, 2, 60);
     console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   }
   
@@ -798,19 +789,76 @@ function pruneShortSegments(points: Point[], minLength: number = 4, maxAngleDegr
   return result.length >= 3 ? result : points;
 }
 
-// Sanitize polygon - simplified version for worker (no ClipperLib dependency)
-// Full sanitization with ClipperLib happens in PDF export
+// Sanitize polygon to fix self-intersections (bow-ties) before offset
+// Uses Clipper's SimplifyPolygon which performs a Boolean Union to untie crossings
+// Also ensures correct winding orientation (Counter-Clockwise for outer contours)
 function sanitizePolygonForOffset(points: Point[]): Point[] {
-  // Just return points as-is in worker - ClipperLib sanitization is in PDF export
-  return points;
+  if (points.length < 3) return points;
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  // Step 1: Use SimplifyPolygon to fix self-intersections
+  // This performs a Boolean Union operation which resolves all crossing edges
+  const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (!simplified || simplified.length === 0) {
+    console.log('[Worker] SimplifyPolygon returned empty, keeping original');
+    return points;
+  }
+  
+  // Find the largest polygon (by area) if there are multiple
+  let largestPath = simplified[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(simplified[0]));
+  
+  for (let i = 1; i < simplified.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(simplified[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = simplified[i];
+    }
+  }
+  
+  if (!largestPath || largestPath.length < 3) {
+    console.log('[Worker] No valid polygon after simplify, keeping original');
+    return points;
+  }
+  
+  // Step 2: Force correct winding orientation (Counter-Clockwise for outer shapes)
+  // Clipper uses positive area = counter-clockwise convention
+  const orientation = ClipperLib.Clipper.Orientation(largestPath);
+  if (!orientation) {
+    // Path is clockwise, reverse it to make counter-clockwise
+    ClipperLib.Clipper.ReversePath(largestPath);
+    console.log('[Worker] Reversed path to counter-clockwise orientation');
+  }
+  
+  // Step 3: Clean up any tiny artifacts
+  ClipperLib.Clipper.CleanPolygon(largestPath, CLIPPER_SCALE * 0.1);
+  
+  // Convert back to Point format
+  const result: Point[] = largestPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  if (result.length < 3) {
+    console.log('[Worker] Sanitized path too short, keeping original');
+    return points;
+  }
+  
+  console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points, orientation:', orientation ? 'CCW' : 'CW->CCW');
+  
+  return result;
 }
 
 // Chaikin's corner-cutting algorithm to smooth pixel-step jaggies
 // Replaces each shallow-angle corner with two points: Q (75% toward next) and R (25% toward next)
 // Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
-// Threshold of 120° means only very sharp corners (like 60° tips) are preserved
-// 90° right angles and gentler curves get smoothed
-function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 120): Point[] {
+function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
   if (points.length < 3) return points;
   
   let result = [...points];
@@ -833,9 +881,7 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
       const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
       const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
       
-      // Calculate the turning angle at this vertex
-      // angleDegrees = angle between the two edge vectors
-      // 180° = straight line (no turn), 90° = right angle turn, 0° = complete reversal
+      // Calculate angle between vectors (0° = same direction, 180° = opposite)
       let angleDegrees = 180; // default to straight line
       if (len1 > 0.0001 && len2 > 0.0001) {
         const dot = v1x * v2x + v1y * v2y;
@@ -843,19 +889,14 @@ function smoothPolyChaikin(points: Point[], iterations: number = 2, sharpAngleTh
         angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
       }
       
-      // angleDegrees = angle BETWEEN the two edge vectors:
-      // 0° = straight line (vectors same direction)
-      // 90° = right angle turn
-      // 180° = U-turn (vectors opposite)
-      // For a sharp corner (30° tip), vectors are nearly opposite → angleDegrees ≈ 150°
-      // For a gentle curve, vectors align → angleDegrees ≈ 10-30°
-      // We PRESERVE sharp corners (large angleDegrees > 120°)
-      // We SMOOTH gentle turns and pixel steps (angleDegrees < 120°)
-      if (angleDegrees > sharpAngleThreshold) {
-        // Sharp corner (like diamond tip) - keep original point
+      // Deviation from straight line (0° = straight, 180° = U-turn)
+      const deviation = 180 - angleDegrees;
+      
+      // If sharp corner (deviation > threshold), preserve the original point
+      if (deviation > sharpAngleThreshold) {
         newPoints.push(curr);
       } else {
-        // Gentle turn or pixel step - apply Chaikin corner cutting
+        // Apply Chaikin's corner cutting for shallow angles
         // Q = 0.75 * P_i + 0.25 * P_{i+1} (cut 25% from this point toward next)
         const qx = 0.75 * curr.x + 0.25 * next.x;
         const qy = 0.75 * curr.y + 0.25 * next.y;
