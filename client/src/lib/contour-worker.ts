@@ -1,7 +1,11 @@
+import ClipperLib from 'js-clipper';
+
 interface Point {
   x: number;
   y: number;
 }
+
+const CLIPPER_SCALE = 100000;
 
 interface WorkerMessage {
   type: 'process';
@@ -321,6 +325,11 @@ function processContour(
   // Prune short segments that create tiny jogs on flat edges
   smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
   console.log('[Worker] After prune:', smoothedPath.length, 'points');
+  
+  // CRITICAL: Sanitize path to fix self-intersections (bow-ties) that cause offset to fail
+  // This must happen BEFORE any offset operations
+  smoothedPath = sanitizePolygonForOffset(smoothedPath);
+  console.log('[Worker] After sanitize:', smoothedPath.length, 'points');
   
   smoothedPath = fixOffsetCrossings(smoothedPath);
   console.log('[Worker] After fix crossings:', smoothedPath.length, 'points');
@@ -771,6 +780,72 @@ function pruneShortSegments(points: Point[], minLength: number = 4, maxAngleDegr
   }
   
   return result.length >= 3 ? result : points;
+}
+
+// Sanitize polygon to fix self-intersections (bow-ties) before offset
+// Uses Clipper's SimplifyPolygon which performs a Boolean Union to untie crossings
+// Also ensures correct winding orientation (Counter-Clockwise for outer contours)
+function sanitizePolygonForOffset(points: Point[]): Point[] {
+  if (points.length < 3) return points;
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  // Step 1: Use SimplifyPolygon to fix self-intersections
+  // This performs a Boolean Union operation which resolves all crossing edges
+  const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (!simplified || simplified.length === 0) {
+    console.log('[Worker] SimplifyPolygon returned empty, keeping original');
+    return points;
+  }
+  
+  // Find the largest polygon (by area) if there are multiple
+  let largestPath = simplified[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(simplified[0]));
+  
+  for (let i = 1; i < simplified.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(simplified[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = simplified[i];
+    }
+  }
+  
+  if (!largestPath || largestPath.length < 3) {
+    console.log('[Worker] No valid polygon after simplify, keeping original');
+    return points;
+  }
+  
+  // Step 2: Force correct winding orientation (Counter-Clockwise for outer shapes)
+  // Clipper uses positive area = counter-clockwise convention
+  const orientation = ClipperLib.Clipper.Orientation(largestPath);
+  if (!orientation) {
+    // Path is clockwise, reverse it to make counter-clockwise
+    ClipperLib.Clipper.ReversePath(largestPath);
+    console.log('[Worker] Reversed path to counter-clockwise orientation');
+  }
+  
+  // Step 3: Clean up any tiny artifacts
+  ClipperLib.Clipper.CleanPolygon(largestPath, CLIPPER_SCALE * 0.1);
+  
+  // Convert back to Point format
+  const result: Point[] = largestPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  if (result.length < 3) {
+    console.log('[Worker] Sanitized path too short, keeping original');
+    return points;
+  }
+  
+  console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points, orientation:', orientation ? 'CCW' : 'CW->CCW');
+  
+  return result;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
