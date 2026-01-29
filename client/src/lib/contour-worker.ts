@@ -394,12 +394,14 @@ function processContour(
   }
   
   // Draw original image on top
-  // The image should be positioned where the contour's inner edge is
-  // Inner edge is at (previewMinX + totalOffsetPixels, previewMinY + totalOffsetPixels) in original coords
-  // After shifting by offset, this becomes:
-  const imageCanvasX = (previewMinX + totalOffsetPixels) + offsetX;
-  const imageCanvasY = (previewMinY + totalOffsetPixels) + offsetY;
+  // The image content starts at (0,0) in the original coordinate system
+  // After canvas offset, position is: 0 + offsetX = offsetX
+  // This places the image correctly relative to the contour
+  // Since the contour's inner edge should be approximately at the image boundary
+  const imageCanvasX = 0 + offsetX;
+  const imageCanvasY = 0 + offsetY;
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
+  console.log('[Worker] previewMin:', previewMinX.toFixed(1), previewMinY.toFixed(1), 'offset:', offsetX.toFixed(1), offsetY.toFixed(1));
   drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
   // Calculate contour data for PDF export
@@ -439,13 +441,15 @@ function processContour(
   }));
   
   // Image offset in the PDF coordinate system
-  // The image inner edge in pixel space is at approximately (0, 0) of the original image
-  // After Clipper offset, this is at (minPathX + totalOffsetPixels, minPathY + totalOffsetPixels) approximately
-  // But more accurately, the original image occupies the center of the contour
-  // Image left edge in PDF = ((0 - minPathX) / DPI) + bleedInches (if original image started at x=0)
-  // But with Clipper, minPathX ≈ -totalOffsetPixels, so image left ≈ totalOffsetInches + bleedInches
+  // The image content starts at (0, 0) in the original coordinate system
+  // In PDF coordinates, this maps to: ((-minPathX) / DPI) + bleedInches
+  // This is consistent with how the preview positions the image
   const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
   const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
+  
+  // Verify alignment: the contour minimum should be at bleedInches, image should be inside
+  console.log('[Worker] Alignment check: contourMin (px)=', minPathX.toFixed(1), minPathY.toFixed(1),
+              'imageOffset (in)=', imageOffsetXCalc.toFixed(4), imageOffsetYCalc.toFixed(4));
   
   console.log('[Worker] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
   console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
