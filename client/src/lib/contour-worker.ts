@@ -357,6 +357,9 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
+  // Apply text baseline flattening for horizontal text designs
+  smoothedPath = flattenTextBaselines(smoothedPath, effectiveDPI);
+  
   postProgress(70);
   
   // Calculate effective dimensions for page size
@@ -2239,6 +2242,111 @@ function smoothBridgeAreas(points: Point[]): Point[] {
     }
   }
   
+  return result;
+}
+
+/**
+ * Detect if path looks like horizontal text and gently flatten top/bottom baselines
+ * Only affects the extreme top/bottom edges, preserving character details
+ */
+function flattenTextBaselines(points: Point[], dpi: number): Point[] {
+  if (points.length < 50) return points;
+  
+  // Get bounding box
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const width = maxX - minX;
+  const height = maxY - minY;
+  
+  // Only apply to horizontal text (width > 1.5x height)
+  if (width < height * 1.5) {
+    return points;
+  }
+  
+  // Define baseline regions (top and bottom 8% of height)
+  const baselineThickness = height * 0.08;
+  const topRegionMax = minY + baselineThickness;
+  const bottomRegionMin = maxY - baselineThickness;
+  
+  // Find points in top and bottom regions
+  const topPoints: {idx: number, p: Point}[] = [];
+  const bottomPoints: {idx: number, p: Point}[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p.y <= topRegionMax) {
+      topPoints.push({idx: i, p});
+    } else if (p.y >= bottomRegionMin) {
+      bottomPoints.push({idx: i, p});
+    }
+  }
+  
+  // Need enough points in each region to be text-like
+  const minRegionPoints = Math.floor(points.length * 0.05);
+  if (topPoints.length < minRegionPoints || bottomPoints.length < minRegionPoints) {
+    return points;
+  }
+  
+  // Check if top/bottom regions are relatively flat (standard deviation check)
+  const topYValues = topPoints.map(tp => tp.p.y);
+  const bottomYValues = bottomPoints.map(bp => bp.p.y);
+  
+  const topMean = topYValues.reduce((a, b) => a + b, 0) / topYValues.length;
+  const bottomMean = bottomYValues.reduce((a, b) => a + b, 0) / bottomYValues.length;
+  
+  const topStdDev = Math.sqrt(topYValues.reduce((sum, y) => sum + (y - topMean) ** 2, 0) / topYValues.length);
+  const bottomStdDev = Math.sqrt(bottomYValues.reduce((sum, y) => sum + (y - bottomMean) ** 2, 0) / bottomYValues.length);
+  
+  // Threshold: if std dev is less than 3% of height, it's already fairly flat text
+  const flatnessThreshold = height * 0.03;
+  const topIsFlat = topStdDev < flatnessThreshold * 2;
+  const bottomIsFlat = bottomStdDev < flatnessThreshold * 2;
+  
+  if (!topIsFlat && !bottomIsFlat) {
+    // Not text-like enough
+    return points;
+  }
+  
+  console.log('[Worker] Text baseline detection: width/height ratio', (width/height).toFixed(2), 
+              'top stddev', topStdDev.toFixed(1), 'bottom stddev', bottomStdDev.toFixed(1));
+  
+  // Apply gentle flattening - pull points toward the mean baseline
+  // Use a soft blend factor (0.3 = 30% toward flat line)
+  const blendFactor = 0.3;
+  const result = [...points];
+  
+  if (topIsFlat) {
+    // Find the most common (mode) Y value in top region for the baseline
+    const targetTopY = topMean;
+    for (const tp of topPoints) {
+      const currentY = result[tp.idx].y;
+      // Only flatten points that are close to the edge (within baselineThickness/2)
+      if (currentY <= minY + baselineThickness / 2) {
+        result[tp.idx] = {
+          x: result[tp.idx].x,
+          y: currentY + (targetTopY - currentY) * blendFactor
+        };
+      }
+    }
+  }
+  
+  if (bottomIsFlat) {
+    const targetBottomY = bottomMean;
+    for (const bp of bottomPoints) {
+      const currentY = result[bp.idx].y;
+      // Only flatten points that are close to the edge (within baselineThickness/2)
+      if (currentY >= maxY - baselineThickness / 2) {
+        result[bp.idx] = {
+          x: result[bp.idx].x,
+          y: currentY + (targetBottomY - currentY) * blendFactor
+        };
+      }
+    }
+  }
+  
+  console.log('[Worker] Applied text baseline flattening');
   return result;
 }
 
