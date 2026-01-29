@@ -341,15 +341,17 @@ function processContour(
   
   postProgress(90);
   
-  // CRITICAL: With Clipper vector offset, the path coordinates extend to negative values
-  // The contour goes from approximately (-totalOffsetPixels, -totalOffsetPixels) to 
-  // (width+totalOffsetPixels, height+totalOffsetPixels)
-  // We need to shift by totalOffsetPixels to bring the left/top edge to (0,0),
-  // then add padding for the bleed margin
-  // Previous formula: offsetX = padding - totalOffsetPixels (assumed path starts at 0)
-  // New formula: offsetX = padding (path already extends to -totalOffsetPixels, adding padding puts it at positive coords)
-  const offsetX = padding;
-  const offsetY = padding;
+  // CRITICAL: With Clipper vector offset, the path coordinates may extend to negative values
+  // We need to shift the path so its minimum point is at the bleed margin (bleedPixels from canvas edge)
+  // First, find the actual minimum bounds of the path
+  const previewPathXs = smoothedPath.map(p => p.x);
+  const previewPathYs = smoothedPath.map(p => p.y);
+  const previewMinX = Math.min(...previewPathXs);
+  const previewMinY = Math.min(...previewPathYs);
+  
+  // Shift so the contour's left/top edge is at bleedPixels from canvas edge
+  const offsetX = bleedPixels - previewMinX;
+  const offsetY = bleedPixels - previewMinY;
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
@@ -371,7 +373,13 @@ function processContour(
   }
   
   // Draw original image on top
-  drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
+  // The image should be positioned where the contour's inner edge is
+  // Inner edge is at (previewMinX + totalOffsetPixels, previewMinY + totalOffsetPixels) in original coords
+  // After shifting by offset, this becomes:
+  const imageCanvasX = (previewMinX + totalOffsetPixels) + offsetX;
+  const imageCanvasY = (previewMinY + totalOffsetPixels) + offsetY;
+  console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
+  drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
   // Calculate contour data for PDF export (path in inches)
   // Use the effective 1x dimensions (not the 4x hi-res dimensions)
@@ -380,24 +388,32 @@ function processContour(
   const heightInches = effectiveDilatedHeight / effectiveDPI + (bleedInches * 2);
   
   // Convert path to inches with proper coordinate transform for PDF
-  // CRITICAL: After Clipper offset, the contour extends from approximately 
-  // (-totalOffsetPixels, -totalOffsetPixels) to (width+totalOffsetPixels, height+totalOffsetPixels)
-  // We need to shift by totalOffsetPixels to bring the origin back to (0,0)
-  // Then add bleedInches for the page margin
-  const totalOffsetInches = totalOffsetPixels / effectiveDPI;
-  
-  // Debug: Log actual path bounds from Clipper
+  // Get actual path bounds from Clipper output
   const pathXs = smoothedPath.map(p => p.x);
   const pathYs = smoothedPath.map(p => p.y);
-  console.log('[Worker] Path bounds (pixels): X:', Math.min(...pathXs).toFixed(1), 'to', Math.max(...pathXs).toFixed(1),
-              'Y:', Math.min(...pathYs).toFixed(1), 'to', Math.max(...pathYs).toFixed(1));
-  console.log('[Worker] Expected bounds: X:', -totalOffsetPixels, 'to', width + totalOffsetPixels,
-              'Y:', -totalOffsetPixels, 'to', height + totalOffsetPixels);
+  const minPathX = Math.min(...pathXs);
+  const minPathY = Math.min(...pathYs);
+  const maxPathX = Math.max(...pathXs);
+  const maxPathY = Math.max(...pathYs);
+  
+  console.log('[Worker] Path bounds (pixels): X:', minPathX.toFixed(1), 'to', maxPathX.toFixed(1),
+              'Y:', minPathY.toFixed(1), 'to', maxPathY.toFixed(1));
   console.log('[Worker] totalOffsetPixels:', totalOffsetPixels, 'bleedPixels:', bleedPixels, 'DPI:', effectiveDPI);
   
+  // The path coordinates need to be shifted so the minimum is at bleedInches
+  // Then Y needs to be flipped for PDF coordinate system
+  const shiftX = bleedInches - (minPathX / effectiveDPI);
+  const shiftY = bleedInches - (minPathY / effectiveDPI);
+  
+  // Recalculate page dimensions based on actual path bounds
+  const pathWidthInches = (maxPathX - minPathX) / effectiveDPI;
+  const pathHeightInches = (maxPathY - minPathY) / effectiveDPI;
+  const actualWidthInches = pathWidthInches + (bleedInches * 2);
+  const actualHeightInches = pathHeightInches + (bleedInches * 2);
+  
   const pathInInches = smoothedPath.map(p => ({
-    x: (p.x / effectiveDPI) + bleedInches + totalOffsetInches,
-    y: heightInches - ((p.y / effectiveDPI) + bleedInches + totalOffsetInches)
+    x: (p.x / effectiveDPI) + shiftX,
+    y: actualHeightInches - ((p.y / effectiveDPI) + shiftY)
   }));
   
   // Debug: Log converted path bounds
@@ -405,17 +421,23 @@ function processContour(
   const pathYsInches = pathInInches.map(p => p.y);
   console.log('[Worker] Path bounds (inches): X:', Math.min(...pathXsInches).toFixed(4), 'to', Math.max(...pathXsInches).toFixed(4),
               'Y:', Math.min(...pathYsInches).toFixed(4), 'to', Math.max(...pathYsInches).toFixed(4));
-  console.log('[Worker] Page size (inches):', widthInches.toFixed(4), 'x', heightInches.toFixed(4));
-  console.log('[Worker] Image offset (inches):', ((bleedPixels + totalOffsetPixels) / effectiveDPI).toFixed(4));
+  console.log('[Worker] Page size (inches):', actualWidthInches.toFixed(4), 'x', actualHeightInches.toFixed(4));
+  
+  // Image offset: distance from page edge to image
+  // The image inner edge should align with the contour inner edge
+  // Contour inner edge is approximately at minPath + totalOffset (the original image boundary)
+  const imageOffsetXCalc = ((minPathX + totalOffsetPixels) / effectiveDPI) + shiftX;
+  const imageOffsetYCalc = ((minPathY + totalOffsetPixels) / effectiveDPI) + shiftY;
+  console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
   
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
     contourData: {
       pathPoints: pathInInches,
-      widthInches,
-      heightInches,
-      imageOffsetX: (bleedPixels + totalOffsetPixels) / effectiveDPI,
-      imageOffsetY: (bleedPixels + totalOffsetPixels) / effectiveDPI,
+      widthInches: actualWidthInches,
+      heightInches: actualHeightInches,
+      imageOffsetX: imageOffsetXCalc,
+      imageOffsetY: imageOffsetYCalc,
       backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
       useEdgeBleed: useEdgeBleed
     }
