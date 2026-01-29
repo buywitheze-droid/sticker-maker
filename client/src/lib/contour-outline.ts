@@ -373,7 +373,9 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    let smoothedPath = smoothPath(boundaryPath, 2);
+    // Use RDP to straighten edges and reduce points (tolerance 1.5px)
+    // This "pulls the line tight" instead of creating waves like moving average
+    let smoothedPath = rdpSimplifyPolygon(boundaryPath, 1.5);
     
     // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
     smoothedPath = fixOffsetCrossings(smoothedPath);
@@ -697,27 +699,41 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return path;
 }
 
-function smoothPath(points: Point[], windowSize: number): Point[] {
-  // MATCHES WORKER EXACTLY - simple moving average smoothing
-  if (points.length < windowSize * 2 + 1) return points;
+// RDP for closed polygons - handles the wrap-around at endpoints
+// Uses existing douglasPeucker function for the actual simplification
+function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
+  if (points.length < 4) return points;
   
-  const result: Point[] = [];
-  const n = points.length;
+  // For closed polygons, we need to find a good split point
+  // Use the point furthest from the centroid as our starting point
+  const centroidX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+  const centroidY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
   
-  for (let i = 0; i < n; i++) {
-    let sumX = 0, sumY = 0;
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + n) % n;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
+  let maxDist = 0;
+  let splitIndex = 0;
+  for (let i = 0; i < points.length; i++) {
+    const dist = Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
+    if (dist > maxDist) {
+      maxDist = dist;
+      splitIndex = i;
     }
-    result.push({
-      x: sumX / (windowSize * 2 + 1),
-      y: sumY / (windowSize * 2 + 1)
-    });
   }
   
-  return result;
+  // Rotate array so split point is at start/end
+  const rotated = [...points.slice(splitIndex), ...points.slice(0, splitIndex)];
+  
+  // Add the first point at the end to close the loop
+  rotated.push({ ...rotated[0] });
+  
+  // Simplify the open path using Douglas-Peucker
+  const simplified = douglasPeucker(rotated, tolerance);
+  
+  // Remove the duplicate closing point
+  if (simplified.length > 1) {
+    simplified.pop();
+  }
+  
+  return simplified;
 }
 
 // Generate U-shaped merge path (for outward curves)
@@ -1638,9 +1654,10 @@ export function getContourPath(
     
     console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
     
-    // Light smoothing to reduce noise from pixel-level tracing
-    const smoothedBasePath = smoothPath(boundaryPath, 2);
-    console.log('[getContourPath] After smoothPath:', smoothedBasePath.length, 'points');
+    // Use RDP algorithm to straighten edges and reduce points (tolerance 1.5px)
+    // This "pulls the line tight" instead of creating waves like moving average
+    const smoothedBasePath = rdpSimplifyPolygon(boundaryPath, 1.5);
+    console.log('[getContourPath] After RDP simplify:', smoothedBasePath.length, 'points');
     
     // Apply TOTAL offset using Clipper (base + user offset combined)
     // This preserves sharp corners with miter joins (miterLimit = 15.0)
