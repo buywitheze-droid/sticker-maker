@@ -269,90 +269,55 @@ function processContour(
   
   postProgress(30);
   
-  // Scale all radii by 4x for hi-res processing
-  const hiResAutoBridgePixels = autoBridgePixels * SUPER_SAMPLE;
-  const hiResBaseOffsetPixels = baseOffsetPixels * SUPER_SAMPLE;
-  const hiResUserOffsetPixels = userOffsetPixels * SUPER_SAMPLE;
+  // =============================================================================
+  // VECTOR OFFSETTING APPROACH (PyClipper / Vatti clipping algorithm)
+  // =============================================================================
+  // 1. Trace the ORIGINAL tight contour from the raw image mask (no pixel dilation)
+  // 2. Convert to Clipper path format
+  // 3. Use ClipperOffset with JT_ROUND for perfect vector offsetting
+  // 4. Straight lines stay straight, corners are perfectly rounded
+  // =============================================================================
   
-  let autoBridgedMask = hiResMask;
-  if (hiResAutoBridgePixels > 0) {
-    const halfAutoBridge = Math.round(hiResAutoBridgePixels / 2);
-    const dilatedAuto = dilateSilhouette(hiResMask, hiResWidth, hiResHeight, halfAutoBridge);
-    const dilatedAutoWidth = hiResWidth + halfAutoBridge * 2;
-    const dilatedAutoHeight = hiResHeight + halfAutoBridge * 2;
-    const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
-    
-    autoBridgedMask = new Uint8Array(hiResWidth * hiResHeight);
-    for (let y = 0; y < hiResHeight; y++) {
-      for (let x = 0; x < hiResWidth; x++) {
-        autoBridgedMask[y * hiResWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
-      }
-    }
+  // Step 1: Trace original tight contour from hi-res mask (NO dilation yet)
+  // First fill any interior holes
+  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
+  const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+  
+  if (originalContour.length < 3) {
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   postProgress(40);
   
-  const baseDilatedMask = dilateSilhouette(autoBridgedMask, hiResWidth, hiResHeight, hiResBaseOffsetPixels);
-  const baseWidth = hiResWidth + hiResBaseOffsetPixels * 2;
-  const baseHeight = hiResHeight + hiResBaseOffsetPixels * 2;
-  
-  postProgress(50);
-  
-  const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
-  
-  postProgress(60);
-  
-  const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, hiResUserOffsetPixels);
-  const dilatedWidth = baseWidth + hiResUserOffsetPixels * 2;
-  const dilatedHeight = baseHeight + hiResUserOffsetPixels * 2;
-  
-  postProgress(70);
-  
-  // Trace boundary at 4x resolution
-  const hiResBoundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
-  
-  if (hiResBoundaryPath.length < 3) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-  }
-  
-  // CRITICAL: Downscale coordinates by dividing by 4 immediately after tracing
-  // This converts coarse pixel steps into high-precision floating-point coordinates
-  const boundaryPath = hiResBoundaryPath.map(p => ({
+  // Downscale to 1x coordinates for vector processing
+  let tightContour = originalContour.map(p => ({
     x: p.x / SUPER_SAMPLE,
     y: p.y / SUPER_SAMPLE
   }));
   
-  // Calculate the effective 1x dimensions for page size calculations
-  // (dilatedWidth and dilatedHeight are at 4x scale)
-  const effectiveDilatedWidth = dilatedWidth / SUPER_SAMPLE;
-  const effectiveDilatedHeight = dilatedHeight / SUPER_SAMPLE;
+  console.log('[Worker] Original tight contour:', tightContour.length, 'points');
   
-  postProgress(80);
+  // Step 2: Simplify the tight contour to remove pixel stair-steps
+  // Use moderate epsilon to get clean base contour
+  const tightEpsilon = 0.001;
+  tightContour = approxPolyDP(tightContour, tightEpsilon);
+  console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
   
-  console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
-  console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
+  // Sanitize to fix any self-intersections
+  tightContour = sanitizePolygonForOffset(tightContour);
   
-  // MORPHOLOGICAL DILATION APPROACH:
-  // The contour is traced from the dilated pixel mask, which already maintains
-  // a perfect constant distance from the artwork. We use a very low epsilon
-  // approxPolyDP to remove stair-step aliasing while preserving curves.
+  postProgress(50);
   
-  // approxPolyDP: Very low epsilon to preserve curves on gentle turns
-  // epsilon = 0.0005 * perimeter removes jagged steps but doesn't cut into curves
-  const epsilonFactor = 0.0005; // Very low "rope tension" to preserve gentle curves
-  let smoothedPath = approxPolyDP(boundaryPath, epsilonFactor);
-  console.log('[Worker] After approxPolyDP (epsilon:', epsilonFactor, '):', smoothedPath.length, 'points');
+  // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
+  // This guarantees: straight lines stay straight, corners are perfectly rounded
+  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
+  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
   
-  // Light cleanup: prune only very short segments with shallow angles
-  // Use gentler settings to avoid cutting curves
-  smoothedPath = pruneShortSegments(smoothedPath, 2, 15);
-  console.log('[Worker] After light prune:', smoothedPath.length, 'points');
+  postProgress(60);
   
-  // Sanitize to fix any self-intersections (required for valid polygons)
-  smoothedPath = sanitizePolygonForOffset(smoothedPath);
-  console.log('[Worker] After sanitize:', smoothedPath.length, 'points');
+  // Step 4: Gap closing (if enabled) - uses auto-bridging
+  let smoothedPath = vectorOffsetPath;
   
-  // Gap closing (if enabled)
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
     : strokeSettings.closeSmallGaps 
@@ -363,14 +328,16 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
-  // REMOVED: Vector-based corner rounding (roundCorners) which was cutting corners on curves
-  // The morphological dilation already provides a perfect constant distance.
-  // We only do minimal Chaikin smoothing to clean up remaining stair-steps.
+  postProgress(70);
   
-  // Minimal Chaikin smoothing - 1 iteration with high corner threshold
-  // This smooths jagged pixel edges while preserving sharp corners
-  smoothedPath = smoothPolyChaikin(smoothedPath, 1, 120);
-  console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
+  // Calculate effective dimensions for page size
+  // The offset contour extends beyond original by totalOffsetPixels on each side
+  const effectiveDilatedWidth = width + totalOffsetPixels * 2;
+  const effectiveDilatedHeight = height + totalOffsetPixels * 2;
+  
+  console.log('[Worker] Final contour:', smoothedPath.length, 'points');
+  
+  postProgress(80);
   
   postProgress(90);
   
@@ -961,6 +928,77 @@ function traceBoundarySimple(mask: Uint8Array, width: number, height: number): P
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
   // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
   return traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Apply pure vector offset using Clipper's ClipperOffset with JT_ROUND
+ * This is the PyClipper equivalent using Vatti clipping algorithm.
+ * 
+ * Guarantees:
+ * - Straight lines stay perfectly straight
+ * - Corners are perfectly rounded (arc segments)
+ * - Zero pixel aliasing (pure vector math)
+ * 
+ * @param points - input polygon points (tight contour from image)
+ * @param offsetPixels - offset distance in pixels (positive = expand outward)
+ * @returns offset polygon with rounded corners
+ */
+function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
+  if (points.length < 3 || offsetPixels <= 0) return points;
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  const scaledOffset = offsetPixels * CLIPPER_SCALE;
+  
+  // Create ClipperOffset object
+  const co = new ClipperLib.ClipperOffset();
+  
+  // Set arc tolerance for smooth round corners
+  // Lower value = smoother curves (more points), higher = more angular
+  // 0.25px tolerance gives smooth arcs without excessive points
+  co.ArcTolerance = CLIPPER_SCALE * 0.25;
+  
+  // MiterLimit only applies to JT_MITER, but set a reasonable default
+  co.MiterLimit = 2.0;
+  
+  // Add path with JT_ROUND for perfectly rounded corners
+  // ET_CLOSEDPOLYGON for closed contour
+  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  
+  // Execute the offset
+  const offsetPaths: Array<Array<{X: number; Y: number}>> = [];
+  co.Execute(offsetPaths, scaledOffset);
+  
+  if (offsetPaths.length === 0 || offsetPaths[0].length < 3) {
+    console.log('[Worker] clipperVectorOffset: offset failed, returning original');
+    return points;
+  }
+  
+  // Find the largest polygon if multiple were created
+  let resultPath = offsetPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(offsetPaths[0]));
+  
+  for (let i = 1; i < offsetPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(offsetPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = offsetPaths[i];
+    }
+  }
+  
+  // Convert back to Point format
+  const result = resultPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] clipperVectorOffset: input', points.length, 'pts, output', result.length, 'pts');
+  
+  return result;
 }
 
 /**
