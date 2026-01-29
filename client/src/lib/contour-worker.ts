@@ -332,25 +332,27 @@ function processContour(
   console.log('[Worker] Hi-res boundary traced:', hiResBoundaryPath.length, 'points at', SUPER_SAMPLE, 'x');
   console.log('[Worker] Downscaled to:', boundaryPath.length, 'high-precision points');
   
-  // approxPolyDP: Simplify contour using Douglas-Peucker with perimeter-based epsilon
-  // epsilon = 0.0008 * perimeter automatically scales with image size
-  // This removes stair-step aliasing while preserving overall shape
-  const epsilonFactor = 0.0009; // "rope tension" - higher = straighter/sharper lines
+  // MORPHOLOGICAL DILATION APPROACH:
+  // The contour is traced from the dilated pixel mask, which already maintains
+  // a perfect constant distance from the artwork. We use a very low epsilon
+  // approxPolyDP to remove stair-step aliasing while preserving curves.
+  
+  // approxPolyDP: Very low epsilon to preserve curves on gentle turns
+  // epsilon = 0.0005 * perimeter removes jagged steps but doesn't cut into curves
+  const epsilonFactor = 0.0005; // Very low "rope tension" to preserve gentle curves
   let smoothedPath = approxPolyDP(boundaryPath, epsilonFactor);
-  console.log('[Worker] After approxPolyDP:', smoothedPath.length, 'points');
+  console.log('[Worker] After approxPolyDP (epsilon:', epsilonFactor, '):', smoothedPath.length, 'points');
   
-  // Prune short segments that create tiny jogs on flat edges
-  smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
-  console.log('[Worker] After prune:', smoothedPath.length, 'points');
+  // Light cleanup: prune only very short segments with shallow angles
+  // Use gentler settings to avoid cutting curves
+  smoothedPath = pruneShortSegments(smoothedPath, 2, 15);
+  console.log('[Worker] After light prune:', smoothedPath.length, 'points');
   
-  // CRITICAL: Sanitize path to fix self-intersections (bow-ties) that cause offset to fail
-  // This must happen BEFORE any offset operations
+  // Sanitize to fix any self-intersections (required for valid polygons)
   smoothedPath = sanitizePolygonForOffset(smoothedPath);
   console.log('[Worker] After sanitize:', smoothedPath.length, 'points');
   
-  smoothedPath = fixOffsetCrossings(smoothedPath);
-  console.log('[Worker] After fix crossings:', smoothedPath.length, 'points');
-  
+  // Gap closing (if enabled)
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
     : strokeSettings.closeSmallGaps 
@@ -361,31 +363,14 @@ function processContour(
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
-  // Straighten noisy lines - DPI-proportional tolerance
-  // Scale deviation tolerance based on contour size to avoid over-simplification on small offsets
-  // At 300 DPI with large offset (>20px): use 3-4px tolerance (aggressive)
-  // At lower DPI or small offset: use 1.5-2px tolerance (gentle)
-  const baseDeviation = 0.01 * effectiveDPI; // 0.01" = 3px at 300 DPI, 1.5px at 150 DPI
-  const offsetScale = Math.min(1, totalOffsetPixels / 20); // Scale 0-1 based on offset size
-  const maxDeviation = Math.max(1.5, baseDeviation * (0.5 + 0.5 * offsetScale)); // Range: 1.5px to baseDeviation
+  // REMOVED: Vector-based corner rounding (roundCorners) which was cutting corners on curves
+  // The morphological dilation already provides a perfect constant distance.
+  // We only do minimal Chaikin smoothing to clean up remaining stair-steps.
   
-  console.log('[Worker] Straightening with maxDeviation:', maxDeviation.toFixed(2), 'px (offset:', totalOffsetPixels, 'px, DPI:', effectiveDPI, ')');
-  
-  // First pass: aggressive straightening with DPI-scaled tolerance
-  // 25° corner threshold = preserve corners sensitively (any angle >25° is a corner)
-  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation);
-  
-  // Second pass: gentler pass to catch remaining noise on lines
-  smoothedPath = straightenNoisyLines(smoothedPath, 25, maxDeviation * 0.5);
-  console.log('[Worker] After line straightening:', smoothedPath.length, 'points');
-  
-  // Round sharp corners using Clipper's JT_ROUND buffer-and-shrink technique
-  // This also smooths out rough/jagged edges on straight lines
-  // Scale radius with DPI for consistent physical rounding
-  const cornerRadiusInches = 0.05; // 0.05" corner radius (increased to smooth rough lines)
-  const cornerRadiusPixels = cornerRadiusInches * effectiveDPI;
-  smoothedPath = roundCorners(smoothedPath, cornerRadiusPixels);
-  console.log('[Worker] After corner rounding:', smoothedPath.length, 'points');
+  // Minimal Chaikin smoothing - 1 iteration with high corner threshold
+  // This smooths jagged pixel edges while preserving sharp corners
+  smoothedPath = smoothPolyChaikin(smoothedPath, 1, 120);
+  console.log('[Worker] After Chaikin smooth:', smoothedPath.length, 'points');
   
   postProgress(90);
   
