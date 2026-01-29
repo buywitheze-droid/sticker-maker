@@ -1014,6 +1014,41 @@ export default function ControlsSection({
 
               {contourDebugSettings.enabled && (
                 <div className="space-y-2">
+                  {/* Alpha Tracing Method */}
+                  <div className="p-2 bg-white rounded-lg border border-blue-200">
+                    <Label className="text-xs font-medium text-blue-700 uppercase tracking-wide block mb-2">
+                      Alpha Tracing Method
+                    </Label>
+                    <Select
+                      value={contourDebugSettings.alphaTracingMethod}
+                      onValueChange={(value) => onContourDebugChange({ alphaTracingMethod: value as 'marching-squares' | 'moore-neighbor' | 'contour-following' })}
+                    >
+                      <SelectTrigger className="w-full h-8 text-xs bg-white border-blue-200">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="marching-squares">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Marching Squares</span>
+                            <span className="text-[10px] text-gray-400">Smooth edges, industry standard</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="moore-neighbor">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Moore-Neighbor</span>
+                            <span className="text-[10px] text-gray-400">Fast, simple boundary tracing</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="contour-following">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Contour Following</span>
+                            <span className="text-[10px] text-gray-400">Good for complex shapes</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   {/* Show Raw Contour */}
                   <div className="flex items-center gap-3 p-2 bg-white/70 rounded-lg">
                     <Checkbox

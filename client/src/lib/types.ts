@@ -70,8 +70,11 @@ export interface SpotColorData {
   spotGloss: boolean;
 }
 
+export type AlphaTracingMethod = 'marching-squares' | 'moore-neighbor' | 'contour-following';
+
 export interface ContourDebugSettings {
   enabled: boolean;
+  alphaTracingMethod: AlphaTracingMethod;
   gaussianSmoothing: boolean;
   cornerDetection: boolean;
   bezierCurveFitting: boolean;

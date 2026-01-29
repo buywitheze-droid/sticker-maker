@@ -64,6 +64,7 @@ export default function ImageEditor() {
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
   const [contourDebugSettings, setContourDebugSettings] = useState<ContourDebugSettings>({
     enabled: false,
+    alphaTracingMethod: 'marching-squares',
     gaussianSmoothing: true,
     cornerDetection: true,
     bezierCurveFitting: true,

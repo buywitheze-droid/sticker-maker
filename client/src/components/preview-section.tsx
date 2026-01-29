@@ -269,7 +269,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
       const debugKey = contourDebugSettings?.enabled 
-        ? `-dbg-${contourDebugSettings.gaussianSmoothing}-${contourDebugSettings.cornerDetection}-${contourDebugSettings.bezierCurveFitting}-${contourDebugSettings.autoBridging}-${contourDebugSettings.gapClosing}-${contourDebugSettings.holeFilling}-${contourDebugSettings.pathSimplification}-${contourDebugSettings.showRawContour}`
+        ? `-dbg-${contourDebugSettings.alphaTracingMethod}-${contourDebugSettings.gaussianSmoothing}-${contourDebugSettings.cornerDetection}-${contourDebugSettings.bezierCurveFitting}-${contourDebugSettings.autoBridging}-${contourDebugSettings.gapClosing}-${contourDebugSettings.holeFilling}-${contourDebugSettings.pathSimplification}-${contourDebugSettings.showRawContour}`
         : '';
       return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.closeSmallGaps}-${strokeSettings.closeBigGaps}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${resizeSettings.widthInches}-${resizeSettings.heightInches}${debugKey}`;
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.closeSmallGaps, strokeSettings.closeBigGaps, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, resizeSettings.widthInches, resizeSettings.heightInches, contourDebugSettings]);
@@ -1146,6 +1146,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <div className="absolute top-2 left-2 z-30 bg-purple-900/90 text-white text-[10px] px-2 py-1 rounded-md font-mono max-w-[160px]">
                     <div className="font-semibold text-purple-200 mb-0.5">DEBUG MODE</div>
                     <div className="space-y-0.5 text-purple-100">
+                      <div className="text-blue-300 font-semibold border-b border-blue-400/30 pb-0.5 mb-0.5">
+                        {contourDebugSettings.alphaTracingMethod === 'marching-squares' && 'Marching Squares'}
+                        {contourDebugSettings.alphaTracingMethod === 'moore-neighbor' && 'Moore-Neighbor'}
+                        {contourDebugSettings.alphaTracingMethod === 'contour-following' && 'Contour Following'}
+                      </div>
                       <div className={contourDebugSettings.gaussianSmoothing ? '' : 'line-through opacity-50'}>Smoothing</div>
                       <div className={contourDebugSettings.cornerDetection ? '' : 'line-through opacity-50'}>Corners</div>
                       <div className={contourDebugSettings.bezierCurveFitting ? '' : 'line-through opacity-50'}>Bezier</div>
