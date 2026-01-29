@@ -354,8 +354,8 @@ function processContour(
   postProgress(60);
   
   // Step 1: Simplify the stair-stepped boundary BEFORE offset
-  // This removes the jagged pixel edges and creates proper diagonal lines
-  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.5);
+  // Use very low tolerance (0.05) to preserve sharp corners while removing pixel stair-steps
+  const simplifiedPath = simplifyPolygonClipper(rawBoundaryPath, 0.05);
   
   postProgress(70);
   
