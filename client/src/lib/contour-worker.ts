@@ -245,8 +245,15 @@ function processContour(
   const hiResHeight = height * SUPER_SAMPLE;
   const hiResAlpha = upscaleAlphaChannel(data, width, height, SUPER_SAMPLE);
   
+  // Apply box blur to alpha channel to smooth out anti-aliasing artifacts
+  // This makes straight edges with slight transparency variations appear cleaner
+  // Radius of 2px at super-sampled resolution (= 0.5px at original resolution)
+  const blurRadius = 2;
+  const smoothedAlpha = boxBlurAlpha(hiResAlpha, hiResWidth, hiResHeight, blurRadius);
+  console.log('[Worker] Applied alpha blur radius:', blurRadius, 'px');
+  
   // Create silhouette mask at 4x resolution
-  const hiResMask = createSilhouetteMaskFromAlpha(hiResAlpha, hiResWidth, hiResHeight, strokeSettings.alphaThreshold);
+  const hiResMask = createSilhouetteMaskFromAlpha(smoothedAlpha, hiResWidth, hiResHeight, strokeSettings.alphaThreshold);
   
   if (hiResMask.length === 0) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
@@ -500,6 +507,52 @@ function upscaleAlphaChannel(data: Uint8ClampedArray, width: number, height: num
       const alpha = top * (1 - yWeight) + bottom * yWeight;
       
       result[y * newWidth + x] = Math.round(alpha);
+    }
+  }
+  
+  return result;
+}
+
+// Separable box blur on alpha channel (horizontal then vertical pass)
+// Much faster O(1) per pixel instead of O(r^2)
+// This helps straight edges with slight transparency variations appear cleaner
+function boxBlurAlpha(alpha: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  if (radius <= 0) return alpha;
+  
+  const temp = new Uint8Array(alpha.length);
+  const result = new Uint8Array(alpha.length);
+  
+  // Horizontal pass
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      let count = 0;
+      const left = Math.max(0, x - radius);
+      const right = Math.min(width - 1, x + radius);
+      
+      for (let i = left; i <= right; i++) {
+        sum += alpha[rowOffset + i];
+        count++;
+      }
+      temp[rowOffset + x] = Math.round(sum / count);
+    }
+  }
+  
+  // Vertical pass
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      let sum = 0;
+      let count = 0;
+      const top = Math.max(0, y - radius);
+      const bottom = Math.min(height - 1, y + radius);
+      
+      for (let j = top; j <= bottom; j++) {
+        sum += temp[j * width + x];
+        count++;
+      }
+      result[y * width + x] = Math.round(sum / count);
     }
   }
   
