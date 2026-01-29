@@ -1637,15 +1637,14 @@ export function getContourPath(
     console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
     
     // Light smoothing to reduce noise from pixel-level tracing
-    let smoothedBasePath = smoothPath(boundaryPath, 2);
-    
-    // Pre-process with CleanPolygon before offset (removes near-collinear points)
-    const cleanedPath = simplifyPolygon(smoothedBasePath, 0.6);
-    console.log('[getContourPath] After CleanPolygon:', cleanedPath.length, 'points');
+    const smoothedBasePath = smoothPath(boundaryPath, 2);
+    console.log('[getContourPath] After smoothPath:', smoothedBasePath.length, 'points');
     
     // Apply TOTAL offset using Clipper (base + user offset combined)
     // This preserves sharp corners with miter joins (miterLimit = 15.0)
-    const offsetPath = offsetPolygon(cleanedPath, totalOffsetPixels, 'sharp', 15.0);
+    // NOTE: No pre-simplification - Clipper handles full paths efficiently and
+    // aggressive simplification destroys shape accuracy
+    const offsetPath = offsetPolygon(smoothedBasePath, totalOffsetPixels, 'sharp', 15.0);
     
     console.log('[getContourPath] After Clipper offset (total:', totalOffsetPixels, 'px):', offsetPath.length, 'points');
     
