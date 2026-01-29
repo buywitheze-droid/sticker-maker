@@ -281,7 +281,8 @@ function processContour(
   
   postProgress(80);
   
-  let smoothedPath = smoothPath(boundaryPath, 2);
+  // Use RDP to straighten edges (tolerance 1.5px) - matches PDF export
+  let smoothedPath = rdpSimplifyPolygon(boundaryPath, 1.5);
   smoothedPath = fixOffsetCrossings(smoothedPath);
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
@@ -553,26 +554,83 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return path;
 }
 
-function smoothPath(points: Point[], windowSize: number): Point[] {
-  if (points.length < windowSize * 2 + 1) return points;
+// Ramer-Douglas-Peucker algorithm for path simplification
+// "Pulls the line tight" instead of creating waves like moving average
+function douglasPeucker(points: Point[], epsilon: number): Point[] {
+  if (points.length < 3) return points;
   
-  const result: Point[] = [];
-  const n = points.length;
+  let maxDist = 0;
+  let maxIndex = 0;
   
-  for (let i = 0; i < n; i++) {
-    let sumX = 0, sumY = 0;
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + n) % n;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
+  const first = points[0];
+  const last = points[points.length - 1];
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const dist = perpendicularDistanceRDP(points[i], first, last);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIndex = i;
     }
-    result.push({
-      x: sumX / (windowSize * 2 + 1),
-      y: sumY / (windowSize * 2 + 1)
-    });
   }
   
-  return result;
+  if (maxDist > epsilon) {
+    const left = douglasPeucker(points.slice(0, maxIndex + 1), epsilon);
+    const right = douglasPeucker(points.slice(maxIndex), epsilon);
+    return left.slice(0, -1).concat(right);
+  } else {
+    return [first, last];
+  }
+}
+
+function perpendicularDistanceRDP(point: Point, lineStart: Point, lineEnd: Point): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  
+  if (dx === 0 && dy === 0) {
+    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
+  }
+  
+  const t = Math.max(0, Math.min(1,
+    ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / (dx * dx + dy * dy)
+  ));
+  
+  const nearestX = lineStart.x + t * dx;
+  const nearestY = lineStart.y + t * dy;
+  
+  return Math.sqrt((point.x - nearestX) ** 2 + (point.y - nearestY) ** 2);
+}
+
+// RDP for closed polygons - handles wrap-around at endpoints
+function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
+  if (points.length < 4) return points;
+  
+  // Find point furthest from centroid as split point
+  const centroidX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+  const centroidY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+  
+  let maxDist = 0;
+  let splitIndex = 0;
+  for (let i = 0; i < points.length; i++) {
+    const dist = Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
+    if (dist > maxDist) {
+      maxDist = dist;
+      splitIndex = i;
+    }
+  }
+  
+  // Rotate array so split point is at start/end
+  const rotated = [...points.slice(splitIndex), ...points.slice(0, splitIndex)];
+  rotated.push({ ...rotated[0] });
+  
+  // Simplify the open path using Douglas-Peucker
+  const simplified = douglasPeucker(rotated, tolerance);
+  
+  // Remove the duplicate closing point
+  if (simplified.length > 1) {
+    simplified.pop();
+  }
+  
+  return simplified;
 }
 
 function fixOffsetCrossings(points: Point[]): Point[] {
