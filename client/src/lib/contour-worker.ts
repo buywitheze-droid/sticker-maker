@@ -584,19 +584,33 @@ function traceBoundary(mask: Uint8Array, width: number, height: number, method: 
 }
 
 // MARCHING SQUARES: Industry-standard algorithm for smooth contours
-// Creates sub-pixel accurate edges by interpolating cell corners
+// For binary masks, we place edge points at cell edge midpoints
+// Uses proper contour following without coordinate clamping
 function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: number): Point[] {
-  const path: Point[] = [];
+  // Edge lookup table: for each cell config, lists edges that have contour crossing
+  // Edges: 0=top, 1=right, 2=bottom, 3=left
+  // For binary masks, we trace where 0 meets 1
+  const edgeLookup: { [key: number]: number[][] } = {
+    0: [], 15: [],  // All same - no edges
+    1: [[3, 0]], 14: [[0, 3]],  // Single corner filled/empty
+    2: [[0, 1]], 13: [[1, 0]],
+    4: [[1, 2]], 11: [[2, 1]],
+    8: [[2, 3]], 7: [[3, 2]],
+    3: [[3, 1]], 12: [[1, 3]],  // Two adjacent corners
+    6: [[0, 2]], 9: [[2, 0]],
+    5: [[3, 0], [1, 2]],  // Saddle: TL+BR - disambiguate by choosing one direction
+    10: [[0, 1], [2, 3]]  // Saddle: TR+BL - disambiguate by choosing one direction
+  };
   
-  // Find starting edge point
-  let startX = -1, startY = -1, startEdge = -1;
-  outer: for (let y = 0; y < height - 1; y++) {
-    for (let x = 0; x < width - 1; x++) {
-      const cell = getMarchingSquaresCell(mask, width, height, x, y);
+  // Find first cell with an edge crossing
+  let startX = -1, startY = -1, startCell = 0;
+  outer: for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const cell = getMSCell(mask, width, height, x, y);
       if (cell > 0 && cell < 15) {
         startX = x;
         startY = y;
-        startEdge = getFirstEdge(cell);
+        startCell = cell;
         break outer;
       }
     }
@@ -604,121 +618,111 @@ function traceBoundaryMarchingSquares(mask: Uint8Array, width: number, height: n
   
   if (startX === -1) return [];
   
-  let x = startX, y = startY, edge = startEdge;
+  const path: Point[] = [];
   const visited = new Set<string>();
-  const maxSteps = width * height * 4;
+  
+  // Get starting edge (first edge of first segment in lookup)
+  const startEdges = edgeLookup[startCell];
+  if (!startEdges || startEdges.length === 0) return [];
+  
+  let x = startX, y = startY;
+  let entryEdge = startEdges[0][0];  // Enter from this edge
+  const maxSteps = (width + height) * 4;
   let steps = 0;
   
   do {
-    const key = `${x},${y},${edge}`;
-    if (visited.has(key)) break;
-    visited.add(key);
+    const cell = getMSCell(mask, width, height, x, y);
+    const edges = edgeLookup[cell];
+    if (!edges || edges.length === 0) break;
     
-    // Get interpolated point on this edge
-    const pt = getEdgePoint(x, y, edge);
+    // Find segment matching our entry edge
+    let exitEdge = -1;
+    for (const seg of edges) {
+      if (seg[0] === entryEdge) {
+        exitEdge = seg[1];
+        break;
+      }
+    }
+    
+    // If no matching segment, try reverse direction or fallback
+    if (exitEdge === -1) {
+      for (const seg of edges) {
+        if (seg[1] === entryEdge) {
+          exitEdge = seg[0];
+          break;
+        }
+      }
+    }
+    if (exitEdge === -1) break;
+    
+    // Add point at exit edge midpoint
+    const pt = getMSEdgePoint(x, y, exitEdge);
+    const key = `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+    if (visited.has(key) && steps > 2) break;
+    visited.add(key);
     path.push(pt);
     
-    // Move to next cell and edge
-    const next = getNextMarchingSquaresEdge(mask, width, height, x, y, edge);
+    // Move to next cell
+    const next = getMSNextCell(x, y, exitEdge, width, height);
+    if (next.x < 0 || next.y < 0 || next.x >= width || next.y >= height) break;
+    
     x = next.x;
     y = next.y;
-    edge = next.edge;
+    entryEdge = next.entryEdge;
     
     steps++;
-  } while ((x !== startX || y !== startY || edge !== startEdge) && steps < maxSteps);
+  } while ((x !== startX || y !== startY || entryEdge !== startEdges[0][0]) && steps < maxSteps);
   
   return path;
 }
 
-// Get the 4-bit cell configuration for marching squares
-function getMarchingSquaresCell(mask: Uint8Array, width: number, height: number, x: number, y: number): number {
-  const tl = (x >= 0 && y >= 0 && mask[y * width + x] === 1) ? 1 : 0;
-  const tr = (x + 1 < width && y >= 0 && mask[y * width + x + 1] === 1) ? 2 : 0;
-  const br = (x + 1 < width && y + 1 < height && mask[(y + 1) * width + x + 1] === 1) ? 4 : 0;
-  const bl = (x >= 0 && y + 1 < height && mask[(y + 1) * width + x] === 1) ? 8 : 0;
-  return tl | tr | br | bl;
+function getMSCell(mask: Uint8Array, width: number, height: number, x: number, y: number): number {
+  const getVal = (px: number, py: number) => 
+    (px >= 0 && px < width && py >= 0 && py < height && mask[py * width + px] === 1) ? 1 : 0;
+  return getVal(x, y) | (getVal(x + 1, y) << 1) | (getVal(x + 1, y + 1) << 2) | (getVal(x, y + 1) << 3);
 }
 
-// Get first edge from a cell configuration (0=top, 1=right, 2=bottom, 3=left)
-function getFirstEdge(cell: number): number {
-  // Map cell configs to their first edge
-  const edgeMap: { [key: number]: number } = {
-    1: 0, 2: 1, 3: 1, 4: 2, 5: 0, 6: 2, 7: 2,
-    8: 3, 9: 0, 10: 1, 11: 1, 12: 3, 13: 0, 14: 3
-  };
-  return edgeMap[cell] ?? 0;
-}
-
-// Get interpolated point on an edge (0=top, 1=right, 2=bottom, 3=left)
-function getEdgePoint(x: number, y: number, edge: number): Point {
+function getMSEdgePoint(x: number, y: number, edge: number): Point {
   switch (edge) {
-    case 0: return { x: x + 0.5, y: y };        // Top
-    case 1: return { x: x + 1, y: y + 0.5 };    // Right
-    case 2: return { x: x + 0.5, y: y + 1 };    // Bottom
-    case 3: return { x: x, y: y + 0.5 };        // Left
+    case 0: return { x: x + 0.5, y };        // Top edge
+    case 1: return { x: x + 1, y: y + 0.5 }; // Right edge
+    case 2: return { x: x + 0.5, y: y + 1 }; // Bottom edge
+    case 3: return { x, y: y + 0.5 };        // Left edge
     default: return { x: x + 0.5, y: y + 0.5 };
   }
 }
 
-// Get next edge following marching squares algorithm
-function getNextMarchingSquaresEdge(mask: Uint8Array, width: number, height: number, x: number, y: number, edge: number): { x: number; y: number; edge: number } {
-  // Move to adjacent cell based on current edge
-  let nx = x, ny = y;
-  switch (edge) {
-    case 0: ny = y - 1; break; // Exit top -> enter from bottom
-    case 1: nx = x + 1; break; // Exit right -> enter from left
-    case 2: ny = y + 1; break; // Exit bottom -> enter from top
-    case 3: nx = x - 1; break; // Exit left -> enter from right
+function getMSNextCell(x: number, y: number, exitEdge: number, width: number, height: number): { x: number; y: number; entryEdge: number } {
+  // Move to adjacent cell and determine entry edge (opposite of exit)
+  switch (exitEdge) {
+    case 0: return { x, y: y - 1, entryEdge: 2 }; // Exit top, enter bottom of cell above
+    case 1: return { x: x + 1, y, entryEdge: 3 }; // Exit right, enter left of cell to right
+    case 2: return { x, y: y + 1, entryEdge: 0 }; // Exit bottom, enter top of cell below
+    case 3: return { x: x - 1, y, entryEdge: 1 }; // Exit left, enter right of cell to left
+    default: return { x, y, entryEdge: 0 };
   }
-  
-  // Clamp to valid range
-  nx = Math.max(0, Math.min(width - 2, nx));
-  ny = Math.max(0, Math.min(height - 2, ny));
-  
-  // Get cell configuration and determine exit edge
-  const cell = getMarchingSquaresCell(mask, width, height, nx, ny);
-  const entryEdge = (edge + 2) % 4; // Opposite of exit edge
-  
-  // Determine next exit edge based on cell config and entry
-  const nextEdge = getExitEdge(cell, entryEdge);
-  
-  return { x: nx, y: ny, edge: nextEdge };
-}
-
-// Determine exit edge based on cell config and entry edge
-function getExitEdge(cell: number, entry: number): number {
-  // Simplified marching squares exit logic
-  const exits: { [key: number]: { [key: number]: number } } = {
-    1:  { 0: 3, 3: 0 },
-    2:  { 0: 1, 1: 0 },
-    3:  { 1: 3, 3: 1 },
-    4:  { 1: 2, 2: 1 },
-    5:  { 0: 2, 2: 0, 1: 3, 3: 1 }, // Saddle point
-    6:  { 0: 2, 2: 0 },
-    7:  { 2: 3, 3: 2 },
-    8:  { 2: 3, 3: 2 },
-    9:  { 0: 2, 2: 0 },
-    10: { 0: 3, 3: 0, 1: 2, 2: 1 }, // Saddle point
-    11: { 1: 2, 2: 1 },
-    12: { 1: 3, 3: 1 },
-    13: { 0: 1, 1: 0 },
-    14: { 0: 3, 3: 0 }
-  };
-  
-  return exits[cell]?.[entry] ?? ((entry + 2) % 4);
 }
 
 // MOORE-NEIGHBOR: Classic boundary following using 8-connectivity
-// Fast and simple, traces actual pixel boundaries
+// Starts from a boundary pixel (foreground with background neighbor)
 function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting point (first foreground pixel)
-  let startX = -1, startY = -1;
+  // Find starting boundary pixel (foreground with at least one background neighbor)
+  let startX = -1, startY = -1, startDir = 0;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (mask[y * width + x] === 1) {
-        startX = x;
-        startY = y;
-        break outer;
+        // Check if this is a boundary pixel
+        for (let d = 0; d < 8; d++) {
+          const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+          const nx = x + dirs[d][0];
+          const ny = y + dirs[d][1];
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height || mask[ny * width + nx] === 0) {
+            startX = x;
+            startY = y;
+            startDir = (d + 4) % 8; // Start searching from opposite of background
+            break outer;
+          }
+        }
       }
     }
   }
@@ -726,33 +730,27 @@ function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: num
   if (startX === -1) return [];
   
   const path: Point[] = [];
-  
-  // 8-directional neighbors (clockwise from East)
   const directions = [
-    { dx: 1, dy: 0 },   // 0: E
-    { dx: 1, dy: 1 },   // 1: SE
-    { dx: 0, dy: 1 },   // 2: S
-    { dx: -1, dy: 1 },  // 3: SW
-    { dx: -1, dy: 0 },  // 4: W
-    { dx: -1, dy: -1 }, // 5: NW
-    { dx: 0, dy: -1 },  // 6: N
-    { dx: 1, dy: -1 }   // 7: NE
+    [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]
   ];
   
   let x = startX, y = startY;
-  let dir = 0; // Start looking East
+  let dir = startDir;
   const maxSteps = width * height * 2;
   let steps = 0;
+  let firstStep = true;
   
   do {
     path.push({ x, y });
     
-    // Moore neighbor tracing: start from backtrack direction + 1
+    // Moore neighbor: search clockwise starting from backtrack + 1
+    const searchStart = (dir + 5) % 8; // Backtrack is dir+4, so start at dir+5
     let found = false;
+    
     for (let i = 0; i < 8; i++) {
-      const checkDir = (dir + 6 + i) % 8; // Start from backtrack + 1
-      const nx = x + directions[checkDir].dx;
-      const ny = y + directions[checkDir].dy;
+      const checkDir = (searchStart + i) % 8;
+      const nx = x + directions[checkDir][0];
+      const ny = y + directions[checkDir][1];
       
       if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
         x = nx;
@@ -765,15 +763,97 @@ function traceBoundaryMooreNeighbor(mask: Uint8Array, width: number, height: num
     
     if (!found) break;
     steps++;
-  } while ((x !== startX || y !== startY) && steps < maxSteps);
+    
+    if (firstStep) firstStep = false;
+  } while ((x !== startX || y !== startY || firstStep) && steps < maxSteps);
   
   return path;
 }
 
-// CONTOUR FOLLOWING: Edge-based tracing using 4-connectivity
-// Good for complex shapes, follows actual boundary edges between pixels
+// CONTOUR FOLLOWING: Suzuki-Abe style edge tracing
+// Traces the actual edges between foreground and background pixels
+// Outputs corner points of boundary cells for clean vector paths
 function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: number): Point[] {
-  // Find starting boundary pixel (foreground with background neighbor)
+  // Find starting boundary pixel (first foreground pixel with left neighbor = background)
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] === 1) {
+        // Check if left neighbor is background (or edge)
+        if (x === 0 || mask[y * width + (x - 1)] === 0) {
+          startX = x;
+          startY = y;
+          break outer;
+        }
+      }
+    }
+  }
+  
+  if (startX === -1) return [];
+  
+  const path: Point[] = [];
+  
+  // 4 cardinal directions: 0=E, 1=S, 2=W, 3=N
+  const dx = [1, 0, -1, 0];
+  const dy = [0, 1, 0, -1];
+  
+  // Track edge segments (pixel corner to corner)
+  // We walk along the boundary, keeping foreground on our right
+  let x = startX, y = startY;
+  let dir = 3; // Start facing North (foreground on right = West side entry)
+  const maxSteps = (width + height) * 4;
+  let steps = 0;
+  
+  // Add initial point (top-left corner of starting pixel)
+  path.push({ x, y });
+  
+  do {
+    // Turn right and look for foreground
+    // If found, move there. If not, turn left until we find foreground.
+    let newDir = (dir + 1) % 4; // Turn right first
+    let found = false;
+    
+    for (let turn = 0; turn < 4; turn++) {
+      const checkDir = (dir + 1 - turn + 4) % 4; // Right, forward, left, back
+      const nx = x + dx[checkDir];
+      const ny = y + dy[checkDir];
+      
+      const isInside = nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1;
+      
+      if (isInside) {
+        // Add corner point before moving
+        const cornerX = checkDir === 0 ? x + 1 : checkDir === 2 ? x : (checkDir === 1 ? x + 1 : x);
+        const cornerY = checkDir === 1 ? y + 1 : checkDir === 3 ? y : (checkDir === 0 ? y : y + 1);
+        
+        // Only add if different from last point
+        const lastPt = path[path.length - 1];
+        if (path.length === 0 || lastPt.x !== cornerX || lastPt.y !== cornerY) {
+          path.push({ x: cornerX, y: cornerY });
+        }
+        
+        x = nx;
+        y = ny;
+        dir = checkDir;
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) break;
+    steps++;
+    
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
+  
+  // Close the path by returning to start
+  if (path.length > 2 && (path[path.length - 1].x !== path[0].x || path[path.length - 1].y !== path[0].y)) {
+    path.push({ x: path[0].x, y: path[0].y });
+  }
+  
+  return path;
+}
+
+// Legacy function kept for compatibility - boundary check helper
+function traceBoundaryContourFollowingLegacy(mask: Uint8Array, width: number, height: number): Point[] {
   let startX = -1, startY = -1;
   outer: for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -788,17 +868,15 @@ function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: 
   if (startX === -1) return [];
   
   const path: Point[] = [];
-  
-  // 4-directional neighbors (clockwise from North)
   const directions = [
-    { dx: 0, dy: -1 },  // 0: N
-    { dx: 1, dy: 0 },   // 1: E
-    { dx: 0, dy: 1 },   // 2: S
-    { dx: -1, dy: 0 }   // 3: W
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 }
   ];
   
   let x = startX, y = startY;
-  let dir = 0; // Start looking North
+  let dir = 0;
   const maxSteps = width * height * 4;
   let steps = 0;
   const visited = new Set<string>();
@@ -808,13 +886,11 @@ function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: 
     if (visited.has(key) && steps > 1) break;
     visited.add(key);
     
-    // Add edge midpoints for smoother path
     path.push({ x: x + 0.5, y: y + 0.5 });
     
-    // Find next boundary pixel (prefer continuing in same direction)
     let found = false;
     for (let i = 0; i < 4; i++) {
-      const checkDir = (dir + 3 + i) % 4; // Start from left of current direction
+      const checkDir = (dir + 3 + i) % 4;
       const nx = x + directions[checkDir].dx;
       const ny = y + directions[checkDir].dy;
       
@@ -829,7 +905,6 @@ function traceBoundaryContourFollowing(mask: Uint8Array, width: number, height: 
     }
     
     if (!found) {
-      // Fall back to any foreground neighbor
       for (let i = 0; i < 4; i++) {
         const checkDir = (dir + i) % 4;
         const nx = x + directions[checkDir].dx;
