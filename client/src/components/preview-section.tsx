@@ -265,7 +265,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
     // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 8;
+    const CONTOUR_CACHE_VERSION = 9;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
       const debugKey = contourDebugSettings?.enabled 
@@ -287,7 +287,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const cacheKey = generateContourCacheKey();
-      if (contourCacheRef.current?.key === cacheKey) return;
+      console.log('[Preview] Cache key:', cacheKey.slice(-100), 'Current:', contourCacheRef.current?.key?.slice(-100));
+      if (contourCacheRef.current?.key === cacheKey) {
+        console.log('[Preview] Cache hit - skipping reprocess');
+        return;
+      }
+      console.log('[Preview] Cache miss - reprocessing');
 
       // Debounce processing to avoid rapid re-renders during slider drags
       contourDebounceRef.current = setTimeout(() => {

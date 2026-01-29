@@ -356,6 +356,18 @@ function processContour(
   // Check if debug mode wants raw contour (skip all processing)
   const useRaw = debugSettings?.enabled && debugSettings.showRawContour;
   
+  // Log debug settings for troubleshooting
+  if (debugSettings?.enabled) {
+    console.log('[ContourWorker] Debug settings:', {
+      method: debugSettings.alphaTracingMethod,
+      smoothing: debugSettings.gaussianSmoothing,
+      corners: debugSettings.cornerDetection,
+      bridging: debugSettings.autoBridging,
+      gaps: debugSettings.gapClosing,
+      raw: debugSettings.showRawContour
+    });
+  }
+  
   let smoothedPath = boundaryPath;
   
   if (!useRaw) {
