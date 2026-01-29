@@ -229,13 +229,14 @@ export function removeLoopsWithClipper(points: Point[]): Point[] {
 
 // Surgical angle-based corner rounding - only modifies acute angles
 // Replaces sharp V-shaped vertices with small arc segments
+// Now corner-aware: only rounds very acute angles (<20°) that are likely artifacts
 export function roundSharpCorners(points: Point[], radiusPixels: number): Point[] {
   if (points.length < 3 || radiusPixels <= 0) return points;
   
   const result: Point[] = [];
   const n = points.length;
-  const minAngleDegrees = 30; // Angles sharper than this get rounded
-  const minAngleCos = Math.cos((180 - minAngleDegrees) * Math.PI / 180); // cos(150°) ≈ -0.866
+  const minAngleDegrees = 20; // Only round very acute angles (likely artifacts)
+  const minAngleCos = Math.cos((180 - minAngleDegrees) * Math.PI / 180);
   
   let sharpCornersFound = 0;
   
@@ -244,7 +245,6 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
     const curr = points[i];
     const next = points[(i + 1) % n];
     
-    // Calculate vectors
     const v1x = prev.x - curr.x;
     const v1y = prev.y - curr.y;
     const v2x = next.x - curr.x;
@@ -258,41 +258,32 @@ export function roundSharpCorners(points: Point[], radiusPixels: number): Point[
       continue;
     }
     
-    // Normalize
     const n1x = v1x / len1;
     const n1y = v1y / len1;
     const n2x = v2x / len2;
     const n2y = v2y / len2;
     
-    // Calculate dot product (cos of angle)
     const dot = n1x * n2x + n1y * n2y;
     
-    // Check if this is a sharp angle (V-shape)
-    // dot > minAngleCos means angle is less than minAngleDegrees
     if (dot > minAngleCos) {
       sharpCornersFound++;
       
-      // Simple chamfer: cut the corner by connecting points along each edge
       const chamferDist = Math.min(radiusPixels, len1 * 0.3, len2 * 0.3);
       
-      // Point along edge toward prev
       const p1x = curr.x + n1x * chamferDist;
       const p1y = curr.y + n1y * chamferDist;
       
-      // Point along edge toward next
       const p2x = curr.x + n2x * chamferDist;
       const p2y = curr.y + n2y * chamferDist;
       
-      // Add the two chamfer points (simple bevel cut)
       result.push({ x: p1x, y: p1y });
       result.push({ x: p2x, y: p2y });
     } else {
-      // Normal angle, keep the point
       result.push(curr);
     }
   }
   
-  console.log('[roundSharpCorners] Found', sharpCornersFound, 'sharp corners, path:', points.length, '→', result.length, 'points');
+  console.log('[roundSharpCorners] Found', sharpCornersFound, 'very acute corners, path:', points.length, '→', result.length, 'points');
   
   return result.length >= 3 ? result : points;
 }

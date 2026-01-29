@@ -23,6 +23,60 @@ interface Point {
   y: number;
 }
 
+function calculatePointAngle(p1: Point, p2: Point): number {
+  return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+}
+
+function normalizePointAngle(angle: number): number {
+  while (angle > Math.PI) angle -= 2 * Math.PI;
+  while (angle < -Math.PI) angle += 2 * Math.PI;
+  return angle;
+}
+
+function detectPathCornerPoints(points: Point[]): boolean[] {
+  const n = points.length;
+  if (n < 3) return new Array(n).fill(false);
+  
+  const isCorner: boolean[] = new Array(n).fill(false);
+  const angleDeltas: number[] = new Array(n).fill(0);
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    const inAngle = calculatePointAngle(prev, curr);
+    const outAngle = calculatePointAngle(curr, next);
+    const delta = Math.abs(normalizePointAngle(outAngle - inAngle));
+    angleDeltas[i] = delta;
+  }
+  
+  const sortedDeltas = [...angleDeltas].sort((a, b) => a - b);
+  const medianDelta = sortedDeltas[Math.floor(n / 2)];
+  
+  for (let i = 0; i < n; i++) {
+    const currentDelta = angleDeltas[i];
+    
+    const windowSize = 2;
+    const neighbors: number[] = [];
+    for (let j = -windowSize; j <= windowSize; j++) {
+      if (j === 0) continue;
+      const idx = (i + j + n) % n;
+      neighbors.push(angleDeltas[idx]);
+    }
+    neighbors.sort((a, b) => a - b);
+    const localMedian = neighbors[Math.floor(neighbors.length / 2)];
+    
+    const isAbruptVsLocal = currentDelta > localMedian * 2.5 && currentDelta > 0.25;
+    const isAbruptVsGlobal = currentDelta > medianDelta * 3.0;
+    const isSharpAngle = currentDelta > Math.PI / 8;
+    
+    isCorner[i] = (isAbruptVsLocal && isSharpAngle) || (isAbruptVsGlobal && isSharpAngle);
+  }
+  
+  return isCorner;
+}
+
 // Trace contour outlines from a binary mask using edge-following algorithm
 // Returns multiple contours (for holes and separate regions)
 function traceContourFromMask(mask: boolean[][], w: number, h: number): Point[][] {
@@ -697,23 +751,37 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
 }
 
 function smoothPath(points: Point[], windowSize: number): Point[] {
-  // MATCHES WORKER EXACTLY - simple moving average smoothing
   if (points.length < windowSize * 2 + 1) return points;
   
+  const isCorner = detectPathCornerPoints(points);
   const result: Point[] = [];
   const n = points.length;
   
   for (let i = 0; i < n; i++) {
+    if (isCorner[i]) {
+      result.push(points[i]);
+      continue;
+    }
+    
     let sumX = 0, sumY = 0;
+    let count = 0;
     for (let j = -windowSize; j <= windowSize; j++) {
       const idx = (i + j + n) % n;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
+      if (!isCorner[idx]) {
+        sumX += points[idx].x;
+        sumY += points[idx].y;
+        count++;
+      }
     }
-    result.push({
-      x: sumX / (windowSize * 2 + 1),
-      y: sumY / (windowSize * 2 + 1)
-    });
+    
+    if (count > 0) {
+      result.push({
+        x: sumX / count,
+        y: sumY / count
+      });
+    } else {
+      result.push(points[i]);
+    }
   }
   
   return result;
