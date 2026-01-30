@@ -270,64 +270,53 @@ function processContour(
   postProgress(30);
   
   // =============================================================================
-  // PROTRACER-STYLE VECTOR OFFSETTING (PyClipper / Vatti clipping algorithm)
+  // VECTOR OFFSETTING APPROACH (PyClipper / Vatti clipping algorithm)
   // =============================================================================
-  // 1. Fill interior holes in the mask (letter holes like O, A, D, etc.)
-  // 2. Trace ALL separate contours (ProTracer-style, catches all small items)
-  // 3. Offset each contour individually using Clipper JT_ROUND
-  // 4. Union all offset contours to create single unified shape
+  // 1. Trace the ORIGINAL tight contour from the raw image mask (no pixel dilation)
+  // 2. Convert to Clipper path format
+  // 3. Use ClipperOffset with JT_ROUND for perfect vector offsetting
+  // 4. Straight lines stay straight, corners are perfectly rounded
   // =============================================================================
   
-  // Step 1: Fill interior holes in the original hi-res mask
-  const filledMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
+  // Step 1: Trace original tight contour from hi-res mask (NO dilation yet)
+  // First fill any interior holes
+  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
+  const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
   
-  // Step 2: Trace ALL separate contours (ProTracer-style)
-  // This ensures small disconnected items are not missed
-  const allContours = traceAllBoundaries(filledMask, hiResWidth, hiResHeight);
-  
-  if (allContours.length === 0) {
+  if (originalContour.length < 3) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  console.log('[Worker] ProTracer found', allContours.length, 'separate objects in design');
-  
   postProgress(40);
   
-  // Downscale all contours to 1x coordinates
-  const contoursAt1x = allContours.map(contour => 
-    contour.map(p => ({
-      x: p.x / SUPER_SAMPLE,
-      y: p.y / SUPER_SAMPLE
-    }))
-  );
+  // Downscale to 1x coordinates for vector processing
+  let tightContour = originalContour.map(p => ({
+    x: p.x / SUPER_SAMPLE,
+    y: p.y / SUPER_SAMPLE
+  }));
   
-  // Deduplicate and sanitize each contour
-  const cleanedContours = contoursAt1x.map(contour => {
-    let cleaned = deduplicatePoints(contour);
-    cleaned = sanitizePolygonForOffset(cleaned);
-    return cleaned;
-  }).filter(c => c.length >= 3);
+  console.log('[Worker] Original tight contour:', tightContour.length, 'points');
   
-  console.log('[Worker] After cleanup:', cleanedContours.length, 'valid contours');
+  // Step 2: Simplify the tight contour to remove pixel stair-steps
+  // Use moderate epsilon to get clean base contour
+  const tightEpsilon = 0.001;
+  tightContour = approxPolyDP(tightContour, tightEpsilon);
+  console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
+  
+  // Sanitize to fix any self-intersections
+  tightContour = sanitizePolygonForOffset(tightContour);
   
   postProgress(50);
   
-  // Step 3 & 4: Offset each contour and union them all
+  // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
   // This guarantees: straight lines stay straight, corners are perfectly rounded
-  // Small items are included and merged with the main shape
-  const vectorOffsetPath = offsetAndUnionContours(cleanedContours, totalOffsetPixels);
-  console.log('[Worker] After ProTracer offset+union (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
-  
-  // Step 5: Simplify straight segments while preserving rounded corners
-  // Use conservative RDP with small epsilon to reduce points on straight lines
-  // This makes lines straighter without cutting across curves
-  const simplifiedPath = simplifyPreservingCorners(vectorOffsetPath, effectiveDPI);
-  console.log('[Worker] After line simplification:', simplifiedPath.length, 'points');
+  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
+  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
-  // Step 6: Gap closing (if enabled) - uses auto-bridging
-  let smoothedPath = simplifiedPath;
+  // Step 4: Gap closing (if enabled) - uses auto-bridging
+  let smoothedPath = vectorOffsetPath;
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
@@ -999,116 +988,6 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
 }
 
 /**
- * Trace ALL separate contours in the mask (ProTracer-style)
- * This ensures small disconnected items are not missed
- * Returns an array of contours, each being a Point array
- */
-function traceAllBoundaries(mask: Uint8Array, width: number, height: number): Point[][] {
-  const allContours: Point[][] = [];
-  const visited = new Uint8Array(mask.length);
-  
-  // Find all separate contours by looking for unvisited foreground pixels
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      if (mask[idx] === 1 && visited[idx] === 0) {
-        // Found an unvisited foreground pixel - trace its contour
-        const contour = traceBoundaryFromPoint(mask, width, height, x, y, visited);
-        if (contour.length >= 3) {
-          allContours.push(contour);
-          // Mark all pixels in this connected component as visited
-          markConnectedComponent(mask, width, height, x, y, visited);
-        }
-      }
-    }
-  }
-  
-  console.log('[Worker] Found', allContours.length, 'separate contours');
-  return allContours;
-}
-
-/**
- * Trace boundary starting from a specific point
- */
-function traceBoundaryFromPoint(mask: Uint8Array, width: number, height: number, startX: number, startY: number, visited: Uint8Array): Point[] {
-  const path: Point[] = [];
-  const directions = [
-    { dx: 1, dy: 0 },
-    { dx: 1, dy: 1 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 1 },
-    { dx: -1, dy: 0 },
-    { dx: -1, dy: -1 },
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: -1 }
-  ];
-  
-  let x = startX, y = startY;
-  let dir = 0;
-  const maxSteps = width * height * 2;
-  let steps = 0;
-  
-  do {
-    path.push({ x, y });
-    
-    let found = false;
-    for (let i = 0; i < 8; i++) {
-      const checkDir = (dir + 6 + i) % 8;
-      const nx = x + directions[checkDir].dx;
-      const ny = y + directions[checkDir].dy;
-      
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
-        x = nx;
-        y = ny;
-        dir = checkDir;
-        found = true;
-        break;
-      }
-    }
-    
-    if (!found) break;
-    steps++;
-  } while ((x !== startX || y !== startY) && steps < maxSteps);
-  
-  return path;
-}
-
-/**
- * Mark all pixels in a connected component as visited using flood fill
- */
-function markConnectedComponent(mask: Uint8Array, width: number, height: number, startX: number, startY: number, visited: Uint8Array): void {
-  const queue: number[] = [];
-  const startIdx = startY * width + startX;
-  
-  if (visited[startIdx] === 1) return;
-  
-  queue.push(startIdx);
-  visited[startIdx] = 1;
-  
-  while (queue.length > 0) {
-    const idx = queue.shift()!;
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // Check 8-connected neighbors
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const nIdx = ny * width + nx;
-          if (mask[nIdx] === 1 && visited[nIdx] === 0) {
-            visited[nIdx] = 1;
-            queue.push(nIdx);
-          }
-        }
-      }
-    }
-  }
-}
-
-/**
  * Apply pure vector offset using Clipper's ClipperOffset with JT_ROUND
  * This is the PyClipper equivalent using Vatti clipping algorithm.
  * 
@@ -1177,241 +1056,6 @@ function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
   console.log('[Worker] clipperVectorOffset: input', points.length, 'pts, output', result.length, 'pts');
   
   return result;
-}
-
-/**
- * ProTracer-style multi-contour processing:
- * 1. Offset each contour individually using Clipper JT_ROUND
- * 2. Union all offset contours into a single shape
- * This ensures small disconnected items are included and merged properly
- * 
- * @param contours - array of contours (each is a Point array)
- * @param offsetPixels - offset distance in pixels
- * @returns single unified contour containing all elements
- */
-function offsetAndUnionContours(contours: Point[][], offsetPixels: number): Point[] {
-  if (contours.length === 0) return [];
-  if (contours.length === 1) {
-    return clipperVectorOffset(contours[0], offsetPixels);
-  }
-  
-  console.log('[Worker] ProTracer: offsetting and unioning', contours.length, 'contours');
-  
-  // Step 1: Offset each contour individually
-  const allOffsetPaths: Array<Array<{X: number; Y: number}>> = [];
-  
-  for (let i = 0; i < contours.length; i++) {
-    const contour = contours[i];
-    if (contour.length < 3) continue;
-    
-    // Convert to Clipper format
-    const clipperPath: Array<{X: number; Y: number}> = contour.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-    
-    const scaledOffset = offsetPixels * CLIPPER_SCALE;
-    
-    // Create ClipperOffset for this contour
-    const co = new ClipperLib.ClipperOffset();
-    co.ArcTolerance = CLIPPER_SCALE * 0.25;
-    co.MiterLimit = 2.0;
-    co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    
-    const offsetResult: Array<Array<{X: number; Y: number}>> = [];
-    co.Execute(offsetResult, scaledOffset);
-    
-    // Add all resulting paths to our collection
-    for (const path of offsetResult) {
-      if (path.length >= 3) {
-        allOffsetPaths.push(path);
-      }
-    }
-  }
-  
-  if (allOffsetPaths.length === 0) {
-    console.log('[Worker] ProTracer: no valid offset paths');
-    return contours[0] || [];
-  }
-  
-  if (allOffsetPaths.length === 1) {
-    // Only one path, just convert and return
-    return allOffsetPaths[0].map(p => ({
-      x: p.X / CLIPPER_SCALE,
-      y: p.Y / CLIPPER_SCALE
-    }));
-  }
-  
-  // Step 2: Union all offset paths using Clipper
-  console.log('[Worker] ProTracer: unioning', allOffsetPaths.length, 'offset paths');
-  
-  const clipper = new ClipperLib.Clipper();
-  
-  // Add first path as subject
-  clipper.AddPath(allOffsetPaths[0], ClipperLib.PolyType.ptSubject, true);
-  
-  // Add remaining paths as clips
-  for (let i = 1; i < allOffsetPaths.length; i++) {
-    clipper.AddPath(allOffsetPaths[i], ClipperLib.PolyType.ptClip, true);
-  }
-  
-  // Execute union operation
-  const unionResult: Array<Array<{X: number; Y: number}>> = [];
-  clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-  
-  if (unionResult.length === 0) {
-    console.log('[Worker] ProTracer: union failed, using largest offset path');
-    // Fall back to largest path
-    let largest = allOffsetPaths[0];
-    let largestArea = Math.abs(ClipperLib.Clipper.Area(allOffsetPaths[0]));
-    for (let i = 1; i < allOffsetPaths.length; i++) {
-      const area = Math.abs(ClipperLib.Clipper.Area(allOffsetPaths[i]));
-      if (area > largestArea) {
-        largestArea = area;
-        largest = allOffsetPaths[i];
-      }
-    }
-    return largest.map(p => ({
-      x: p.X / CLIPPER_SCALE,
-      y: p.Y / CLIPPER_SCALE
-    }));
-  }
-  
-  // Find the largest resulting polygon (outer contour)
-  let resultPath = unionResult[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
-  
-  for (let i = 1; i < unionResult.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      resultPath = unionResult[i];
-    }
-  }
-  
-  // Convert back to Point format
-  const result = resultPath.map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-  
-  console.log('[Worker] ProTracer: unified contour has', result.length, 'points');
-  return result;
-}
-
-/**
- * Simplify contour by reducing points on straight segments while preserving rounded corners
- * Uses angle-based detection to identify corner arcs vs straight segments
- * Straight segments get simplified with RDP, corner arcs are preserved
- * 
- * @param points - input contour (after Clipper offset with rounded corners)
- * @param dpi - effective DPI for calculating tolerances
- * @returns simplified contour with fewer points but same visual appearance
- */
-function simplifyPreservingCorners(points: Point[], dpi: number): Point[] {
-  if (points.length < 10) return points;
-  
-  // Calculate tolerance based on DPI - about 0.5px at the working resolution
-  // This is tight enough to keep curves smooth but removes redundant points on lines
-  const tolerance = 0.5;
-  
-  // First, identify corner regions by detecting high curvature areas
-  const n = points.length;
-  const curvatures: number[] = [];
-  
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    // Calculate angle at this point
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.001 || len2 < 0.001) {
-      curvatures.push(0);
-      continue;
-    }
-    
-    // Cross product gives sin of angle (direction of turn)
-    const cross = v1x * v2y - v1y * v2x;
-    // Dot product gives cos of angle
-    const dot = v1x * v2x + v1y * v2y;
-    
-    const angle = Math.atan2(Math.abs(cross), dot);
-    curvatures.push(angle);
-  }
-  
-  // Mark points that are part of curved regions (corners)
-  // A point is in a curve if it or its neighbors have significant curvature
-  const isCornerPoint: boolean[] = new Array(n).fill(false);
-  const curveThreshold = Math.PI / 36; // ~5 degrees - small but detectable curve
-  const windowSize = 3; // Check nearby points too
-  
-  for (let i = 0; i < n; i++) {
-    // Check if this point or nearby points have curvature
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + n) % n;
-      if (curvatures[idx] > curveThreshold) {
-        isCornerPoint[i] = true;
-        break;
-      }
-    }
-  }
-  
-  // Now simplify: keep all corner points, apply RDP to straight segments
-  const result: Point[] = [];
-  let straightSegment: Point[] = [];
-  
-  for (let i = 0; i < n; i++) {
-    if (isCornerPoint[i]) {
-      // If we have a straight segment pending, simplify it
-      if (straightSegment.length > 2) {
-        const simplified = douglasPeucker(straightSegment, tolerance);
-        // Add all but the last point (to avoid duplicates)
-        for (let j = 0; j < simplified.length - 1; j++) {
-          result.push(simplified[j]);
-        }
-      } else if (straightSegment.length > 0) {
-        for (let j = 0; j < straightSegment.length - 1; j++) {
-          result.push(straightSegment[j]);
-        }
-      }
-      straightSegment = [];
-      
-      // Add the corner point
-      result.push(points[i]);
-    } else {
-      // Accumulate straight segment points
-      straightSegment.push(points[i]);
-    }
-  }
-  
-  // Handle any remaining straight segment at the end
-  if (straightSegment.length > 2) {
-    const simplified = douglasPeucker(straightSegment, tolerance);
-    for (let j = 0; j < simplified.length; j++) {
-      result.push(simplified[j]);
-    }
-  } else {
-    for (const p of straightSegment) {
-      result.push(p);
-    }
-  }
-  
-  // Remove consecutive duplicates
-  const dedupedResult = deduplicatePoints(result);
-  
-  console.log('[Worker] simplifyPreservingCorners: kept', 
-    isCornerPoint.filter(x => x).length, 'corner points,', 
-    'reduced', points.length, '->', dedupedResult.length);
-  
-  return dedupedResult;
 }
 
 /**
@@ -1493,25 +1137,6 @@ function roundCorners(points: Point[], radius: number): Point[] {
   
   console.log('[Worker] roundCorners: radius =', radius.toFixed(2), 'px, points:', points.length, '->', result.length);
   
-  return result;
-}
-
-/**
- * Remove exact duplicate consecutive points from a path
- * Keeps the contour shape intact, just removes redundant duplicates
- */
-function deduplicatePoints(points: Point[]): Point[] {
-  if (points.length < 2) return points;
-  
-  const result: Point[] = [points[0]];
-  for (let i = 1; i < points.length; i++) {
-    const prev = result[result.length - 1];
-    const curr = points[i];
-    // Keep point if it's different from the previous one
-    if (Math.abs(curr.x - prev.x) > 0.01 || Math.abs(curr.y - prev.y) > 0.01) {
-      result.push(curr);
-    }
-  }
   return result;
 }
 
