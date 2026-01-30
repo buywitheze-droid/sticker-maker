@@ -665,14 +665,15 @@ export default function ImageEditor() {
     try {
       // Handle PDF with existing CutContour - generate proper vector CutContour PDF
       // Apply resize settings so the output PDF matches user's requested dimensions
+      // Use pageWidthPts/pageHeightPts (PDF points) for correct coordinate scaling
       if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && downloadType === 'cutcontour') {
         const { generatePDFWithVectorCutContour } = await import('@/lib/pdf-parser');
         const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
         await generatePDFWithVectorCutContour(
           imageInfo.image,
           imageInfo.pdfCutContourInfo.cutContourPoints,
-          imageInfo.pdfCutContourInfo.pageWidth,
-          imageInfo.pdfCutContourInfo.pageHeight,
+          imageInfo.pdfCutContourInfo.pageWidthPts || imageInfo.pdfCutContourInfo.pageWidth,
+          imageInfo.pdfCutContourInfo.pageHeightPts || imageInfo.pdfCutContourInfo.pageHeight,
           imageInfo.dpi || 300,
           `${nameWithoutExt}_with_cutcontour.pdf`,
           {

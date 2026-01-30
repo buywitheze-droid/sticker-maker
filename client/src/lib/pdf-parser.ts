@@ -6,12 +6,17 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
+export type CutContourUnits = 'points' | 'pixels';
+
 export interface PDFCutContourInfo {
   hasCutContour: boolean;
   cutContourPath: Path2D | null;
   cutContourPoints: { x: number; y: number }[][];
-  pageWidth: number;
-  pageHeight: number;
+  cutContourUnits: CutContourUnits;  // Explicit units for path coordinates
+  pageWidth: number;   // Render dimensions in pixels (at render DPI)
+  pageHeight: number;  // Render dimensions in pixels (at render DPI)
+  pageWidthPts: number;  // Original PDF page dimensions in points (72/inch)
+  pageHeightPts: number; // Original PDF page dimensions in points (72/inch)
 }
 
 export interface ParsedPDFData {
@@ -41,22 +46,43 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
   // Get base viewport at 1:1 scale for path coordinates
   const baseViewport = page.getViewport({ scale: 1 });
   
-  // Update cutContourInfo with page dimensions (at render DPI)
+  // Update cutContourInfo with page dimensions
+  // pageWidth/pageHeight = render pixels (at render DPI for canvas/preview)
+  // pageWidthPts/pageHeightPts = PDF points (72/inch, for vector export)
   cutContourInfo.pageWidth = viewport.width;
   cutContourInfo.pageHeight = viewport.height;
+  // If pdf-lib didn't set point dimensions, derive from viewport
+  if (cutContourInfo.pageWidthPts === 0) {
+    cutContourInfo.pageWidthPts = baseViewport.width;  // baseViewport is at scale=1 (points)
+    cutContourInfo.pageHeightPts = baseViewport.height;
+  }
   
-  // If CutContour was detected but no paths extracted, try using PDF.js operator list
+  // If CutContour was detected but no paths extracted by pdf-lib, try PDF.js operator list
+  // Operator list paths are in render pixels (scaled during extraction)
   if (cutContourInfo.hasCutContour && cutContourInfo.cutContourPoints.length === 0) {
     try {
       const paths = await extractPathsFromOperatorList(page, baseViewport.height, pdfScale);
       if (paths.length > 0) {
         cutContourInfo.cutContourPoints = paths;
-        console.log('[PDF Parser] Extracted', paths.length, 'paths from operator list');
+        cutContourInfo.cutContourUnits = 'pixels';  // Operator list returns pixels
+        console.log('[PDF Parser] Extracted', paths.length, 'paths from operator list (in render pixels)');
       }
     } catch (e) {
       console.warn('[PDF Parser] Operator list extraction failed:', e);
     }
   }
+  
+  // Convert paths to pixels if they're in points (deterministic based on units flag)
+  if (cutContourInfo.cutContourUnits === 'points' && cutContourInfo.cutContourPoints.length > 0) {
+    console.log('[PDF Parser] Converting paths from PDF points to render pixels (scale:', pdfScale, ')');
+    cutContourInfo.cutContourPoints = cutContourInfo.cutContourPoints.map(path =>
+      path.map(pt => ({ x: pt.x * pdfScale, y: pt.y * pdfScale }))
+    );
+    cutContourInfo.cutContourUnits = 'pixels';  // Now in pixels
+  }
+  
+  // Verify final units are pixels
+  console.log('[PDF Parser] Final cutContourUnits:', cutContourInfo.cutContourUnits);
   
   console.log('[PDF Parser] Final result: hasCutContour:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
   
@@ -92,10 +118,12 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
 }
 
 // Extract paths from PDF.js operator list (handles decompressed content)
+// Returns paths in RENDER PIXELS (scaled by render DPI) for preview compatibility
+// The caller must provide scale factor (renderDPI / 72)
 async function extractPathsFromOperatorList(
   page: pdfjsLib.PDFPageProxy,
-  pageHeight: number,
-  scale: number
+  pageHeightPts: number,  // Page height in PDF points (for Y-flip calculation)
+  scale: number           // Scale factor: renderDPI / 72 (e.g., 300/72 ≈ 4.17)
 ): Promise<{ x: number; y: number }[][]> {
   const operatorList = await page.getOperatorList();
   const OPS = pdfjsLib.OPS;
@@ -111,6 +139,7 @@ async function extractPathsFromOperatorList(
     // Check for setFillColorSpace or setStrokeColorSpace - these might indicate CutContour
     // In PDF.js, color space changes are tracked but spot colors are hard to detect
     // We'll capture all paths and filter later based on stroke color (magenta-ish)
+    // Scale to render pixels for preview compatibility
     
     if (fn === OPS.moveTo && args) {
       if (currentPath.length > 0) {
@@ -118,24 +147,24 @@ async function extractPathsFromOperatorList(
         currentPath = [];
       }
       const x = args[0] * scale;
-      const y = (pageHeight - args[1]) * scale; // Flip Y
+      const y = (pageHeightPts - args[1]) * scale; // Flip Y and scale
       currentPath.push({ x, y });
     } else if (fn === OPS.lineTo && args) {
       const x = args[0] * scale;
-      const y = (pageHeight - args[1]) * scale;
+      const y = (pageHeightPts - args[1]) * scale;
       currentPath.push({ x, y });
     } else if (fn === OPS.curveTo && args) {
       // Bezier curve - use endpoint
       const x = args[4] * scale;
-      const y = (pageHeight - args[5]) * scale;
+      const y = (pageHeightPts - args[5]) * scale;
       currentPath.push({ x, y });
     } else if (fn === OPS.curveTo2 && args) {
       const x = args[2] * scale;
-      const y = (pageHeight - args[3]) * scale;
+      const y = (pageHeightPts - args[3]) * scale;
       currentPath.push({ x, y });
     } else if (fn === OPS.curveTo3 && args) {
       const x = args[2] * scale;
-      const y = (pageHeight - args[3]) * scale;
+      const y = (pageHeightPts - args[3]) * scale;
       currentPath.push({ x, y });
     } else if (fn === OPS.closePath) {
       if (currentPath.length > 0) {
@@ -144,7 +173,7 @@ async function extractPathsFromOperatorList(
     } else if (fn === OPS.rectangle && args) {
       // Rectangle: x, y, width, height
       const x = args[0] * scale;
-      const y = (pageHeight - args[1]) * scale;
+      const y = (pageHeightPts - args[1]) * scale;
       const w = args[2] * scale;
       const h = args[3] * scale;
       if (currentPath.length > 0) {
@@ -211,8 +240,11 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
     hasCutContour: false,
     cutContourPath: null,
     cutContourPoints: [],
+    cutContourUnits: 'points',  // pdf-lib extracts in PDF points
     pageWidth: 0,
-    pageHeight: 0
+    pageHeight: 0,
+    pageWidthPts: 0,
+    pageHeightPts: 0
   };
   
   try {
@@ -222,6 +254,10 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
     
     const page = pages[0];
     const { width, height } = page.getSize();
+    // Store original PDF dimensions in points (72/inch)
+    result.pageWidthPts = width;
+    result.pageHeightPts = height;
+    // pageWidth/pageHeight will be set to pixels later in parsePDF
     result.pageWidth = width;
     result.pageHeight = height;
     
@@ -619,18 +655,28 @@ export function isPDFFile(file: File): boolean {
 
 // Generate a PDF with the image and a proper vector CutContour spot color path
 // Supports resize settings to scale the output to user-specified dimensions
+// cutContourPoints are in RENDER PIXELS (at render DPI, typically 300)
+// pageWidthPts/pageHeightPts are the original PDF page dimensions in points
 export async function generatePDFWithVectorCutContour(
   image: HTMLImageElement,
   cutContourPoints: { x: number; y: number }[][],
-  pageWidth: number,
-  pageHeight: number,
-  dpi: number,
+  pageWidthPts: number,  // Original PDF page width in points (72/inch)
+  pageHeightPts: number, // Original PDF page height in points (72/inch)
+  renderDPI: number,     // Render DPI used for path coordinates (e.g., 300)
   filename: string,
   resizeSettings?: { widthInches: number; heightInches: number; outputDPI: number }
 ): Promise<void> {
   const { PDFDocument, PDFName, PDFArray, PDFDict } = await import('pdf-lib');
   
-  // Calculate scale factor if resize settings provided
+  // Convert path coordinates from render pixels to PDF points
+  // renderDPI / 72 = pixels per point, so divide by this to get points
+  const pixelsPerPoint = renderDPI / 72;
+  
+  // Original page dimensions in points
+  const originalWidthPts = pageWidthPts;
+  const originalHeightPts = pageHeightPts;
+  
+  // Calculate target dimensions and scale factors
   let targetWidthPts: number;
   let targetHeightPts: number;
   let scaleX = 1;
@@ -642,17 +688,15 @@ export async function generatePDFWithVectorCutContour(
     targetHeightPts = resizeSettings.heightInches * 72;
     
     // Calculate how much to scale the original path coordinates
-    const originalWidthPts = (pageWidth / dpi) * 72;
-    const originalHeightPts = (pageHeight / dpi) * 72;
     scaleX = targetWidthPts / originalWidthPts;
     scaleY = targetHeightPts / originalHeightPts;
     
     console.log('[PDF Generator] Resizing from', originalWidthPts.toFixed(2), 'x', originalHeightPts.toFixed(2), 'pts to', targetWidthPts.toFixed(2), 'x', targetHeightPts.toFixed(2), 'pts');
     console.log('[PDF Generator] Scale factors: X=', scaleX.toFixed(4), 'Y=', scaleY.toFixed(4));
   } else {
-    // Use original dimensions
-    targetWidthPts = (pageWidth / dpi) * 72;
-    targetHeightPts = (pageHeight / dpi) * 72;
+    // Use original dimensions (already in points)
+    targetWidthPts = originalWidthPts;
+    targetHeightPts = originalHeightPts;
   }
   
   const widthPts = targetWidthPts;
@@ -713,22 +757,31 @@ export async function generatePDFWithVectorCutContour(
     // Build path operators
     let pathOps = '/CutContour CS 1 SCN\n0.5 w\n';
     
-    // Scale from original pixels to target points
-    // The outer scaleX/scaleY already accounts for resize
-    const pixelToPointsX = widthPts / pageWidth;
-    const pixelToPointsY = heightPts / pageHeight;
+    // Path coordinates are in RENDER PIXELS (e.g., at 300 DPI)
+    // Step 1: Convert from pixels to points (divide by pixelsPerPoint)
+    // Step 2: Apply resize scale factor (scaleX/scaleY)
+    // Step 3: Flip Y for PDF coordinate system (origin at bottom-left)
+    // Note: Y was already flipped during extraction (origin at top-left canvas coords)
+    
+    // Combined scale: pixels -> points -> target size
+    const pixelToTargetX = scaleX / pixelsPerPoint;
+    const pixelToTargetY = scaleY / pixelsPerPoint;
+    
+    console.log('[PDF Generator] Path scaling: pixelsPerPoint=', pixelsPerPoint, 'scaleX=', scaleX, 'scaleY=', scaleY);
+    console.log('[PDF Generator] Combined pixel-to-target scale: X=', pixelToTargetX, 'Y=', pixelToTargetY);
     
     for (const path of cutContourPoints) {
       if (path.length < 2) continue;
       
-      // Transform: pixel coords -> scaled points, flip Y for PDF coordinate system
-      const startX = path[0].x * pixelToPointsX;
-      const startY = heightPts - (path[0].y * pixelToPointsY);
+      // Transform: pixels -> points -> target, flip Y for PDF
+      // path[i].y is in canvas coords (0 at top), convert to PDF coords (0 at bottom)
+      const startX = path[0].x * pixelToTargetX;
+      const startY = heightPts - (path[0].y * pixelToTargetY);
       pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
       
       for (let i = 1; i < path.length; i++) {
-        const x = path[i].x * pixelToPointsX;
-        const y = heightPts - (path[i].y * pixelToPointsY);
+        const x = path[i].x * pixelToTargetX;
+        const y = heightPts - (path[i].y * pixelToTargetY);
         pathOps += `${x.toFixed(4)} ${y.toFixed(4)} l\n`;
       }
       
