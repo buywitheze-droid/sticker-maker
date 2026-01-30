@@ -370,31 +370,11 @@ export default function ControlsSection({
             
             {showContourOptions && (
               <div className="space-y-3 px-4 pb-3">
-              {/* Algorithm Toggle */}
-              <div>
-                <Label className="text-xs text-gray-500 font-medium">Algorithm</Label>
-                <div className="flex items-center gap-2 mt-2">
-                  <button
-                    onClick={() => onStrokeChange({ algorithm: 'shapes' })}
-                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                      strokeSettings.algorithm === 'shapes'
-                        ? 'bg-cyan-500 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    Shapes
-                  </button>
-                  <button
-                    onClick={() => onStrokeChange({ algorithm: 'complex' })}
-                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                      strokeSettings.algorithm === 'complex'
-                        ? 'bg-cyan-500 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    Complex/Curves
-                  </button>
-                </div>
+              {/* Auto-detection Info */}
+              <div className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+                <p className="text-xs text-gray-600">
+                  <span className="font-medium">Smart Detection:</span> The app automatically detects your design type and applies the best contour algorithm.
+                </p>
               </div>
               
               <div>

@@ -284,8 +284,30 @@ function processContour(
   // First fill any interior holes
   const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
   
-  const algorithm = strokeSettings.algorithm || 'shapes';
-  console.log('[Worker] Algorithm:', algorithm);
+  // First, trace a single contour for complexity analysis
+  const analysisContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+  
+  if (analysisContour.length < 3) {
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+  }
+  
+  // Downscale for analysis
+  const analysisContourScaled = analysisContour.map(p => ({
+    x: p.x / SUPER_SAMPLE,
+    y: p.y / SUPER_SAMPLE
+  }));
+  
+  // Auto-detect algorithm based on contour complexity
+  const complexity = analyzeContourComplexity(analysisContourScaled, effectiveDPI);
+  const algorithm = complexity.needsComplexProcessing ? 'complex' : 'shapes';
+  
+  console.log('[Worker] Complexity analysis:', {
+    perimeterAreaRatio: complexity.perimeterAreaRatio.toFixed(3),
+    concavityScore: complexity.concavityScore.toFixed(3),
+    narrowGapCount: complexity.narrowGapCount,
+    needsComplexProcessing: complexity.needsComplexProcessing
+  });
+  console.log('[Worker] Auto-detected algorithm:', algorithm);
   
   let processedContour: Point[];
   
@@ -1065,6 +1087,139 @@ function traceBoundarySimple(mask: Uint8Array, width: number, height: number): P
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
   // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
   return traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Result of contour complexity analysis
+ */
+interface ComplexityAnalysis {
+  perimeterAreaRatio: number;
+  concavityScore: number;
+  narrowGapCount: number;
+  needsComplexProcessing: boolean;
+}
+
+/**
+ * Analyze contour complexity to auto-detect if Complex algorithm is needed
+ * 
+ * Metrics used:
+ * 1. Perimeter-to-area ratio: Script fonts have more complex outlines (higher ratio)
+ * 2. Sharp angle count: Number of sharp turns (both inward and outward)
+ * 3. Narrow gap detection: Find deep, narrow indentations typical of script fonts
+ * 
+ * @param points - contour points
+ * @param effectiveDPI - DPI for threshold calculations
+ * @returns complexity analysis with recommendation
+ */
+function analyzeContourComplexity(points: Point[], effectiveDPI: number): ComplexityAnalysis {
+  if (points.length < 10) {
+    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, needsComplexProcessing: false };
+  }
+  
+  // Calculate perimeter
+  let perimeter = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % points.length];
+    perimeter += Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+  }
+  
+  // Calculate area using shoelace formula
+  let signedArea = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    signedArea += points[i].x * points[j].y - points[j].x * points[i].y;
+  }
+  const area = Math.abs(signedArea / 2);
+  
+  // Determine winding direction (positive = CCW, negative = CW in canvas coords)
+  const isCCW = signedArea < 0; // Canvas Y is inverted
+  
+  // Perimeter-to-area ratio (normalized by square root of area for scale independence)
+  // Higher values = more complex/jagged outline
+  // A perfect circle has ratio ~3.54, a perfect square ~4.0
+  // Script fonts typically have ratio > 8
+  const perimeterAreaRatio = area > 0 ? perimeter / Math.sqrt(area) : 0;
+  
+  // Analyze sharp turns (orientation-independent)
+  // Count vertices with sharp angle changes (< 120 degrees = sharp turn)
+  let sharpTurnCount = 0;
+  let totalSharpness = 0;
+  
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const curr = points[i];
+    const next = points[(i + 1) % points.length];
+    
+    // Vector from prev to curr
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    // Vector from curr to next
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0.001 && len2 > 0.001) {
+      // Angle between vectors (orientation-independent)
+      const dot = v1x * v2x + v1y * v2y;
+      const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
+      const angleDeg = Math.acos(cosAngle) * 180 / Math.PI;
+      
+      // Sharp turns are when angle between segments is < 120 degrees
+      // (meaning the path makes a significant direction change)
+      if (angleDeg < 120) {
+        sharpTurnCount++;
+        // Weight sharper turns more heavily
+        totalSharpness += (120 - angleDeg) / 120;
+      }
+    }
+  }
+  
+  // Concavity score: ratio of sharp turns weighted by sharpness
+  // Normalized by point count for scale independence
+  const concavityScore = points.length > 0 ? (totalSharpness / points.length) * 10 : 0;
+  
+  // Detect narrow gaps: find sequences of points that form deep, narrow indentations
+  // A narrow gap is where two parts of the contour come close together
+  const gapThresholdPixels = 0.12 * effectiveDPI; // 0.12" gap threshold
+  let narrowGapCount = 0;
+  
+  // Sample every nth point to check for nearby non-adjacent points
+  const sampleStep = Math.max(1, Math.floor(points.length / 150));
+  const minIndexDistance = Math.floor(points.length / 8); // Points must be far apart in sequence
+  
+  for (let i = 0; i < points.length; i += sampleStep) {
+    const p1 = points[i];
+    
+    // Check for nearby points that are far apart in the sequence (indicating a narrow gap)
+    for (let j = i + minIndexDistance; j < points.length - minIndexDistance; j += sampleStep) {
+      const p2 = points[j];
+      const dist = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+      
+      if (dist < gapThresholdPixels) {
+        narrowGapCount++;
+      }
+    }
+  }
+  
+  // Decision thresholds (tuned for script vs block fonts)
+  // Script fonts typically have:
+  // - Higher perimeter-to-area ratio (> 8 for complex scripts, circle=3.54, square=4)
+  // - Higher concavity/sharpness score (> 0.2)
+  // - More narrow gaps (> 2)
+  const needsComplexProcessing = 
+    perimeterAreaRatio > 8 ||       // Complex outline (script fonts are typically > 10)
+    concavityScore > 0.2 ||         // Many sharp turns
+    narrowGapCount > 2;             // Multiple narrow gaps detected
+  
+  return {
+    perimeterAreaRatio,
+    concavityScore,
+    narrowGapCount,
+    needsComplexProcessing
+  };
 }
 
 /**
