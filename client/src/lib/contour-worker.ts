@@ -284,21 +284,25 @@ function processContour(
   // First fill any interior holes
   const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
   
-  // First, trace a single contour for complexity analysis
-  const analysisContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+  // IMPORTANT: Analyze complexity on ORIGINAL mask (not filled)
+  // This preserves the gaps between letters for accurate detection
+  // For multi-letter text like "Tercos", filling would merge letters into one blob
+  const allContoursForAnalysis = traceAllContours(hiResMask, hiResWidth, hiResHeight);
   
-  if (analysisContour.length < 3) {
+  if (allContoursForAnalysis.length === 0) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  // Downscale for analysis
-  const analysisContourScaled = analysisContour.map(p => ({
-    x: p.x / SUPER_SAMPLE,
-    y: p.y / SUPER_SAMPLE
-  }));
+  // Downscale all contours for analysis
+  const scaledContoursForAnalysis = allContoursForAnalysis.map(contour => 
+    contour.map(p => ({
+      x: p.x / SUPER_SAMPLE,
+      y: p.y / SUPER_SAMPLE
+    }))
+  );
   
-  // Auto-detect algorithm based on contour complexity
-  const complexity = analyzeContourComplexity(analysisContourScaled, effectiveDPI);
+  // Analyze complexity across ALL contours
+  const complexity = analyzeMultiContourComplexity(scaledContoursForAnalysis, effectiveDPI);
   const algorithm = complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
   console.log('[Worker] Complexity analysis:', {
@@ -1096,7 +1100,104 @@ interface ComplexityAnalysis {
   perimeterAreaRatio: number;
   concavityScore: number;
   narrowGapCount: number;
+  contourCount: number;
   needsComplexProcessing: boolean;
+}
+
+/**
+ * Analyze complexity across MULTIPLE contours
+ * This is critical for multi-letter text where each letter is a separate contour
+ * 
+ * Decision logic:
+ * - Few contours (1-3) with HIGH individual complexity → Complex algorithm (script font)
+ * - Many contours (4+) with LOW individual complexity → Shapes algorithm (block text like "TERCOS")
+ * - Single contour with deep indentations → Complex algorithm
+ * 
+ * @param contours - Array of contour point arrays
+ * @param effectiveDPI - DPI for threshold calculations
+ * @returns aggregated complexity analysis
+ */
+function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number): ComplexityAnalysis {
+  if (contours.length === 0) {
+    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 0, needsComplexProcessing: false };
+  }
+  
+  const contourCount = contours.length;
+  
+  // Analyze each contour individually
+  const individualAnalyses = contours.map(c => analyzeContourComplexity(c, effectiveDPI));
+  
+  // Aggregate metrics (weighted average by contour size)
+  let totalPerimeter = 0;
+  let totalArea = 0;
+  let weightedConcavity = 0;
+  let totalNarrowGaps = 0;
+  
+  for (let i = 0; i < contours.length; i++) {
+    const points = contours[i];
+    const analysis = individualAnalyses[i];
+    
+    // Calculate perimeter and area for weighting
+    let perimeter = 0;
+    for (let j = 0; j < points.length; j++) {
+      const p1 = points[j];
+      const p2 = points[(j + 1) % points.length];
+      perimeter += Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+    }
+    
+    let signedArea = 0;
+    for (let j = 0; j < points.length; j++) {
+      const k = (j + 1) % points.length;
+      signedArea += points[j].x * points[k].y - points[k].x * points[j].y;
+    }
+    const area = Math.abs(signedArea / 2);
+    
+    totalPerimeter += perimeter;
+    totalArea += area;
+    weightedConcavity += analysis.concavityScore * area;
+    totalNarrowGaps += analysis.narrowGapCount;
+  }
+  
+  // Calculate aggregate metrics
+  const perimeterAreaRatio = totalArea > 0 ? totalPerimeter / Math.sqrt(totalArea) : 0;
+  const concavityScore = totalArea > 0 ? weightedConcavity / totalArea : 0;
+  
+  // Key insight: Multi-letter BLOCK text has many simple contours
+  // Script fonts typically trace as 1-2 connected contours with deep indentations
+  
+  // Check if individual contours show script font characteristics
+  const hasComplexContour = individualAnalyses.some(a => 
+    a.perimeterAreaRatio > 20 ||  // Very complex individual shape
+    a.concavityScore > 0.8 ||     // Many sharp turns in single shape
+    a.narrowGapCount > 3          // Narrow gaps within single shape
+  );
+  
+  // Multi-letter block text detection:
+  // Many (4+) separate, simple contours = block text like "TERCOS"
+  const isMultiLetterBlockText = contourCount >= 4 && 
+    individualAnalyses.every(a => 
+      a.perimeterAreaRatio < 12 &&  // Each letter is relatively simple
+      a.concavityScore < 0.6        // No excessive sharp turns
+    );
+  
+  // Script font detection:
+  // Few contours (1-2) OR any single contour shows high complexity
+  const needsComplexProcessing = hasComplexContour && !isMultiLetterBlockText;
+  
+  console.log('[Worker] Multi-contour analysis:', {
+    contourCount,
+    hasComplexContour,
+    isMultiLetterBlockText,
+    individualRatios: individualAnalyses.map(a => a.perimeterAreaRatio.toFixed(2))
+  });
+  
+  return {
+    perimeterAreaRatio,
+    concavityScore,
+    narrowGapCount: totalNarrowGaps,
+    contourCount,
+    needsComplexProcessing
+  };
 }
 
 /**
@@ -1113,7 +1214,7 @@ interface ComplexityAnalysis {
  */
 function analyzeContourComplexity(points: Point[], effectiveDPI: number): ComplexityAnalysis {
   if (points.length < 10) {
-    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, needsComplexProcessing: false };
+    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 1, needsComplexProcessing: false };
   }
   
   // Calculate perimeter
@@ -1219,6 +1320,7 @@ function analyzeContourComplexity(points: Point[], effectiveDPI: number): Comple
     perimeterAreaRatio,
     concavityScore,
     narrowGapCount,
+    contourCount: 1,
     needsComplexProcessing
   };
 }
