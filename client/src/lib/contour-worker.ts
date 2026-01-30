@@ -318,10 +318,16 @@ function processContour(
   const vectorOffsetPath = offsetAndUnionContours(cleanedContours, totalOffsetPixels);
   console.log('[Worker] After ProTracer offset+union (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
   
+  // Step 5: Simplify straight segments while preserving rounded corners
+  // Use conservative RDP with small epsilon to reduce points on straight lines
+  // This makes lines straighter without cutting across curves
+  const simplifiedPath = simplifyPreservingCorners(vectorOffsetPath, effectiveDPI);
+  console.log('[Worker] After line simplification:', simplifiedPath.length, 'points');
+  
   postProgress(60);
   
-  // Step 4: Gap closing (if enabled) - uses auto-bridging
-  let smoothedPath = vectorOffsetPath;
+  // Step 6: Gap closing (if enabled) - uses auto-bridging
+  let smoothedPath = simplifiedPath;
   
   const gapThresholdPixels = strokeSettings.closeBigGaps 
     ? Math.round(0.42 * effectiveDPI) 
@@ -1291,6 +1297,121 @@ function offsetAndUnionContours(contours: Point[][], offsetPixels: number): Poin
   
   console.log('[Worker] ProTracer: unified contour has', result.length, 'points');
   return result;
+}
+
+/**
+ * Simplify contour by reducing points on straight segments while preserving rounded corners
+ * Uses angle-based detection to identify corner arcs vs straight segments
+ * Straight segments get simplified with RDP, corner arcs are preserved
+ * 
+ * @param points - input contour (after Clipper offset with rounded corners)
+ * @param dpi - effective DPI for calculating tolerances
+ * @returns simplified contour with fewer points but same visual appearance
+ */
+function simplifyPreservingCorners(points: Point[], dpi: number): Point[] {
+  if (points.length < 10) return points;
+  
+  // Calculate tolerance based on DPI - about 0.5px at the working resolution
+  // This is tight enough to keep curves smooth but removes redundant points on lines
+  const tolerance = 0.5;
+  
+  // First, identify corner regions by detecting high curvature areas
+  const n = points.length;
+  const curvatures: number[] = [];
+  
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+    
+    // Calculate angle at this point
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 < 0.001 || len2 < 0.001) {
+      curvatures.push(0);
+      continue;
+    }
+    
+    // Cross product gives sin of angle (direction of turn)
+    const cross = v1x * v2y - v1y * v2x;
+    // Dot product gives cos of angle
+    const dot = v1x * v2x + v1y * v2y;
+    
+    const angle = Math.atan2(Math.abs(cross), dot);
+    curvatures.push(angle);
+  }
+  
+  // Mark points that are part of curved regions (corners)
+  // A point is in a curve if it or its neighbors have significant curvature
+  const isCornerPoint: boolean[] = new Array(n).fill(false);
+  const curveThreshold = Math.PI / 36; // ~5 degrees - small but detectable curve
+  const windowSize = 3; // Check nearby points too
+  
+  for (let i = 0; i < n; i++) {
+    // Check if this point or nearby points have curvature
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + n) % n;
+      if (curvatures[idx] > curveThreshold) {
+        isCornerPoint[i] = true;
+        break;
+      }
+    }
+  }
+  
+  // Now simplify: keep all corner points, apply RDP to straight segments
+  const result: Point[] = [];
+  let straightSegment: Point[] = [];
+  
+  for (let i = 0; i < n; i++) {
+    if (isCornerPoint[i]) {
+      // If we have a straight segment pending, simplify it
+      if (straightSegment.length > 2) {
+        const simplified = douglasPeucker(straightSegment, tolerance);
+        // Add all but the last point (to avoid duplicates)
+        for (let j = 0; j < simplified.length - 1; j++) {
+          result.push(simplified[j]);
+        }
+      } else if (straightSegment.length > 0) {
+        for (let j = 0; j < straightSegment.length - 1; j++) {
+          result.push(straightSegment[j]);
+        }
+      }
+      straightSegment = [];
+      
+      // Add the corner point
+      result.push(points[i]);
+    } else {
+      // Accumulate straight segment points
+      straightSegment.push(points[i]);
+    }
+  }
+  
+  // Handle any remaining straight segment at the end
+  if (straightSegment.length > 2) {
+    const simplified = douglasPeucker(straightSegment, tolerance);
+    for (let j = 0; j < simplified.length; j++) {
+      result.push(simplified[j]);
+    }
+  } else {
+    for (const p of straightSegment) {
+      result.push(p);
+    }
+  }
+  
+  // Remove consecutive duplicates
+  const dedupedResult = deduplicatePoints(result);
+  
+  console.log('[Worker] simplifyPreservingCorners: kept', 
+    isCornerPoint.filter(x => x).length, 'corner points,', 
+    'reduced', points.length, '->', dedupedResult.length);
+  
+  return dedupedResult;
 }
 
 /**
