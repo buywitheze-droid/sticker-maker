@@ -1187,31 +1187,40 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
   const perimeterAreaRatio = totalArea > 0 ? totalPerimeter / Math.sqrt(totalArea) : 0;
   const concavityScore = totalArea > 0 ? weightedConcavity / totalArea : 0;
   
-  // Key insight: Multi-letter BLOCK text has many simple contours
-  // Script fonts typically trace as 1-2 connected contours with deep indentations
+  // Key insight: 
+  // - Multi-letter BLOCK text has many separate simple contours → shapes algorithm
+  // - Script fonts have few contours (1-2) with NARROW GAPS where letters connect → complex algorithm
+  // - Single solid shapes (like Tercos) should use shapes algorithm regardless of complexity
   
-  // Check if individual contours show script font characteristics
-  const hasComplexContour = individualAnalyses.some(a => 
-    a.perimeterAreaRatio > 20 ||  // Very complex individual shape
-    a.concavityScore > 0.8 ||     // Many sharp turns in single shape
-    a.narrowGapCount > 3          // Narrow gaps within single shape
-  );
+  // NARROW GAPS are the key indicator of script fonts
+  // Script fonts have letters that almost touch but don't quite connect
+  const hasNarrowGaps = individualAnalyses.some(a => a.narrowGapCount > 5);
   
   // Multi-letter block text detection:
   // Many (4+) separate, simple contours = block text like "TERCOS"
   const isMultiLetterBlockText = contourCount >= 4 && 
     individualAnalyses.every(a => 
-      a.perimeterAreaRatio < 12 &&  // Each letter is relatively simple
-      a.concavityScore < 0.6        // No excessive sharp turns
+      a.perimeterAreaRatio < 15 &&  // Each letter is relatively simple
+      a.concavityScore < 0.8        // No excessive sharp turns
     );
   
+  // Single solid shape detection:
+  // 1-3 contours WITHOUT narrow gaps = solid design like Tercos
+  const isSingleSolidShape = contourCount <= 3 && !hasNarrowGaps;
+  
   // Script font detection:
-  // Few contours (1-2) OR any single contour shows high complexity
-  const needsComplexProcessing = hasComplexContour && !isMultiLetterBlockText;
+  // Few contours (1-3) WITH narrow gaps = connected script that needs bridging
+  const needsComplexProcessing = hasNarrowGaps && !isMultiLetterBlockText && !isSingleSolidShape;
+  
+  console.log('[Worker] Detection:', {
+    hasNarrowGaps,
+    isMultiLetterBlockText,
+    isSingleSolidShape
+  });
   
   console.log('[Worker] Multi-contour analysis:', {
     contourCount,
-    hasComplexContour,
+    hasNarrowGaps,
     isMultiLetterBlockText,
     individualRatios: individualAnalyses.map(a => a.perimeterAreaRatio.toFixed(2))
   });
