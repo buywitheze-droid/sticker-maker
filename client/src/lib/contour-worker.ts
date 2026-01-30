@@ -424,20 +424,22 @@ function processContour(
   
   postProgress(60);
   
-  // Step 4: Gap closing (if enabled) - only for complex algorithm
+  // Step 4: Gap closing - ALWAYS enabled for complex algorithm (script fonts)
   // Shapes algorithm should NOT use gap closing since block text is already a solid shape
   let smoothedPath = vectorOffsetPath;
   
   if (algorithm === 'complex') {
-    const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.42 * effectiveDPI) 
+    // Default to 0.08" gap threshold for complex algorithm (script fonts need gap bridging)
+    // Use larger threshold if closeBigGaps is set, smaller if closeSmallGaps
+    const gapThresholdInches = strokeSettings.closeBigGaps 
+      ? 0.42 
       : strokeSettings.closeSmallGaps 
-        ? Math.round(0.15 * effectiveDPI) 
-        : 0;
+        ? 0.15 
+        : 0.08; // Default gap threshold for script fonts
     
-    if (gapThresholdPixels > 0) {
-      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-    }
+    const gapThresholdPixels = Math.round(gapThresholdInches * effectiveDPI);
+    console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdInches, 'inches (', gapThresholdPixels, 'px)');
+    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
   // CRITICAL: Final loop removal - eliminates any self-intersections created by offset or gap closing

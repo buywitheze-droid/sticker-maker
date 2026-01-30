@@ -473,60 +473,6 @@ export default function ControlsSection({
                 )}
               </div>
               
-              {/* Gap Closing Options - for script fonts */}
-              <div className="pt-2 border-t border-gray-200">
-                <Label className="text-xs text-gray-500 font-medium mb-2 block">Gap Bridging (Script Fonts)</Label>
-                <div className="space-y-2">
-                  <button
-                    onClick={() => onStrokeChange({ 
-                      closeSmallGaps: !strokeSettings.closeSmallGaps,
-                      closeBigGaps: false 
-                    })}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
-                      strokeSettings.closeSmallGaps && !strokeSettings.closeBigGaps
-                        ? 'border-cyan-400 bg-cyan-50 text-cyan-700' 
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">Small Gaps</span>
-                      <span className="text-xs text-gray-400">(0.15")</span>
-                    </div>
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      strokeSettings.closeSmallGaps && !strokeSettings.closeBigGaps ? 'border-cyan-500 bg-cyan-500' : 'border-gray-300'
-                    }`}>
-                      {strokeSettings.closeSmallGaps && !strokeSettings.closeBigGaps && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                      )}
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => onStrokeChange({ 
-                      closeBigGaps: !strokeSettings.closeBigGaps,
-                      closeSmallGaps: false 
-                    })}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all ${
-                      strokeSettings.closeBigGaps
-                        ? 'border-cyan-400 bg-cyan-50 text-cyan-700' 
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">Large Gaps</span>
-                      <span className="text-xs text-gray-400">(0.42")</span>
-                    </div>
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      strokeSettings.closeBigGaps ? 'border-cyan-500 bg-cyan-500' : 'border-gray-300'
-                    }`}>
-                      {strokeSettings.closeBigGaps && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                      )}
-                    </div>
-                  </button>
-                </div>
-                <p className="mt-1.5 text-xs text-gray-500">Bridges gaps in cursive/script text for smooth contours.</p>
-              </div>
-              
               </div>
             )}
           </div>
