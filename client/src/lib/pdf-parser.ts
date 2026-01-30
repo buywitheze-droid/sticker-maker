@@ -618,19 +618,45 @@ export function isPDFFile(file: File): boolean {
 }
 
 // Generate a PDF with the image and a proper vector CutContour spot color path
+// Supports resize settings to scale the output to user-specified dimensions
 export async function generatePDFWithVectorCutContour(
   image: HTMLImageElement,
   cutContourPoints: { x: number; y: number }[][],
   pageWidth: number,
   pageHeight: number,
   dpi: number,
-  filename: string
+  filename: string,
+  resizeSettings?: { widthInches: number; heightInches: number; outputDPI: number }
 ): Promise<void> {
   const { PDFDocument, PDFName, PDFArray, PDFDict } = await import('pdf-lib');
   
-  // Convert from pixels to points (72 points per inch)
-  const widthPts = (pageWidth / dpi) * 72;
-  const heightPts = (pageHeight / dpi) * 72;
+  // Calculate scale factor if resize settings provided
+  let targetWidthPts: number;
+  let targetHeightPts: number;
+  let scaleX = 1;
+  let scaleY = 1;
+  
+  if (resizeSettings && resizeSettings.widthInches > 0 && resizeSettings.heightInches > 0) {
+    // User specified output size in inches - convert to points
+    targetWidthPts = resizeSettings.widthInches * 72;
+    targetHeightPts = resizeSettings.heightInches * 72;
+    
+    // Calculate how much to scale the original path coordinates
+    const originalWidthPts = (pageWidth / dpi) * 72;
+    const originalHeightPts = (pageHeight / dpi) * 72;
+    scaleX = targetWidthPts / originalWidthPts;
+    scaleY = targetHeightPts / originalHeightPts;
+    
+    console.log('[PDF Generator] Resizing from', originalWidthPts.toFixed(2), 'x', originalHeightPts.toFixed(2), 'pts to', targetWidthPts.toFixed(2), 'x', targetHeightPts.toFixed(2), 'pts');
+    console.log('[PDF Generator] Scale factors: X=', scaleX.toFixed(4), 'Y=', scaleY.toFixed(4));
+  } else {
+    // Use original dimensions
+    targetWidthPts = (pageWidth / dpi) * 72;
+    targetHeightPts = (pageHeight / dpi) * 72;
+  }
+  
+  const widthPts = targetWidthPts;
+  const heightPts = targetHeightPts;
   
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([widthPts, heightPts]);
@@ -687,20 +713,22 @@ export async function generatePDFWithVectorCutContour(
     // Build path operators
     let pathOps = '/CutContour CS 1 SCN\n0.5 w\n';
     
+    // Scale from original pixels to target points
+    // The outer scaleX/scaleY already accounts for resize
+    const pixelToPointsX = widthPts / pageWidth;
+    const pixelToPointsY = heightPts / pageHeight;
+    
     for (const path of cutContourPoints) {
       if (path.length < 2) continue;
       
-      // Scale from pixels to points and flip Y coordinate
-      const scaleX = widthPts / pageWidth;
-      const scaleY = heightPts / pageHeight;
-      
-      const startX = path[0].x * scaleX;
-      const startY = heightPts - (path[0].y * scaleY);
+      // Transform: pixel coords -> scaled points, flip Y for PDF coordinate system
+      const startX = path[0].x * pixelToPointsX;
+      const startY = heightPts - (path[0].y * pixelToPointsY);
       pathOps += `${startX.toFixed(4)} ${startY.toFixed(4)} m\n`;
       
       for (let i = 1; i < path.length; i++) {
-        const x = path[i].x * scaleX;
-        const y = heightPts - (path[i].y * scaleY);
+        const x = path[i].x * pixelToPointsX;
+        const y = heightPts - (path[i].y * pixelToPointsY);
         pathOps += `${x.toFixed(4)} ${y.toFixed(4)} l\n`;
       }
       
