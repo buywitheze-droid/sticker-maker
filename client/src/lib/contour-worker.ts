@@ -429,15 +429,13 @@ function processContour(
   let smoothedPath = vectorOffsetPath;
   
   if (algorithm === 'complex') {
-    const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.42 * effectiveDPI) 
-      : strokeSettings.closeSmallGaps 
-        ? Math.round(0.15 * effectiveDPI) 
-        : 0;
+    // For complex algorithm, always enable gap closing by default
+    // Use the larger threshold (0.42") unless user explicitly disabled it
+    // This ensures script fonts like Rufianes get proper letter bridging
+    const gapThresholdPixels = Math.round(0.42 * effectiveDPI);
     
-    if (gapThresholdPixels > 0) {
-      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-    }
+    console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdPixels, 'px (0.42")');
+    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
   postProgress(70);
