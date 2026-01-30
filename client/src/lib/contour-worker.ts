@@ -1124,10 +1124,29 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
     return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 0, needsComplexProcessing: false };
   }
   
-  const contourCount = contours.length;
+  // Filter out very small contours (letter holes like in O, R, etc.)
+  // These small holes can have high perimeter-to-area ratios and shouldn't trigger complex processing
+  const minContourArea = (0.02 * effectiveDPI) ** 2; // Minimum 0.02" x 0.02" = 0.0004 sq inches
   
-  // Analyze each contour individually
-  const individualAnalyses = contours.map(c => analyzeContourComplexity(c, effectiveDPI));
+  const significantContours = contours.filter(c => {
+    if (c.length < 10) return false;
+    let signedArea = 0;
+    for (let i = 0; i < c.length; i++) {
+      const j = (i + 1) % c.length;
+      signedArea += c[i].x * c[j].y - c[j].x * c[i].y;
+    }
+    const area = Math.abs(signedArea / 2);
+    return area >= minContourArea;
+  });
+  
+  // If no significant contours, use original contours
+  const contoursToAnalyze = significantContours.length > 0 ? significantContours : contours;
+  const contourCount = contoursToAnalyze.length;
+  
+  console.log('[Worker] Contour filtering:', contours.length, 'total,', significantContours.length, 'significant (min area:', minContourArea.toFixed(0), 'px²)');
+  
+  // Analyze each significant contour individually
+  const individualAnalyses = contoursToAnalyze.map(c => analyzeContourComplexity(c, effectiveDPI));
   
   // Aggregate metrics (weighted average by contour size)
   let totalPerimeter = 0;
@@ -1135,8 +1154,8 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
   let weightedConcavity = 0;
   let totalNarrowGaps = 0;
   
-  for (let i = 0; i < contours.length; i++) {
-    const points = contours[i];
+  for (let i = 0; i < contoursToAnalyze.length; i++) {
+    const points = contoursToAnalyze[i];
     const analysis = individualAnalyses[i];
     
     // Calculate perimeter and area for weighting
