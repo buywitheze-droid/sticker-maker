@@ -280,53 +280,110 @@ function processContour(
   // 4. Straight lines stay straight, corners are perfectly rounded
   // =============================================================================
   
-  // Step 1: Trace original tight contour from hi-res mask (NO dilation yet)
+  // Step 1: Trace contours from hi-res mask
   // First fill any interior holes
   const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
-  const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
   
-  if (originalContour.length < 3) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+  const algorithm = strokeSettings.algorithm || 'shapes';
+  console.log('[Worker] Algorithm:', algorithm);
+  
+  let processedContour: Point[];
+  
+  if (algorithm === 'complex') {
+    // =============================================================================
+    // CLUSTER-BASED BRIDGING for Complex algorithm
+    // =============================================================================
+    // 1. Trace ALL separate contours (not just the largest)
+    // 2. Cluster them by proximity (within 0.15")
+    // 3. Dense clusters (multiple nearby contours): Union + Buffer & Shrink
+    // 4. Isolated contours (single shape): Skip bridging, standard offset only
+    // =============================================================================
+    
+    console.log('[Worker] Complex algorithm: using cluster-based bridging');
+    
+    // Trace all separate contours from the mask
+    const allContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
+    
+    if (allContours.length === 0) {
+      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+    }
+    
+    postProgress(40);
+    
+    // Downscale all contours to 1x coordinates
+    const scaledContours = allContours.map(contour => 
+      contour.map(p => ({
+        x: p.x / SUPER_SAMPLE,
+        y: p.y / SUPER_SAMPLE
+      }))
+    );
+    
+    // Simplify each contour
+    const tightEpsilon = 0.0002; // Lower epsilon for complex designs
+    const simplifiedContours = scaledContours.map(contour => {
+      const simplified = approxPolyDP(contour, tightEpsilon);
+      return sanitizePolygonForOffset(simplified);
+    });
+    
+    console.log('[Worker] Traced', simplifiedContours.length, 'contours, each simplified');
+    
+    // Cluster threshold: 0.15" default for script fonts
+    const clusterThresholdInches = 0.15;
+    const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
+    
+    // Gap close distance for dense clusters
+    const gapCloseInches = (strokeSettings.autoBridgingThreshold || 0.02) * 2.5;
+    const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
+    
+    console.log('[Worker] Cluster threshold:', clusterThresholdPixels, 'px (', clusterThresholdInches, 'in)');
+    console.log('[Worker] Gap close distance:', gapClosePixels, 'px (', gapCloseInches.toFixed(3), 'in)');
+    
+    // Process with cluster-based logic
+    processedContour = processContoursWithClustering(
+      simplifiedContours,
+      clusterThresholdPixels,
+      gapClosePixels,
+      effectiveDPI
+    );
+    
+    postProgress(50);
+    
+  } else {
+    // =============================================================================
+    // STANDARD processing for Shapes algorithm
+    // =============================================================================
+    // Single contour tracing with standard offset (no cluster analysis)
+    
+    const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+    
+    if (originalContour.length < 3) {
+      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+    }
+    
+    postProgress(40);
+    
+    // Downscale to 1x coordinates for vector processing
+    let tightContour = originalContour.map(p => ({
+      x: p.x / SUPER_SAMPLE,
+      y: p.y / SUPER_SAMPLE
+    }));
+    
+    console.log('[Worker] Original tight contour:', tightContour.length, 'points');
+    
+    // Simplify the tight contour to remove pixel stair-steps
+    const tightEpsilon = 0.001; // Higher epsilon for cleaner shapes
+    tightContour = approxPolyDP(tightContour, tightEpsilon);
+    console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
+    
+    // Sanitize to fix any self-intersections
+    processedContour = sanitizePolygonForOffset(tightContour);
+    
+    postProgress(50);
   }
   
-  postProgress(40);
-  
-  // Downscale to 1x coordinates for vector processing
-  let tightContour = originalContour.map(p => ({
-    x: p.x / SUPER_SAMPLE,
-    y: p.y / SUPER_SAMPLE
-  }));
-  
-  console.log('[Worker] Original tight contour:', tightContour.length, 'points');
-  console.log('[Worker] Algorithm:', strokeSettings.algorithm || 'shapes');
-  
-  // Step 2: Simplify the tight contour to remove pixel stair-steps
-  // Algorithm-specific epsilon:
-  // - "shapes": Higher epsilon (0.001) for cleaner, simpler shapes
-  // - "complex": Lower epsilon (0.0002) to preserve more curve detail
-  const algorithm = strokeSettings.algorithm || 'shapes';
-  const tightEpsilon = algorithm === 'complex' ? 0.0002 : 0.001;
-  tightContour = approxPolyDP(tightContour, tightEpsilon);
-  console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
-  
-  // Sanitize to fix any self-intersections
-  tightContour = sanitizePolygonForOffset(tightContour);
-  
-  postProgress(50);
-  
-  // Step 3a: For Complex algorithm, apply Vector Closing to bridge gaps
-  // This uses the "offset out then in" technique to merge separated text/objects
-  // while preserving perfect straight lines on blocky designs
-  let processedContour = tightContour;
-  if (algorithm === 'complex') {
-    // Use the autoBridgingThreshold for vector close gap (default 0.02")
-    // Multiply by 2.5x for better letter gap coverage (0.05" at default)
-    const vectorCloseInches = (strokeSettings.autoBridgingThreshold || 0.02) * 2.5;
-    const vectorCloseGap = Math.round(vectorCloseInches * effectiveDPI);
-    if (vectorCloseGap > 0) {
-      processedContour = vectorCloseMerge(tightContour, vectorCloseGap);
-      console.log('[Worker] Complex algorithm: applied vectorCloseMerge with gap', vectorCloseGap, 'px (', vectorCloseInches.toFixed(3), 'in)');
-    }
+  if (processedContour.length < 3) {
+    console.log('[Worker] Processed contour too small, returning empty');
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   // Step 3b: Apply VECTOR OFFSET using Clipper with JT_ROUND
@@ -1006,6 +1063,526 @@ function traceBoundarySimple(mask: Uint8Array, width: number, height: number): P
 function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
   // Use simple Moore neighbor tracing - reliable and works well with 4x upscaling
   return traceBoundarySimple(mask, width, height);
+}
+
+/**
+ * Bounding box for a contour
+ */
+interface BoundingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * A contour with its bounding box for clustering
+ */
+interface ContourWithBounds {
+  points: Point[];
+  bounds: BoundingBox;
+  area: number;
+}
+
+/**
+ * Compute bounding box for a set of points
+ */
+function computeBounds(points: Point[]): BoundingBox {
+  if (points.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+  
+  let minX = points[0].x, maxX = points[0].x;
+  let minY = points[0].y, maxY = points[0].y;
+  
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * Compute signed area of polygon using shoelace formula
+ */
+function computePolygonArea(points: Point[]): number {
+  if (points.length < 3) return 0;
+  
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    area += points[i].x * points[j].y - points[j].x * points[i].y;
+  }
+  return Math.abs(area / 2);
+}
+
+/**
+ * Check if two bounding boxes are within a threshold distance of each other
+ * Uses expanded bounding box intersection test
+ */
+function boundsWithinDistance(a: BoundingBox, b: BoundingBox, distance: number): boolean {
+  // Expand box A by distance on all sides
+  const expandedA = {
+    minX: a.minX - distance,
+    minY: a.minY - distance,
+    maxX: a.maxX + distance,
+    maxY: a.maxY + distance
+  };
+  
+  // Check if expanded A intersects B
+  return !(expandedA.maxX < b.minX || b.maxX < expandedA.minX ||
+           expandedA.maxY < b.minY || b.maxY < expandedA.minY);
+}
+
+/**
+ * Trace ALL separate contours from a mask using proper connected component labeling
+ * Uses flood fill to identify each component, then traces its boundary once
+ * Returns array of contours, each being a closed polygon
+ */
+function traceAllContours(mask: Uint8Array, width: number, height: number): Point[][] {
+  const componentLabel = new Int32Array(width * height); // 0 = unlabeled, >0 = component ID
+  const contours: Point[][] = [];
+  let currentLabel = 0;
+  
+  // Flood fill helper using iterative approach (avoids stack overflow)
+  function floodFillComponent(startX: number, startY: number, label: number): void {
+    const stack: Array<{x: number, y: number}> = [{x: startX, y: startY}];
+    
+    while (stack.length > 0) {
+      const {x, y} = stack.pop()!;
+      const idx = y * width + x;
+      
+      // Skip if out of bounds, not foreground, or already labeled
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      if (mask[idx] !== 1 || componentLabel[idx] !== 0) continue;
+      
+      // Label this pixel
+      componentLabel[idx] = label;
+      
+      // Add 4-connected neighbors (8-connected would work too)
+      stack.push({x: x + 1, y: y});
+      stack.push({x: x - 1, y: y});
+      stack.push({x: x, y: y + 1});
+      stack.push({x: x, y: y - 1});
+    }
+  }
+  
+  // First pass: label all connected components using flood fill
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (mask[idx] === 1 && componentLabel[idx] === 0) {
+        currentLabel++;
+        floodFillComponent(x, y, currentLabel);
+      }
+    }
+  }
+  
+  console.log('[Worker] traceAllContours: found', currentLabel, 'connected components');
+  
+  // Second pass: for each component, find a boundary pixel and trace the contour
+  const componentTraced = new Set<number>();
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      const label = componentLabel[idx];
+      
+      if (label <= 0 || componentTraced.has(label)) continue;
+      
+      // Check if this is a boundary pixel (has at least one background neighbor)
+      let isBoundary = false;
+      for (let dy = -1; dy <= 1 && !isBoundary; dy++) {
+        for (let dx = -1; dx <= 1 && !isBoundary; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            isBoundary = true;
+          } else if (mask[ny * width + nx] !== 1) {
+            isBoundary = true;
+          }
+        }
+      }
+      
+      if (!isBoundary) continue;
+      
+      // Trace the contour for this component
+      const contour = traceBoundaryForComponent(mask, width, height, x, y);
+      
+      if (contour.length >= 3) {
+        contours.push(contour);
+        componentTraced.add(label);
+      }
+    }
+  }
+  
+  console.log('[Worker] traceAllContours: traced', contours.length, 'contours from', currentLabel, 'components');
+  return contours;
+}
+
+/**
+ * Trace boundary for a single component using Moore neighbor tracing
+ */
+function traceBoundaryForComponent(
+  mask: Uint8Array, 
+  width: number, 
+  height: number, 
+  startX: number, 
+  startY: number
+): Point[] {
+  const path: Point[] = [];
+  const directions = [
+    { dx: 1, dy: 0 },
+    { dx: 1, dy: 1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: -1, dy: -1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: -1 }
+  ];
+  
+  let x = startX, y = startY;
+  let dir = 0;
+  const maxSteps = width * height;
+  let steps = 0;
+  
+  do {
+    path.push({ x, y });
+    
+    let found = false;
+    for (let i = 0; i < 8; i++) {
+      const checkDir = (dir + 6 + i) % 8;
+      const nx = x + directions[checkDir].dx;
+      const ny = y + directions[checkDir].dy;
+      
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
+        x = nx;
+        y = ny;
+        dir = checkDir;
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) break;
+    steps++;
+  } while ((x !== startX || y !== startY) && steps < maxSteps);
+  
+  return path;
+}
+
+/**
+ * Cluster contours by proximity using Union-Find algorithm
+ * Returns array of clusters, each cluster is array of contour indices
+ */
+function clusterContoursByProximity(
+  contours: ContourWithBounds[], 
+  thresholdPixels: number
+): number[][] {
+  const n = contours.length;
+  if (n <= 1) return n === 1 ? [[0]] : [];
+  
+  // Union-Find data structure
+  const parent = new Array(n).fill(0).map((_, i) => i);
+  const rank = new Array(n).fill(0);
+  
+  function find(x: number): number {
+    if (parent[x] !== x) {
+      parent[x] = find(parent[x]); // Path compression
+    }
+    return parent[x];
+  }
+  
+  function union(x: number, y: number): void {
+    const px = find(x), py = find(y);
+    if (px === py) return;
+    
+    // Union by rank
+    if (rank[px] < rank[py]) {
+      parent[px] = py;
+    } else if (rank[px] > rank[py]) {
+      parent[py] = px;
+    } else {
+      parent[py] = px;
+      rank[px]++;
+    }
+  }
+  
+  // Check all pairs for proximity
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (boundsWithinDistance(contours[i].bounds, contours[j].bounds, thresholdPixels)) {
+        union(i, j);
+      }
+    }
+  }
+  
+  // Group indices by their root
+  const clusters = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!clusters.has(root)) {
+      clusters.set(root, []);
+    }
+    clusters.get(root)!.push(i);
+  }
+  
+  return Array.from(clusters.values());
+}
+
+/**
+ * Process clusters with cluster-based bridging strategy:
+ * - Dense clusters (multiple contours nearby): Union + vectorCloseMerge
+ * - Isolated contours (single shape): Standard offset only
+ * 
+ * Returns array of processed contours ready for final offset
+ */
+function processContoursWithClustering(
+  rawContours: Point[][],
+  clusterThresholdPixels: number,
+  gapClosePixels: number,
+  effectiveDPI: number
+): Point[] {
+  if (rawContours.length === 0) return [];
+  
+  // Build contours with bounds and area
+  const contours: ContourWithBounds[] = rawContours.map(points => ({
+    points,
+    bounds: computeBounds(points),
+    area: computePolygonArea(points)
+  }));
+  
+  // If only one contour, process based on its characteristics
+  if (contours.length === 1) {
+    console.log('[Worker] Single contour detected, skipping cluster analysis');
+    // Single large contour - likely already solid, skip heavy bridging
+    return contours[0].points;
+  }
+  
+  // Cluster by proximity
+  const clusters = clusterContoursByProximity(contours, clusterThresholdPixels);
+  console.log('[Worker] Clustered', contours.length, 'contours into', clusters.length, 'groups');
+  
+  const processedContours: Point[][] = [];
+  
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const clusterIndices = clusters[ci];
+    const clusterContours = clusterIndices.map(i => contours[i]);
+    
+    if (clusterIndices.length === 1) {
+      // Group B: Isolated/Solid - skip bridging, use standard processing
+      console.log('[Worker] Cluster', ci, ': ISOLATED (1 contour, area:', Math.round(clusterContours[0].area), 'px²)');
+      processedContours.push(clusterContours[0].points);
+    } else {
+      // Group A: Dense/Script - use expand-then-shrink on ALL contours together
+      // This merges non-overlapping nearby shapes into a single outline
+      console.log('[Worker] Cluster', ci, ': DENSE (', clusterIndices.length, 'contours) - applying multi-path Buffer&Shrink');
+      
+      if (gapClosePixels > 0) {
+        // Use multiPathVectorMerge: expand all contours, union, then shrink
+        // This properly merges separate letters that don't physically overlap
+        const bridgedPath = multiPathVectorMerge(
+          clusterContours.map(c => c.points),
+          gapClosePixels
+        );
+        processedContours.push(bridgedPath);
+      } else {
+        // No gap closing - just union (for non-overlapping, picks largest)
+        const unionedPath = unionClusterContours(clusterContours.map(c => c.points));
+        processedContours.push(unionedPath);
+      }
+    }
+  }
+  
+  // If multiple processed contours, union them all into final result
+  if (processedContours.length === 0) return [];
+  if (processedContours.length === 1) return processedContours[0];
+  
+  // Final union of all processed clusters
+  console.log('[Worker] Final union of', processedContours.length, 'processed clusters');
+  return unionClusterContours(processedContours);
+}
+
+/**
+ * Multi-path Vector Merge - merges multiple non-overlapping contours into one
+ * Uses the expand-then-shrink technique on ALL contours together:
+ * 1. Expand all contours by +gapPixels (now they overlap)
+ * 2. Union the expanded shapes (creates merged regions)
+ * 3. Shrink by -gapPixels (restores original size but now merged)
+ * 
+ * This properly handles script fonts where letters are close but don't physically touch.
+ * 
+ * @param contours - array of separate contour polygons
+ * @param gapPixels - gap closing distance in pixels
+ * @returns single merged polygon
+ */
+function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
+  if (contours.length === 0) return [];
+  if (contours.length === 1) return contours[0];
+  if (gapPixels <= 0) return unionClusterContours(contours);
+  
+  console.log('[Worker] multiPathVectorMerge: input', contours.length, 'contours, gap:', gapPixels, 'px');
+  
+  const scaledGap = gapPixels * CLIPPER_SCALE;
+  
+  // Step 1: Expand ALL contours by +gapPixels using ClipperOffset
+  const coExpand = new ClipperLib.ClipperOffset();
+  coExpand.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coExpand.MiterLimit = 2.0;
+  
+  for (const contour of contours) {
+    if (contour.length < 3) continue;
+    const clipperPath = contour.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+  
+  const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
+  coExpand.Execute(expandedPaths, scaledGap);
+  
+  if (expandedPaths.length === 0) {
+    console.log('[Worker] multiPathVectorMerge: expand failed, returning first contour');
+    return contours[0];
+  }
+  
+  console.log('[Worker] multiPathVectorMerge: after expand (+', gapPixels, 'px):', expandedPaths.length, 'paths');
+  
+  // Step 2: Union all expanded paths (they should now overlap where gaps were small)
+  const clipper = new ClipperLib.Clipper();
+  for (const path of expandedPaths) {
+    clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+  }
+  
+  const unionResult: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (unionResult.length === 0) {
+    console.log('[Worker] multiPathVectorMerge: union failed, using expanded');
+    // Fall back to largest expanded path
+    let largest = expandedPaths[0];
+    let largestArea = Math.abs(ClipperLib.Clipper.Area(expandedPaths[0]));
+    for (let i = 1; i < expandedPaths.length; i++) {
+      const area = Math.abs(ClipperLib.Clipper.Area(expandedPaths[i]));
+      if (area > largestArea) {
+        largestArea = area;
+        largest = expandedPaths[i];
+      }
+    }
+    return largest.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+  }
+  
+  console.log('[Worker] multiPathVectorMerge: after union:', unionResult.length, 'paths');
+  
+  // Step 3: Shrink all unioned paths by -gapPixels
+  const coShrink = new ClipperLib.ClipperOffset();
+  coShrink.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coShrink.MiterLimit = 2.0;
+  
+  for (const path of unionResult) {
+    coShrink.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+  
+  const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
+  coShrink.Execute(shrunkPaths, -scaledGap);
+  
+  if (shrunkPaths.length === 0) {
+    console.log('[Worker] multiPathVectorMerge: shrink failed, using union result');
+    // Fall back to largest union result
+    let largest = unionResult[0];
+    let largestArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
+    for (let i = 1; i < unionResult.length; i++) {
+      const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+      if (area > largestArea) {
+        largestArea = area;
+        largest = unionResult[i];
+      }
+    }
+    return largest.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+  }
+  
+  console.log('[Worker] multiPathVectorMerge: after shrink (-', gapPixels, 'px):', shrunkPaths.length, 'paths');
+  
+  // Find the largest shrunk path (this is the main merged outline)
+  let resultPath = shrunkPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[0]));
+  
+  for (let i = 1; i < shrunkPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = shrunkPaths[i];
+    }
+  }
+  
+  // Step 4: Simplify to remove redundant collinear points
+  const simplifiedPaths = ClipperLib.Clipper.SimplifyPolygon(resultPath, ClipperLib.PolyFillType.pftNonZero);
+  const finalPath = simplifiedPaths.length > 0 ? simplifiedPaths[0] : resultPath;
+  
+  const result = finalPath.map((p: {X: number; Y: number}) => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] multiPathVectorMerge: final result:', result.length, 'pts');
+  
+  return result;
+}
+
+/**
+ * Union multiple contours into a single polygon using Clipper
+ */
+function unionClusterContours(contours: Point[][]): Point[] {
+  if (contours.length === 0) return [];
+  if (contours.length === 1) return contours[0];
+  
+  const clipper = new ClipperLib.Clipper();
+  
+  for (const contour of contours) {
+    if (contour.length < 3) continue;
+    
+    const clipperPath = contour.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    
+    clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
+  }
+  
+  const result: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, result,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (result.length === 0) {
+    console.log('[Worker] unionClusterContours: Union produced empty result');
+    return contours[0]; // Fallback to first contour
+  }
+  
+  // Find largest polygon
+  let largestPath = result[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(result[0]));
+  
+  for (let i = 1; i < result.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(result[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = result[i];
+    }
+  }
+  
+  const points = largestPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] unionClusterContours:', contours.length, 'inputs ->', points.length, 'points');
+  return points;
 }
 
 /**
