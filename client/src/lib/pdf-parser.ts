@@ -6,18 +6,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
-export type CutContourUnits = 'points' | 'pixels';
-
-export interface PDFCutContourInfo {
-  hasCutContour: boolean;
-  cutContourPath: Path2D | null;
-  cutContourPoints: { x: number; y: number }[][];
-  cutContourUnits: CutContourUnits;  // Explicit units for path coordinates
-  pageWidth: number;   // Render dimensions in pixels (at render DPI)
-  pageHeight: number;  // Render dimensions in pixels (at render DPI)
-  pageWidthPts: number;  // Original PDF page dimensions in points (72/inch)
-  pageHeightPts: number; // Original PDF page dimensions in points (72/inch)
-}
+// Import types from shared types module - do not re-export to avoid circular imports
+import type { PDFCutContourInfo } from './types';
 
 export interface ParsedPDFData {
   image: HTMLImageElement;
@@ -72,6 +62,12 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
     }
   }
   
+  // Defensive check: ensure cutContourUnits is set
+  if (cutContourInfo.cutContourPoints.length > 0 && !cutContourInfo.cutContourUnits) {
+    console.warn('[PDF Parser] WARNING: cutContourUnits not set, defaulting to points');
+    cutContourInfo.cutContourUnits = 'points';
+  }
+  
   // Convert paths to pixels if they're in points (deterministic based on units flag)
   if (cutContourInfo.cutContourUnits === 'points' && cutContourInfo.cutContourPoints.length > 0) {
     console.log('[PDF Parser] Converting paths from PDF points to render pixels (scale:', pdfScale, ')');
@@ -81,7 +77,10 @@ export async function parsePDF(file: File): Promise<ParsedPDFData> {
     cutContourInfo.cutContourUnits = 'pixels';  // Now in pixels
   }
   
-  // Verify final units are pixels
+  // Verify final units are pixels (should always be true after conversion)
+  if (cutContourInfo.cutContourPoints.length > 0 && cutContourInfo.cutContourUnits !== 'pixels') {
+    console.error('[PDF Parser] ERROR: Final cutContourUnits should be pixels but is:', cutContourInfo.cutContourUnits);
+  }
   console.log('[PDF Parser] Final cutContourUnits:', cutContourInfo.cutContourUnits);
   
   console.log('[PDF Parser] Final result: hasCutContour:', cutContourInfo.hasCutContour, 'paths:', cutContourInfo.cutContourPoints.length);
@@ -520,134 +519,8 @@ function extractPathFromContentStream(content: string, pageWidth: number, pageHe
   return paths;
 }
 
-async function extractCutContour(
-  page: pdfjsLib.PDFPageProxy, 
-  viewport: pdfjsLib.PageViewport,
-  scale: number
-): Promise<PDFCutContourInfo> {
-  const result: PDFCutContourInfo = {
-    hasCutContour: false,
-    cutContourPath: null,
-    cutContourPoints: [],
-    pageWidth: viewport.width,
-    pageHeight: viewport.height
-  };
-  
-  try {
-    const operatorList = await page.getOperatorList();
-    const ops = operatorList.fnArray;
-    const args = operatorList.argsArray;
-    
-    let inCutContour = false;
-    let currentPath: { x: number; y: number }[] = [];
-    const path2D = new Path2D();
-    
-    // Debug: Log all operators and look for spot color patterns
-    const colorOps: string[] = [];
-    const allColorArgs: any[] = [];
-    
-    for (let i = 0; i < ops.length; i++) {
-      const op = ops[i];
-      const arg = args[i];
-      
-      // Check for various color-related operators
-      if (op === pdfjsLib.OPS.setFillColorN || 
-          op === pdfjsLib.OPS.setStrokeColorN ||
-          op === pdfjsLib.OPS.setFillColorSpace ||
-          op === pdfjsLib.OPS.setStrokeColorSpace) {
-        colorOps.push(`op${op}`);
-        allColorArgs.push(arg);
-        
-        // Check for CutContour in any argument
-        if (Array.isArray(arg)) {
-          for (const a of arg) {
-            if (typeof a === 'string' && a.toLowerCase().includes('cutcontour')) {
-              result.hasCutContour = true;
-              inCutContour = true;
-              console.log('[PDF Parser] CutContour found in args:', a);
-            }
-          }
-        }
-      }
-    }
-    
-    if (colorOps.length > 0) {
-      console.log('[PDF Parser] Color operators found:', colorOps.length);
-      console.log('[PDF Parser] Sample color args:', allColorArgs.slice(0, 5));
-    } else {
-      console.log('[PDF Parser] No color operators found in operator list');
-    }
-    
-    // Also check the raw PDF stream for CutContour text
-    console.log('[PDF Parser] Total operators:', ops.length);
-    
-    for (let i = 0; i < ops.length; i++) {
-      const op = ops[i];
-      const arg = args[i];
-      
-      if (op === pdfjsLib.OPS.setFillColorN || op === pdfjsLib.OPS.setStrokeColorN) {
-        const colorName = arg?.[arg.length - 1];
-        if (typeof colorName === 'string' && 
-            colorName.toLowerCase().includes('cutcontour')) {
-          inCutContour = true;
-          result.hasCutContour = true;
-          console.log('[PDF Parser] CutContour detected:', colorName);
-        }
-      }
-      
-      if (op === pdfjsLib.OPS.setFillRGBColor || op === pdfjsLib.OPS.setStrokeRGBColor) {
-        inCutContour = false;
-      }
-      
-      if (inCutContour) {
-        if (op === pdfjsLib.OPS.moveTo) {
-          const x = arg[0] * scale;
-          const y = viewport.height - (arg[1] * scale);
-          path2D.moveTo(x, y);
-          if (currentPath.length > 0) {
-            result.cutContourPoints.push([...currentPath]);
-            currentPath = [];
-          }
-          currentPath.push({ x, y });
-        } else if (op === pdfjsLib.OPS.lineTo) {
-          const x = arg[0] * scale;
-          const y = viewport.height - (arg[1] * scale);
-          path2D.lineTo(x, y);
-          currentPath.push({ x, y });
-        } else if (op === pdfjsLib.OPS.curveTo) {
-          const x1 = arg[0] * scale;
-          const y1 = viewport.height - (arg[1] * scale);
-          const x2 = arg[2] * scale;
-          const y2 = viewport.height - (arg[3] * scale);
-          const x3 = arg[4] * scale;
-          const y3 = viewport.height - (arg[5] * scale);
-          path2D.bezierCurveTo(x1, y1, x2, y2, x3, y3);
-          currentPath.push({ x: x3, y: y3 });
-        } else if (op === pdfjsLib.OPS.closePath) {
-          path2D.closePath();
-          if (currentPath.length > 0) {
-            currentPath.push(currentPath[0]);
-            result.cutContourPoints.push([...currentPath]);
-            currentPath = [];
-          }
-        }
-      }
-    }
-    
-    if (currentPath.length > 0) {
-      result.cutContourPoints.push([...currentPath]);
-    }
-    
-    if (result.hasCutContour && result.cutContourPoints.length > 0) {
-      result.cutContourPath = path2D;
-    }
-    
-  } catch (error) {
-    console.warn('Could not extract CutContour from PDF:', error);
-  }
-  
-  return result;
-}
+// Legacy extractCutContour function removed - superseded by extractCutContourFromRawPDF
+// and extractPathsFromOperatorList with explicit units tracking
 
 export function isPDFFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
