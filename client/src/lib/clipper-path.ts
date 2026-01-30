@@ -204,11 +204,73 @@ export function simplifyPathWithClipper(points: Point[], tolerance: number, offs
   return clipperPathToPoints(largest);
 }
 
+/**
+ * Welds narrow 'caves' or 'necks' in a contour using Minkowski Closing.
+ * Expands the polygon by gapWidthPixels, then shrinks by the same amount.
+ * This causes narrow indentations (too tight for cutting blades) to collide and seal shut.
+ * 
+ * @param points - Input contour points
+ * @param gapWidthPixels - Width of gaps to close (default 1.5 pixels)
+ * @returns Contour with narrow gaps welded shut
+ */
+export function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] {
+  if (points.length < 3 || gapWidthPixels <= 0) return points;
+  
+  // Convert to Clipper format
+  const clipperPath = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  // Scale the gap width for Clipper's integer coordinates
+  const scaledGapWidth = gapWidthPixels * CLIPPER_SCALE;
+  
+  // Step 1: Expand (positive offset) - this will cause narrow caves to collide
+  const expandOffset = new ClipperLib.ClipperOffset();
+  expandOffset.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const expandedPaths: ClipperLib.Paths = [];
+  expandOffset.Execute(expandedPaths, scaledGapWidth);
+  
+  if (expandedPaths.length === 0 || expandedPaths[0].length === 0) {
+    console.log('[weldNarrowGaps] Expansion produced no result, returning original');
+    return points;
+  }
+  
+  // Step 2: Shrink (negative offset) - restore to original size with caves welded
+  const shrinkOffset = new ClipperLib.ClipperOffset();
+  shrinkOffset.AddPath(expandedPaths[0], ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const shrunkPaths: ClipperLib.Paths = [];
+  shrinkOffset.Execute(shrunkPaths, -scaledGapWidth);
+  
+  if (shrunkPaths.length === 0 || shrunkPaths[0].length === 0) {
+    console.log('[weldNarrowGaps] Shrinking produced no result, returning expanded');
+    // Fall back to expanded result converted back
+    return expandedPaths[0].map((p: { X: number; Y: number }) => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+  }
+  
+  // Convert back to Point format
+  const result = shrunkPaths[0].map((p: { X: number; Y: number }) => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[weldNarrowGaps] Welded narrow gaps:', points.length, '→', result.length, 'points (gap width:', gapWidthPixels, 'px)');
+  
+  return result;
+}
+
 export function removeLoopsWithClipper(points: Point[]): Point[] {
   if (points.length < 3) return points;
   
+  // Step 0: Weld narrow gaps using Minkowski Closing (expand + shrink)
+  // This seals 'caves' too tight for cutting blades
+  let result = weldNarrowGaps(points, 1.5);
+  
   // First pass: Use Clipper to remove self-intersections
-  let result = cleanPathWithClipper(points);
+  result = cleanPathWithClipper(result);
   
   // Second pass: Clean up closely spaced vertices
   result = simplifyPathWithClipper(result, 0.5);
