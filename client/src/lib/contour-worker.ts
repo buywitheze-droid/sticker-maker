@@ -414,10 +414,12 @@ function processContour(
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  // Step 3b: Apply VECTOR OFFSET using Clipper with JT_ROUND
-  // This guarantees: straight lines stay straight, corners are perfectly rounded
-  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels);
-  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
+  // Step 3b: Apply VECTOR OFFSET using Clipper
+  // For "shapes" algorithm: use JT_MITER for sharp corners (block text like Tercos)
+  // For "complex" algorithm: use JT_ROUND for smooth corners (script fonts)
+  const useSharpCorners = algorithm === 'shapes';
+  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels, useSharpCorners);
+  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px, sharp:', useSharpCorners, '):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
   
@@ -1855,19 +1857,20 @@ function unionClusterContours(contours: Point[][]): Point[] {
 }
 
 /**
- * Apply pure vector offset using Clipper's ClipperOffset with JT_ROUND
+ * Apply pure vector offset using Clipper's ClipperOffset
  * This is the PyClipper equivalent using Vatti clipping algorithm.
  * 
  * Guarantees:
  * - Straight lines stay perfectly straight
- * - Corners are perfectly rounded (arc segments)
+ * - Corners are rounded (JT_ROUND) or sharp (JT_MITER) based on joinType
  * - Zero pixel aliasing (pure vector math)
  * 
  * @param points - input polygon points (tight contour from image)
  * @param offsetPixels - offset distance in pixels (positive = expand outward)
- * @returns offset polygon with rounded corners
+ * @param useSharpCorners - if true, use JT_MITER for sharp corners; if false, use JT_ROUND
+ * @returns offset polygon
  */
-function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
+function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false): Point[] {
   if (points.length < 3 || offsetPixels <= 0) return points;
   
   // Convert to Clipper format with scaling
@@ -1886,12 +1889,16 @@ function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
   // 0.25px tolerance gives smooth arcs without excessive points
   co.ArcTolerance = CLIPPER_SCALE * 0.25;
   
-  // MiterLimit only applies to JT_MITER, but set a reasonable default
-  co.MiterLimit = 2.0;
+  // MiterLimit controls how far sharp corners extend before being beveled
+  // Higher value = sharper corners allowed; 3.0 is a good balance
+  co.MiterLimit = 3.0;
   
-  // Add path with JT_ROUND for perfectly rounded corners
+  // Choose join type based on corner style
+  const joinType = useSharpCorners ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound;
+  
+  // Add path with chosen join type
   // ET_CLOSEDPOLYGON for closed contour
-  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  co.AddPath(clipperPath, joinType, ClipperLib.EndType.etClosedPolygon);
   
   // Execute the offset
   const offsetPaths: Array<Array<{X: number; Y: number}>> = [];
