@@ -89,45 +89,6 @@ function clipperPathToPoints(path: ClipperLib.Path): Point[] {
   }));
 }
 
-// Area-based filtering to discard tiny noise islands
-// minAreaPx2: minimum area in square pixels (default 10px²)
-export function filterSmallPolygons(paths: ClipperLib.Path[], minAreaPx2: number = 10): ClipperLib.Path[] {
-  if (!paths || paths.length === 0) return paths;
-  
-  // Convert threshold to Clipper scale (area scales quadratically)
-  const minAreaScaled = minAreaPx2 * CLIPPER_SCALE * CLIPPER_SCALE;
-  
-  const filtered = paths.filter(path => {
-    const area = Math.abs(ClipperLib.Clipper.Area(path));
-    return area >= minAreaScaled;
-  });
-  
-  const removed = paths.length - filtered.length;
-  if (removed > 0) {
-    console.log(`[filterSmallPolygons] Removed ${removed} tiny islands (< ${minAreaPx2}px²)`);
-  }
-  
-  return filtered.length > 0 ? filtered : paths; // Keep original if all filtered
-}
-
-// Get the largest polygon by area from a list
-export function getLargestPolygon(paths: ClipperLib.Path[]): ClipperLib.Path | null {
-  if (!paths || paths.length === 0) return null;
-  
-  let largest = paths[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(largest));
-  
-  for (let i = 1; i < paths.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(paths[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      largest = paths[i];
-    }
-  }
-  
-  return largest;
-}
-
 export function cleanPathWithClipper(points: Point[], offsetWidth: number = 0, dpi: number = 300): Point[] {
   if (points.length < 3) return points;
   
@@ -145,18 +106,19 @@ export function cleanPathWithClipper(points: Point[], offsetWidth: number = 0, d
     return points;
   }
   
-  // Filter out tiny noise islands (< 10px²)
-  const filtered = filterSmallPolygons(simplified, 10);
+  // Find the largest polygon by area (main outline, not tiny loop fragments)
+  let largestArea = 0;
+  let largestPath = simplified[0];
   
-  // Get the largest polygon (main outline, not tiny loop fragments)
-  const largestPath = getLargestPolygon(filtered);
-  if (!largestPath) {
-    console.log('[cleanPathWithClipper] No valid polygon found, returning original');
-    return points;
+  for (const path of simplified) {
+    const area = Math.abs(ClipperLib.Clipper.Area(path));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = path;
+    }
   }
   
-  const largestArea = Math.abs(ClipperLib.Clipper.Area(largestPath));
-  console.log('[cleanPathWithClipper] Largest polygon has', largestPath.length, 'points, area:', largestArea / (CLIPPER_SCALE * CLIPPER_SCALE), 'px²');
+  console.log('[cleanPathWithClipper] Largest polygon has', largestPath.length, 'points, area:', largestArea);
   
   // Use shared tolerance calculation based on DPI and offset
   const tolerances = calculateClipperTolerances(dpi, offsetWidth);
@@ -192,11 +154,18 @@ export function offsetPathWithClipper(points: Point[], offsetAmount: number, dpi
   
   if (solution.length === 0) return points;
   
-  // Filter out tiny noise islands (< 10px²) and get largest polygon
-  const filtered = filterSmallPolygons(solution, 10);
-  const largest = getLargestPolygon(filtered);
+  let largestArea = 0;
+  let largestPath = solution[0];
   
-  return largest ? clipperPathToPoints(largest) : points;
+  for (const path of solution) {
+    const area = Math.abs(ClipperLib.Clipper.Area(path));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = path;
+    }
+  }
+  
+  return clipperPathToPoints(largestPath);
 }
 
 export function simplifyPathWithClipper(points: Point[], tolerance: number, offsetWidth: number = 0, dpi: number = 300): Point[] {
@@ -220,11 +189,19 @@ export function simplifyPathWithClipper(points: Point[], tolerance: number, offs
     return clipperPathToPoints(simplified);
   }
   
-  // Filter out tiny noise islands (< 10px²) and get largest polygon
-  const filtered = filterSmallPolygons(noIntersections, 10);
-  const largest = getLargestPolygon(filtered);
+  // Return the largest polygon
+  let largest = noIntersections[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(largest));
   
-  return largest ? clipperPathToPoints(largest) : clipperPathToPoints(simplified);
+  for (let i = 1; i < noIntersections.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(noIntersections[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largest = noIntersections[i];
+    }
+  }
+  
+  return clipperPathToPoints(largest);
 }
 
 export function removeLoopsWithClipper(points: Point[]): Point[] {
