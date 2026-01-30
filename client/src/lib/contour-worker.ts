@@ -371,6 +371,10 @@ function processContour(
       effectiveDPI
     );
     
+    // Step 0: Weld narrow gaps using Minkowski Closing (expand + shrink)
+    // This seals 'caves' too tight for cutting blades
+    processedContour = weldNarrowGaps(processedContour, 1.5);
+    
     postProgress(50);
     
   } else {
@@ -1860,6 +1864,86 @@ function unionClusterContours(contours: Point[][]): Point[] {
   
   console.log('[Worker] unionClusterContours:', contours.length, 'inputs ->', points.length, 'points');
   return points;
+}
+
+/**
+ * Welds narrow 'caves' or 'necks' in a contour using Minkowski Closing.
+ * Expands the polygon by gapWidthPixels, then shrinks by the same amount.
+ * This causes narrow indentations (too tight for cutting blades) to collide and seal shut.
+ * 
+ * @param points - Input contour points
+ * @param gapWidthPixels - Width of gaps to close (default 1.5 pixels)
+ * @returns Contour with narrow gaps welded shut
+ */
+function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] {
+  if (points.length < 3 || gapWidthPixels <= 0) return points;
+  
+  // Convert to Clipper format
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  // Scale the gap width for Clipper's integer coordinates
+  const scaledGapWidth = gapWidthPixels * CLIPPER_SCALE;
+  
+  // Step 1: Expand (positive offset) - this will cause narrow caves to collide
+  const expandOffset = new ClipperLib.ClipperOffset();
+  expandOffset.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
+  expandOffset.Execute(expandedPaths, scaledGapWidth);
+  
+  if (expandedPaths.length === 0 || expandedPaths[0].length === 0) {
+    console.log('[Worker] weldNarrowGaps: Expansion produced no result, returning original');
+    return points;
+  }
+  
+  // Find largest expanded path if multiple were created
+  let expandedPath = expandedPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(expandedPaths[0]));
+  for (let i = 1; i < expandedPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(expandedPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      expandedPath = expandedPaths[i];
+    }
+  }
+  
+  // Step 2: Shrink (negative offset) - restore to original size with caves welded
+  const shrinkOffset = new ClipperLib.ClipperOffset();
+  shrinkOffset.AddPath(expandedPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
+  shrinkOffset.Execute(shrunkPaths, -scaledGapWidth);
+  
+  if (shrunkPaths.length === 0 || shrunkPaths[0].length === 0) {
+    console.log('[Worker] weldNarrowGaps: Shrinking produced no result, returning expanded');
+    // Fall back to expanded result converted back
+    return expandedPath.map(p => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+  }
+  
+  // Find largest shrunk path
+  let shrunkPath = shrunkPaths[0];
+  largestArea = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[0]));
+  for (let i = 1; i < shrunkPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      shrunkPath = shrunkPaths[i];
+    }
+  }
+  
+  // Convert back to Point format
+  const result = shrunkPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] weldNarrowGaps: Welded narrow gaps:', points.length, '→', result.length, 'points (gap width:', gapWidthPixels, 'px)');
+  
+  return result;
 }
 
 /**
