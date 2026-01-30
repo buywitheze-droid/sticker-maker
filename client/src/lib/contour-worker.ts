@@ -428,15 +428,12 @@ function processContour(
   // Shapes algorithm should NOT use gap closing since block text is already a solid shape
   let smoothedPath = vectorOffsetPath;
   
-  if (algorithm === 'complex') {
-    // For complex algorithm, always enable gap closing by default
-    // Use 0.29" threshold (30% less than original 0.42") for better precision
-    // This ensures script fonts like Rufianes get proper letter bridging
-    const gapThresholdPixels = Math.round(0.29 * effectiveDPI);
-    
-    console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdPixels, 'px (0.29")');
-    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-  }
+  // Gap closing disabled - user preference
+  // if (algorithm === 'complex') {
+  //   const gapThresholdPixels = Math.round(0.29 * effectiveDPI);
+  //   console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdPixels, 'px (0.29")');
+  //   smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+  // }
   
   postProgress(70);
   
