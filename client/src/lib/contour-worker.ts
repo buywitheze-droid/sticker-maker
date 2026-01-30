@@ -430,11 +430,11 @@ function processContour(
   
   if (algorithm === 'complex') {
     // For complex algorithm, always enable gap closing by default
-    // Use the larger threshold (0.42") unless user explicitly disabled it
+    // Use 0.29" threshold (30% less than original 0.42") for better precision
     // This ensures script fonts like Rufianes get proper letter bridging
-    const gapThresholdPixels = Math.round(0.42 * effectiveDPI);
+    const gapThresholdPixels = Math.round(0.29 * effectiveDPI);
     
-    console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdPixels, 'px (0.42")');
+    console.log('[Worker] Complex algorithm: applying gap closing with threshold', gapThresholdPixels, 'px (0.29")');
     smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
   }
   
