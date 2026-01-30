@@ -314,9 +314,24 @@ function processContour(
   
   postProgress(50);
   
-  // Step 3: Apply VECTOR OFFSET using Clipper with JT_ROUND
+  // Step 3a: For Complex algorithm, apply Vector Closing to bridge gaps
+  // This uses the "offset out then in" technique to merge separated text/objects
+  // while preserving perfect straight lines on blocky designs
+  let processedContour = tightContour;
+  if (algorithm === 'complex') {
+    // Use the autoBridgingThreshold for vector close gap (default 0.02")
+    // Multiply by 2.5x for better letter gap coverage (0.05" at default)
+    const vectorCloseInches = (strokeSettings.autoBridgingThreshold || 0.02) * 2.5;
+    const vectorCloseGap = Math.round(vectorCloseInches * effectiveDPI);
+    if (vectorCloseGap > 0) {
+      processedContour = vectorCloseMerge(tightContour, vectorCloseGap);
+      console.log('[Worker] Complex algorithm: applied vectorCloseMerge with gap', vectorCloseGap, 'px (', vectorCloseInches.toFixed(3), 'in)');
+    }
+  }
+  
+  // Step 3b: Apply VECTOR OFFSET using Clipper with JT_ROUND
   // This guarantees: straight lines stay straight, corners are perfectly rounded
-  const vectorOffsetPath = clipperVectorOffset(tightContour, totalOffsetPixels);
+  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels);
   console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
@@ -1060,6 +1075,114 @@ function clipperVectorOffset(points: Point[], offsetPixels: number): Point[] {
   }));
   
   console.log('[Worker] clipperVectorOffset: input', points.length, 'pts, output', result.length, 'pts');
+  
+  return result;
+}
+
+/**
+ * Vector Closing Merge - bridges gaps in separated text/objects
+ * Uses the "offset out then in" technique:
+ * 1. Offset OUT by +X (merges separated objects into single bubble)
+ * 2. Offset IN by -X (restores straight lines to original position)
+ * 3. PreserveCollinear strips redundant points on straight edges
+ * 
+ * This preserves perfect straight lines on blocky designs while
+ * bridging gaps in script fonts and separated characters.
+ * 
+ * @param points - input polygon points (tight contour)
+ * @param gapPixels - gap closing distance in pixels (e.g., 20px)
+ * @returns merged polygon with gaps bridged
+ */
+function vectorCloseMerge(points: Point[], gapPixels: number): Point[] {
+  if (points.length < 3 || gapPixels <= 0) return points;
+  
+  console.log('[Worker] vectorCloseMerge: input', points.length, 'pts, gap:', gapPixels, 'px');
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  const scaledGap = gapPixels * CLIPPER_SCALE;
+  
+  // Step 1: Offset OUT (expand) to merge separated objects
+  const coExpand = new ClipperLib.ClipperOffset();
+  coExpand.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coExpand.MiterLimit = 2.0;
+  coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  
+  const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
+  coExpand.Execute(expandedPaths, scaledGap);
+  
+  if (expandedPaths.length === 0 || expandedPaths[0].length < 3) {
+    console.log('[Worker] vectorCloseMerge: expand failed, returning original');
+    return points;
+  }
+  
+  console.log('[Worker] vectorCloseMerge: after expand (+', gapPixels, 'px):', expandedPaths[0].length, 'pts');
+  
+  // Step 2: Offset IN (shrink) to restore original size
+  const coShrink = new ClipperLib.ClipperOffset();
+  coShrink.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coShrink.MiterLimit = 2.0;
+  
+  // Add all expanded paths (handles multiple islands if any)
+  for (const path of expandedPaths) {
+    coShrink.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+  
+  const restoredPaths: Array<Array<{X: number; Y: number}>> = [];
+  coShrink.Execute(restoredPaths, -scaledGap); // Negative offset = shrink
+  
+  if (restoredPaths.length === 0 || restoredPaths[0].length < 3) {
+    console.log('[Worker] vectorCloseMerge: shrink failed, using expanded');
+    // If shrink fails, at least return the expanded version
+    const result = expandedPaths[0].map(p => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+    return result;
+  }
+  
+  console.log('[Worker] vectorCloseMerge: after shrink (-', gapPixels, 'px):', restoredPaths[0].length, 'pts');
+  
+  // Step 3: Union all restored paths to merge any overlapping regions
+  // This ensures separated objects that were merged stay as one polygon
+  const clipper = new ClipperLib.Clipper();
+  for (const path of restoredPaths) {
+    clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+  }
+  
+  const unionResult: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult, 
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  
+  // Find the largest polygon from union result
+  let resultPath = unionResult.length > 0 ? unionResult[0] : restoredPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(resultPath));
+  
+  for (let i = 1; i < unionResult.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = unionResult[i];
+    }
+  }
+  
+  // Step 4: Use SimplifyPolygon to remove redundant collinear points
+  // This is the ClipperLib equivalent of PreserveCollinear behavior
+  // It removes points that lie on a line between their neighbors
+  const simplifiedPaths = ClipperLib.Clipper.SimplifyPolygon(resultPath, ClipperLib.PolyFillType.pftNonZero);
+  const finalPath = simplifiedPaths.length > 0 ? simplifiedPaths[0] : resultPath;
+  
+  // Convert back to Point format
+  const result = finalPath.map((p: {X: number; Y: number}) => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  console.log('[Worker] vectorCloseMerge: final after simplify:', result.length, 'pts');
   
   return result;
 }
