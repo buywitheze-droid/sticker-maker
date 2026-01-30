@@ -1533,6 +1533,14 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   
   console.log('[Worker] multiPathVectorMerge: after shrink (-', gapPixels, 'px):', shrunkPaths.length, 'paths');
   
+  // Log all shrunk paths with their areas
+  const shrunkAreas = shrunkPaths.map((path, i) => ({
+    index: i,
+    points: path.length,
+    area: Math.abs(ClipperLib.Clipper.Area(path)) / (CLIPPER_SCALE * CLIPPER_SCALE)
+  }));
+  console.log('[Worker] multiPathVectorMerge shrunk path areas (px²):', shrunkAreas.map(p => p.area.toFixed(1)).join(', '));
+  
   // Find the largest shrunk path (this is the main merged outline)
   let resultPath = shrunkPaths[0];
   let largestArea = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[0]));
@@ -1542,6 +1550,22 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
     if (area > largestArea) {
       largestArea = area;
       resultPath = shrunkPaths[i];
+    }
+  }
+  
+  // If multiple paths remain after shrink, we need to bridge them together
+  // This happens when shapes in the same cluster are too far apart to merge naturally
+  if (shrunkPaths.length > 1) {
+    console.log('[Worker] multiPathVectorMerge: bridging', shrunkPaths.length, 'separate paths together');
+    
+    // Create bridges between all separate paths and union them into one
+    const bridgedResult = bridgeMultiplePaths(shrunkPaths, gapPixels * 0.1); // Thin bridges (10% of gap distance)
+    if (bridgedResult && bridgedResult.length >= 3) {
+      resultPath = bridgedResult.map(p => ({
+        X: Math.round(p.x * CLIPPER_SCALE),
+        Y: Math.round(p.y * CLIPPER_SCALE)
+      }));
+      console.log('[Worker] multiPathVectorMerge: bridged result:', resultPath.length, 'pts');
     }
   }
   
@@ -1557,6 +1581,161 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   console.log('[Worker] multiPathVectorMerge: final result:', result.length, 'pts');
   
   return result;
+}
+
+/**
+ * Bridge multiple separate paths together by finding closest point pairs
+ * and creating connecting bridges. Returns a single unified path.
+ * 
+ * Uses Minimum Spanning Tree approach to connect all shapes with minimal bridges.
+ * 
+ * @param clipperPaths - paths in Clipper scaled coordinates
+ * @param bridgeWidthPixels - width of bridges in pixels (NOT scaled)
+ */
+function bridgeMultiplePaths(
+  clipperPaths: Array<Array<{X: number; Y: number}>>,
+  bridgeWidthPixels: number
+): Point[] {
+  if (clipperPaths.length === 0) return [];
+  if (clipperPaths.length === 1) {
+    return clipperPaths[0].map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+  }
+  
+  // Convert to Point arrays for easier manipulation (in pixels)
+  const paths = clipperPaths.map(path => 
+    path.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }))
+  );
+  
+  // Find the closest point between each pair of paths
+  // Build edges for MST
+  interface Edge {
+    pathA: number;
+    pathB: number;
+    pointA: Point;
+    pointB: Point;
+    distance: number;
+  }
+  
+  const edges: Edge[] = [];
+  
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i + 1; j < paths.length; j++) {
+      // Find closest point pair between path i and path j
+      let minDist = Infinity;
+      let closestA: Point = paths[i][0];
+      let closestB: Point = paths[j][0];
+      
+      // Sample points to avoid O(n*m) complexity for large paths
+      const sampleRateA = Math.max(1, Math.floor(paths[i].length / 50));
+      const sampleRateB = Math.max(1, Math.floor(paths[j].length / 50));
+      
+      for (let a = 0; a < paths[i].length; a += sampleRateA) {
+        for (let b = 0; b < paths[j].length; b += sampleRateB) {
+          const dx = paths[i][a].x - paths[j][b].x;
+          const dy = paths[i][a].y - paths[j][b].y;
+          const dist = dx * dx + dy * dy;
+          if (dist < minDist) {
+            minDist = dist;
+            closestA = paths[i][a];
+            closestB = paths[j][b];
+          }
+        }
+      }
+      
+      edges.push({
+        pathA: i,
+        pathB: j,
+        pointA: closestA,
+        pointB: closestB,
+        distance: Math.sqrt(minDist)
+      });
+    }
+  }
+  
+  // Sort edges by distance (for MST, take shortest first)
+  edges.sort((a, b) => a.distance - b.distance);
+  
+  // Use Union-Find to build MST
+  const parent = Array.from({ length: paths.length }, (_, i) => i);
+  function findRoot(x: number): number {
+    if (parent[x] !== x) parent[x] = findRoot(parent[x]);
+    return parent[x];
+  }
+  
+  const bridgeEdges: Edge[] = [];
+  for (const edge of edges) {
+    const rootA = findRoot(edge.pathA);
+    const rootB = findRoot(edge.pathB);
+    if (rootA !== rootB) {
+      bridgeEdges.push(edge);
+      parent[rootA] = rootB;
+      if (bridgeEdges.length === paths.length - 1) break;
+    }
+  }
+  
+  console.log('[Worker] bridgeMultiplePaths: creating', bridgeEdges.length, 'bridges');
+  
+  // Create bridge rectangles and union everything together
+  // Bridge width in pixels (passed as parameter)
+  const bridgeWidth = bridgeWidthPixels;
+  const allPaths: Array<Array<{X: number; Y: number}>> = clipperPaths.slice();
+  
+  for (const bridge of bridgeEdges) {
+    // Create a thin rectangle bridge between pointA and pointB
+    const dx = bridge.pointB.x - bridge.pointA.x;
+    const dy = bridge.pointB.y - bridge.pointA.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.001) continue;
+    
+    // Perpendicular direction
+    const perpX = -dy / len * (bridgeWidth / 2);
+    const perpY = dx / len * (bridgeWidth / 2);
+    
+    // Bridge rectangle corners
+    const bridgePath = [
+      { X: Math.round((bridge.pointA.x + perpX) * CLIPPER_SCALE), Y: Math.round((bridge.pointA.y + perpY) * CLIPPER_SCALE) },
+      { X: Math.round((bridge.pointA.x - perpX) * CLIPPER_SCALE), Y: Math.round((bridge.pointA.y - perpY) * CLIPPER_SCALE) },
+      { X: Math.round((bridge.pointB.x - perpX) * CLIPPER_SCALE), Y: Math.round((bridge.pointB.y - perpY) * CLIPPER_SCALE) },
+      { X: Math.round((bridge.pointB.x + perpX) * CLIPPER_SCALE), Y: Math.round((bridge.pointB.y + perpY) * CLIPPER_SCALE) }
+    ];
+    
+    allPaths.push(bridgePath);
+  }
+  
+  // Union all paths including bridges
+  const clipper = new ClipperLib.Clipper();
+  for (const path of allPaths) {
+    if (path.length >= 3) {
+      clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+    }
+  }
+  
+  const unionResult: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (unionResult.length === 0) {
+    console.log('[Worker] bridgeMultiplePaths: union failed, returning largest input');
+    let largest = paths[0];
+    for (const p of paths) {
+      if (p.length > largest.length) largest = p;
+    }
+    return largest;
+  }
+  
+  // Find largest result (should now be one unified path)
+  let largestPath = unionResult[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
+  for (let i = 1; i < unionResult.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = unionResult[i];
+    }
+  }
+  
+  console.log('[Worker] bridgeMultiplePaths: final unified path:', largestPath.length, 'pts');
+  return largestPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
 }
 
 /**
@@ -1588,7 +1767,18 @@ function unionClusterContours(contours: Point[][]): Point[] {
     return contours[0]; // Fallback to first contour
   }
   
+  // Log all resulting polygons with their areas
+  console.log('[Worker] unionClusterContours: Union produced', result.length, 'polygon(s)');
+  const polygonInfo = result.map((path, i) => ({
+    index: i,
+    points: path.length,
+    area: Math.abs(ClipperLib.Clipper.Area(path)) / (CLIPPER_SCALE * CLIPPER_SCALE)
+  }));
+  console.log('[Worker] unionClusterContours polygon areas (px²):', polygonInfo.map(p => p.area.toFixed(1)).join(', '));
+  
   // Find largest polygon
+  // NOTE: We only return the largest because vinyl cutters need a single cut path
+  // If multiple isolated shapes exist, they should be merged during expand/shrink
   let largestPath = result[0];
   let largestArea = Math.abs(ClipperLib.Clipper.Area(result[0]));
   
@@ -1597,6 +1787,23 @@ function unionClusterContours(contours: Point[][]): Point[] {
     if (area > largestArea) {
       largestArea = area;
       largestPath = result[i];
+    }
+  }
+  
+  // If multiple polygons remain, bridge them together
+  // This ensures isolated shapes are connected in the final cut path
+  if (result.length > 1) {
+    console.log('[Worker] unionClusterContours: bridging', result.length, 'separate polygons together');
+    
+    // Calculate a reasonable bridge width based on the smallest polygon
+    const minArea = Math.min(...result.map(p => Math.abs(ClipperLib.Clipper.Area(p))));
+    const minRadius = Math.sqrt(minArea / (CLIPPER_SCALE * CLIPPER_SCALE) / Math.PI);
+    const bridgeWidthPixels = Math.max(2, minRadius * 0.1); // 10% of smallest shape radius, min 2px
+    
+    const bridgedResult = bridgeMultiplePaths(result, bridgeWidthPixels);
+    if (bridgedResult && bridgedResult.length >= 3) {
+      console.log('[Worker] unionClusterContours: bridged result:', bridgedResult.length, 'points');
+      return bridgedResult;
     }
   }
   
