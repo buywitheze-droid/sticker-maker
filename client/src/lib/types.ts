@@ -1,14 +1,9 @@
-export type CutContourUnits = 'points' | 'pixels';
-
 export interface PDFCutContourInfo {
   hasCutContour: boolean;
   cutContourPath: Path2D | null;
   cutContourPoints: { x: number; y: number }[][];
-  cutContourUnits: CutContourUnits;  // Explicit units for path coordinates - REQUIRED
-  pageWidth: number;       // Render dimensions in pixels (at render DPI)
-  pageHeight: number;      // Render dimensions in pixels (at render DPI)
-  pageWidthPts: number;    // Original PDF page dimensions in points (72/inch) - REQUIRED
-  pageHeightPts: number;   // Original PDF page dimensions in points (72/inch) - REQUIRED
+  pageWidth: number;
+  pageHeight: number;
 }
 
 export interface ImageInfo {
