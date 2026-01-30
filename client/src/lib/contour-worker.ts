@@ -2395,9 +2395,27 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
 
 // Final loop removal - eliminates any self-intersections from the finished contour path
 // This is critical for print and cut: any crossing lines will cause the cutter to damage the design
-// Uses Clipper's SimplifyPolygon which performs a Boolean Union to untie all crossings
+// Uses Clipper's Boolean Union to untie all crossings
 function removeFinalLoops(points: Point[]): Point[] {
-  if (points.length < 4) return points;
+  return removeFinalLoopsInner(points, 'removeFinalLoops');
+}
+
+// Shared loop removal implementation - used by both gap closing and final cleanup
+// The caller parameter is for logging purposes to track where the call originated
+function removeFinalLoopsInner(points: Point[], caller: string): Point[] {
+  if (points.length < 4) {
+    return points;
+  }
+  
+  // First, detect how many self-intersections exist BEFORE cleanup
+  const beforeIntersections = detectSelfIntersections(points);
+  
+  // If no intersections detected, return early
+  if (beforeIntersections === 0) {
+    return points;
+  }
+  
+  console.log('[Worker]', caller, ': Found', beforeIntersections, 'self-intersections, removing...');
   
   const originalLength = points.length;
   
@@ -2407,29 +2425,49 @@ function removeFinalLoops(points: Point[]): Point[] {
     Y: Math.round(p.y * CLIPPER_SCALE)
   }));
   
-  // Use SimplifyPolygon to remove all self-intersections
-  // This performs a Boolean Union which splits the path at crossings and keeps the outer boundary
-  const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+  // APPROACH 1: Use Clipper Boolean Union operation
+  // This is more robust than SimplifyPolygon for resolving self-intersections
+  // Union of a polygon with itself resolves all crossings
+  const clipper = new ClipperLib.Clipper();
+  clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
   
-  if (!simplified || simplified.length === 0) {
-    console.log('[Worker] removeFinalLoops: SimplifyPolygon returned empty, keeping original');
+  const unionResult: ClipperLib.Path[] = [];
+  const success = clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    unionResult,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero
+  );
+  
+  let resultPaths = unionResult;
+  
+  // If union failed or returned empty, fall back to SimplifyPolygon
+  if (!success || !unionResult || unionResult.length === 0) {
+    console.log('[Worker] removeFinalLoops: Union failed, trying SimplifyPolygon');
+    resultPaths = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+  }
+  
+  if (!resultPaths || resultPaths.length === 0) {
+    console.log('[Worker]', caller, ': All methods failed, keeping original');
     return points;
   }
   
-  // Find the largest polygon by area (main outline, discard any tiny loop fragments)
-  let largestPath = simplified[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(simplified[0]));
+  console.log('[Worker]', caller, ': Clipper returned', resultPaths.length, 'polygons');
   
-  for (let i = 1; i < simplified.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(simplified[i]));
+  // Find the largest polygon by area (main outline, discard any tiny loop fragments)
+  let largestPath = resultPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(resultPaths[0]));
+  
+  for (let i = 1; i < resultPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(resultPaths[i]));
     if (area > largestArea) {
       largestArea = area;
-      largestPath = simplified[i];
+      largestPath = resultPaths[i];
     }
   }
   
   if (!largestPath || largestPath.length < 3) {
-    console.log('[Worker] removeFinalLoops: No valid polygon after simplify, keeping original');
+    console.log('[Worker]', caller, ': No valid polygon after cleanup, keeping original');
     return points;
   }
   
@@ -2443,19 +2481,19 @@ function removeFinalLoops(points: Point[]): Point[] {
   }));
   
   if (result.length < 3) {
-    console.log('[Worker] removeFinalLoops: Result too short, keeping original');
+    console.log('[Worker]', caller, ': Result too short, keeping original');
     return points;
   }
   
   // Log if we actually removed loops
-  if (simplified.length > 1 || result.length !== originalLength) {
-    console.log('[Worker] removeFinalLoops: Removed self-intersections, split into', simplified.length, 'polygons, kept largest:', originalLength, '->', result.length, 'points');
+  if (resultPaths.length > 1 || result.length !== originalLength) {
+    console.log('[Worker]', caller, ': Removed self-intersections, split into', resultPaths.length, 'polygons, kept largest:', originalLength, '->', result.length, 'points');
   }
   
   // Validate: check if any self-intersections remain
   const remainingIntersections = detectSelfIntersections(result);
   if (remainingIntersections > 0) {
-    console.warn('[Worker] removeFinalLoops: WARNING - Still has', remainingIntersections, 'self-intersections after cleanup!');
+    console.warn('[Worker]', caller, ': WARNING - Still has', remainingIntersections, 'self-intersections after cleanup!');
   }
   
   return result;
@@ -3157,11 +3195,19 @@ function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
   }
   
   // Apply smoothing pass to eliminate wave artifacts from gap closing
+  let finalResult = result;
   if (result.length >= 10 && refinedGaps.length > 0) {
-    return smoothBridgeAreas(result);
+    finalResult = smoothBridgeAreas(result);
   }
   
-  return result.length >= 3 ? result : points;
+  // CRITICAL: Apply loop removal after gap closing to fix any self-intersections
+  // Gap closing can create loops when the path curves back on itself
+  // Use the same robust removeFinalLoops function for consistent behavior
+  if (finalResult.length >= 4) {
+    finalResult = removeFinalLoopsInner(finalResult, 'closeGapsWithShapes');
+  }
+  
+  return finalResult.length >= 3 ? finalResult : points;
 }
 
 // Smooth the path to eliminate wave artifacts from gap closing
