@@ -440,6 +440,10 @@ function processContour(
     }
   }
   
+  // CRITICAL: Final loop removal - eliminates any self-intersections created by offset or gap closing
+  // This ensures the contour path is valid for print and cut (no crossing lines)
+  smoothedPath = removeFinalLoops(smoothedPath);
+  
   postProgress(70);
   
   // Calculate effective dimensions for page size
@@ -2387,6 +2391,134 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   console.log('[Worker] Sanitized:', points.length, '->', result.length, 'points');
   
   return result;
+}
+
+// Final loop removal - eliminates any self-intersections from the finished contour path
+// This is critical for print and cut: any crossing lines will cause the cutter to damage the design
+// Uses Clipper's SimplifyPolygon which performs a Boolean Union to untie all crossings
+function removeFinalLoops(points: Point[]): Point[] {
+  if (points.length < 4) return points;
+  
+  const originalLength = points.length;
+  
+  // Convert to Clipper format with scaling
+  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  
+  // Use SimplifyPolygon to remove all self-intersections
+  // This performs a Boolean Union which splits the path at crossings and keeps the outer boundary
+  const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+  
+  if (!simplified || simplified.length === 0) {
+    console.log('[Worker] removeFinalLoops: SimplifyPolygon returned empty, keeping original');
+    return points;
+  }
+  
+  // Find the largest polygon by area (main outline, discard any tiny loop fragments)
+  let largestPath = simplified[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(simplified[0]));
+  
+  for (let i = 1; i < simplified.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(simplified[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestPath = simplified[i];
+    }
+  }
+  
+  if (!largestPath || largestPath.length < 3) {
+    console.log('[Worker] removeFinalLoops: No valid polygon after simplify, keeping original');
+    return points;
+  }
+  
+  // Clean up any micro-vertices that might cause issues
+  ClipperLib.Clipper.CleanPolygon(largestPath, CLIPPER_SCALE * 0.05);
+  
+  // Convert back to Point format
+  const result: Point[] = largestPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  
+  if (result.length < 3) {
+    console.log('[Worker] removeFinalLoops: Result too short, keeping original');
+    return points;
+  }
+  
+  // Log if we actually removed loops
+  if (simplified.length > 1 || result.length !== originalLength) {
+    console.log('[Worker] removeFinalLoops: Removed self-intersections, split into', simplified.length, 'polygons, kept largest:', originalLength, '->', result.length, 'points');
+  }
+  
+  // Validate: check if any self-intersections remain
+  const remainingIntersections = detectSelfIntersections(result);
+  if (remainingIntersections > 0) {
+    console.warn('[Worker] removeFinalLoops: WARNING - Still has', remainingIntersections, 'self-intersections after cleanup!');
+  }
+  
+  return result;
+}
+
+// Detect self-intersections in a polygon path
+// Returns the count of intersections found
+function detectSelfIntersections(points: Point[]): number {
+  if (points.length < 4) return 0;
+  
+  const n = points.length;
+  let intersectionCount = 0;
+  
+  // Check each edge pair for intersection (excluding adjacent edges)
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    
+    // Only check edges that are at least 2 apart (skip adjacent edges)
+    for (let j = i + 2; j < n; j++) {
+      // Skip if edges share a vertex (adjacent in polygon)
+      if (j === (i + n - 1) % n) continue;
+      
+      const p3 = points[j];
+      const p4 = points[(j + 1) % n];
+      
+      if (segmentsIntersect(p1, p2, p3, p4)) {
+        intersectionCount++;
+      }
+    }
+  }
+  
+  return intersectionCount;
+}
+
+// Check if two line segments intersect (excluding shared endpoints)
+function segmentsIntersect(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+  const d1 = direction(p3, p4, p1);
+  const d2 = direction(p3, p4, p2);
+  const d3 = direction(p1, p2, p3);
+  const d4 = direction(p1, p2, p4);
+  
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+    return true;
+  }
+  
+  // Check for collinear cases
+  if (d1 === 0 && onSegment(p3, p4, p1)) return true;
+  if (d2 === 0 && onSegment(p3, p4, p2)) return true;
+  if (d3 === 0 && onSegment(p1, p2, p3)) return true;
+  if (d4 === 0 && onSegment(p1, p2, p4)) return true;
+  
+  return false;
+}
+
+function direction(p1: Point, p2: Point, p3: Point): number {
+  return (p3.x - p1.x) * (p2.y - p1.y) - (p2.x - p1.x) * (p3.y - p1.y);
+}
+
+function onSegment(p1: Point, p2: Point, p: Point): boolean {
+  return Math.min(p1.x, p2.x) <= p.x && p.x <= Math.max(p1.x, p2.x) &&
+         Math.min(p1.y, p2.y) <= p.y && p.y <= Math.max(p1.y, p2.y);
 }
 
 // Chaikin's corner-cutting algorithm to smooth pixel-step jaggies
