@@ -1911,8 +1911,9 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
   co.ArcTolerance = CLIPPER_SCALE * 0.25;
   
   // MiterLimit controls how far sharp corners extend before being beveled
-  // Higher value = sharper corners allowed; 3.0 is a good balance
-  co.MiterLimit = 3.0;
+  // Higher value = sharper corners allowed; 10.0 allows very sharp corners
+  // Without this, acute angles get beveled which can look "distorted"
+  co.MiterLimit = 10.0;
   
   // Choose join type based on corner style
   const joinType = useSharpCorners ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound;
