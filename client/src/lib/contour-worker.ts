@@ -331,8 +331,10 @@ function processContour(
     const clusterThresholdInches = 0.15;
     const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
     
-    // Gap close distance for dense clusters
-    const gapCloseInches = (strokeSettings.autoBridgingThreshold || 0.02) * 2.5;
+    // Gap close distance for script fonts - needs to be large enough to bridge letter gaps
+    // Use 0.15" as the base (typical letter spacing in script fonts)
+    // This is the expand distance: gaps up to 2x this value will be bridged
+    const gapCloseInches = 0.15;
     const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
     
     console.log('[Worker] Cluster threshold:', clusterThresholdPixels, 'px (', clusterThresholdInches, 'in)');
@@ -1356,10 +1358,19 @@ function processContoursWithClustering(
     area: computePolygonArea(points)
   }));
   
-  // If only one contour, process based on its characteristics
+  // If only one contour, still apply gap closing to fill narrow indentations
+  // This handles cases like script fonts where all letters connect via background
+  // but have deep "dips" between letters that need to be smoothed out
   if (contours.length === 1) {
-    console.log('[Worker] Single contour detected, skipping cluster analysis');
-    // Single large contour - likely already solid, skip heavy bridging
+    console.log('[Worker] Single contour detected, applying gap closing to fill indentations');
+    
+    if (gapClosePixels > 0) {
+      // Apply vectorCloseMerge to close narrow indentations/gaps within the contour
+      const bridgedPath = vectorCloseMerge(contours[0].points, gapClosePixels);
+      console.log('[Worker] vectorCloseMerge: input', contours[0].points.length, 'pts -> output', bridgedPath.length, 'pts');
+      return bridgedPath;
+    }
+    
     return contours[0].points;
   }
   
