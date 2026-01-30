@@ -34,6 +34,8 @@ Preferred communication style: Simple, everyday language.
 - **Canvas Rendering**: Custom stroke algorithms using Clipper.js library for mathematically correct polygon offsetting, real-time preview, high-resolution export canvas.
 - **Contour Generation**: True alpha channel edge detection, CadCut-style bounds detection, vector contour tracing using Clipper.js-based Minkowski sum offset with proper boundary tracing (Moore neighbor algorithm), support for interior holes with adjustable margins, single continuous outline generation for multi-object images, advanced alpha threshold control.
 - **Corner Modes**: Rounded corners (arc insertion at convex vertices) and sharp corners (miter joins with bevel fallback) for contour offset styling.
+- **PDF CutContour Import**: PDFs with existing CutContour spot color paths are detected, extracted, and preserved. Paths are scaled proportionally when user resizes and re-embedded in output PDF with proper spot color.
+- **Coordinate System**: Explicit units tracking (points vs pixels) with deterministic conversion. PDF extraction returns points, preview uses pixels, PDF generation converts back to points with resize scaling applied.
 - **Download System**: Multiple download modes (Standard, High-res, Vector Quality, CutContour), true vector export formats (PDF, EPS, SVG) with edge tracing, CutContour export with magenta spot color.
 - **UI/UX**: Dark grey application theme, toast notifications, form validation, draggable and responsive controls, zoom functionality with "Fit to View", manual position control for design placement.
 - **Image Cropping**: Automatic empty space removal and content-aware cropping for precise boundary detection.
