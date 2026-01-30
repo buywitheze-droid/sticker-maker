@@ -1447,9 +1447,13 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   const scaledGap = gapPixels * CLIPPER_SCALE;
   
   // Step 1: Expand ALL contours by +gapPixels using ClipperOffset
+  // CRITICAL: Use jtMiter (not jtRound) to preserve sharp corners
+  // When you offset a square OUT with Miter, it stays a square
+  // When you offset it back IN, it returns to the exact original square
+  // This preserves Tercos-style sharp corners while still bridging Rufianes-style gaps
   const coExpand = new ClipperLib.ClipperOffset();
   coExpand.ArcTolerance = CLIPPER_SCALE * 0.25;
-  coExpand.MiterLimit = 2.0;
+  coExpand.MiterLimit = 4.0; // Higher limit to preserve sharper corners
   
   for (const contour of contours) {
     if (contour.length < 3) continue;
@@ -1464,7 +1468,7 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
       clipperPath = clipperPath.slice().reverse();
     }
     
-    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   }
   
   const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
@@ -1505,12 +1509,13 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   console.log('[Worker] multiPathVectorMerge: after union:', unionResult.length, 'paths');
   
   // Step 3: Shrink all unioned paths by -gapPixels
+  // Use jtMiter to preserve sharp corners on the way back
   const coShrink = new ClipperLib.ClipperOffset();
   coShrink.ArcTolerance = CLIPPER_SCALE * 0.25;
-  coShrink.MiterLimit = 2.0;
+  coShrink.MiterLimit = 4.0;
   
   for (const path of unionResult) {
-    coShrink.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    coShrink.AddPath(path, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   }
   
   const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
@@ -1928,10 +1933,14 @@ function vectorCloseMerge(points: Point[], gapPixels: number): Point[] {
   const scaledGap = gapPixels * CLIPPER_SCALE;
   
   // Step 1: Offset OUT (expand) to merge separated objects
+  // CRITICAL: Use jtMiter (not jtRound) to preserve sharp corners
+  // When you offset a square OUT with Miter, it stays a square
+  // When you offset it back IN, it returns to the exact original square
+  // This preserves Tercos-style sharp corners while still bridging Rufianes-style gaps
   const coExpand = new ClipperLib.ClipperOffset();
   coExpand.ArcTolerance = CLIPPER_SCALE * 0.25;
-  coExpand.MiterLimit = 2.0;
-  coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  coExpand.MiterLimit = 4.0; // Higher limit to preserve sharper corners
+  coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   
   const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
   coExpand.Execute(expandedPaths, scaledGap);
@@ -1944,13 +1953,14 @@ function vectorCloseMerge(points: Point[], gapPixels: number): Point[] {
   console.log('[Worker] vectorCloseMerge: after expand (+', gapPixels, 'px):', expandedPaths[0].length, 'pts');
   
   // Step 2: Offset IN (shrink) to restore original size
+  // Also use jtMiter to preserve corners on the way back
   const coShrink = new ClipperLib.ClipperOffset();
   coShrink.ArcTolerance = CLIPPER_SCALE * 0.25;
-  coShrink.MiterLimit = 2.0;
+  coShrink.MiterLimit = 4.0;
   
   // Add all expanded paths (handles multiple islands if any)
   for (const path of expandedPaths) {
-    coShrink.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    coShrink.AddPath(path, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   }
   
   const restoredPaths: Array<Array<{X: number; Y: number}>> = [];
