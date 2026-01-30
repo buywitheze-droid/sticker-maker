@@ -11,6 +11,7 @@ import { processContourInWorker } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
 import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -26,7 +27,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
   ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const isMobile = useIsMobile();
+    // On mobile: default to 95% zoom, no panning
     const [zoom, setZoom] = useState(1);
+    const hasSetMobileZoom = useRef(false);
+    
+    // Set default zoom to 95% on mobile once detected
+    useEffect(() => {
+      if (isMobile && !hasSetMobileZoom.current) {
+        setZoom(0.95);
+        hasSetMobileZoom.current = true;
+      }
+    }, [isMobile]);
     const [panX, setPanX] = useState(0); // -100 to 100 (percent offset)
     const [panY, setPanY] = useState(0); // -100 to 100 (percent offset)
     const [backgroundColor, setBackgroundColor] = useState("transparent");
@@ -86,8 +98,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [isDragging]);
     
-    // Touch handlers for mobile pan
+    // Touch handlers for mobile pan - DISABLED on mobile to prevent accidental panning
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
+      // Disable touch panning on mobile - keep it simple with fixed 95% zoom
+      if (isMobile) return;
       if (zoom === 1 || e.touches.length !== 1) return;
       e.preventDefault(); // Prevent scroll interference when zoomed
       const touch = e.touches[0];
@@ -98,9 +112,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         panX,
         panY
       };
-    }, [zoom, panX, panY]);
+    }, [isMobile, zoom, panX, panY]);
     
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
+      // Disable touch panning on mobile
+      if (isMobile) return;
       if (!isDragging || !dragStartRef.current || e.touches.length !== 1) return;
       e.preventDefault(); // Prevent scrolling while panning
       const touch = e.touches[0];
@@ -115,15 +131,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       setPanX(newPanX);
       setPanY(newPanY);
-    }, [isDragging]);
+    }, [isMobile, isDragging]);
     
     const handleTouchEnd = useCallback(() => {
+      // Disable touch panning on mobile
+      if (isMobile) return;
       setIsDragging(false);
       dragStartRef.current = null;
-    }, []);
+    }, [isMobile]);
     
     // Fit to View: calculate zoom to fit canvas within container and reset pan
     const fitToView = useCallback(() => {
+      // On mobile, always use 95% zoom
+      if (isMobile) {
+        setZoom(0.95);
+        setPanX(0);
+        setPanY(0);
+        return;
+      }
       if (!containerRef.current) return;
       const viewPadding = Math.max(4, Math.round(Math.min(previewDims.width, previewDims.height) * 0.03));
       const containerWidth = containerRef.current.clientWidth - viewPadding * 2;
@@ -134,14 +159,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       setZoom(Math.max(0.2, Math.round(fitZoom * 20) / 20)); // round to 5% steps
       setPanX(0);
       setPanY(0);
-    }, [previewDims.height, previewDims.width]);
+    }, [isMobile, previewDims.height, previewDims.width]);
     
     // Reset view to default zoom and pan
     const resetView = useCallback(() => {
-      setZoom(1);
+      // On mobile, reset to 95% zoom
+      setZoom(isMobile ? 0.95 : 1);
       setPanX(0);
       setPanY(0);
-    }, []);
+    }, [isMobile]);
     
     // Mouse wheel zoom handler
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -151,6 +177,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, []);
     
     // Auto-set zoom to 75% for images with no empty space around them
+    // On mobile, always use 95% zoom
     useEffect(() => {
       if (!imageInfo) {
         lastImageRef.current = null;
@@ -162,6 +189,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (lastImageRef.current === imageKey) return;
       lastImageRef.current = imageKey;
       
+      // On mobile, always use 95% zoom
+      if (isMobile) {
+        setZoom(0.95);
+        return;
+      }
+      
       // Check if image has minimal empty space around the edges
       const hasMinimalEmptySpace = checkImageHasMinimalEmptySpace(imageInfo.image);
       if (hasMinimalEmptySpace) {
@@ -169,7 +202,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         setZoom(1);
       }
-    }, [imageInfo]);
+    }, [imageInfo, isMobile]);
 
     useEffect(() => {
       if (!containerRef.current) return;
