@@ -2400,8 +2400,67 @@ function removeFinalLoops(points: Point[]): Point[] {
   return removeFinalLoopsInner(points, 'removeFinalLoops');
 }
 
+// Shapely buffer(0) equivalent - forces polygon reconstruction to fix self-intersections
+// Uses expand/contract technique to rebuild path cleanly
+// Reference: poly.buffer(0) in Shapely/Python
+function bufferZeroFix(
+  clipperPath: ClipperLib.Path, 
+  epsilonPx: number = 1.0, 
+  joinType: number = ClipperLib.JoinType.jtRound
+): ClipperLib.Path[] {
+  const epsilon = epsilonPx * CLIPPER_SCALE;
+  
+  const co = new ClipperLib.ClipperOffset();
+  co.ArcTolerance = 0.25 * CLIPPER_SCALE;
+  co.MiterLimit = 2;
+  
+  // Add path and execute outward offset
+  co.AddPath(clipperPath, joinType, ClipperLib.EndType.etClosedPolygon);
+  
+  const expanded: ClipperLib.Path[] = [];
+  co.Execute(expanded, epsilon);
+  
+  if (!expanded || expanded.length === 0) {
+    return [];
+  }
+  
+  // Contract back by same amount
+  const co2 = new ClipperLib.ClipperOffset();
+  co2.ArcTolerance = 0.25 * CLIPPER_SCALE;
+  co2.MiterLimit = 2;
+  
+  // Add each expanded polygon separately (handles MultiPolygon case)
+  for (const path of expanded) {
+    co2.AddPath(path, joinType, ClipperLib.EndType.etClosedPolygon);
+  }
+  
+  const result: ClipperLib.Path[] = [];
+  co2.Execute(result, -epsilon);
+  
+  return result;
+}
+
+// Find largest polygon by area from a list
+function findLargestPolygon(paths: ClipperLib.Path[]): ClipperLib.Path | null {
+  if (!paths || paths.length === 0) return null;
+  
+  let largest = paths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(paths[0]));
+  
+  for (let i = 1; i < paths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(paths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largest = paths[i];
+    }
+  }
+  
+  return largest;
+}
+
 // Shared loop removal implementation - used by both gap closing and final cleanup
 // The caller parameter is for logging purposes to track where the call originated
+// Uses Shapely-inspired buffer(0) technique as primary approach
 function removeFinalLoopsInner(points: Point[], caller: string): Point[] {
   if (points.length < 4) {
     return points;
@@ -2420,12 +2479,16 @@ function removeFinalLoopsInner(points: Point[], caller: string): Point[] {
   const originalLength = points.length;
   
   // Convert to Clipper format with scaling
-  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+  const clipperPath: ClipperLib.Path = points.map(p => ({
     X: Math.round(p.x * CLIPPER_SCALE),
     Y: Math.round(p.y * CLIPPER_SCALE)
   }));
   
-  // APPROACH 1: Use Clipper Boolean Union with pftPositive (most aggressive)
+  let resultPath: ClipperLib.Path | null = null;
+  let result: Point[] | null = null;
+  
+  // APPROACH 1: Boolean Union with pftPositive - most reliable primary approach
+  console.log('[Worker]', caller, ': Trying Union with pftPositive...');
   const clipper = new ClipperLib.Clipper();
   clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
   
@@ -2437,91 +2500,72 @@ function removeFinalLoopsInner(points: Point[], caller: string): Point[] {
     ClipperLib.PolyFillType.pftPositive
   );
   
-  let resultPath: ClipperLib.Path | null = null;
-  
   if (success && unionResult && unionResult.length > 0) {
-    // Find largest polygon
-    resultPath = unionResult[0];
-    let largestArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
-    for (let i = 1; i < unionResult.length; i++) {
-      const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-      if (area > largestArea) {
-        largestArea = area;
-        resultPath = unionResult[i];
-      }
+    resultPath = findLargestPolygon(unionResult);
+    if (resultPath) {
+      result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
     }
   }
   
-  // Check if union worked - if not or still has intersections, try micro-offset
-  let result = resultPath ? resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE })) : null;
-  
+  // APPROACH 2: Micro-offset (0.5px) - minimal distortion
   if (!result || detectSelfIntersections(result) > 0) {
-    console.log('[Worker]', caller, ': Union insufficient, trying micro-offset...');
+    console.log('[Worker]', caller, ': Union insufficient, trying 0.5px micro-offset...');
+    const bufferResult = bufferZeroFix(clipperPath, 0.5, ClipperLib.JoinType.jtRound);
     
-    // APPROACH 2: Micro-offset technique with larger offset (0.5 pixel equivalent)
-    const microOffset = 0.5 * CLIPPER_SCALE; // 0.5 pixel in scaled units
-    
-    const co1 = new ClipperLib.ClipperOffset();
-    co1.ArcTolerance = 0.25 * CLIPPER_SCALE;
-    co1.MiterLimit = 2;
-    co1.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    
-    const expanded: ClipperLib.Path[] = [];
-    co1.Execute(expanded, microOffset);
-    
-    if (expanded && expanded.length > 0) {
-      // Find largest
-      let largestExpanded = expanded[0];
-      let largestArea = Math.abs(ClipperLib.Clipper.Area(expanded[0]));
-      for (let i = 1; i < expanded.length; i++) {
-        const area = Math.abs(ClipperLib.Clipper.Area(expanded[i]));
-        if (area > largestArea) {
-          largestArea = area;
-          largestExpanded = expanded[i];
-        }
-      }
-      
-      // Contract back
-      const co2 = new ClipperLib.ClipperOffset();
-      co2.ArcTolerance = 0.25 * CLIPPER_SCALE;
-      co2.MiterLimit = 2;
-      co2.AddPath(largestExpanded, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-      
-      const contracted: ClipperLib.Path[] = [];
-      co2.Execute(contracted, -microOffset);
-      
-      if (contracted && contracted.length > 0) {
-        let largestContracted = contracted[0];
-        largestArea = Math.abs(ClipperLib.Clipper.Area(contracted[0]));
-        for (let i = 1; i < contracted.length; i++) {
-          const area = Math.abs(ClipperLib.Clipper.Area(contracted[i]));
-          if (area > largestArea) {
-            largestArea = area;
-            largestContracted = contracted[i];
-          }
-        }
-        resultPath = largestContracted;
+    if (bufferResult && bufferResult.length > 0) {
+      resultPath = findLargestPolygon(bufferResult);
+      if (resultPath) {
         result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
       }
     }
   }
   
-  // APPROACH 3: If still has intersections, try SimplifyPolygon with pftEvenOdd
+  // APPROACH 3: Larger offset (1px) - forces path rebuild
   if (!result || detectSelfIntersections(result) > 0) {
-    console.log('[Worker]', caller, ': Micro-offset insufficient, trying SimplifyPolygon...');
+    console.log('[Worker]', caller, ': Micro-offset insufficient, trying 1px offset...');
+    const bufferResult = bufferZeroFix(clipperPath, 1.0, ClipperLib.JoinType.jtRound);
+    
+    if (bufferResult && bufferResult.length > 0) {
+      resultPath = findLargestPolygon(bufferResult);
+      if (resultPath) {
+        result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+      }
+    }
+  }
+  
+  // APPROACH 4: SimplifyPolygon with pftEvenOdd
+  if (!result || detectSelfIntersections(result) > 0) {
+    console.log('[Worker]', caller, ': Offset insufficient, trying SimplifyPolygon pftEvenOdd...');
     const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftEvenOdd);
     if (simplified && simplified.length > 0) {
-      let largestSimplified = simplified[0];
-      let largestArea = Math.abs(ClipperLib.Clipper.Area(simplified[0]));
-      for (let i = 1; i < simplified.length; i++) {
-        const area = Math.abs(ClipperLib.Clipper.Area(simplified[i]));
-        if (area > largestArea) {
-          largestArea = area;
-          largestSimplified = simplified[i];
-        }
+      resultPath = findLargestPolygon(simplified);
+      if (resultPath) {
+        result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
       }
-      resultPath = largestSimplified;
-      result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+    }
+  }
+  
+  // APPROACH 5: SimplifyPolygon with pftNonZero
+  if (!result || detectSelfIntersections(result) > 0) {
+    console.log('[Worker]', caller, ': Trying SimplifyPolygon with pftNonZero...');
+    const simplified = ClipperLib.Clipper.SimplifyPolygon(clipperPath, ClipperLib.PolyFillType.pftNonZero);
+    if (simplified && simplified.length > 0) {
+      resultPath = findLargestPolygon(simplified);
+      if (resultPath) {
+        result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+      }
+    }
+  }
+  
+  // APPROACH 6: Aggressive offset (2px) as last resort
+  if (!result || detectSelfIntersections(result) > 0) {
+    console.log('[Worker]', caller, ': Trying aggressive 2px offset...');
+    const bufferResult2 = bufferZeroFix(clipperPath, 2.0, ClipperLib.JoinType.jtRound);
+    if (bufferResult2 && bufferResult2.length > 0) {
+      resultPath = findLargestPolygon(bufferResult2);
+      if (resultPath) {
+        result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+      }
     }
   }
   
