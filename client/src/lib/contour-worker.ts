@@ -1206,13 +1206,14 @@ function analyzeContourComplexity(points: Point[], effectiveDPI: number): Comple
   
   // Decision thresholds (tuned for script vs block fonts)
   // Script fonts typically have:
-  // - Higher perimeter-to-area ratio (> 8 for complex scripts, circle=3.54, square=4)
-  // - Higher concavity/sharpness score (> 0.2)
-  // - More narrow gaps (> 2)
+  // - Higher perimeter-to-area ratio (> 15 for complex scripts, circle=3.54, square=4)
+  // - Higher concavity/sharpness score (> 0.5)
+  // - More narrow gaps (> 5)
+  // Block text like "Tercos" should NOT trigger complex processing
   const needsComplexProcessing = 
-    perimeterAreaRatio > 8 ||       // Complex outline (script fonts are typically > 10)
-    concavityScore > 0.2 ||         // Many sharp turns
-    narrowGapCount > 2;             // Multiple narrow gaps detected
+    perimeterAreaRatio > 15 ||      // Very complex outline (script fonts are typically > 15)
+    concavityScore > 0.5 ||         // Many sharp turns (raised threshold)
+    narrowGapCount > 5;             // Multiple narrow gaps detected (raised threshold)
   
   return {
     perimeterAreaRatio,
