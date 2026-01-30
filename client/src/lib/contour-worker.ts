@@ -353,14 +353,15 @@ function processContour(
     
     console.log('[Worker] Traced', simplifiedContours.length, 'contours, each simplified');
     
-    // Cluster threshold: 0.15" default for script fonts
-    const clusterThresholdInches = 0.15;
+    // Cluster threshold: 0.08" for grouping nearby contours
+    // Only contours within this distance will be considered part of the same cluster
+    const clusterThresholdInches = 0.08;
     const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
     
-    // Gap close distance for script fonts - needs to be large enough to bridge letter gaps
-    // Use 0.15" as the base (typical letter spacing in script fonts)
+    // Gap close distance for script fonts - bridges gaps between separate letters
+    // Use 0.08" as the base - only bridges truly separate items, not internal features
     // This is the expand distance: gaps up to 2x this value will be bridged
-    const gapCloseInches = 0.15;
+    const gapCloseInches = 0.08;
     const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
     
     console.log('[Worker] Cluster threshold:', clusterThresholdPixels, 'px (', clusterThresholdInches, 'in)');
@@ -423,17 +424,20 @@ function processContour(
   
   postProgress(60);
   
-  // Step 4: Gap closing (if enabled) - uses auto-bridging
+  // Step 4: Gap closing (if enabled) - only for complex algorithm
+  // Shapes algorithm should NOT use gap closing since block text is already a solid shape
   let smoothedPath = vectorOffsetPath;
   
-  const gapThresholdPixels = strokeSettings.closeBigGaps 
-    ? Math.round(0.42 * effectiveDPI) 
-    : strokeSettings.closeSmallGaps 
-      ? Math.round(0.15 * effectiveDPI) 
-      : 0;
-  
-  if (gapThresholdPixels > 0) {
-    smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+  if (algorithm === 'complex') {
+    const gapThresholdPixels = strokeSettings.closeBigGaps 
+      ? Math.round(0.42 * effectiveDPI) 
+      : strokeSettings.closeSmallGaps 
+        ? Math.round(0.15 * effectiveDPI) 
+        : 0;
+    
+    if (gapThresholdPixels > 0) {
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+    }
   }
   
   postProgress(70);
