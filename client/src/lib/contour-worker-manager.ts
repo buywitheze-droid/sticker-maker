@@ -75,8 +75,6 @@ interface ProcessRequest {
     color: string;
     enabled: boolean;
     alphaThreshold: number;
-    closeSmallGaps: boolean;
-    closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
     autoBridging: boolean;
@@ -182,8 +180,6 @@ class ContourWorkerManager {
       color: string;
       enabled: boolean;
       alphaThreshold: number;
-      closeSmallGaps: boolean;
-      closeBigGaps: boolean;
       backgroundColor: string;
       useCustomBackground: boolean;
       autoBridging: boolean;
@@ -265,8 +261,6 @@ class ContourWorkerManager {
       color: string;
       enabled: boolean;
       alphaThreshold: number;
-      closeSmallGaps: boolean;
-      closeBigGaps: boolean;
       backgroundColor: string;
       useCustomBackground: boolean;
       autoBridging: boolean;
@@ -331,8 +325,6 @@ export async function processContourInWorker(
     color: string;
     enabled: boolean;
     alphaThreshold: number;
-    closeSmallGaps: boolean;
-    closeBigGaps: boolean;
     backgroundColor: string;
     useCustomBackground: boolean;
     autoBridging: boolean;

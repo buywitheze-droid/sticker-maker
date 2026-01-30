@@ -26,8 +26,6 @@ export interface StrokeSettings {
   color: string;
   enabled: boolean;
   alphaThreshold: number;
-  closeSmallGaps: boolean;
-  closeBigGaps: boolean;
   backgroundColor: string;
   useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
   cornerMode: ContourCornerMode; // 'rounded' for smooth arcs, 'sharp' for miter corners

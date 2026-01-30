@@ -235,15 +235,8 @@ function closeGapsForBleedInches(points: Array<{ x: number; y: number }>, maxGap
     x: p.x * refDPI, 
     y: p.y * refDPI 
   }));
-  const gapThresholdPixels = maxGapInches * refDPI;
-  
-  // Apply gap closing multiple times with progressively smaller thresholds
-  let result = closeGapsWithShapes(pixelPoints, gapThresholdPixels);
-  result = closeGapsWithShapes(result, gapThresholdPixels * 0.5);
-  result = closeGapsWithShapes(result, gapThresholdPixels * 0.25);
-  
-  // Convert back to inches
-  return result.map(p => ({ x: p.x / refDPI, y: p.y / refDPI }));
+  // Gap closing removed - return points unchanged
+  return points;
 }
 
 export function createSilhouetteContour(
@@ -264,13 +257,6 @@ export function createSilhouetteContour(
   
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
-  
-  let gapClosePixels = 0;
-  if (strokeSettings.closeBigGaps) {
-    gapClosePixels = Math.round(0.19 * effectiveDPI);
-  } else if (strokeSettings.closeSmallGaps) {
-    gapClosePixels = Math.round(0.07 * effectiveDPI);
-  }
   
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
@@ -305,52 +291,12 @@ export function createSilhouetteContour(
       }
     }
     
-    let bridgedMask = autoBridgedMask;
-    let bridgedWidth = image.width;
-    let bridgedHeight = image.height;
+    const bridgedMask = autoBridgedMask;
+    const bridgedWidth = image.width;
+    const bridgedHeight = image.height;
     
-    if (gapClosePixels > 0) {
-      const halfGapPixels = Math.round(gapClosePixels / 2);
-      
-      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
-      const dilatedWidth = image.width + halfGapPixels * 2;
-      const dilatedHeight = image.height + halfGapPixels * 2;
-      
-      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
-      
-      bridgedMask = new Uint8Array(image.width * image.height);
-      bridgedMask.set(autoBridgedMask);
-      
-      for (let y = 1; y < image.height - 1; y++) {
-        for (let x = 1; x < image.width - 1; x++) {
-          if (autoBridgedMask[y * image.width + x] === 0) {
-            const srcX = x + halfGapPixels;
-            const srcY = y + halfGapPixels;
-            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
-              let hasContentTop = false, hasContentBottom = false;
-              let hasContentLeft = false, hasContentRight = false;
-              
-              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
-                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
-                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
-                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
-              }
-              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
-                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
-              }
-              
-              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
-                bridgedMask[y * image.width + x] = 1;
-              }
-            }
-          }
-        }
-      }
-      
+    // Smooth bridge logic for nearby outlines
+    {
       const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
       if (smoothBridgePixels > 0) {
         const distanceMap = new Float32Array(image.width * image.height);
@@ -413,9 +359,6 @@ export function createSilhouetteContour(
           }
         }
       }
-      
-      bridgedWidth = image.width;
-      bridgedHeight = image.height;
     }
     
     const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
@@ -447,17 +390,6 @@ export function createSilhouetteContour(
     
     // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
     smoothedPath = fixOffsetCrossings(smoothedPath);
-    
-    // Apply gap closing using U/N shapes based on settings
-    const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.42 * effectiveDPI) 
-      : strokeSettings.closeSmallGaps 
-        ? Math.round(0.15 * effectiveDPI) 
-        : 0;
-    
-    if (gapThresholdPixels > 0) {
-      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-    }
     
     const offsetX = padding - totalOffsetPixels;
     const offsetY = padding - totalOffsetPixels;
@@ -1306,284 +1238,6 @@ function lineSegmentIntersect(p1: Point, p2: Point, p3: Point, p4: Point): Point
   return null;
 }
 
-// Close gaps by detecting where paths are close and applying U/N shapes
-function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
-  if (points.length < 20) return points;
-  
-  const n = points.length;
-  const result: Point[] = [];
-  const processed = new Set<number>();
-  
-  // OPTIMIZATION: Use larger stride for faster processing
-  const stride = n > 2000 ? 8 : n > 1000 ? 5 : n > 500 ? 3 : 2;
-  
-  // Calculate centroid using sampled points for speed
-  let centroidX = 0, centroidY = 0;
-  let sampleCount = 0;
-  for (let i = 0; i < n; i += stride) {
-    centroidX += points[i].x;
-    centroidY += points[i].y;
-    sampleCount++;
-  }
-  centroidX /= sampleCount;
-  centroidY /= sampleCount;
-  
-  // Calculate average distance from centroid using sampled points
-  let totalDist = 0;
-  for (let i = 0; i < n; i += stride) {
-    totalDist += Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
-  }
-  const avgDistFromCentroid = totalDist / sampleCount;
-  
-  // Find all gap locations where path points are within threshold but far apart in path order
-  const gaps: Array<{i: number, j: number, dist: number}> = [];
-  
-  // Limit how much of path we can skip to avoid deleting entire outline
-  const maxSkipPoints = Math.floor(n * 0.20); // Max 20% of path per gap (reduced from 25%)
-  const minSkipPoints = Math.max(15, Math.floor(n / 50)); // Scale minimum with path size
-  
-  const thresholdSq = gapThreshold * gapThreshold;
-  
-  // OPTIMIZATION: Limit max gaps to prevent excessive processing
-  const maxGaps = 20;
-  
-  for (let i = 0; i < n && gaps.length < maxGaps; i += stride) {
-    const pi = points[i];
-    
-    // Search ahead but limit to maxSkipPoints to avoid false gaps
-    const maxSearch = Math.min(n - 5, i + maxSkipPoints);
-    // Use larger inner stride for faster search
-    const innerStride = stride * 2;
-    for (let j = i + minSkipPoints; j < maxSearch; j += innerStride) {
-      const pj = points[j];
-      const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
-      
-      if (distSq < thresholdSq) {
-        // Quick check if this is a narrow passage (close) vs a protrusion (keep)
-        const dist = Math.sqrt(distSq);
-        const dx = pj.x - pi.x;
-        const dy = pj.y - pi.y;
-        const lineLen = dist;
-        
-        // Sample only ~10 points for speed
-        let maxPerpDist = 0;
-        const sampleStride = Math.max(1, Math.floor((j - i) / 10));
-        for (let k = i + sampleStride; k < j; k += sampleStride) {
-          const pk = points[k];
-          const perpDist = Math.abs((pk.x - pi.x) * dy - (pk.y - pi.y) * dx) / (lineLen || 1);
-          maxPerpDist = Math.max(maxPerpDist, perpDist);
-        }
-        
-        // If path extends more than 3x the gap distance, it's a protrusion - don't close
-        if (maxPerpDist > dist * 3) {
-          continue;
-        }
-        
-        gaps.push({i, j, dist});
-        break;
-      }
-    }
-  }
-  
-  console.log('[closeGapsWithShapes] Scanned', n, 'points, stride:', stride, ', threshold:', gapThreshold.toFixed(0), 'px, gaps:', gaps.length);
-  
-  if (gaps.length === 0) {
-    console.log('[closeGapsWithShapes] No gaps found');
-    return points;
-  }
-  
-  console.log('[closeGapsWithShapes] Found', gaps.length, 'potential gaps');
-  
-  // Classify gaps into two categories:
-  // 1. Inward gaps (original detection) - these point toward the centroid and get priority
-  // 2. Geometry gaps (new detection) - J-shaped, hooks, etc. that don't point inward
-  const inwardGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
-  const geometryGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
-  
-  for (const gap of gaps) {
-    // Calculate average distance of the gap section from centroid
-    let gapSectionDist = 0;
-    let gapSectionCount = 0;
-    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
-    for (let k = gap.i; k <= gap.j; k += sampleStride) {
-      const pk = points[k];
-      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
-      gapSectionCount++;
-    }
-    const avgGapDist = gapSectionDist / gapSectionCount;
-    
-    // Inward gap: section average is LESS than shape average (dips toward center)
-    if (avgGapDist < avgDistFromCentroid * 0.95) {
-      inwardGaps.push({...gap, priority: 1}); // High priority
-      console.log('[closeGapsWithShapes] Inward gap at', gap.i, '-', gap.j);
-    } else {
-      geometryGaps.push({...gap, priority: 2}); // Lower priority
-      console.log('[closeGapsWithShapes] Geometry gap at', gap.i, '-', gap.j);
-    }
-  }
-  
-  // Filter geometry gaps to exclude any that overlap with inward gaps
-  // This ensures inward detection behavior stays exactly as before
-  const nonOverlappingGeometryGaps = geometryGaps.filter(geoGap => {
-    for (const inwardGap of inwardGaps) {
-      // Check if ranges overlap: geoGap[i,j] overlaps with inwardGap[i,j]
-      const overlapStart = Math.max(geoGap.i, inwardGap.i);
-      const overlapEnd = Math.min(geoGap.j, inwardGap.j);
-      if (overlapStart < overlapEnd) {
-        return false; // Overlaps with an inward gap, exclude it
-      }
-    }
-    return true; // No overlap, keep it
-  });
-  
-  // Combine: inward gaps (original behavior) + non-overlapping geometry gaps
-  const exteriorGaps = [...inwardGaps, ...nonOverlappingGeometryGaps];
-  
-  console.log('[closeGapsWithShapes] Inward gaps:', inwardGaps.length, 'Non-overlapping geometry gaps:', nonOverlappingGeometryGaps.length);
-  
-  if (exteriorGaps.length === 0) {
-    console.log('[closeGapsWithShapes] No gaps to close');
-    return points;
-  }
-  
-  // For each gap, find the NARROWEST point (peak-to-peak) and bridge there
-  // This preserves both sides of the gap instead of cutting one off
-  
-  // Sort gaps by path position
-  const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
-  
-  // Find the actual narrowest point for each gap
-  const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
-  for (const gap of sortedGaps) {
-    let minDist = gap.dist;
-    let bestI = gap.i;
-    let bestJ = gap.j;
-    
-    // Search around the initial gap points to find the true narrowest crossing
-    const searchRange = Math.min(20, Math.floor((gap.j - gap.i) / 4));
-    for (let di = -searchRange; di <= searchRange; di++) {
-      const testI = gap.i + di;
-      if (testI < 0 || testI >= n) continue;
-      
-      for (let dj = -searchRange; dj <= searchRange; dj++) {
-        const testJ = gap.j + dj;
-        if (testJ < 0 || testJ >= n || testJ <= testI + 10) continue;
-        
-        const pi = points[testI];
-        const pj = points[testJ];
-        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
-        
-        if (dist < minDist) {
-          minDist = dist;
-          bestI = testI;
-          bestJ = testJ;
-        }
-      }
-    }
-    
-    refinedGaps.push({i: bestI, j: bestJ, dist: minDist});
-  }
-  
-  // Process path, bridging at the narrowest point of each gap
-  let currentIdx = 0;
-  
-  for (const gap of refinedGaps) {
-    // Skip overlapping gaps
-    if (gap.i < currentIdx) continue;
-    
-    // Add points before the gap bridge point
-    for (let k = currentIdx; k <= gap.i; k++) {
-      if (!processed.has(k)) {
-        result.push(points[k]);
-        processed.add(k);
-      }
-    }
-    
-    // Create a minimal bridge at the narrowest point
-    const p1 = points[gap.i];
-    const p2 = points[gap.j];
-    const gapDist = gap.dist;
-    
-    if (gapDist > 0.5) {
-      // Add just 3 points for a small smooth bridge (minimal distortion)
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
-      result.push({ x: midX, y: midY });
-    }
-    
-    // For exterior caves (already filtered above), ALWAYS delete the cave interior
-    // Skip all points between i and j (the "top of the P" / cave interior)
-    for (let k = gap.i + 1; k < gap.j; k++) {
-      processed.add(k);
-    }
-    
-    currentIdx = gap.j;
-  }
-  
-  // Add remaining points
-  for (let k = currentIdx; k < n; k++) {
-    if (!processed.has(k)) {
-      result.push(points[k]);
-    }
-  }
-  
-  // Apply smoothing pass to eliminate wave artifacts from gap closing
-  // This is especially important for medium/small offsets
-  if (result.length >= 10 && refinedGaps.length > 0) {
-    return smoothBridgeAreas(result);
-  }
-  
-  return result.length >= 3 ? result : points;
-}
-
-// Smooth the path to eliminate wave artifacts, especially around bridge areas
-function smoothBridgeAreas(points: Point[]): Point[] {
-  if (points.length < 10) return points;
-  
-  const n = points.length;
-  const result: Point[] = [];
-  
-  // Apply 3-point weighted average smoothing (preserves shape while reducing waves)
-  for (let i = 0; i < n; i++) {
-    if (i === 0 || i === n - 1) {
-      result.push(points[i]);
-    } else {
-      const prev = points[i - 1];
-      const curr = points[i];
-      const next = points[i + 1];
-      
-      // Check if this point creates a sharp angle (wave artifact)
-      const dx1 = curr.x - prev.x;
-      const dy1 = curr.y - prev.y;
-      const dx2 = next.x - curr.x;
-      const dy2 = next.y - curr.y;
-      
-      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-      
-      if (len1 > 0.1 && len2 > 0.1) {
-        // Calculate angle between segments
-        const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-        
-        // If sharp angle (less than ~120 degrees), smooth it
-        if (dot < 0.5) {
-          // Weighted average toward neighbors (flatten the wave)
-          result.push({
-            x: prev.x * 0.25 + curr.x * 0.5 + next.x * 0.25,
-            y: prev.y * 0.25 + curr.y * 0.5 + next.y * 0.25
-          });
-        } else {
-          result.push(curr);
-        }
-      } else {
-        result.push(curr);
-      }
-    }
-  }
-  
-  return result;
-}
-
 // Merge points that are very close together (indicating a near-crossing)
 function mergeClosePathPoints(points: Point[]): Point[] {
   if (points.length < 6) return points;
@@ -1874,30 +1528,6 @@ export function getContourPath(
     if (smoothedPath.length > 800) {
       smoothedPath = simplifyPolygon(smoothedPath, 0.25);
       console.log('[getContourPath] After final CleanPolygon:', smoothedPath.length, 'points');
-    }
-    
-    // Apply gap closing using U/N shapes based on settings
-    const gapThresholdPixels = strokeSettings.closeBigGaps 
-      ? Math.round(0.42 * effectiveDPI) 
-      : strokeSettings.closeSmallGaps 
-        ? Math.round(0.15 * effectiveDPI) 
-        : 0;
-    
-    if (gapThresholdPixels > 0) {
-      console.log('[getContourPath] Starting gap closing with threshold:', gapThresholdPixels);
-      const startTime = performance.now();
-      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
-      console.log('[getContourPath] Gap closing took:', (performance.now() - startTime).toFixed(0), 'ms');
-      
-      // Ensure path is properly closed after gap processing
-      if (smoothedPath.length > 2) {
-        const first = smoothedPath[0];
-        const last = smoothedPath[smoothedPath.length - 1];
-        const closeDist = Math.sqrt((first.x - last.x) ** 2 + (first.y - last.y) ** 2);
-        if (closeDist > 2) {
-          smoothedPath.push({ x: first.x, y: first.y });
-        }
-      }
     }
     
     // Add bleed to dimensions so expanded background fits within page
