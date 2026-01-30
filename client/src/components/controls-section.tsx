@@ -370,6 +370,33 @@ export default function ControlsSection({
             
             {showContourOptions && (
               <div className="space-y-3 px-4 pb-3">
+              {/* Algorithm Toggle */}
+              <div>
+                <Label className="text-xs text-gray-500 font-medium">Algorithm</Label>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={() => onStrokeChange({ algorithm: 'shapes' })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                      strokeSettings.algorithm === 'shapes'
+                        ? 'bg-cyan-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    Shapes
+                  </button>
+                  <button
+                    onClick={() => onStrokeChange({ algorithm: 'complex' })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                      strokeSettings.algorithm === 'complex'
+                        ? 'bg-cyan-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    Complex/Curves
+                  </button>
+                </div>
+              </div>
+              
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Contour Margin</Label>
                 <Select

@@ -38,6 +38,7 @@ export default function ImageEditor() {
     cornerMode: 'sharp', // Default to sharp corners with high miter limit
     autoBridging: true, // Auto-bridge narrow gaps in contour
     autoBridgingThreshold: 0.02, // Gap threshold in inches
+    algorithm: 'shapes', // Default to Shapes algorithm for simple designs
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -226,6 +227,7 @@ export default function ImageEditor() {
       cornerMode: 'sharp',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
+      algorithm: 'shapes',
     });
     
     // Apply detected shape or default settings
@@ -340,6 +342,7 @@ export default function ImageEditor() {
         cornerMode: 'sharp',
         autoBridging: true,
         autoBridgingThreshold: 0.02,
+        algorithm: 'shapes',
       });
       
       const newShapeSettings: ShapeSettings = {
@@ -422,6 +425,7 @@ export default function ImageEditor() {
       cornerMode: 'sharp',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
+      algorithm: 'shapes',
     });
     setShapeSettings({
       enabled: false,

@@ -82,6 +82,7 @@ interface ProcessRequest {
     autoBridging: boolean;
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
+    algorithm?: 'shapes' | 'complex';
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -188,6 +189,7 @@ class ContourWorkerManager {
       autoBridging: boolean;
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
+      algorithm?: 'shapes' | 'complex';
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -270,6 +272,7 @@ class ContourWorkerManager {
       autoBridging: boolean;
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
+      algorithm?: 'shapes' | 'complex';
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -335,6 +338,7 @@ export async function processContourInWorker(
     autoBridging: boolean;
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
+    algorithm?: 'shapes' | 'complex';
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback

@@ -19,6 +19,8 @@ export interface ImageInfo {
 
 export type ContourCornerMode = 'rounded' | 'sharp';
 
+export type ContourAlgorithm = 'shapes' | 'complex';
+
 export interface StrokeSettings {
   width: number;
   color: string;
@@ -31,6 +33,7 @@ export interface StrokeSettings {
   cornerMode: ContourCornerMode; // 'rounded' for smooth arcs, 'sharp' for miter corners
   autoBridging: boolean; // If true, close narrow gaps/caves in contour
   autoBridgingThreshold: number; // Gap threshold in inches (default 0.02)
+  algorithm?: ContourAlgorithm; // 'shapes' for simple designs, 'complex' for complex/curved designs (default: shapes)
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

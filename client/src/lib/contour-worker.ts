@@ -24,6 +24,7 @@ interface WorkerMessage {
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
+    algorithm?: 'shapes' | 'complex';
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -210,6 +211,7 @@ function processContour(
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
+    algorithm?: 'shapes' | 'complex';
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -296,10 +298,14 @@ function processContour(
   }));
   
   console.log('[Worker] Original tight contour:', tightContour.length, 'points');
+  console.log('[Worker] Algorithm:', strokeSettings.algorithm || 'shapes');
   
   // Step 2: Simplify the tight contour to remove pixel stair-steps
-  // Use moderate epsilon to get clean base contour
-  const tightEpsilon = 0.001;
+  // Algorithm-specific epsilon:
+  // - "shapes": Higher epsilon (0.001) for cleaner, simpler shapes
+  // - "complex": Lower epsilon (0.0002) to preserve more curve detail
+  const algorithm = strokeSettings.algorithm || 'shapes';
+  const tightEpsilon = algorithm === 'complex' ? 0.0002 : 0.001;
   tightContour = approxPolyDP(tightContour, tightEpsilon);
   console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
   
