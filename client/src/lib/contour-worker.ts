@@ -2393,6 +2393,57 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   return result;
 }
 
+// Distance-based spike filter - removes "pirate hook" spikes
+// If dist(Point_i, Point_{i+2}) < threshold, Point_{i+1} is a spike and should be removed
+function removeSpikesByDistance(points: Point[], thresholdPx: number = 3.0): Point[] {
+  if (points.length < 4) return points;
+  
+  const result: Point[] = [];
+  const n = points.length;
+  let spikesRemoved = 0;
+  
+  // Track which points to skip (spike vertices)
+  const isSpike: boolean[] = new Array(n).fill(false);
+  
+  for (let i = 0; i < n; i++) {
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    const p2 = points[(i + 2) % n];
+    
+    // Calculate distance between non-adjacent vertices (p0 to p2)
+    const dx = p2.x - p0.x;
+    const dy = p2.y - p0.y;
+    const dist02 = Math.sqrt(dx * dx + dy * dy);
+    
+    // Calculate distances to the intermediate point
+    const d01 = Math.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2);
+    const d12 = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+    
+    // If p0-p2 is much shorter than p0-p1-p2, p1 is a spike
+    // Also check absolute threshold for tiny spikes
+    const pathDist = d01 + d12;
+    const isNarrowSpike = dist02 < thresholdPx && pathDist > dist02 * 1.5;
+    
+    if (isNarrowSpike && !isSpike[i] && !isSpike[(i + 2) % n]) {
+      isSpike[(i + 1) % n] = true;
+      spikesRemoved++;
+    }
+  }
+  
+  // Build result without spike points
+  for (let i = 0; i < n; i++) {
+    if (!isSpike[i]) {
+      result.push(points[i]);
+    }
+  }
+  
+  if (spikesRemoved > 0) {
+    console.log('[Worker] removeSpikesByDistance: Removed', spikesRemoved, 'spike(s), threshold:', thresholdPx, 'px');
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
 // Clean almost-loops (hairpins/spikes) using polygon simplification
 // Equivalent to cv2.approxPolyDP in OpenCV
 // This removes vertices that create unnecessary complexity like hairpin turns
@@ -2400,14 +2451,17 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
 function cleanAlmostLoops(points: Point[], epsilonFactor: number = 0.003): Point[] {
   if (points.length < 4) return points;
   
-  // Calculate perimeter
-  const perimeter = calculatePerimeter(points);
+  // Step 1: Distance-based spike filter (removes "pirate hook" spikes)
+  let cleaned = removeSpikesByDistance(points, 3.0);
+  
+  // Step 2: Calculate perimeter for Douglas-Peucker
+  const perimeter = calculatePerimeter(cleaned);
   
   // Calculate epsilon based on perimeter (like cv2.approxPolyDP)
   const epsilon = epsilonFactor * perimeter;
   
-  // Apply Douglas-Peucker simplification using existing rdpSimplifyPolygon
-  const simplified = rdpSimplifyPolygon(points, epsilon);
+  // Step 3: Apply Douglas-Peucker simplification
+  const simplified = rdpSimplifyPolygon(cleaned, epsilon);
   
   // Ensure we still have a valid polygon
   if (simplified.length < 3) {
@@ -2415,7 +2469,7 @@ function cleanAlmostLoops(points: Point[], epsilonFactor: number = 0.003): Point
     return points;
   }
   
-  console.log('[Worker] cleanAlmostLoops: Simplified', points.length, '->', simplified.length, 'points (epsilon:', epsilon.toFixed(2), ')');
+  console.log('[Worker] cleanAlmostLoops: Spikes+RDP simplified', points.length, '->', simplified.length, 'points (epsilon:', epsilon.toFixed(2), ')');
   
   return simplified;
 }
