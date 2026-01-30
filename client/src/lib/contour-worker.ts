@@ -2393,6 +2393,33 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   return result;
 }
 
+// Clean almost-loops (hairpins/spikes) using polygon simplification
+// Equivalent to cv2.approxPolyDP in OpenCV
+// This removes vertices that create unnecessary complexity like hairpin turns
+// Uses existing rdpSimplifyPolygon (Ramer-Douglas-Peucker) implementation
+function cleanAlmostLoops(points: Point[], epsilonFactor: number = 0.003): Point[] {
+  if (points.length < 4) return points;
+  
+  // Calculate perimeter
+  const perimeter = calculatePerimeter(points);
+  
+  // Calculate epsilon based on perimeter (like cv2.approxPolyDP)
+  const epsilon = epsilonFactor * perimeter;
+  
+  // Apply Douglas-Peucker simplification using existing rdpSimplifyPolygon
+  const simplified = rdpSimplifyPolygon(points, epsilon);
+  
+  // Ensure we still have a valid polygon
+  if (simplified.length < 3) {
+    console.log('[Worker] cleanAlmostLoops: Simplification too aggressive, keeping original');
+    return points;
+  }
+  
+  console.log('[Worker] cleanAlmostLoops: Simplified', points.length, '->', simplified.length, 'points (epsilon:', epsilon.toFixed(2), ')');
+  
+  return simplified;
+}
+
 // Final loop removal - eliminates any self-intersections from the finished contour path
 // This is critical for print and cut: any crossing lines will cause the cutter to damage the design
 // Uses Clipper's Boolean Union to untie all crossings
@@ -2580,9 +2607,41 @@ function removeFinalLoopsInner(points: Point[], caller: string): Point[] {
     result = resultPath.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
   }
   
+  // STEP A: Clean almost-loops (hairpins/spikes) using approxPolyDP equivalent
+  // This removes vertices that create unnecessary complexity like hairpin turns
+  // Apply unconditionally - hairpins may not register as true self-intersections
+  console.log('[Worker]', caller, ': Applying cleanAlmostLoops (approxPolyDP equivalent)...');
+  const beforeClean = result.length;
+  result = cleanAlmostLoops(result, 0.005); // Use 0.005 factor like Python snippet
+  
+  // STEP B: Re-validate after simplification - simplification may have fixed or introduced issues
+  const postSimplifyIntersections = detectSelfIntersections(result);
+  if (postSimplifyIntersections > 0) {
+    console.log('[Worker]', caller, ': Post-simplify validation found', postSimplifyIntersections, 'intersections, running final union...');
+    
+    // Re-run union to ensure validity
+    const finalClipperPath: ClipperLib.Path = result.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    
+    const finalClipper = new ClipperLib.Clipper();
+    finalClipper.AddPath(finalClipperPath, ClipperLib.PolyType.ptSubject, true);
+    
+    const finalUnion: ClipperLib.Path[] = [];
+    if (finalClipper.Execute(ClipperLib.ClipType.ctUnion, finalUnion, ClipperLib.PolyFillType.pftPositive, ClipperLib.PolyFillType.pftPositive)) {
+      if (finalUnion && finalUnion.length > 0) {
+        const largestFinal = findLargestPolygon(finalUnion);
+        if (largestFinal && largestFinal.length >= 3) {
+          result = largestFinal.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+        }
+      }
+    }
+  }
+  
   console.log('[Worker]', caller, ': Cleanup complete:', originalLength, '->', result.length, 'points');
   
-  // Validate: check if any self-intersections remain
+  // Final validation: check if any self-intersections remain
   const remainingIntersections = detectSelfIntersections(result);
   if (remainingIntersections > 0) {
     console.warn('[Worker]', caller, ': WARNING - Still has', remainingIntersections, 'self-intersections after cleanup!');
