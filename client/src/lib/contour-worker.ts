@@ -285,7 +285,13 @@ function processContour(
   const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
   
   const algorithm = strokeSettings.algorithm || 'shapes';
-  console.log('[Worker] Algorithm:', algorithm);
+  console.log('[Worker] ======================================');
+  console.log('[Worker] ALGORITHM:', algorithm.toUpperCase());
+  console.log('[Worker] Image size:', width, 'x', height, 'px');
+  console.log('[Worker] Effective DPI:', effectiveDPI.toFixed(1));
+  console.log('[Worker] Preview mode:', previewMode);
+  console.log('[Worker] strokeSettings.algorithm:', strokeSettings.algorithm);
+  console.log('[Worker] ======================================');
   
   let processedContour: Point[];
   
@@ -1447,10 +1453,17 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   
   for (const contour of contours) {
     if (contour.length < 3) continue;
-    const clipperPath = contour.map(p => ({
+    let clipperPath = contour.map(p => ({
       X: Math.round(p.x * CLIPPER_SCALE),
       Y: Math.round(p.y * CLIPPER_SCALE)
     }));
+    
+    // Ensure CCW orientation for correct expand direction
+    const pathArea = ClipperLib.Clipper.Area(clipperPath);
+    if (pathArea < 0) {
+      clipperPath = clipperPath.slice().reverse();
+    }
+    
     coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
   }
   
@@ -1687,10 +1700,23 @@ function vectorCloseMerge(points: Point[], gapPixels: number): Point[] {
   console.log('[Worker] vectorCloseMerge: input', points.length, 'pts, gap:', gapPixels, 'px');
   
   // Convert to Clipper format with scaling
-  const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
+  let clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
     X: Math.round(p.x * CLIPPER_SCALE),
     Y: Math.round(p.y * CLIPPER_SCALE)
   }));
+  
+  // CRITICAL: Ensure correct winding orientation for offset direction
+  // In Clipper, positive offset on COUNTER-CLOCKWISE path = expand outward
+  // Positive offset on CLOCKWISE path = shrink inward (WRONG for our purpose!)
+  // ClipperLib.Clipper.Area returns positive for CCW, negative for CW
+  const pathArea = ClipperLib.Clipper.Area(clipperPath);
+  console.log('[Worker] vectorCloseMerge: path area =', pathArea, (pathArea >= 0 ? '(CCW - correct)' : '(CW - reversing)'));
+  
+  if (pathArea < 0) {
+    // Path is clockwise, need to reverse for correct offset direction
+    clipperPath = clipperPath.slice().reverse();
+    console.log('[Worker] vectorCloseMerge: reversed path to CCW orientation');
+  }
   
   const scaledGap = gapPixels * CLIPPER_SCALE;
   
