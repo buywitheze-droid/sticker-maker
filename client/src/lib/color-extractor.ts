@@ -344,7 +344,91 @@ export function extractDominantColors(
   // Sort all colors by percentage (highest first) - include neutrals like black/gray/white
   const sortedColors = allColors.sort((a, b) => b.percentage - a.percentage);
 
-  return sortedColors.slice(0, maxColors).map(({ isNeutral, ...color }) => color);
+  return sortedColors.map(({ isNeutral, ...color }) => color);
+}
+
+export interface ColorGroup {
+  label: string;
+  colors: ExtractedColor[];
+}
+
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return { h: h * 360, s, l };
+}
+
+export function groupColorsByShade(colors: ExtractedColor[]): ColorGroup[] {
+  const groups = new Map<string, ExtractedColor[]>();
+  
+  for (const color of colors) {
+    const { r, g, b } = color.rgb;
+    const { h, s, l } = rgbToHsl(r, g, b);
+    
+    let groupName: string;
+    
+    if (s < 0.1) {
+      if (l < 0.08) groupName = 'Blacks';
+      else if (l < 0.35) groupName = 'Dark Greys';
+      else if (l < 0.65) groupName = 'Medium Greys';
+      else if (l < 0.9) groupName = 'Light Greys';
+      else groupName = 'Whites';
+    } else if (s < 0.2 && l > 0.85) {
+      groupName = 'Whites';
+    } else {
+      const shade = l < 0.4 ? 'Dark' : l > 0.7 ? 'Light' : '';
+      
+      if (h < 15 || h >= 345) groupName = shade ? `${shade} Reds` : 'Reds';
+      else if (h < 40) groupName = shade ? `${shade} Oranges` : 'Oranges';
+      else if (h < 70) groupName = shade ? `${shade} Yellows` : 'Yellows';
+      else if (h < 160) groupName = shade ? `${shade} Greens` : 'Greens';
+      else if (h < 200) groupName = shade ? `${shade} Teals` : 'Teals';
+      else if (h < 260) groupName = shade ? `${shade} Blues` : 'Blues';
+      else if (h < 310) groupName = shade ? `${shade} Purples` : 'Purples';
+      else groupName = shade ? `${shade} Pinks` : 'Pinks';
+    }
+    
+    if (!groups.has(groupName)) groups.set(groupName, []);
+    groups.get(groupName)!.push(color);
+  }
+  
+  const groupOrder = [
+    'Reds', 'Light Reds', 'Dark Reds',
+    'Oranges', 'Light Oranges', 'Dark Oranges',
+    'Yellows', 'Light Yellows', 'Dark Yellows',
+    'Greens', 'Light Greens', 'Dark Greens',
+    'Teals', 'Light Teals', 'Dark Teals',
+    'Blues', 'Light Blues', 'Dark Blues',
+    'Purples', 'Light Purples', 'Dark Purples',
+    'Pinks', 'Light Pinks', 'Dark Pinks',
+    'Whites', 'Light Greys', 'Medium Greys', 'Dark Greys', 'Blacks'
+  ];
+  
+  const result: ColorGroup[] = [];
+  for (const label of groupOrder) {
+    const colors = groups.get(label);
+    if (colors && colors.length > 0) {
+      colors.sort((a, b) => b.percentage - a.percentage);
+      result.push({ label, colors });
+    }
+  }
+  
+  groups.forEach((groupColors, label) => {
+    if (!groupOrder.includes(label)) {
+      groupColors.sort((a: ExtractedColor, b: ExtractedColor) => b.percentage - a.percentage);
+      result.push({ label, colors: groupColors });
+    }
+  });
+  
+  return result;
 }
 
 export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 18): ExtractedColor[] {

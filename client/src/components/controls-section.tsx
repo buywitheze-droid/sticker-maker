@@ -11,8 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
-import { extractColorsFromImage, ExtractedColor } from "@/lib/color-extractor";
-import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X } from "lucide-react";
+import { extractColorsFromImage, groupColorsByShade, ExtractedColor } from "@/lib/color-extractor";
+import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X, Layers } from "lucide-react";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -61,6 +61,7 @@ export default function ControlsSection({
   const [showSpotColors, setShowSpotColors] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
   const [spotPreviewEnabled, setSpotPreviewEnabled] = useState(false);
+  const [groupColorsEnabled, setGroupColorsEnabled] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
@@ -81,7 +82,7 @@ export default function ControlsSection({
   // Reset extracted colors when image changes to prevent stale colors from showing
   useEffect(() => {
     if (imageInfo?.image) {
-      const colors = extractColorsFromImage(imageInfo.image, 18);
+      const colors = extractColorsFromImage(imageInfo.image, 999);
       setExtractedColors(colors);
     } else {
       setExtractedColors([]);
@@ -728,7 +729,18 @@ export default function ControlsSection({
             {showSpotColors && (
               <div className="px-4 pb-3 space-y-3">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-gray-600 font-medium">Design Colors</div>
+                <button
+                  onClick={() => setGroupColorsEnabled(!groupColorsEnabled)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    groupColorsEnabled 
+                      ? 'bg-blue-100 text-blue-700 border border-blue-300' 
+                      : 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200'
+                  }`}
+                  title={groupColorsEnabled ? "Show flat list" : "Group by color shade"}
+                >
+                  <Layers className="w-3 h-3" />
+                  Group Colors
+                </button>
                 <button
                   onClick={() => setSpotPreviewEnabled(!spotPreviewEnabled)}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors ${
@@ -745,8 +757,50 @@ export default function ControlsSection({
               
               {extractedColors.length === 0 ? (
                 <div className="text-xs text-gray-500 italic">No colors detected</div>
+              ) : groupColorsEnabled ? (
+                <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                  {groupColorsByShade(extractedColors).map((group) => (
+                    <div key={group.label}>
+                      <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 sticky top-0 bg-gray-50 py-1 px-1 rounded">{group.label}</div>
+                      <div className="space-y-1">
+                        {group.colors.map((color) => {
+                          const colorIndex = extractedColors.indexOf(color);
+                          return (
+                            <div key={colorIndex} className="flex items-center gap-3 p-2 bg-white rounded border border-gray-200">
+                              <div 
+                                className="w-8 h-8 rounded border border-gray-300 flex-shrink-0"
+                                style={{ backgroundColor: color.hex }}
+                                title={color.hex}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-mono text-gray-700 truncate">{color.name || color.hex}</div>
+                                <div className="text-[10px] text-gray-400">{color.hex} - {color.percentage.toFixed(1)}%</div>
+                              </div>
+                              <div className="flex gap-3">
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                  <Checkbox
+                                    checked={color.spotWhite}
+                                    onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotWhite', checked as boolean)}
+                                  />
+                                  <span className="text-xs text-gray-600">White</span>
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                  <Checkbox
+                                    checked={color.spotGloss}
+                                    onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotGloss', checked as boolean)}
+                                  />
+                                  <span className="text-xs text-gray-600">Gloss</span>
+                                </label>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {extractedColors.map((color, index) => (
                     <div key={index} className="flex items-center gap-3 p-2 bg-white rounded border border-gray-200">
                       <div 
@@ -755,8 +809,8 @@ export default function ControlsSection({
                         title={color.hex}
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-mono text-gray-700 truncate">{color.hex}</div>
-                        <div className="text-[10px] text-gray-400">{color.percentage.toFixed(1)}%</div>
+                        <div className="text-xs font-mono text-gray-700 truncate">{color.name || color.hex}</div>
+                        <div className="text-[10px] text-gray-400">{color.hex} - {color.percentage.toFixed(1)}%</div>
                       </div>
                       <div className="flex gap-3">
                         <label className="flex items-center gap-1 cursor-pointer">
