@@ -615,7 +615,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width]);
 
-    const createSpotOverlayCanvas = (source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
+    const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {
       if (!imageInfo || !spotPreviewData?.enabled) return null;
       
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
@@ -623,14 +623,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       if (whiteColors.length === 0 && glossColors.length === 0) return null;
       
-      const img = source || imageInfo.image;
       const srcCanvas = document.createElement('canvas');
       const srcCtx = srcCanvas.getContext('2d');
       if (!srcCtx) return null;
       
-      srcCanvas.width = img.width;
-      srcCanvas.height = img.height;
-      srcCtx.drawImage(img, 0, 0);
+      srcCanvas.width = imageInfo.image.width;
+      srcCanvas.height = imageInfo.image.height;
+      srcCtx.drawImage(imageInfo.image, 0, 0);
       const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
       // Create overlay canvas
@@ -928,7 +927,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.clip();
       ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
       
-      const spotOverlay = createSpotOverlayCanvas(sourceImage);
+      const spotOverlay = createSpotOverlayCanvas();
       if (spotOverlay) {
         ctx.drawImage(spotOverlay, imageX, imageY, imageWidth, imageHeight);
       }
