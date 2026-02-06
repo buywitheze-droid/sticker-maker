@@ -38,9 +38,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Store the last rendered image position for spot overlay alignment
     const lastImageRenderRef = useRef<{x: number; y: number; width: number; height: number} | null>(null);
     const [previewDims, setPreviewDims] = useState({ width: 360, height: 360 });
+    const spotPulseRef = useRef(1);
+    const spotAnimFrameRef = useRef<number | null>(null);
+    const renderRef = useRef<(() => void) | null>(null);
     
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
@@ -350,11 +352,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useEffect(() => {
       if (!canvasRef.current || !imageInfo) return;
 
+      const doRender = () => {
       const canvas = canvasRef.current;
+      if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      // Square canvas to match square container - image will be centered inside
       const canvasWidth = previewDims.width;
       const canvasHeight = previewDims.height;
       canvas.width = canvasWidth;
@@ -613,7 +616,57 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
+      };
+      doRender();
+      renderRef.current = doRender;
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width]);
+
+    useEffect(() => {
+      if (!spotPreviewData?.enabled) {
+        spotPulseRef.current = 1;
+        if (spotAnimFrameRef.current !== null) {
+          cancelAnimationFrame(spotAnimFrameRef.current);
+          spotAnimFrameRef.current = null;
+        }
+        return;
+      }
+      
+      const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
+      const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
+      
+      if (whiteColors.length === 0 && glossColors.length === 0) {
+        spotPulseRef.current = 1;
+        if (spotAnimFrameRef.current !== null) {
+          cancelAnimationFrame(spotAnimFrameRef.current);
+          spotAnimFrameRef.current = null;
+        }
+        return;
+      }
+      
+      let startTime: number | null = null;
+      
+      const animate = (timestamp: number) => {
+        if (startTime === null) startTime = timestamp;
+        const elapsed = (timestamp - startTime) / 1000;
+        spotPulseRef.current = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * Math.PI * 1.5));
+        
+        if (renderRef.current) {
+          renderRef.current();
+        }
+        
+        spotAnimFrameRef.current = requestAnimationFrame(animate);
+      };
+      
+      spotAnimFrameRef.current = requestAnimationFrame(animate);
+      
+      return () => {
+        if (spotAnimFrameRef.current !== null) {
+          cancelAnimationFrame(spotAnimFrameRef.current);
+          spotAnimFrameRef.current = null;
+        }
+        spotPulseRef.current = 1;
+      };
+    }, [spotPreviewData]);
 
     const createSpotOverlayCanvas = (source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
       if (!imageInfo || !spotPreviewData?.enabled) return null;
@@ -930,7 +983,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const spotOverlay = createSpotOverlayCanvas(sourceImage);
       if (spotOverlay) {
+        ctx.save();
+        ctx.globalAlpha = spotPulseRef.current;
         ctx.drawImage(spotOverlay, imageX, imageY, imageWidth, imageHeight);
+        ctx.restore();
       }
       
       ctx.restore();
@@ -1030,7 +1086,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const spotWidth = dsWidth * scaleX;
           const spotHeight = dsHeight * scaleY;
           
+          ctx.save();
+          ctx.globalAlpha = spotPulseRef.current;
           ctx.drawImage(spotOverlay, spotX, spotY, spotWidth, spotHeight);
+          ctx.restore();
         }
       } else {
         const aspectRatio = imageInfo.image.width / imageInfo.image.height;
@@ -1048,10 +1107,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         ctx.drawImage(imageInfo.image, displayX, displayY, displayWidth, displayHeight);
         
-        // Draw spot color overlay at exact same position
         const spotOverlay = createSpotOverlayCanvas();
         if (spotOverlay) {
+          ctx.save();
+          ctx.globalAlpha = spotPulseRef.current;
           ctx.drawImage(spotOverlay, displayX, displayY, displayWidth, displayHeight);
+          ctx.restore();
         }
       }
     };

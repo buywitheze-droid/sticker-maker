@@ -338,7 +338,7 @@ export async function processContourInWorker(
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
-): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number }> {
+): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number }> {
   const manager = getContourWorkerManager();
   return manager.process(image, strokeSettings, resizeSettings, onProgress);
 }
