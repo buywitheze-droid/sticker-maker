@@ -189,9 +189,10 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
-  ): Promise<HTMLCanvasElement> {
+  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number }> {
     if (!this.worker) {
-      return this.processFallback(image, strokeSettings, resizeSettings);
+      const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
+      return { canvas, downsampleScale: 1 };
     }
 
     // Downsample large images to prevent memory issues
@@ -231,7 +232,7 @@ class ContourWorkerManager {
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
     resultCtx.putImageData(result.imageData, 0, 0);
-    return resultCanvas;
+    return { canvas: resultCanvas, downsampleScale: scale };
   }
 
   private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {
@@ -334,7 +335,7 @@ export async function processContourInWorker(
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
-): Promise<HTMLCanvasElement> {
+): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number }> {
   const manager = getContourWorkerManager();
   return manager.process(image, strokeSettings, resizeSettings, onProgress);
 }

@@ -33,7 +33,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const lastImageRef = useRef<string | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
-    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
+    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement; downsampleScale: number} | null>(null);
     const processingIdRef = useRef(0);
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
@@ -327,9 +327,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               setProcessingProgress(progress);
             }
           }
-        ).then((contourCanvas) => {
+        ).then((result) => {
           if (processingIdRef.current === currentId) {
-            contourCacheRef.current = { key: cacheKey, canvas: contourCanvas };
+            contourCacheRef.current = { key: cacheKey, canvas: result.canvas, downsampleScale: result.downsampleScale };
             setIsProcessing(false);
           }
         }).catch((error) => {
@@ -615,8 +615,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width]);
 
-    // Helper function to create spot color overlay canvas from original image
-    const createSpotOverlayCanvas = (): HTMLCanvasElement | null => {
+    const createSpotOverlayCanvas = (source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
       if (!imageInfo || !spotPreviewData?.enabled) return null;
       
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
@@ -624,14 +623,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       if (whiteColors.length === 0 && glossColors.length === 0) return null;
       
-      // Create canvas with original image data
+      const img = source || imageInfo.image;
       const srcCanvas = document.createElement('canvas');
       const srcCtx = srcCanvas.getContext('2d');
       if (!srcCtx) return null;
       
-      srcCanvas.width = imageInfo.image.width;
-      srcCanvas.height = imageInfo.image.height;
-      srcCtx.drawImage(imageInfo.image, 0, 0);
+      srcCanvas.width = img.width;
+      srcCanvas.height = img.height;
+      srcCtx.drawImage(img, 0, 0);
       const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
       // Create overlay canvas
@@ -929,8 +928,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.clip();
       ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
       
-      // Draw spot color overlay on top of the image (still clipped to shape)
-      const spotOverlay = createSpotOverlayCanvas();
+      const spotOverlay = createSpotOverlayCanvas(sourceImage);
       if (spotOverlay) {
         ctx.drawImage(spotOverlay, imageX, imageY, imageWidth, imageHeight);
       }
@@ -1016,22 +1014,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
         }
         
-        // Draw spot color overlay at exact image position within contour
         const spotOverlay = createSpotOverlayCanvas();
         if (spotOverlay) {
-          // Calculate padding directly from actual canvas dimensions (most reliable)
-          // contourCanvas.width = image.width + (padding * 2)
-          // So: padding = (contourCanvas.width - image.width) / 2
-          const paddingX = (contourCanvas.width - imageInfo.image.width) / 2;
-          const paddingY = (contourCanvas.height - imageInfo.image.height) / 2;
+          const dsScale = contourCacheRef.current?.downsampleScale ?? 1;
+          const dsWidth = imageInfo.image.width * dsScale;
+          const dsHeight = imageInfo.image.height * dsScale;
+          const paddingX = (contourCanvas.width - dsWidth) / 2;
+          const paddingY = (contourCanvas.height - dsHeight) / 2;
           
           const scaleX = contourWidth / contourCanvas.width;
           const scaleY = contourHeight / contourCanvas.height;
           
           const spotX = contourX + (paddingX * scaleX);
           const spotY = contourY + (paddingY * scaleY);
-          const spotWidth = imageInfo.image.width * scaleX;
-          const spotHeight = imageInfo.image.height * scaleY;
+          const spotWidth = dsWidth * scaleX;
+          const spotHeight = dsHeight * scaleY;
           
           ctx.drawImage(spotOverlay, spotX, spotY, spotWidth, spotHeight);
         }
