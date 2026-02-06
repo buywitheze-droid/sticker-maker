@@ -31,9 +31,10 @@ interface WorkerMessage {
 interface WorkerResponse {
   type: 'result' | 'error' | 'progress';
   imageData?: ImageData;
+  imageCanvasX?: number;
+  imageCanvasY?: number;
   error?: string;
   progress?: number;
-  // Cached contour data for fast PDF export
   contourData?: {
     pathPoints: Array<{x: number; y: number}>;
     widthInches: number;
@@ -77,6 +78,9 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
       let contourData: WorkerResponse['contourData'];
       let scale = 1;
       
+      let imageCanvasX = 0;
+      let imageCanvasY = 0;
+      
       if (shouldDownscale) {
         scale = targetMaxDim / maxDim;
         const scaledWidth = Math.round(imageData.width * scale);
@@ -88,15 +92,18 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         const result = processContour(scaledData, strokeSettings, scaledDPI, previewMode);
         postProgress(90);
         
-        // Upscale result back to original size
         processedData = upscaleImageData(result.imageData, 
           Math.round(result.imageData.width / scale), 
           Math.round(result.imageData.height / scale));
         contourData = result.contourData;
+        imageCanvasX = Math.round(result.imageCanvasX / scale);
+        imageCanvasY = Math.round(result.imageCanvasY / scale);
       } else {
         const result = processContour(imageData, strokeSettings, effectiveDPI, previewMode);
         processedData = result.imageData;
         contourData = result.contourData;
+        imageCanvasX = result.imageCanvasX;
+        imageCanvasY = result.imageCanvasY;
       }
       
       postProgress(100);
@@ -104,6 +111,8 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
       const response: WorkerResponse = {
         type: 'result',
         imageData: processedData,
+        imageCanvasX,
+        imageCanvasY,
         contourData: contourData
       };
       (self as unknown as Worker).postMessage(response, [processedData.data.buffer]);
@@ -185,6 +194,8 @@ function postProgress(percent: number) {
 
 interface ContourResult {
   imageData: ImageData;
+  imageCanvasX: number;
+  imageCanvasY: number;
   contourData: {
     pathPoints: Array<{x: number; y: number}>;
     widthInches: number;
@@ -536,6 +547,8 @@ function processContour(
   
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
+    imageCanvasX: Math.round(imageCanvasX),
+    imageCanvasY: Math.round(imageCanvasY),
     contourData: {
       pathPoints: pathInInches,
       widthInches: pageWidthInches,
@@ -3704,12 +3717,13 @@ function createOutputWithImage(
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   drawImageToData(output, canvasWidth, canvasHeight, imageData, padding, padding);
   
-  // Return empty contour data for images with no contour
   const widthInches = canvasWidth / effectiveDPI;
   const heightInches = canvasHeight / effectiveDPI;
   
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
+    imageCanvasX: padding,
+    imageCanvasY: padding,
     contourData: {
       pathPoints: [],
       widthInches,

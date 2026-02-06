@@ -33,7 +33,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const lastImageRef = useRef<string | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
-    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement; downsampleScale: number} | null>(null);
+    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number} | null>(null);
     const processingIdRef = useRef(0);
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
@@ -329,7 +329,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           }
         ).then((result) => {
           if (processingIdRef.current === currentId) {
-            contourCacheRef.current = { key: cacheKey, canvas: result.canvas, downsampleScale: result.downsampleScale };
+            contourCacheRef.current = { key: cacheKey, canvas: result.canvas, downsampleScale: result.downsampleScale, imageCanvasX: result.imageCanvasX, imageCanvasY: result.imageCanvasY };
             setIsProcessing(false);
           }
         }).catch((error) => {
@@ -1017,16 +1017,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const spotOverlay = createSpotOverlayCanvas();
         if (spotOverlay) {
           const dsScale = contourCacheRef.current?.downsampleScale ?? 1;
-          const dsWidth = imageInfo.image.width * dsScale;
-          const dsHeight = imageInfo.image.height * dsScale;
-          const paddingX = (contourCanvas.width - dsWidth) / 2;
-          const paddingY = (contourCanvas.height - dsHeight) / 2;
+          const dsWidth = Math.round(imageInfo.image.width * dsScale);
+          const dsHeight = Math.round(imageInfo.image.height * dsScale);
+          const imgX = contourCacheRef.current?.imageCanvasX ?? 0;
+          const imgY = contourCacheRef.current?.imageCanvasY ?? 0;
           
           const scaleX = contourWidth / contourCanvas.width;
           const scaleY = contourHeight / contourCanvas.height;
           
-          const spotX = contourX + (paddingX * scaleX);
-          const spotY = contourY + (paddingY * scaleY);
+          const spotX = contourX + (imgX * scaleX);
+          const spotY = contourY + (imgY * scaleY);
           const spotWidth = dsWidth * scaleX;
           const spotHeight = dsHeight * scaleY;
           

@@ -51,6 +51,8 @@ export interface ContourData {
 interface WorkerResponse {
   type: 'result' | 'error' | 'progress';
   imageData?: ImageData;
+  imageCanvasX?: number;
+  imageCanvasY?: number;
   error?: string;
   progress?: number;
   contourData?: ContourData;
@@ -58,6 +60,8 @@ interface WorkerResponse {
 
 interface WorkerResult {
   imageData: ImageData;
+  imageCanvasX?: number;
+  imageCanvasY?: number;
   contourData?: ContourData;
 }
 
@@ -133,7 +137,7 @@ class ContourWorkerManager {
   }
 
   private handleMessage(e: MessageEvent<WorkerResponse>) {
-    const { type, imageData, error, progress, contourData } = e.data;
+    const { type, imageData, imageCanvasX, imageCanvasY, error, progress, contourData } = e.data;
 
     if (type === 'progress' && this.currentRequest?.onProgress && progress !== undefined) {
       this.currentRequest.onProgress(progress);
@@ -141,11 +145,10 @@ class ContourWorkerManager {
     }
 
     if (type === 'result' && imageData && this.currentRequest) {
-      // Cache the contour data for fast PDF export
       if (contourData) {
         this.cachedContourData = contourData;
       }
-      this.currentRequest.resolve({ imageData, contourData });
+      this.currentRequest.resolve({ imageData, imageCanvasX, imageCanvasY, contourData });
       this.finishProcessing();
     } else if (type === 'error' && this.currentRequest) {
       this.currentRequest.reject(new Error(error || 'Unknown worker error'));
@@ -189,10 +192,10 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
-  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number }> {
+  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number }> {
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
-      return { canvas, downsampleScale: 1 };
+      return { canvas, downsampleScale: 1, imageCanvasX: 0, imageCanvasY: 0 };
     }
 
     // Downsample large images to prevent memory issues
@@ -232,7 +235,7 @@ class ContourWorkerManager {
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
     resultCtx.putImageData(result.imageData, 0, 0);
-    return { canvas: resultCanvas, downsampleScale: scale };
+    return { canvas: resultCanvas, downsampleScale: scale, imageCanvasX: result.imageCanvasX ?? 0, imageCanvasY: result.imageCanvasY ?? 0 };
   }
 
   private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {
