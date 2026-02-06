@@ -251,18 +251,41 @@ function detectBackgroundColor(imageData: ImageData): { r: number; g: number; b:
   return null;
 }
 
+function nameFromHsl(h: number, s: number, l: number): string {
+  if (s < 0.1) {
+    if (l < 0.15) return 'Near Black';
+    if (l < 0.4) return 'Dark Gray';
+    if (l < 0.7) return 'Gray';
+    if (l < 0.9) return 'Light Gray';
+    return 'Near White';
+  }
+  const prefix = l < 0.35 ? 'Dark ' : l > 0.7 ? 'Light ' : '';
+  if (h < 15 || h >= 345) return prefix + 'Red';
+  if (h < 40) return prefix + 'Orange';
+  if (h < 65) return prefix + 'Yellow';
+  if (h < 160) return prefix + 'Green';
+  if (h < 200) return prefix + 'Teal';
+  if (h < 260) return prefix + 'Blue';
+  if (h < 300) return prefix + 'Purple';
+  return prefix + 'Pink';
+}
+
 export function extractDominantColors(
   imageData: ImageData,
   maxColors: number = 18,
-  minPercentage: number = 0.5
+  minPercentage: number = 0.1
 ): ExtractedColor[] {
-  // Detect background color from corners
   const bgColor = detectBackgroundColor(imageData);
-  const bgColorTolerance = 30; // Distance threshold to consider a pixel as background
+  const bgColorTolerance = 30;
   
-  // Track actual RGB totals for each palette color to compute average
   const paletteCounts = new Map<string, { 
     color: typeof COLOR_PALETTE[0]; 
+    count: number;
+    totalR: number;
+    totalG: number;
+    totalB: number;
+  }>();
+  const unmatchedBuckets = new Map<string, {
     count: number;
     totalR: number;
     totalG: number;
@@ -271,7 +294,6 @@ export function extractDominantColors(
   const data = imageData.data;
   let totalOpaquePixels = 0;
 
-  // Initialize all palette colors
   for (const paletteColor of COLOR_PALETTE) {
     paletteCounts.set(paletteColor.name, { 
       color: paletteColor, 
@@ -282,21 +304,14 @@ export function extractDominantColors(
     });
   }
 
-  // Count pixels matching each palette color
-  // Only count fully opaque pixels (alpha >= 250) to get accurate spot colors
-  // Semi-transparent pixels (anti-aliasing, edges, artifacts) can produce false color matches
-  // Using 250 instead of 220 to be stricter and avoid picking up background artifacts
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
     const a = data[i + 3];
 
-    // Only count truly opaque pixels for spot color detection
-    // This filters out ALL semi-transparent artifacts, edges, anti-aliasing, and background noise
     if (a < 250) continue;
     
-    // Skip pixels that match the detected background color
     if (bgColor) {
       const bgDist = Math.sqrt(
         (r - bgColor.r) ** 2 + (g - bgColor.g) ** 2 + (b - bgColor.b) ** 2
@@ -304,26 +319,37 @@ export function extractDominantColors(
       if (bgDist <= bgColorTolerance) continue;
     }
 
-    const closestColor = findClosestPaletteColor(r, g, b);
-    // Skip if color doesn't match any palette color closely enough
-    if (!closestColor) continue;
-    
     totalOpaquePixels++;
-    const entry = paletteCounts.get(closestColor.name)!;
-    entry.count++;
-    // Track actual pixel colors to compute average
-    entry.totalR += r;
-    entry.totalG += g;
-    entry.totalB += b;
+
+    const closestColor = findClosestPaletteColor(r, g, b);
+    if (closestColor) {
+      const entry = paletteCounts.get(closestColor.name)!;
+      entry.count++;
+      entry.totalR += r;
+      entry.totalG += g;
+      entry.totalB += b;
+    } else {
+      const qr = Math.round(r / 24) * 24;
+      const qg = Math.round(g / 24) * 24;
+      const qb = Math.round(b / 24) * 24;
+      const key = `${qr},${qg},${qb}`;
+      const existing = unmatchedBuckets.get(key);
+      if (existing) {
+        existing.count++;
+        existing.totalR += r;
+        existing.totalG += g;
+        existing.totalB += b;
+      } else {
+        unmatchedBuckets.set(key, { count: 1, totalR: r, totalG: g, totalB: b });
+      }
+    }
   }
 
   if (totalOpaquePixels === 0) return [];
 
-  // Convert to ExtractedColor array using ACTUAL average colors from image
   const allColors: Array<ExtractedColor & { isNeutral: boolean }> = Array.from(paletteCounts.values())
     .filter(entry => entry.count > 0)
     .map(entry => {
-      // Compute actual average color from matched pixels
       const avgR = Math.round(entry.totalR / entry.count);
       const avgG = Math.round(entry.totalG / entry.count);
       const avgB = Math.round(entry.totalB / entry.count);
@@ -341,7 +367,44 @@ export function extractDominantColors(
     })
     .filter(c => c.percentage >= minPercentage);
 
-  // Sort all colors by percentage (highest first) - include neutrals like black/gray/white
+  for (const [, bucket] of unmatchedBuckets) {
+    const pct = (bucket.count / totalOpaquePixels) * 100;
+    if (pct < minPercentage) continue;
+    const avgR = Math.round(bucket.totalR / bucket.count);
+    const avgG = Math.round(bucket.totalG / bucket.count);
+    const avgB = Math.round(bucket.totalB / bucket.count);
+    const { h, s, l } = rgbToHsl(avgR, avgG, avgB);
+    const isNeutral = s < 0.1;
+    
+    let merged = false;
+    for (const existing of allColors) {
+      if (colorDistance(existing.rgb, { r: avgR, g: avgG, b: avgB }) < 35) {
+        existing.count += bucket.count;
+        existing.percentage += pct;
+        existing.rgb = {
+          r: Math.round((existing.rgb.r + avgR) / 2),
+          g: Math.round((existing.rgb.g + avgG) / 2),
+          b: Math.round((existing.rgb.b + avgB) / 2)
+        };
+        existing.hex = rgbToHex(existing.rgb.r, existing.rgb.g, existing.rgb.b);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) {
+      allColors.push({
+        rgb: { r: avgR, g: avgG, b: avgB },
+        hex: rgbToHex(avgR, avgG, avgB),
+        count: bucket.count,
+        percentage: pct,
+        spotWhite: false,
+        spotGloss: false,
+        name: nameFromHsl(h, s, l),
+        isNeutral
+      });
+    }
+  }
+
   const sortedColors = allColors.sort((a, b) => b.percentage - a.percentage);
 
   return sortedColors.map(({ isNeutral, ...color }) => color);
