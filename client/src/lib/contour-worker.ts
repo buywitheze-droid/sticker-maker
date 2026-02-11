@@ -435,8 +435,9 @@ function processContour(
   
   postProgress(60);
   
-  // Step 4: Use vector offset path directly
-  let smoothedPath = vectorOffsetPath;
+  // Step 4: Clean the vector offset path - remove degenerate near-duplicate points
+  // that can cause visible artifacts (lines from edge into design)
+  let smoothedPath = removeNearDuplicatePoints(vectorOffsetPath, 0.01);
   
   postProgress(70);
   
@@ -1817,7 +1818,18 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   
   // Step 4: Simplify to remove redundant collinear points
   const simplifiedPaths = ClipperLib.Clipper.SimplifyPolygon(resultPath, ClipperLib.PolyFillType.pftNonZero);
-  const finalPath = simplifiedPaths.length > 0 ? simplifiedPaths[0] : resultPath;
+  let finalPath = resultPath;
+  if (simplifiedPaths.length > 0) {
+    finalPath = simplifiedPaths[0];
+    let bestArea = Math.abs(ClipperLib.Clipper.Area(simplifiedPaths[0]));
+    for (let i = 1; i < simplifiedPaths.length; i++) {
+      const area = Math.abs(ClipperLib.Clipper.Area(simplifiedPaths[i]));
+      if (area > bestArea) {
+        bestArea = area;
+        finalPath = simplifiedPaths[i];
+      }
+    }
+  }
   
   const result = finalPath.map((p: {X: number; Y: number}) => ({
     x: p.X / CLIPPER_SCALE,
@@ -1902,6 +1914,8 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
   
   // Step 1: Expand (positive offset) - this will cause narrow caves to collide
   const expandOffset = new ClipperLib.ClipperOffset();
+  expandOffset.ArcTolerance = CLIPPER_SCALE * 0.25;
+  expandOffset.MiterLimit = 2.0;
   expandOffset.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
   const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
   expandOffset.Execute(expandedPaths, scaledGapWidth);
@@ -1922,8 +1936,12 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
     }
   }
   
+  ClipperLib.Clipper.CleanPolygon(expandedPath, CLIPPER_SCALE * 0.1);
+  
   // Step 2: Shrink (negative offset) - restore to original size with caves welded
   const shrinkOffset = new ClipperLib.ClipperOffset();
+  shrinkOffset.ArcTolerance = CLIPPER_SCALE * 0.25;
+  shrinkOffset.MiterLimit = 2.0;
   shrinkOffset.AddPath(expandedPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
   const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
   shrinkOffset.Execute(shrunkPaths, -scaledGapWidth);
@@ -1948,6 +1966,8 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
     }
   }
   
+  ClipperLib.Clipper.CleanPolygon(shrunkPath, CLIPPER_SCALE * 0.1);
+  
   // Convert back to Point format
   const result = shrunkPath.map(p => ({
     x: p.X / CLIPPER_SCALE,
@@ -1959,20 +1979,30 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
   return result;
 }
 
-/**
- * Apply pure vector offset using Clipper's ClipperOffset
- * This is the PyClipper equivalent using Vatti clipping algorithm.
- * 
- * Guarantees:
- * - Straight lines stay perfectly straight
- * - Corners are rounded (JT_ROUND) or sharp (JT_MITER) based on joinType
- * - Zero pixel aliasing (pure vector math)
- * 
- * @param points - input polygon points (tight contour from image)
- * @param offsetPixels - offset distance in pixels (positive = expand outward)
- * @param useSharpCorners - if true, use JT_MITER for sharp corners; if false, use JT_ROUND
- * @returns offset polygon
- */
+function removeNearDuplicatePoints(points: Point[], minDist: number): Point[] {
+  if (points.length < 3) return points;
+  const minDistSq = minDist * minDist;
+  const result: Point[] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const prev = result[result.length - 1];
+    const dx = points[i].x - prev.x;
+    const dy = points[i].y - prev.y;
+    if (dx * dx + dy * dy > minDistSq) {
+      result.push(points[i]);
+    }
+  }
+  if (result.length >= 3) {
+    const first = result[0];
+    const last = result[result.length - 1];
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    if (dx * dx + dy * dy <= minDistSq) {
+      result.pop();
+    }
+  }
+  return result.length >= 3 ? result : points;
+}
+
 function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false): Point[] {
   if (points.length < 3 || offsetPixels <= 0) return points;
   
@@ -2024,6 +2054,8 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
       resultPath = offsetPaths[i];
     }
   }
+  
+  ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.1);
   
   // Convert back to Point format
   const result = resultPath.map(p => ({
