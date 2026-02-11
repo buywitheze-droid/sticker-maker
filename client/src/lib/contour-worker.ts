@@ -384,7 +384,7 @@ function processContour(
     
     // Step 0: Weld narrow gaps using Minkowski Closing (expand + shrink)
     // This seals 'caves' too tight for cutting blades
-    processedContour = weldNarrowGaps(processedContour, 1.5);
+    processedContour = weldNarrowGaps(processedContour, 1.65);
     
     postProgress(50);
     
