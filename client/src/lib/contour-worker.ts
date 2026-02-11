@@ -1936,7 +1936,7 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
     }
   }
   
-  ClipperLib.Clipper.CleanPolygon(expandedPath, CLIPPER_SCALE * 0.1);
+  ClipperLib.Clipper.CleanPolygon(expandedPath, CLIPPER_SCALE * 0.107);
   
   // Step 2: Shrink (negative offset) - restore to original size with caves welded
   const shrinkOffset = new ClipperLib.ClipperOffset();
@@ -1966,7 +1966,7 @@ function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] 
     }
   }
   
-  ClipperLib.Clipper.CleanPolygon(shrunkPath, CLIPPER_SCALE * 0.1);
+  ClipperLib.Clipper.CleanPolygon(shrunkPath, CLIPPER_SCALE * 0.107);
   
   // Convert back to Point format
   const result = shrunkPath.map(p => ({
@@ -2055,7 +2055,7 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
     }
   }
   
-  ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.1);
+  ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.107);
   
   // Convert back to Point format
   const result = resultPath.map(p => ({
@@ -2475,7 +2475,7 @@ function sanitizePolygonForOffset(points: Point[]): Point[] {
   }
   
   // Step 3: Clean up any tiny artifacts
-  ClipperLib.Clipper.CleanPolygon(largestPath, CLIPPER_SCALE * 0.1);
+  ClipperLib.Clipper.CleanPolygon(largestPath, CLIPPER_SCALE * 0.107);
   
   // Convert back to Point format
   const result: Point[] = largestPath.map(p => ({
