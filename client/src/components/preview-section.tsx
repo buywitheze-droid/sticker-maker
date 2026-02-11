@@ -44,6 +44,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const spotAnimFrameRef = useRef<number | null>(null);
     const renderRef = useRef<(() => void) | null>(null);
     
+    const spotOverlayCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
+    const checkerboardPatternRef = useRef<{width: number; height: number; pattern: CanvasPattern} | null>(null);
+    const croppedImageCacheRef = useRef<{src: string; canvas: HTMLCanvasElement | HTMLImageElement} | null>(null);
+    const holographicCacheRef = useRef<{contourKey: string; canvas: HTMLCanvasElement} | null>(null);
+    const lastCanvasDimsRef = useRef<{width: number; height: number}>({width: 0, height: 0});
+    
     // Drag-to-pan state
     const [isDragging, setIsDragging] = useState(false);
     const dragStartRef = useRef<{x: number; y: number; panX: number; panY: number} | null>(null);
@@ -156,13 +162,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useEffect(() => {
       if (!imageInfo) {
         lastImageRef.current = null;
+        spotOverlayCacheRef.current = null;
+        croppedImageCacheRef.current = null;
+        holographicCacheRef.current = null;
         return;
       }
       
-      // Only check when image changes
       const imageKey = `${imageInfo.image.src}-${imageInfo.image.width}-${imageInfo.image.height}`;
       if (lastImageRef.current === imageKey) return;
       lastImageRef.current = imageKey;
+      spotOverlayCacheRef.current = null;
+      croppedImageCacheRef.current = null;
+      holographicCacheRef.current = null;
       
       // Check if image has minimal empty space around the edges
       const hasMinimalEmptySpace = checkImageHasMinimalEmptySpace(imageInfo.image);
@@ -284,6 +295,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useImperativeHandle(ref, () => canvasRef.current!, []);
 
+    const getCheckerboardPattern = (ctx: CanvasRenderingContext2D, w: number, h: number): CanvasPattern | null => {
+      if (checkerboardPatternRef.current?.width === w && checkerboardPatternRef.current?.height === h) {
+        return checkerboardPatternRef.current.pattern;
+      }
+      const gridSize = 10;
+      const patternCanvas = document.createElement('canvas');
+      patternCanvas.width = gridSize * 2;
+      patternCanvas.height = gridSize * 2;
+      const pCtx = patternCanvas.getContext('2d');
+      if (!pCtx) return null;
+      pCtx.fillStyle = '#e8e8e8';
+      pCtx.fillRect(0, 0, gridSize * 2, gridSize * 2);
+      pCtx.fillStyle = '#d0d0d0';
+      pCtx.fillRect(gridSize, 0, gridSize, gridSize);
+      pCtx.fillRect(0, gridSize, gridSize, gridSize);
+      const pattern = ctx.createPattern(patternCanvas, 'repeat');
+      if (pattern) {
+        checkerboardPatternRef.current = { width: w, height: h, pattern };
+      }
+      return pattern;
+    };
+
+    const getCachedCroppedImage = (): HTMLCanvasElement | HTMLImageElement => {
+      if (!imageInfo) return document.createElement('canvas');
+      const src = imageInfo.image.src;
+      if (croppedImageCacheRef.current?.src === src) {
+        return croppedImageCacheRef.current.canvas;
+      }
+      const cropped = cropImageToContent(imageInfo.image);
+      const result = cropped || imageInfo.image;
+      croppedImageCacheRef.current = { src, canvas: result };
+      return result;
+    };
+
     // Version bump forces cache invalidation when worker code changes
     const CONTOUR_CACHE_VERSION = 8;
     const generateContourCacheKey = useCallback(() => {
@@ -360,8 +405,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const canvasWidth = previewDims.width;
       const canvasHeight = previewDims.height;
-      canvas.width = canvasWidth;
-      canvas.height = canvasHeight;
+      if (lastCanvasDimsRef.current.width !== canvasWidth || lastCanvasDimsRef.current.height !== canvasHeight) {
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        lastCanvasDimsRef.current = { width: canvasWidth, height: canvasHeight };
+      } else {
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      }
 
       // Determine which background color to use:
       // - For PDFs with CutContour, use strokeSettings.backgroundColor
@@ -405,16 +455,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const bleedPixelsAtRender = bleedInches * renderDPI;
         const bleedPixels = bleedPixelsAtRender * scale;
         
-        // First draw checkerboard background for transparency indication
-        const gridSize = 10;
-        const lightColor = '#e8e8e8';
-        const darkColor = '#d0d0d0';
-        for (let y = 0; y < canvas.height; y += gridSize) {
-          for (let x = 0; x < canvas.width; x += gridSize) {
-            const isEven = ((x / gridSize) + (y / gridSize)) % 2 === 0;
-            ctx.fillStyle = isEven ? lightColor : darkColor;
-            ctx.fillRect(x, y, gridSize, gridSize);
-          }
+        // Draw checkerboard background using cached pattern
+        const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
+        if (checkerPattern) {
+          ctx.fillStyle = checkerPattern;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         
         // Create clipping path - use extracted paths if available, otherwise use image bounds
@@ -584,17 +629,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           drawShapePreview(ctx, canvas.width, canvas.height);
         } else if (effectiveBackgroundColor === "transparent") {
-          // Draw transparency grid pattern (light grey checkerboard)
-          const gridSize = 10;
-          const lightColor = '#e8e8e8';
-          const darkColor = '#d0d0d0';
-          
-          for (let y = 0; y < canvas.height; y += gridSize) {
-            for (let x = 0; x < canvas.width; x += gridSize) {
-              const isEven = ((x / gridSize) + (y / gridSize)) % 2 === 0;
-              ctx.fillStyle = isEven ? lightColor : darkColor;
-              ctx.fillRect(x, y, gridSize, gridSize);
-            }
+          const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
+          if (checkerPattern) {
+            ctx.fillStyle = checkerPattern;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
           }
           drawImageWithResizePreview(ctx, canvas.width, canvas.height);
         } else {
@@ -644,14 +682,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       
       let startTime: number | null = null;
+      let lastFrameTime = 0;
+      const FRAME_INTERVAL = 1000 / 30;
       
       const animate = (timestamp: number) => {
         if (startTime === null) startTime = timestamp;
-        const elapsed = (timestamp - startTime) / 1000;
-        spotPulseRef.current = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * Math.PI * 1.5));
         
-        if (renderRef.current) {
-          renderRef.current();
+        if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
+          lastFrameTime = timestamp;
+          const elapsed = (timestamp - startTime) / 1000;
+          spotPulseRef.current = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * Math.PI * 1.5));
+          
+          if (renderRef.current) {
+            renderRef.current();
+          }
         }
         
         spotAnimFrameRef.current = requestAnimationFrame(animate);
@@ -677,6 +721,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (whiteColors.length === 0 && glossColors.length === 0) return null;
       
       const img = source || imageInfo.image;
+      const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
+      const cacheKey = `${imgIdentity}-${img.width}x${img.height}-${whiteColors.map(c => c.hex).join(',')}-${glossColors.map(c => c.hex).join(',')}`;
+      
+      if (spotOverlayCacheRef.current?.key === cacheKey) {
+        return spotOverlayCacheRef.current.canvas;
+      }
+      
       const srcCanvas = document.createElement('canvas');
       const srcCtx = srcCanvas.getContext('2d');
       if (!srcCtx) return null;
@@ -686,7 +737,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       srcCtx.drawImage(img, 0, 0);
       const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
       
-      // Create overlay canvas
       const overlayCanvas = document.createElement('canvas');
       overlayCanvas.width = srcCanvas.width;
       overlayCanvas.height = srcCanvas.height;
@@ -695,50 +745,53 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const overlayData = overlayCtx.createImageData(srcCanvas.width, srcCanvas.height);
       
-      const colorMatches = (pixelR: number, pixelG: number, pixelB: number, targetHex: string, tolerance: number = 30) => {
-        const r = parseInt(targetHex.slice(1, 3), 16);
-        const g = parseInt(targetHex.slice(3, 5), 16);
-        const b = parseInt(targetHex.slice(5, 7), 16);
-        return Math.abs(pixelR - r) <= tolerance && 
-               Math.abs(pixelG - g) <= tolerance && 
-               Math.abs(pixelB - b) <= tolerance;
-      };
+      const parsedWhite = whiteColors.map(c => ({
+        r: parseInt(c.hex.slice(1, 3), 16),
+        g: parseInt(c.hex.slice(3, 5), 16),
+        b: parseInt(c.hex.slice(5, 7), 16),
+      }));
+      const parsedGloss = glossColors.map(c => ({
+        r: parseInt(c.hex.slice(1, 3), 16),
+        g: parseInt(c.hex.slice(3, 5), 16),
+        b: parseInt(c.hex.slice(5, 7), 16),
+      }));
+      const tolerance = 30;
       
-      for (let y = 0; y < srcCanvas.height; y++) {
-        for (let x = 0; x < srcCanvas.width; x++) {
-          const idx = (y * srcCanvas.width + x) * 4;
-          const r = srcData.data[idx];
-          const g = srcData.data[idx + 1];
-          const b = srcData.data[idx + 2];
-          const a = srcData.data[idx + 3];
-          
-          if (a < 128) continue;
-          
-          for (const wc of whiteColors) {
-            if (colorMatches(r, g, b, wc.hex)) {
-              overlayData.data[idx] = 255;
-              overlayData.data[idx + 1] = 255;
-              overlayData.data[idx + 2] = 255;
-              overlayData.data[idx + 3] = 255;
-              break;
-            }
+      const pixels = srcData.data;
+      const out = overlayData.data;
+      const len = pixels.length;
+      
+      for (let idx = 0; idx < len; idx += 4) {
+        const a = pixels[idx + 3];
+        if (a < 128) continue;
+        
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        
+        let matched = false;
+        for (let j = 0; j < parsedWhite.length; j++) {
+          const t = parsedWhite[j];
+          if (Math.abs(r - t.r) <= tolerance && Math.abs(g - t.g) <= tolerance && Math.abs(b - t.b) <= tolerance) {
+            out[idx] = 255; out[idx + 1] = 255; out[idx + 2] = 255; out[idx + 3] = 255;
+            matched = true;
+            break;
           }
-          
-          if (overlayData.data[idx + 3] === 0) {
-            for (const gc of glossColors) {
-              if (colorMatches(r, g, b, gc.hex)) {
-                overlayData.data[idx] = 180;
-                overlayData.data[idx + 1] = 180;
-                overlayData.data[idx + 2] = 190;
-                overlayData.data[idx + 3] = 255;
-                break;
-              }
+        }
+        
+        if (!matched) {
+          for (let j = 0; j < parsedGloss.length; j++) {
+            const t = parsedGloss[j];
+            if (Math.abs(r - t.r) <= tolerance && Math.abs(g - t.g) <= tolerance && Math.abs(b - t.b) <= tolerance) {
+              out[idx] = 180; out[idx + 1] = 180; out[idx + 2] = 190; out[idx + 3] = 255;
+              break;
             }
           }
         }
       }
       
       overlayCtx.putImageData(overlayData, 0, 0);
+      spotOverlayCacheRef.current = { key: cacheKey, canvas: overlayCanvas };
       return overlayCanvas;
     };
 
@@ -787,9 +840,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const cornerRadiusPixels = (shapeSettings.cornerRadius || 0.25) * shapePixelsPerInch;
       
-      // Prepare source image for edge bleeding
-      const croppedCanvas = cropImageToContent(imageInfo.image);
-      const sourceImage = croppedCanvas ? croppedCanvas : imageInfo.image;
+      const sourceImage = getCachedCroppedImage();
       
       // Image dimensions within the shape
       let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
@@ -824,8 +875,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;
-      
-      console.log('[MainRender] Image at:', imageX.toFixed(1), imageY.toFixed(1), 'size:', imageWidth.toFixed(1), imageHeight.toFixed(1));
       
       // Draw background with bleed or fill
       if (shapeSettings.bleedEnabled) {
@@ -1016,56 +1065,50 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const contourX = (canvasWidth - contourWidth) / 2;
         const contourY = (canvasHeight - contourHeight) / 2;
         
-        // If holographic is selected, replace the white placeholder with holographic gradient
         if (strokeSettings.backgroundColor === 'holographic') {
-          // Create a temporary canvas to apply the holographic effect
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = contourCanvas.width;
-          tempCanvas.height = contourCanvas.height;
-          const tempCtx = tempCanvas.getContext('2d')!;
+          const holoKey = `${contourCacheRef.current?.key || ''}-${contourCanvas.width}x${contourCanvas.height}`;
+          let holoCanvas = holographicCacheRef.current?.contourKey === holoKey ? holographicCacheRef.current.canvas : null;
           
-          // Draw the contour canvas (which has white background as placeholder)
-          tempCtx.drawImage(contourCanvas, 0, 0);
-          
-          // Get image data to replace white pixels with gradient
-          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          const pixels = imageData.data;
-          
-          // Create gradient canvas
-          const gradientCanvas = document.createElement('canvas');
-          gradientCanvas.width = tempCanvas.width;
-          gradientCanvas.height = tempCanvas.height;
-          const gradCtx = gradientCanvas.getContext('2d')!;
-          const gradient = gradCtx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
-          gradient.addColorStop(0, '#C8C8D0');
-          gradient.addColorStop(0.17, '#E8B8B8');
-          gradient.addColorStop(0.34, '#B8D8E8');
-          gradient.addColorStop(0.51, '#E8D0F0');
-          gradient.addColorStop(0.68, '#B0C8E0');
-          gradient.addColorStop(0.85, '#C0B0D8');
-          gradient.addColorStop(1, '#C8C8D0');
-          gradCtx.fillStyle = gradient;
-          gradCtx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
-          const gradientData = gradCtx.getImageData(0, 0, gradientCanvas.width, gradientCanvas.height);
-          const gradPixels = gradientData.data;
-          
-          // Replace white/near-white pixels with gradient colors
-          for (let i = 0; i < pixels.length; i += 4) {
-            const r = pixels[i];
-            const g = pixels[i + 1];
-            const b = pixels[i + 2];
-            const a = pixels[i + 3];
+          if (!holoCanvas) {
+            holoCanvas = document.createElement('canvas');
+            holoCanvas.width = contourCanvas.width;
+            holoCanvas.height = contourCanvas.height;
+            const tempCtx = holoCanvas.getContext('2d')!;
+            tempCtx.drawImage(contourCanvas, 0, 0);
             
-            // Check if pixel is white/near-white (the placeholder background)
-            if (a > 200 && r > 240 && g > 240 && b > 240) {
-              pixels[i] = gradPixels[i];
-              pixels[i + 1] = gradPixels[i + 1];
-              pixels[i + 2] = gradPixels[i + 2];
+            const imageData = tempCtx.getImageData(0, 0, holoCanvas.width, holoCanvas.height);
+            const pixels = imageData.data;
+            
+            const gradientCanvas = document.createElement('canvas');
+            gradientCanvas.width = holoCanvas.width;
+            gradientCanvas.height = holoCanvas.height;
+            const gradCtx = gradientCanvas.getContext('2d')!;
+            const gradient = gradCtx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
+            gradient.addColorStop(0, '#C8C8D0');
+            gradient.addColorStop(0.17, '#E8B8B8');
+            gradient.addColorStop(0.34, '#B8D8E8');
+            gradient.addColorStop(0.51, '#E8D0F0');
+            gradient.addColorStop(0.68, '#B0C8E0');
+            gradient.addColorStop(0.85, '#C0B0D8');
+            gradient.addColorStop(1, '#C8C8D0');
+            gradCtx.fillStyle = gradient;
+            gradCtx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
+            const gradientData = gradCtx.getImageData(0, 0, gradientCanvas.width, gradientCanvas.height);
+            const gradPixels = gradientData.data;
+            
+            for (let i = 0; i < pixels.length; i += 4) {
+              if (pixels[i + 3] > 200 && pixels[i] > 240 && pixels[i + 1] > 240 && pixels[i + 2] > 240) {
+                pixels[i] = gradPixels[i];
+                pixels[i + 1] = gradPixels[i + 1];
+                pixels[i + 2] = gradPixels[i + 2];
+              }
             }
+            
+            tempCtx.putImageData(imageData, 0, 0);
+            holographicCacheRef.current = { contourKey: holoKey, canvas: holoCanvas };
           }
           
-          tempCtx.putImageData(imageData, 0, 0);
-          ctx.drawImage(tempCanvas, contourX, contourY, contourWidth, contourHeight);
+          ctx.drawImage(holoCanvas, contourX, contourY, contourWidth, contourHeight);
         } else {
           ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
         }
