@@ -320,9 +320,47 @@ function processContour(
   });
   console.log('[Worker] Auto-detected algorithm:', algorithm);
   
+  const scatteredAnalysis = detectScatteredDesign(scaledContoursForAnalysis, effectiveDPI);
+  
   let processedContour: Point[];
   
-  if (algorithm === 'complex') {
+  if (scatteredAnalysis.isScattered) {
+    console.log('[Worker] SCATTERED DESIGN detected - using compound contour generation');
+    
+    const allContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
+    
+    if (allContours.length === 0) {
+      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+    }
+    
+    postProgress(40);
+    
+    const scaledContours = allContours.map(contour => 
+      contour.map(p => ({
+        x: p.x / SUPER_SAMPLE,
+        y: p.y / SUPER_SAMPLE
+      }))
+    );
+    
+    const tightEpsilon = 0.0002;
+    const simplifiedContours = scaledContours.map(contour => {
+      const simplified = approxPolyDP(contour, tightEpsilon);
+      return sanitizePolygonForOffset(simplified);
+    }).filter(c => c.length >= 3);
+    
+    console.log('[Worker] Scattered: traced', simplifiedContours.length, 'contours for compound merge');
+    
+    processedContour = processScatteredContours(
+      simplifiedContours,
+      scatteredAnalysis.maxGapPixels,
+      effectiveDPI
+    );
+    
+    processedContour = weldNarrowGaps(processedContour, 1.65);
+    
+    postProgress(50);
+    
+  } else if (algorithm === 'complex') {
     // =============================================================================
     // CLUSTER-BASED BRIDGING for Complex algorithm
     // =============================================================================
@@ -1349,6 +1387,213 @@ function analyzeContourComplexity(points: Point[], effectiveDPI: number): Comple
     contourCount: 1,
     needsComplexProcessing
   };
+}
+
+interface ScatteredDesignAnalysis {
+  isScattered: boolean;
+  significantContours: Point[][];
+  maxGapPixels: number;
+  totalBoundsArea: number;
+  contentAreaRatio: number;
+}
+
+function detectScatteredDesign(
+  contours: Point[][],
+  effectiveDPI: number
+): ScatteredDesignAnalysis {
+  const noResult: ScatteredDesignAnalysis = {
+    isScattered: false,
+    significantContours: [],
+    maxGapPixels: 0,
+    totalBoundsArea: 0,
+    contentAreaRatio: 1
+  };
+
+  if (contours.length < 2) return noResult;
+
+  const minSignificantArea = (0.05 * effectiveDPI) ** 2;
+
+  const significant: { points: Point[]; bounds: BoundingBox; area: number }[] = [];
+  for (const c of contours) {
+    if (c.length < 10) continue;
+    const area = computePolygonArea(c);
+    if (area >= minSignificantArea) {
+      significant.push({ points: c, bounds: computeBounds(c), area });
+    }
+  }
+
+  if (significant.length < 2) return noResult;
+
+  let globalMinX = Infinity, globalMinY = Infinity;
+  let globalMaxX = -Infinity, globalMaxY = -Infinity;
+  let totalContentArea = 0;
+
+  for (const s of significant) {
+    if (s.bounds.minX < globalMinX) globalMinX = s.bounds.minX;
+    if (s.bounds.minY < globalMinY) globalMinY = s.bounds.minY;
+    if (s.bounds.maxX > globalMaxX) globalMaxX = s.bounds.maxX;
+    if (s.bounds.maxY > globalMaxY) globalMaxY = s.bounds.maxY;
+    totalContentArea += s.area;
+  }
+
+  const totalBoundsWidth = globalMaxX - globalMinX;
+  const totalBoundsHeight = globalMaxY - globalMinY;
+  const totalBoundsArea = totalBoundsWidth * totalBoundsHeight;
+
+  if (totalBoundsArea <= 0) return noResult;
+
+  const contentAreaRatio = totalContentArea / totalBoundsArea;
+
+  let maxGap = 0;
+  for (let i = 0; i < significant.length; i++) {
+    let minDistToAny = Infinity;
+    for (let j = 0; j < significant.length; j++) {
+      if (i === j) continue;
+      const a = significant[i].bounds;
+      const b = significant[j].bounds;
+      const gapX = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+      const gapY = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+      const dist = Math.sqrt(gapX * gapX + gapY * gapY);
+      if (dist < minDistToAny) minDistToAny = dist;
+    }
+    if (minDistToAny > maxGap) maxGap = minDistToAny;
+  }
+
+  const minAbsoluteGapInches = 0.25;
+  const minAbsoluteGapPixels = minAbsoluteGapInches * effectiveDPI;
+  const hasDistantElements = maxGap > minAbsoluteGapPixels;
+  const hasLowDensity = contentAreaRatio < 0.35;
+  const hasMultipleSignificant = significant.length >= 2;
+  const smallestSignificantArea = Math.min(...significant.map(s => s.area));
+  const noTinySpecks = smallestSignificantArea >= minSignificantArea;
+
+  const isBlockText = significant.length >= 4 && significant.every(s => {
+    const w = s.bounds.maxX - s.bounds.minX;
+    const h = s.bounds.maxY - s.bounds.minY;
+    const aspectRatio = w > 0 && h > 0 ? Math.max(w, h) / Math.min(w, h) : 1;
+    return aspectRatio < 5;
+  });
+
+  const isFewLargeComponents = significant.length <= 5;
+
+  const isScattered = hasDistantElements && hasLowDensity && hasMultipleSignificant && noTinySpecks && !isBlockText && isFewLargeComponents;
+
+  console.log('[Worker] Scattered design detection:', {
+    significantContours: significant.length,
+    maxGapPixels: maxGap.toFixed(1),
+    maxGapInches: (maxGap / effectiveDPI).toFixed(3),
+    contentAreaRatio: contentAreaRatio.toFixed(3),
+    hasDistantElements,
+    hasLowDensity,
+    isBlockText,
+    isScattered
+  });
+
+  return {
+    isScattered,
+    significantContours: significant.map(s => s.points),
+    maxGapPixels: maxGap,
+    totalBoundsArea,
+    contentAreaRatio
+  };
+}
+
+function processScatteredContours(
+  contours: Point[][],
+  maxGapPixels: number,
+  effectiveDPI: number
+): Point[] {
+  if (contours.length === 0) return [];
+  if (contours.length === 1) return contours[0];
+
+  const expandDistance = Math.ceil(maxGapPixels / 2) + Math.round(0.02 * effectiveDPI);
+
+  console.log('[Worker] processScatteredContours: bridging', contours.length,
+    'contours with expand distance:', expandDistance, 'px (',
+    (expandDistance / effectiveDPI).toFixed(3), 'in)');
+
+  const scaledExpand = expandDistance * CLIPPER_SCALE;
+
+  const coExpand = new ClipperLib.ClipperOffset();
+  coExpand.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coExpand.MiterLimit = 2.0;
+
+  for (const contour of contours) {
+    if (contour.length < 3) continue;
+    const clipperPath = contour.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+
+  const expandedPaths: Array<Array<{X: number; Y: number}>> = [];
+  coExpand.Execute(expandedPaths, scaledExpand);
+
+  if (expandedPaths.length === 0) {
+    console.log('[Worker] processScatteredContours: expand failed, fallback to largest');
+    let best = contours[0];
+    let bestArea = computePolygonArea(contours[0]);
+    for (let i = 1; i < contours.length; i++) {
+      const a = computePolygonArea(contours[i]);
+      if (a > bestArea) { bestArea = a; best = contours[i]; }
+    }
+    return best;
+  }
+
+  console.log('[Worker] processScatteredContours: expanded to', expandedPaths.length, 'paths');
+
+  const clipper = new ClipperLib.Clipper();
+  for (const path of expandedPaths) {
+    clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+  }
+
+  const unionResult: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+
+  if (unionResult.length === 0) {
+    console.log('[Worker] processScatteredContours: union failed');
+    return expandedPaths[0].map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+  }
+
+  console.log('[Worker] processScatteredContours: union produced', unionResult.length, 'paths');
+
+  const coShrink = new ClipperLib.ClipperOffset();
+  coShrink.ArcTolerance = CLIPPER_SCALE * 0.25;
+  coShrink.MiterLimit = 2.0;
+
+  for (const path of unionResult) {
+    coShrink.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+
+  const shrunkPaths: Array<Array<{X: number; Y: number}>> = [];
+  coShrink.Execute(shrunkPaths, -scaledExpand);
+
+  let finalPaths = shrunkPaths.length > 0 ? shrunkPaths : unionResult;
+
+  console.log('[Worker] processScatteredContours: shrink produced', finalPaths.length, 'paths');
+
+  let resultPath = finalPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(finalPaths[0]));
+
+  for (let i = 1; i < finalPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(finalPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = finalPaths[i];
+    }
+  }
+
+  ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.107);
+
+  const result = resultPath.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+
+  console.log('[Worker] processScatteredContours: final contour', result.length, 'points');
+  return result;
 }
 
 /**
