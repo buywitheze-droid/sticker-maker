@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
+import fs from "fs";
+import archiver from "archiver";
 import sgMail from "@sendgrid/mail";
 
 // Configure multer for file uploads
@@ -218,6 +220,71 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
         details: error instanceof Error ? error.message : "Unknown error",
       });
     }
+  });
+
+  app.get("/api/download-pipeline", (req, res) => {
+    const pipelineFiles = [
+      { path: "client/src/lib/contour-worker.ts", name: "contour-worker.ts" },
+      { path: "client/src/lib/contour-worker-manager.ts", name: "contour-worker-manager.ts" },
+      { path: "client/src/lib/clipper-path.ts", name: "clipper-path.ts" },
+      { path: "client/src/lib/types.ts", name: "types.ts" },
+    ];
+
+    for (const f of pipelineFiles) {
+      const fullPath = path.resolve(f.path);
+      if (!fs.existsSync(fullPath)) {
+        return res.status(404).json({ error: `File not found: ${f.name}` });
+      }
+    }
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", "attachment; filename=contour-pipeline.zip");
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("error", (err: Error) => {
+      res.status(500).json({ error: err.message });
+    });
+    archive.pipe(res);
+
+    for (const f of pipelineFiles) {
+      archive.file(path.resolve(f.path), { name: f.name });
+    }
+
+    archive.finalize();
+  });
+
+  app.get("/download", (_req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download Contour Pipeline</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .card { background: #16213e; border-radius: 12px; padding: 40px; max-width: 500px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    h1 { color: #e94560; margin-bottom: 8px; }
+    p { color: #a0a0b0; line-height: 1.6; }
+    .files { text-align: left; background: #0f3460; border-radius: 8px; padding: 16px; margin: 20px 0; font-family: monospace; font-size: 14px; }
+    .files div { padding: 4px 0; color: #e0e0e0; }
+    .btn { display: inline-block; background: #e94560; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: 600; transition: background 0.2s; cursor: pointer; border: none; }
+    .btn:hover { background: #c73a52; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Contour Pipeline</h1>
+    <p>Download the complete contour generation pipeline source files as a zip archive.</p>
+    <div class="files">
+      <div>contour-worker.ts (4173 lines)</div>
+      <div>contour-worker-manager.ts</div>
+      <div>clipper-path.ts</div>
+      <div>types.ts</div>
+    </div>
+    <a href="/api/download-pipeline" class="btn">Download ZIP</a>
+  </div>
+</body>
+</html>`);
   });
 
   const httpServer = createServer(app);
