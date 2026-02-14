@@ -10,7 +10,7 @@ import { STICKER_SIZES } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { generateContourPDFBase64 } from "@/lib/contour-outline";
 import { generateShapePDFBase64 } from "@/lib/shape-outline";
-import { getContourWorkerManager } from "@/lib/contour-worker-manager";
+import { getContourWorkerManager, type DetectedAlgorithm } from "@/lib/contour-worker-manager";
 import { extractColorsFromImage, groupColorsByShade, ExtractedColor } from "@/lib/color-extractor";
 import { Download, ChevronDown, ChevronUp, Palette, Eye, EyeOff, Pencil, Check, X, Layers } from "lucide-react";
 
@@ -36,6 +36,7 @@ interface ControlsSectionProps {
   onRemoveBackground?: (threshold: number) => void;
   isRemovingBackground?: boolean;
   onSpotPreviewChange?: (data: SpotPreviewData) => void;
+  detectedAlgorithm?: DetectedAlgorithm;
 }
 
 export default function ControlsSection({
@@ -54,7 +55,8 @@ export default function ControlsSection({
   onStepChange,
   onRemoveBackground,
   isRemovingBackground,
-  onSpotPreviewChange
+  onSpotPreviewChange,
+  detectedAlgorithm
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [showContourOptions, setShowContourOptions] = useState(true);
@@ -371,11 +373,53 @@ export default function ControlsSection({
             
             {showContourOptions && (
               <div className="space-y-3 px-4 pb-3">
-              {/* Auto-detection Info */}
-              <div className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+              {/* Auto-detection Info + Algorithm Toggle */}
+              <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 space-y-2">
                 <p className="text-xs text-gray-600">
-                  <span className="font-medium">Smart Detection:</span> The app automatically detects your design type and applies the best contour algorithm.
+                  <span className="font-medium">Smart Detection:</span>{' '}
+                  {detectedAlgorithm === 'complex' ? 'Script/Curved design' :
+                   detectedAlgorithm === 'scattered' ? 'Scattered elements' :
+                   detectedAlgorithm === 'shapes' ? 'Block/Simple shapes' :
+                   'Detecting...'}
                 </p>
+                {detectedAlgorithm && strokeSettings.enabled && (() => {
+                  const effectiveAlgo = strokeSettings.algorithm ?? (detectedAlgorithm === 'scattered' ? 'complex' : detectedAlgorithm);
+                  const isOverridden = strokeSettings.algorithm !== undefined;
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-gray-500">Mode:</span>
+                      <button
+                        className={`text-[10px] px-2 py-0.5 rounded-l border transition-colors ${
+                          effectiveAlgo === 'shapes'
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                        }`}
+                        onClick={() => onStrokeChange({ algorithm: 'shapes' })}
+                      >
+                        Sharp
+                      </button>
+                      <button
+                        className={`text-[10px] px-2 py-0.5 rounded-r border border-l-0 transition-colors ${
+                          effectiveAlgo === 'complex'
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                        }`}
+                        onClick={() => onStrokeChange({ algorithm: 'complex' })}
+                      >
+                        Smooth
+                      </button>
+                      {isOverridden && (
+                        <button
+                          className="text-[10px] px-1.5 py-0.5 text-gray-400 hover:text-gray-600 transition-colors"
+                          onClick={() => onStrokeChange({ algorithm: undefined })}
+                          title="Reset to auto-detected"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               
               <div>

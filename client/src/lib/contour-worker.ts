@@ -44,6 +44,7 @@ interface WorkerResponse {
     backgroundColor: string;
     useEdgeBleed: boolean;
   };
+  detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
 
 // Maximum dimension for any processing to prevent browser crashes
@@ -80,6 +81,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
       
       let imageCanvasX = 0;
       let imageCanvasY = 0;
+      let detectedAlg: 'shapes' | 'complex' | 'scattered' = 'shapes';
       
       if (shouldDownscale) {
         scale = targetMaxDim / maxDim;
@@ -98,12 +100,14 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         contourData = result.contourData;
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
+        detectedAlg = result.detectedAlgorithm;
       } else {
         const result = processContour(imageData, strokeSettings, effectiveDPI, previewMode);
         processedData = result.imageData;
         contourData = result.contourData;
         imageCanvasX = result.imageCanvasX;
         imageCanvasY = result.imageCanvasY;
+        detectedAlg = result.detectedAlgorithm;
       }
       
       postProgress(100);
@@ -113,7 +117,8 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         imageData: processedData,
         imageCanvasX,
         imageCanvasY,
-        contourData: contourData
+        contourData: contourData,
+        detectedAlgorithm: detectedAlg
       };
       (self as unknown as Worker).postMessage(response, [processedData.data.buffer]);
     } catch (error) {
@@ -205,6 +210,7 @@ interface ContourResult {
     backgroundColor: string;
     useEdgeBleed: boolean;
   };
+  detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
 
 function processContour(
@@ -310,7 +316,7 @@ function processContour(
   
   // Analyze complexity across ALL contours
   const complexity = analyzeMultiContourComplexity(scaledContoursForAnalysis, effectiveDPI);
-  const algorithm = complexity.needsComplexProcessing ? 'complex' : 'shapes';
+  const autoAlgorithm = complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
   console.log('[Worker] Complexity analysis:', {
     perimeterAreaRatio: complexity.perimeterAreaRatio.toFixed(3),
@@ -318,13 +324,23 @@ function processContour(
     narrowGapCount: complexity.narrowGapCount,
     needsComplexProcessing: complexity.needsComplexProcessing
   });
-  console.log('[Worker] Auto-detected algorithm:', algorithm);
+  console.log('[Worker] Auto-detected algorithm:', autoAlgorithm);
   
   const scatteredAnalysis = detectScatteredDesign(scaledContoursForAnalysis, effectiveDPI);
   
+  let detectedAlgorithm: 'shapes' | 'complex' | 'scattered' = scatteredAnalysis.isScattered ? 'scattered' : autoAlgorithm;
+  
+  const hasOverride = strokeSettings.algorithm === 'shapes' || strokeSettings.algorithm === 'complex';
+  const algorithm = hasOverride ? strokeSettings.algorithm! : autoAlgorithm;
+  const useScattered = hasOverride ? false : scatteredAnalysis.isScattered;
+  
+  if (hasOverride) {
+    console.log('[Worker] Algorithm OVERRIDE:', strokeSettings.algorithm, '(auto was:', detectedAlgorithm, ')');
+  }
+  
   let processedContour: Point[];
   
-  if (scatteredAnalysis.isScattered) {
+  if (useScattered) {
     console.log('[Worker] SCATTERED DESIGN detected - using compound contour generation');
     
     const allContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
@@ -596,7 +612,8 @@ function processContour(
       imageOffsetY: imageOffsetYCalc,
       backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
       useEdgeBleed: useEdgeBleed
-    }
+    },
+    detectedAlgorithm
   };
 }
 
@@ -4009,7 +4026,8 @@ function createOutputWithImage(
       imageOffsetY: padding / effectiveDPI,
       backgroundColor,
       useEdgeBleed: false
-    }
+    },
+    detectedAlgorithm: 'shapes'
   };
 }
 

@@ -11,7 +11,7 @@ import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
 import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outline";
-import { getContourWorkerManager } from "@/lib/contour-worker-manager";
+import { getContourWorkerManager, type DetectedAlgorithm } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
@@ -36,7 +36,7 @@ export default function ImageEditor() {
     cornerMode: 'sharp', // Default to sharp corners with high miter limit
     autoBridging: true, // Auto-bridge narrow gaps in contour
     autoBridgingThreshold: 0.02, // Gap threshold in inches
-    algorithm: 'shapes', // Default to Shapes algorithm for simple designs
+    algorithm: undefined,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -64,6 +64,7 @@ export default function ImageEditor() {
   const [detectedDimensions, setDetectedDimensions] = useState<{ width: number; height: number } | null>(null);
   const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
+  const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -223,8 +224,9 @@ export default function ImageEditor() {
       cornerMode: 'sharp',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
-      algorithm: 'shapes',
+      algorithm: undefined,
     });
+    setDetectedAlgorithm(undefined);
     
     // Apply detected shape or default settings
     const newShapeSettings: ShapeSettings = {
@@ -325,7 +327,6 @@ export default function ImageEditor() {
       const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
       const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
 
-      // Reset all settings - if shape detected, enable shape mode; otherwise default to contour
       setStrokeSettings({
         width: 0.14,
         color: "#ffffff",
@@ -336,8 +337,9 @@ export default function ImageEditor() {
         cornerMode: 'sharp',
         autoBridging: true,
         autoBridgingThreshold: 0.02,
-        algorithm: 'shapes',
+        algorithm: undefined,
       });
+      setDetectedAlgorithm(undefined);
       
       const newShapeSettings: ShapeSettings = {
         enabled: shouldAutoApplyShape,
@@ -406,7 +408,6 @@ export default function ImageEditor() {
     
     setImageInfo(newImageInfo);
     
-    // Reset settings
     setStrokeSettings({
       width: 0.14,
       color: "#ffffff",
@@ -417,8 +418,9 @@ export default function ImageEditor() {
       cornerMode: 'sharp',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
-      algorithm: 'shapes',
+      algorithm: undefined,
     });
+    setDetectedAlgorithm(undefined);
     setShapeSettings({
       enabled: false,
       type: 'square',
@@ -923,6 +925,7 @@ export default function ImageEditor() {
           onRemoveBackground={handleRemoveBackground}
           isRemovingBackground={isRemovingBackground}
           onSpotPreviewChange={setSpotPreviewData}
+          detectedAlgorithm={detectedAlgorithm}
         />
       </div>
       
@@ -976,6 +979,7 @@ export default function ImageEditor() {
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
+            onDetectedAlgorithm={setDetectedAlgorithm}
           />
         </div>
       </div>

@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
-import { processContourInWorker } from "@/lib/contour-worker-manager";
+import { processContourInWorker, type DetectedAlgorithm } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
 import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
@@ -20,10 +20,11 @@ interface PreviewSectionProps {
   cadCutBounds?: CadCutBounds | null;
   spotPreviewData?: SpotPreviewData;
   showCutLineInfo?: boolean;
+  onDetectedAlgorithm?: (algo: DetectedAlgorithm) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -378,6 +379,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           if (processingIdRef.current === currentId) {
             contourCacheRef.current = { key: cacheKey, canvas: result.canvas, downsampleScale: result.downsampleScale, imageCanvasX: result.imageCanvasX, imageCanvasY: result.imageCanvasY };
             setIsProcessing(false);
+            if (result.detectedAlgorithm && onDetectedAlgorithm) {
+              onDetectedAlgorithm(result.detectedAlgorithm);
+            }
           }
         }).catch((error) => {
           console.error('Contour processing error:', error);

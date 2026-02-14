@@ -38,6 +38,8 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
   return { canvas, scale };
 }
 
+export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
+
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
   widthInches: number;
@@ -56,6 +58,7 @@ interface WorkerResponse {
   error?: string;
   progress?: number;
   contourData?: ContourData;
+  detectedAlgorithm?: DetectedAlgorithm;
 }
 
 interface WorkerResult {
@@ -63,6 +66,7 @@ interface WorkerResult {
   imageCanvasX?: number;
   imageCanvasY?: number;
   contourData?: ContourData;
+  detectedAlgorithm?: DetectedAlgorithm;
 }
 
 interface ResizeSettings {
@@ -137,7 +141,7 @@ class ContourWorkerManager {
   }
 
   private handleMessage(e: MessageEvent<WorkerResponse>) {
-    const { type, imageData, imageCanvasX, imageCanvasY, error, progress, contourData } = e.data;
+    const { type, imageData, imageCanvasX, imageCanvasY, error, progress, contourData, detectedAlgorithm } = e.data;
 
     if (type === 'progress' && this.currentRequest?.onProgress && progress !== undefined) {
       this.currentRequest.onProgress(progress);
@@ -148,7 +152,7 @@ class ContourWorkerManager {
       if (contourData) {
         this.cachedContourData = contourData;
       }
-      this.currentRequest.resolve({ imageData, imageCanvasX, imageCanvasY, contourData });
+      this.currentRequest.resolve({ imageData, imageCanvasX, imageCanvasY, contourData, detectedAlgorithm });
       this.finishProcessing();
     } else if (type === 'error' && this.currentRequest) {
       this.currentRequest.reject(new Error(error || 'Unknown worker error'));
@@ -192,7 +196,7 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
-  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number }> {
+  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; detectedAlgorithm?: DetectedAlgorithm }> {
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
       return { canvas, downsampleScale: 1, imageCanvasX: 0, imageCanvasY: 0 };
@@ -235,7 +239,7 @@ class ContourWorkerManager {
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
     resultCtx.putImageData(result.imageData, 0, 0);
-    return { canvas: resultCanvas, downsampleScale: scale, imageCanvasX: result.imageCanvasX ?? 0, imageCanvasY: result.imageCanvasY ?? 0 };
+    return { canvas: resultCanvas, downsampleScale: scale, imageCanvasX: result.imageCanvasX ?? 0, imageCanvasY: result.imageCanvasY ?? 0, detectedAlgorithm: result.detectedAlgorithm };
   }
 
   private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {
@@ -338,7 +342,7 @@ export async function processContourInWorker(
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
-): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number }> {
+): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; detectedAlgorithm?: DetectedAlgorithm }> {
   const manager = getContourWorkerManager();
   return manager.process(image, strokeSettings, resizeSettings, onProgress);
 }
