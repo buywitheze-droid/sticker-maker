@@ -42,6 +42,7 @@ export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
 
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
+  allPathPoints: Array<Array<{x: number; y: number}>>;
   widthInches: number;
   heightInches: number;
   imageOffsetX: number;

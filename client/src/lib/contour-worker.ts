@@ -37,6 +37,7 @@ interface WorkerResponse {
   progress?: number;
   contourData?: {
     pathPoints: Array<{x: number; y: number}>;
+    allPathPoints: Array<Array<{x: number; y: number}>>;
     widthInches: number;
     heightInches: number;
     imageOffsetX: number;
@@ -203,6 +204,7 @@ interface ContourResult {
   imageCanvasY: number;
   contourData: {
     pathPoints: Array<{x: number; y: number}>;
+    allPathPoints: Array<Array<{x: number; y: number}>>;
     widthInches: number;
     heightInches: number;
     imageOffsetX: number;
@@ -338,7 +340,7 @@ function processContour(
     console.log('[Worker] Algorithm OVERRIDE:', strokeSettings.algorithm, '(auto was:', detectedAlgorithm, ')');
   }
   
-  let processedContour: Point[];
+  let processedContours: Point[][];
   
   if (useScattered) {
     console.log('[Worker] SCATTERED DESIGN detected - using compound contour generation');
@@ -366,28 +368,17 @@ function processContour(
     
     console.log('[Worker] Scattered: traced', simplifiedContours.length, 'contours for compound merge');
     
-    processedContour = processScatteredContours(
+    processedContours = processScatteredContours(
       simplifiedContours,
       scatteredAnalysis.maxGapPixels,
       effectiveDPI
     );
     
-    processedContour = weldNarrowGaps(processedContour, 1.65);
+    processedContours = processedContours.map(c => weldNarrowGaps(c, 1.65));
     
     postProgress(50);
     
   } else if (algorithm === 'complex') {
-    // =============================================================================
-    // SMOOTH/COMPLEX ALGORITHM - Hysteresis + Morph Close + External Contours
-    // =============================================================================
-    // 1. Build hysteresis mask (solid >= 128, maybe >= 40) to capture semi-transparent edges
-    // 2. Morphological close to seal tiny bays before tracing
-    // 3. Fill interior holes
-    // 4. Count external components to decide single-island vs multi-island
-    // 5. Single island: trace largest external contour, simplify, offset
-    // 6. Multi island: use cluster/bridge system then extract external boundary
-    // =============================================================================
-    
     console.log('[Worker] Complex algorithm: hysteresis + morph close pipeline');
     
     const hiThreshold = strokeSettings.alphaThreshold;
@@ -423,8 +414,9 @@ function processContour(
       
       const tightEpsilon = 0.0002;
       scaledOuter = approxPolyDP(scaledOuter, tightEpsilon);
-      processedContour = sanitizePolygonForOffset(scaledOuter);
+      const processedContour = sanitizePolygonForOffset(scaledOuter);
       console.log('[Worker] Single island contour:', processedContour.length, 'points');
+      processedContours = [processedContour];
     } else {
       console.log('[Worker] Multi island (', numComponents, ') - using cluster/bridge system');
       
@@ -454,7 +446,7 @@ function processContour(
       const gapCloseInches = 0.08;
       const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
       
-      processedContour = processContoursWithClustering(
+      processedContours = processContoursWithClustering(
         simplifiedContours,
         clusterThresholdPixels,
         gapClosePixels,
@@ -462,16 +454,11 @@ function processContour(
       );
     }
     
-    processedContour = weldNarrowGaps(processedContour, 4.0);
+    processedContours = processedContours.map(c => weldNarrowGaps(c, 4.0));
     
     postProgress(50);
     
   } else {
-    // =============================================================================
-    // STANDARD processing for Shapes algorithm
-    // =============================================================================
-    // Single contour tracing with standard offset (no cluster analysis)
-    
     const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
     
     if (originalContour.length < 3) {
@@ -480,7 +467,6 @@ function processContour(
     
     postProgress(40);
     
-    // Downscale to 1x coordinates for vector processing
     let tightContour = originalContour.map(p => ({
       x: p.x / SUPER_SAMPLE,
       y: p.y / SUPER_SAMPLE
@@ -488,106 +474,104 @@ function processContour(
     
     console.log('[Worker] Original tight contour:', tightContour.length, 'points');
     
-    // Simplify the tight contour to remove pixel stair-steps
-    const tightEpsilon = 0.001; // Higher epsilon for cleaner shapes
+    const tightEpsilon = 0.001;
     tightContour = approxPolyDP(tightContour, tightEpsilon);
     console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
     
-    // Sanitize to fix any self-intersections
-    processedContour = sanitizePolygonForOffset(tightContour);
+    const processedContour = sanitizePolygonForOffset(tightContour);
+    processedContours = [processedContour];
     
     postProgress(50);
   }
   
-  if (processedContour.length < 3) {
-    console.log('[Worker] Processed contour too small, returning empty');
+  processedContours = processedContours.filter(c => c.length >= 3);
+  if (processedContours.length === 0) {
+    console.log('[Worker] Processed contours too small, returning empty');
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  // Step 3b: Apply VECTOR OFFSET using Clipper
-  // For "shapes" algorithm: use JT_MITER for sharp corners (block text like Tercos)
-  // For "complex" algorithm: use JT_ROUND for smooth corners (script fonts)
   const useSharpCorners = algorithm === 'shapes';
-  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels, useSharpCorners);
-  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px, sharp:', useSharpCorners, '):', vectorOffsetPath.length, 'points');
+  const smoothedPaths: Point[][] = processedContours.map(contour => {
+    let path = clipperVectorOffset(contour, totalOffsetPixels, useSharpCorners);
+    path = removeNearDuplicatePoints(path, 0.01);
+    return path;
+  }).filter(p => p.length >= 3);
+  
+  if (smoothedPaths.length === 0) {
+    console.log('[Worker] All smoothed paths degenerate, returning empty');
+    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+  }
+  
+  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px, sharp:', useSharpCorners, '):', smoothedPaths.length, 'paths');
   
   postProgress(60);
   
-  // Step 4: Clean the vector offset path - remove degenerate near-duplicate points
-  // that can cause visible artifacts (lines from edge into design)
-  let smoothedPath = removeNearDuplicatePoints(vectorOffsetPath, 0.01);
+  let mainPathIndex = 0;
+  let mainPathArea = 0;
+  for (let i = 0; i < smoothedPaths.length; i++) {
+    const area = computePolygonArea(smoothedPaths[i]);
+    if (area > mainPathArea) {
+      mainPathArea = area;
+      mainPathIndex = i;
+    }
+  }
+  const smoothedPath = smoothedPaths[mainPathIndex];
   
   postProgress(70);
   
-  // Calculate effective dimensions for page size
-  // The offset contour extends beyond original by totalOffsetPixels on each side
   const effectiveDilatedWidth = width + totalOffsetPixels * 2;
   const effectiveDilatedHeight = height + totalOffsetPixels * 2;
   
-  console.log('[Worker] Final contour:', smoothedPath.length, 'points');
+  console.log('[Worker] Final contours:', smoothedPaths.length, 'paths, main path:', smoothedPath.length, 'points');
   
   postProgress(80);
   
   postProgress(90);
   
-  // CRITICAL: With Clipper vector offset, the path coordinates may extend to negative values
-  // We need to shift the path so its minimum point is at the bleed margin (bleedPixels from canvas edge)
-  // First, find the actual minimum bounds of the path
-  const previewPathXs = smoothedPath.map(p => p.x);
-  const previewPathYs = smoothedPath.map(p => p.y);
-  const previewMinX = Math.min(...previewPathXs);
-  const previewMinY = Math.min(...previewPathYs);
+  const allPathXs = smoothedPaths.flatMap(p => p.map(pt => pt.x));
+  const allPathYs = smoothedPaths.flatMap(p => p.map(pt => pt.y));
+  const previewMinX = Math.min(...allPathXs);
+  const previewMinY = Math.min(...allPathYs);
   
-  // Shift so the contour's left/top edge is at bleedPixels from canvas edge
   const offsetX = bleedPixels - previewMinX;
   const offsetY = bleedPixels - previewMinY;
   
   const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
   
-  // Use custom background color if enabled, otherwise use edge-aware bleed
   const useEdgeBleed = !strokeSettings.useCustomBackground;
   
   if (useEdgeBleed) {
-    // Edge-aware bleed: extends edge colors outward
     const extendRadius = totalOffsetPixels + bleedPixels;
     const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
     
-    // Draw contour with edge-extended background
     const extendedImageOffsetX = padding - extendRadius;
     const extendedImageOffsetY = padding - extendRadius;
-    drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
+    for (const path of smoothedPaths) {
+      drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, path, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
+    }
   } else {
-    // Custom background: use solid color bleed
-    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
+    for (const path of smoothedPaths) {
+      drawContourToData(output, canvasWidth, canvasHeight, path, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
+    }
   }
   
-  // Draw original image on top
-  // The image should be positioned where the contour's inner edge is
-  // Inner edge is at (previewMinX + totalOffsetPixels, previewMinY + totalOffsetPixels) in original coords
-  // After shifting by offset, this becomes:
   const imageCanvasX = (previewMinX + totalOffsetPixels) + offsetX;
   const imageCanvasY = (previewMinY + totalOffsetPixels) + offsetY;
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
   drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
-  // Calculate contour data for PDF export
-  // Store raw pixel coordinates and let PDF export handle the conversion
-  // This ensures preview and PDF use the exact same path data
-  
-  // Get actual path bounds
-  const pathXs = smoothedPath.map(p => p.x);
-  const pathYs = smoothedPath.map(p => p.y);
-  const minPathX = Math.min(...pathXs);
-  const minPathY = Math.min(...pathYs);
-  const maxPathX = Math.max(...pathXs);
-  const maxPathY = Math.max(...pathYs);
+  const allXs = smoothedPaths.flatMap(p => p.map(pt => pt.x));
+  const allYs = smoothedPaths.flatMap(p => p.map(pt => pt.y));
+  const minPathX = Math.min(...allXs);
+  const minPathY = Math.min(...allYs);
+  const maxPathX = Math.max(...allXs);
+  const maxPathY = Math.max(...allYs);
   
   console.log('[Worker] Path bounds (pixels): X:', minPathX.toFixed(1), 'to', maxPathX.toFixed(1),
               'Y:', minPathY.toFixed(1), 'to', maxPathY.toFixed(1));
   console.log('[Worker] Canvas offset used:', offsetX.toFixed(1), offsetY.toFixed(1));
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
   
-  // Calculate page dimensions based on actual path bounds
   const pathWidthPixels = maxPathX - minPathX;
   const pathHeightPixels = maxPathY - minPathY;
   const pathWidthInches = pathWidthPixels / effectiveDPI;
@@ -595,30 +579,21 @@ function processContour(
   const pageWidthInches = pathWidthInches + (bleedInches * 2);
   const pageHeightInches = pathHeightInches + (bleedInches * 2);
   
-  // Convert path to inches for PDF, matching exactly how preview draws it
-  // Preview draws at: canvas(px + offsetX, py + offsetY) 
-  // For PDF, we map: contour left edge -> bleedInches from page left
-  //                  contour top edge -> bleedInches from page top (but Y-flipped)
-  const pathInInches = smoothedPath.map(p => ({
-    // X: shift so minPathX maps to bleedInches
-    x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
-    // Y: shift and flip (PDF Y=0 is at bottom)
-    y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
-  }));
+  const allPathsInInches = smoothedPaths.map(path => 
+    path.map(p => ({
+      x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
+      y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
+    }))
+  );
   
-  // Image offset in the PDF coordinate system
-  // The image inner edge in pixel space is at approximately (0, 0) of the original image
-  // After Clipper offset, this is at (minPathX + totalOffsetPixels, minPathY + totalOffsetPixels) approximately
-  // But more accurately, the original image occupies the center of the contour
-  // Image left edge in PDF = ((0 - minPathX) / DPI) + bleedInches (if original image started at x=0)
-  // But with Clipper, minPathX ≈ -totalOffsetPixels, so image left ≈ totalOffsetInches + bleedInches
+  const pathInInches = allPathsInInches[mainPathIndex];
+  
   const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
   const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
   
   console.log('[Worker] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
   console.log('[Worker] Image offset (inches):', imageOffsetXCalc.toFixed(4), 'x', imageOffsetYCalc.toFixed(4));
   
-  // Debug: verify path bounds in inches
   const pathXsInches = pathInInches.map(p => p.x);
   const pathYsInches = pathInInches.map(p => p.y);
   console.log('[Worker] Path bounds (inches): X:', Math.min(...pathXsInches).toFixed(4), 'to', Math.max(...pathXsInches).toFixed(4),
@@ -630,6 +605,7 @@ function processContour(
     imageCanvasY: Math.round(imageCanvasY),
     contourData: {
       pathPoints: pathInInches,
+      allPathPoints: allPathsInInches,
       widthInches: pageWidthInches,
       heightInches: pageHeightInches,
       imageOffsetX: imageOffsetXCalc,
@@ -1657,9 +1633,9 @@ function processScatteredContours(
   contours: Point[][],
   maxGapPixels: number,
   effectiveDPI: number
-): Point[] {
+): Point[][] {
   if (contours.length === 0) return [];
-  if (contours.length === 1) return contours[0];
+  if (contours.length === 1) return [contours[0]];
 
   const expandDistance = Math.ceil(maxGapPixels / 2) + Math.round(0.02 * effectiveDPI);
 
@@ -1686,14 +1662,8 @@ function processScatteredContours(
   coExpand.Execute(expandedPaths, scaledExpand);
 
   if (expandedPaths.length === 0) {
-    console.log('[Worker] processScatteredContours: expand failed, fallback to largest');
-    let best = contours[0];
-    let bestArea = computePolygonArea(contours[0]);
-    for (let i = 1; i < contours.length; i++) {
-      const a = computePolygonArea(contours[i]);
-      if (a > bestArea) { bestArea = a; best = contours[i]; }
-    }
-    return best;
+    console.log('[Worker] processScatteredContours: expand failed, returning all contours');
+    return contours.filter(c => computePolygonArea(c) > 100);
   }
 
   console.log('[Worker] processScatteredContours: expanded to', expandedPaths.length, 'paths');
@@ -1709,7 +1679,7 @@ function processScatteredContours(
 
   if (unionResult.length === 0) {
     console.log('[Worker] processScatteredContours: union failed');
-    return expandedPaths[0].map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+    return [expandedPaths[0].map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }))];
   }
 
   console.log('[Worker] processScatteredContours: union produced', unionResult.length, 'paths');
@@ -1729,26 +1699,25 @@ function processScatteredContours(
 
   console.log('[Worker] processScatteredContours: shrink produced', finalPaths.length, 'paths');
 
-  let resultPath = finalPaths[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(finalPaths[0]));
+  const minAreaThreshold = 100 * CLIPPER_SCALE * CLIPPER_SCALE;
+  const results: Point[][] = [];
 
-  for (let i = 1; i < finalPaths.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(finalPaths[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      resultPath = finalPaths[i];
+  for (const path of finalPaths) {
+    const area = Math.abs(ClipperLib.Clipper.Area(path));
+    if (area < minAreaThreshold) continue;
+    const cleaned = [...path];
+    ClipperLib.Clipper.CleanPolygon(cleaned, CLIPPER_SCALE * 0.107);
+    const converted = cleaned.map(p => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+    if (converted.length >= 3) {
+      results.push(converted);
     }
   }
 
-  ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.107);
-
-  const result = resultPath.map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-
-  console.log('[Worker] processScatteredContours: final contour', result.length, 'points');
-  return result;
+  console.log('[Worker] processScatteredContours: final', results.length, 'contour paths');
+  return results.length > 0 ? results : [finalPaths[0].map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }))];
 }
 
 /**
@@ -2032,7 +2001,7 @@ function processContoursWithClustering(
   clusterThresholdPixels: number,
   gapClosePixels: number,
   effectiveDPI: number
-): Point[] {
+): Point[][] {
   if (rawContours.length === 0) return [];
   
   // Build contours with bounds and area
@@ -2049,13 +2018,12 @@ function processContoursWithClustering(
     console.log('[Worker] Single contour detected, applying gap closing to fill indentations');
     
     if (gapClosePixels > 0) {
-      // Apply vectorCloseMerge to close narrow indentations/gaps within the contour
       const bridgedPath = vectorCloseMerge(contours[0].points, gapClosePixels);
       console.log('[Worker] vectorCloseMerge: input', contours[0].points.length, 'pts -> output', bridgedPath.length, 'pts');
-      return bridgedPath;
+      return [bridgedPath];
     }
     
-    return contours[0].points;
+    return [contours[0].points];
   }
   
   // Cluster by proximity
@@ -2093,13 +2061,7 @@ function processContoursWithClustering(
     }
   }
   
-  // If multiple processed contours, union them all into final result
-  if (processedContours.length === 0) return [];
-  if (processedContours.length === 1) return processedContours[0];
-  
-  // Final union of all processed clusters
-  console.log('[Worker] Final union of', processedContours.length, 'processed clusters');
-  return unionClusterContours(processedContours);
+  return processedContours;
 }
 
 /**
@@ -4158,6 +4120,7 @@ function createOutputWithImage(
     imageCanvasY: padding,
     contourData: {
       pathPoints: [],
+      allPathPoints: [],
       widthInches,
       heightInches,
       imageOffsetX: padding / effectiveDPI,
