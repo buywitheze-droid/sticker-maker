@@ -378,67 +378,91 @@ function processContour(
     
   } else if (algorithm === 'complex') {
     // =============================================================================
-    // CLUSTER-BASED BRIDGING for Complex algorithm
+    // SMOOTH/COMPLEX ALGORITHM - Hysteresis + Morph Close + External Contours
     // =============================================================================
-    // 1. Trace ALL separate contours (not just the largest)
-    // 2. Cluster them by proximity (within 0.15")
-    // 3. Dense clusters (multiple nearby contours): Union + Buffer & Shrink
-    // 4. Isolated contours (single shape): Skip bridging, standard offset only
+    // 1. Build hysteresis mask (solid >= 128, maybe >= 40) to capture semi-transparent edges
+    // 2. Morphological close to seal tiny bays before tracing
+    // 3. Fill interior holes
+    // 4. Count external components to decide single-island vs multi-island
+    // 5. Single island: trace largest external contour, simplify, offset
+    // 6. Multi island: use cluster/bridge system then extract external boundary
     // =============================================================================
     
-    console.log('[Worker] Complex algorithm: using cluster-based bridging');
+    console.log('[Worker] Complex algorithm: hysteresis + morph close pipeline');
     
-    // Trace all separate contours from the mask
-    const allContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
+    const hiThreshold = strokeSettings.alphaThreshold;
+    const loThreshold = Math.min(40, Math.max(1, hiThreshold - 10));
+    const complexMask = buildHysteresisMask(smoothedAlpha, hiResWidth, hiResHeight, hiThreshold, loThreshold);
+    console.log('[Worker] Hysteresis mask built: hi=', hiThreshold, 'lo=', loThreshold);
     
-    if (allContours.length === 0) {
-      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-    }
+    const bladeInches = 0.02;
+    const bladePixels4x = Math.round(bladeInches * effectiveDPI * SUPER_SAMPLE);
+    const closeRadius = Math.max(2, Math.round(bladePixels4x / 2));
+    const closedMask = morphologicalClose(complexMask, hiResWidth, hiResHeight, closeRadius);
+    console.log('[Worker] Morphological close radius:', closeRadius, 'px at', SUPER_SAMPLE, 'x');
+    
+    const filledMask = fillSilhouette(closedMask, hiResWidth, hiResHeight);
     
     postProgress(40);
     
-    // Downscale all contours to 1x coordinates
-    const scaledContours = allContours.map(contour => 
-      contour.map(p => ({
+    const numComponents = countExternalComponents(filledMask, hiResWidth, hiResHeight);
+    console.log('[Worker] External components:', numComponents);
+    
+    if (numComponents <= 1) {
+      console.log('[Worker] Single island - tracing largest external contour');
+      const outerContour = traceBoundary(filledMask, hiResWidth, hiResHeight);
+      
+      if (outerContour.length < 3) {
+        return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+      }
+      
+      let scaledOuter = outerContour.map(p => ({
         x: p.x / SUPER_SAMPLE,
         y: p.y / SUPER_SAMPLE
-      }))
-    );
+      }));
+      
+      const tightEpsilon = 0.0002;
+      scaledOuter = approxPolyDP(scaledOuter, tightEpsilon);
+      processedContour = sanitizePolygonForOffset(scaledOuter);
+      console.log('[Worker] Single island contour:', processedContour.length, 'points');
+    } else {
+      console.log('[Worker] Multi island (', numComponents, ') - using cluster/bridge system');
+      
+      const allContours = traceAllContours(filledMask, hiResWidth, hiResHeight);
+      
+      if (allContours.length === 0) {
+        return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+      }
+      
+      const scaledContours = allContours.map(contour => 
+        contour.map(p => ({
+          x: p.x / SUPER_SAMPLE,
+          y: p.y / SUPER_SAMPLE
+        }))
+      );
+      
+      const tightEpsilon = 0.0002;
+      const simplifiedContours = scaledContours.map(contour => {
+        const simplified = approxPolyDP(contour, tightEpsilon);
+        return sanitizePolygonForOffset(simplified);
+      }).filter(c => c.length >= 3);
+      
+      console.log('[Worker] Traced', simplifiedContours.length, 'contours for clustering');
+      
+      const clusterThresholdInches = 0.08;
+      const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
+      const gapCloseInches = 0.08;
+      const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
+      
+      processedContour = processContoursWithClustering(
+        simplifiedContours,
+        clusterThresholdPixels,
+        gapClosePixels,
+        effectiveDPI
+      );
+    }
     
-    // Simplify each contour
-    const tightEpsilon = 0.0002; // Lower epsilon for complex designs
-    const simplifiedContours = scaledContours.map(contour => {
-      const simplified = approxPolyDP(contour, tightEpsilon);
-      return sanitizePolygonForOffset(simplified);
-    });
-    
-    console.log('[Worker] Traced', simplifiedContours.length, 'contours, each simplified');
-    
-    // Cluster threshold: 0.08" for grouping nearby contours
-    // Only contours within this distance will be considered part of the same cluster
-    const clusterThresholdInches = 0.08;
-    const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
-    
-    // Gap close distance for script fonts - bridges gaps between separate letters
-    // Use 0.08" as the base - only bridges truly separate items, not internal features
-    // This is the expand distance: gaps up to 2x this value will be bridged
-    const gapCloseInches = 0.08;
-    const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
-    
-    console.log('[Worker] Cluster threshold:', clusterThresholdPixels, 'px (', clusterThresholdInches, 'in)');
-    console.log('[Worker] Gap close distance:', gapClosePixels, 'px (', gapCloseInches.toFixed(3), 'in)');
-    
-    // Process with cluster-based logic
-    processedContour = processContoursWithClustering(
-      simplifiedContours,
-      clusterThresholdPixels,
-      gapClosePixels,
-      effectiveDPI
-    );
-    
-    // Step 0: Weld narrow gaps using Minkowski Closing (expand + shrink)
-    // This seals 'caves' too tight for cutting blades
-    processedContour = weldNarrowGaps(processedContour, 1.65);
+    processedContour = weldNarrowGaps(processedContour, 4.0);
     
     postProgress(50);
     
@@ -771,6 +795,120 @@ function createSilhouetteMaskFromAlpha(alpha: Uint8Array, width: number, height:
   }
   
   return mask;
+}
+
+function buildHysteresisMask(
+  alpha: Uint8Array, width: number, height: number,
+  hiThreshold: number, loThreshold: number
+): Uint8Array {
+  const mask = new Uint8Array(width * height);
+  const maybe = new Uint8Array(width * height);
+  const queue: number[] = [];
+
+  for (let i = 0; i < alpha.length; i++) {
+    if (alpha[i] >= hiThreshold) {
+      mask[i] = 1;
+      queue.push(i);
+    } else if (alpha[i] >= loThreshold) {
+      maybe[i] = 1;
+    }
+  }
+
+  while (queue.length > 0) {
+    const idx = queue.pop()!;
+    const x = idx % width;
+    const y = (idx - x) / width;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const nIdx = ny * width + nx;
+        if (maybe[nIdx] === 1 && mask[nIdx] === 0) {
+          mask[nIdx] = 1;
+          queue.push(nIdx);
+        }
+      }
+    }
+  }
+
+  return mask;
+}
+
+function morphologicalClose(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  if (radius <= 0) return mask;
+  const radiusSq = radius * radius;
+  const offsets: Array<{dx: number; dy: number}> = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy <= radiusSq) {
+        offsets.push({dx, dy});
+      }
+    }
+  }
+
+  const dilated = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] !== 1) continue;
+      for (const {dx, dy} of offsets) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          dilated[ny * width + nx] = 1;
+        }
+      }
+    }
+  }
+
+  const closed = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (dilated[y * width + x] !== 1) continue;
+      let allSet = true;
+      for (const {dx, dy} of offsets) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height || dilated[ny * width + nx] !== 1) {
+          allSet = false;
+          break;
+        }
+      }
+      if (allSet) closed[y * width + x] = 1;
+    }
+  }
+
+  return closed;
+}
+
+function countExternalComponents(mask: Uint8Array, width: number, height: number): number {
+  const visited = new Uint8Array(width * height);
+  let count = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (mask[idx] !== 1 || visited[idx] === 1) continue;
+      count++;
+      visited[idx] = 1;
+      const stack = [idx];
+      while (stack.length > 0) {
+        const ci = stack.pop()!;
+        const cx = ci % width;
+        const cy = (ci - cx) / width;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            const ni = ny * width + nx;
+            if (mask[ni] === 1 && visited[ni] === 0) {
+              visited[ni] = 1;
+              stack.push(ni);
+            }
+          }
+        }
+      }
+    }
+  }
+  return count;
 }
 
 function dilateSilhouette(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
