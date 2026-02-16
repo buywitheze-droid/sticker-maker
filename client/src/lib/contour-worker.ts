@@ -408,33 +408,14 @@ function processContour(
     const numComponents = countExternalComponents(filledMask, hiResWidth, hiResHeight);
     console.log('[Worker] External components:', numComponents);
     
-    if (numComponents <= 1) {
-      console.log('[Worker] Single island - tracing largest external contour');
-      const outerContour = traceBoundary(filledMask, hiResWidth, hiResHeight);
+    {
+      const allComplexContours = traceAllContours(filledMask, hiResWidth, hiResHeight);
       
-      if (outerContour.length < 3) {
+      if (allComplexContours.length === 0) {
         return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
       }
       
-      let scaledOuter = outerContour.map(p => ({
-        x: p.x / SUPER_SAMPLE,
-        y: p.y / SUPER_SAMPLE
-      }));
-      
-      const tightEpsilon = 0.0002;
-      scaledOuter = approxPolyDP(scaledOuter, tightEpsilon);
-      processedContour = sanitizePolygonForOffset(scaledOuter);
-      console.log('[Worker] Single island contour:', processedContour.length, 'points');
-    } else {
-      console.log('[Worker] Multi island (', numComponents, ') - using cluster/bridge system');
-      
-      const allContours = traceAllContours(filledMask, hiResWidth, hiResHeight);
-      
-      if (allContours.length === 0) {
-        return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-      }
-      
-      const scaledContours = allContours.map(contour => 
+      const scaledContours = allComplexContours.map(contour => 
         contour.map(p => ({
           x: p.x / SUPER_SAMPLE,
           y: p.y / SUPER_SAMPLE
@@ -447,19 +428,31 @@ function processContour(
         return sanitizePolygonForOffset(simplified);
       }).filter(c => c.length >= 3);
       
-      console.log('[Worker] Traced', simplifiedContours.length, 'contours for clustering');
+      const keptComplexContours = retainNearbyOrphans(simplifiedContours, effectiveDPI);
+      console.log('[Worker] Complex: traced', allComplexContours.length, 'contours, kept', keptComplexContours.length, 'after orphan retention');
       
-      const clusterThresholdInches = 0.08;
-      const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
-      const gapCloseInches = 0.08;
-      const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
-      
-      processedContour = processContoursWithClustering(
-        simplifiedContours,
-        clusterThresholdPixels,
-        gapClosePixels,
-        effectiveDPI
-      );
+      if (keptComplexContours.length === 1) {
+        if (numComponents <= 1) {
+          console.log('[Worker] Single island contour:', keptComplexContours[0].length, 'points');
+          processedContour = keptComplexContours[0];
+        } else {
+          const gapCloseInches = 0.08;
+          const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
+          processedContour = vectorCloseMerge(keptComplexContours[0], gapClosePixels);
+        }
+      } else {
+        const clusterThresholdInches = 0.08;
+        const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
+        const gapCloseInches = 0.08;
+        const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
+        
+        processedContour = processContoursWithClustering(
+          keptComplexContours,
+          clusterThresholdPixels,
+          gapClosePixels,
+          effectiveDPI
+        );
+      }
     }
     
     processedContour = weldNarrowGaps(processedContour, 4.0);
@@ -2137,13 +2130,12 @@ function processContoursWithClustering(
     }
   }
   
-  // If multiple processed contours, union them all into final result
   if (processedContours.length === 0) return [];
   if (processedContours.length === 1) return processedContours[0];
   
-  // Final union of all processed clusters
-  console.log('[Worker] Final union of', processedContours.length, 'processed clusters');
-  return unionClusterContours(processedContours);
+  const mergeGapPx = Math.max(8, 0.25 * effectiveDPI);
+  console.log('[Worker] Final merge of', processedContours.length, 'processed clusters with', mergeGapPx.toFixed(1), 'px gap');
+  return multiPathVectorMerge(processedContours, mergeGapPx);
 }
 
 /**
