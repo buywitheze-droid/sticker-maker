@@ -470,31 +470,40 @@ function processContour(
     // =============================================================================
     // STANDARD processing for Shapes algorithm
     // =============================================================================
-    // Single contour tracing with standard offset (no cluster analysis)
+    // Trace all contours and retain nearby orphans (e.g. stars, dots within 0.25")
     
-    const originalContour = traceBoundary(filledOriginalMask, hiResWidth, hiResHeight);
+    const allShapeContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
     
-    if (originalContour.length < 3) {
+    if (allShapeContours.length === 0) {
       return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
     }
     
     postProgress(40);
     
-    // Downscale to 1x coordinates for vector processing
-    let tightContour = originalContour.map(p => ({
-      x: p.x / SUPER_SAMPLE,
-      y: p.y / SUPER_SAMPLE
-    }));
+    const scaledShapeContours = allShapeContours.map(contour =>
+      contour.map(p => ({
+        x: p.x / SUPER_SAMPLE,
+        y: p.y / SUPER_SAMPLE
+      }))
+    );
     
-    console.log('[Worker] Original tight contour:', tightContour.length, 'points');
+    const tightEpsilon = 0.001;
+    const simplifiedShapeContours = scaledShapeContours.map(contour => {
+      const simplified = approxPolyDP(contour, tightEpsilon);
+      return sanitizePolygonForOffset(simplified);
+    }).filter(c => c.length >= 3);
     
-    // Simplify the tight contour to remove pixel stair-steps
-    const tightEpsilon = 0.001; // Higher epsilon for cleaner shapes
-    tightContour = approxPolyDP(tightContour, tightEpsilon);
-    console.log('[Worker] After approxPolyDP (epsilon:', tightEpsilon, '):', tightContour.length, 'points');
+    const keptContours = retainNearbyOrphans(simplifiedShapeContours, effectiveDPI);
+    console.log('[Worker] Shapes: traced', allShapeContours.length, 'contours, kept', keptContours.length, 'after orphan retention');
     
-    // Sanitize to fix any self-intersections
-    processedContour = sanitizePolygonForOffset(tightContour);
+    if (keptContours.length === 1) {
+      processedContour = keptContours[0];
+    } else {
+      const mergeGapPx = Math.max(8, 0.25 * effectiveDPI);
+      processedContour = multiPathVectorMerge(keptContours, mergeGapPx);
+    }
+    
+    console.log('[Worker] Shapes processed contour:', processedContour.length, 'points');
     
     postProgress(50);
   }
@@ -508,7 +517,7 @@ function processContour(
   // For "shapes" algorithm: use JT_MITER for sharp corners (block text like Tercos)
   // For "complex" algorithm: use JT_ROUND for smooth corners (script fonts)
   const useSharpCorners = algorithm === 'shapes';
-  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels, useSharpCorners);
+  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels, useSharpCorners, effectiveDPI);
   console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px, sharp:', useSharpCorners, '):', vectorOffsetPath.length, 'points');
   
   postProgress(60);
@@ -1823,6 +1832,41 @@ function boundsWithinDistance(a: BoundingBox, b: BoundingBox, distance: number):
            expandedA.maxY < b.minY || b.maxY < expandedA.minY);
 }
 
+function retainNearbyOrphans(contours: Point[][], effectiveDPI: number): Point[][] {
+  if (contours.length <= 1) return contours;
+
+  const keepNearMainDistInches = 0.25;
+  const keepNearMainDistPx = Math.max(8, keepNearMainDistInches * effectiveDPI);
+
+  const withMeta = contours.map(c => ({
+    points: c,
+    bounds: computeBounds(c),
+    area: computePolygonArea(c)
+  }));
+
+  let mainIdx = 0;
+  for (let i = 1; i < withMeta.length; i++) {
+    if (withMeta[i].area > withMeta[mainIdx].area) mainIdx = i;
+  }
+
+  const kept: Point[][] = [withMeta[mainIdx].points];
+  const mainBounds = withMeta[mainIdx].bounds;
+
+  for (let i = 0; i < withMeta.length; i++) {
+    if (i === mainIdx) continue;
+    if (boundsWithinDistance(mainBounds, withMeta[i].bounds, keepNearMainDistPx)) {
+      console.log('[Worker] retainNearbyOrphans: keeping orphan', i,
+        'area=', Math.round(withMeta[i].area), 'px² (within', keepNearMainDistInches, 'in)');
+      kept.push(withMeta[i].points);
+    } else {
+      console.log('[Worker] retainNearbyOrphans: discarding orphan', i,
+        'area=', Math.round(withMeta[i].area), 'px² (too far from main body)');
+    }
+  }
+
+  return kept;
+}
+
 /**
  * Trace ALL separate contours from a mask using proper connected component labeling
  * Uses flood fill to identify each component, then traces its boundary once
@@ -2403,10 +2447,30 @@ function removeNearDuplicatePoints(points: Point[], minDist: number): Point[] {
   return result.length >= 3 ? result : points;
 }
 
-function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false): Point[] {
+function clipperPathBounds(path: Array<{X: number; Y: number}>): {minX: number; minY: number; maxX: number; maxY: number} {
+  let minX = path[0].X, maxX = path[0].X;
+  let minY = path[0].Y, maxY = path[0].Y;
+  for (let i = 1; i < path.length; i++) {
+    if (path[i].X < minX) minX = path[i].X;
+    if (path[i].X > maxX) maxX = path[i].X;
+    if (path[i].Y < minY) minY = path[i].Y;
+    if (path[i].Y > maxY) maxY = path[i].Y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function clipperBoundsWithinDist(
+  a: {minX: number; minY: number; maxX: number; maxY: number},
+  b: {minX: number; minY: number; maxX: number; maxY: number},
+  dist: number
+): boolean {
+  return !(a.maxX + dist < b.minX || b.maxX + dist < a.minX ||
+           a.maxY + dist < b.minY || b.maxY + dist < a.minY);
+}
+
+function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false, effectiveDPI: number = 100): Point[] {
   if (points.length < 3 || offsetPixels <= 0) return points;
   
-  // Convert to Clipper format with scaling
   const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
     X: Math.round(p.x * CLIPPER_SCALE),
     Y: Math.round(p.y * CLIPPER_SCALE)
@@ -2414,27 +2478,15 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
   
   const scaledOffset = offsetPixels * CLIPPER_SCALE;
   
-  // Create ClipperOffset object
   const co = new ClipperLib.ClipperOffset();
   
-  // Set arc tolerance for smooth round corners
-  // Lower value = smoother curves (more points), higher = more angular
-  // 0.25px tolerance gives smooth arcs without excessive points
   co.ArcTolerance = CLIPPER_SCALE * 0.25;
-  
-  // MiterLimit controls how far sharp corners extend before being beveled
-  // Higher value = sharper corners allowed; 10.0 allows very sharp corners
-  // Without this, acute angles get beveled which can look "distorted"
   co.MiterLimit = 10.0;
   
-  // Choose join type based on corner style
   const joinType = useSharpCorners ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound;
   
-  // Add path with chosen join type
-  // ET_CLOSEDPOLYGON for closed contour
   co.AddPath(clipperPath, joinType, ClipperLib.EndType.etClosedPolygon);
   
-  // Execute the offset
   const offsetPaths: Array<Array<{X: number; Y: number}>> = [];
   co.Execute(offsetPaths, scaledOffset);
   
@@ -2443,21 +2495,54 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
     return points;
   }
   
-  // Find the largest polygon if multiple were created
-  let resultPath = offsetPaths[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(offsetPaths[0]));
+  const keepNearMainDistInches = 0.25;
+  const keepNearMainDistScaled = Math.max(8, keepNearMainDistInches * effectiveDPI) * CLIPPER_SCALE;
   
+  let mainIdx = 0;
+  let mainArea = Math.abs(ClipperLib.Clipper.Area(offsetPaths[0]));
   for (let i = 1; i < offsetPaths.length; i++) {
     const area = Math.abs(ClipperLib.Clipper.Area(offsetPaths[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      resultPath = offsetPaths[i];
+    if (area > mainArea) {
+      mainArea = area;
+      mainIdx = i;
     }
+  }
+  
+  const mainBounds = clipperPathBounds(offsetPaths[mainIdx]);
+  const keptPaths = [offsetPaths[mainIdx]];
+  
+  for (let i = 0; i < offsetPaths.length; i++) {
+    if (i === mainIdx || offsetPaths[i].length < 3) continue;
+    const oBounds = clipperPathBounds(offsetPaths[i]);
+    if (clipperBoundsWithinDist(mainBounds, oBounds, keepNearMainDistScaled)) {
+      console.log('[Worker] clipperVectorOffset: retaining nearby orphan polygon', i);
+      keptPaths.push(offsetPaths[i]);
+    }
+  }
+  
+  let resultPath: Array<{X: number; Y: number}>;
+  if (keptPaths.length === 1) {
+    resultPath = keptPaths[0];
+  } else {
+    const clipper = new ClipperLib.Clipper();
+    for (const p of keptPaths) {
+      clipper.AddPath(p, ClipperLib.PolyType.ptSubject, true);
+    }
+    const unionResult: Array<Array<{X: number; Y: number}>> = [];
+    clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult,
+      ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    let bestIdx = 0;
+    let bestArea = 0;
+    for (let i = 0; i < unionResult.length; i++) {
+      const a = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+      if (a > bestArea) { bestArea = a; bestIdx = i; }
+    }
+    resultPath = unionResult.length > 0 ? unionResult[bestIdx] : keptPaths[0];
+    console.log('[Worker] clipperVectorOffset: unioned', keptPaths.length, 'nearby polygons');
   }
   
   ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.107);
   
-  // Convert back to Point format
   const result = resultPath.map(p => ({
     x: p.X / CLIPPER_SCALE,
     y: p.Y / CLIPPER_SCALE
