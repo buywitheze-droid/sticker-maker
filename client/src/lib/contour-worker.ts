@@ -45,6 +45,10 @@ interface WorkerResponse {
     imageOffsetY: number;
     backgroundColor: string;
     useEdgeBleed: boolean;
+    effectiveDPI: number;
+    minPathX: number;
+    minPathY: number;
+    bleedInches: number;
   };
   detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
@@ -142,7 +146,11 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           imageOffsetX: recomputedImgOffX,
           imageOffsetY: recomputedImgOffY,
           backgroundColor: result.contourData.backgroundColor,
-          useEdgeBleed: result.contourData.useEdgeBleed
+          useEdgeBleed: result.contourData.useEdgeBleed,
+          effectiveDPI,
+          minPathX: spMinX,
+          minPathY: spMinY,
+          bleedInches
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -256,6 +264,10 @@ interface ContourResult {
     imageOffsetY: number;
     backgroundColor: string;
     useEdgeBleed: boolean;
+    effectiveDPI: number;
+    minPathX: number;
+    minPathY: number;
+    bleedInches: number;
   };
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
@@ -625,7 +637,11 @@ function processContour(
       imageOffsetX: imageOffsetXCalc,
       imageOffsetY: imageOffsetYCalc,
       backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
-      useEdgeBleed: useEdgeBleed
+      useEdgeBleed: useEdgeBleed,
+      effectiveDPI,
+      minPathX,
+      minPathY,
+      bleedInches
     },
     detectedAlgorithm
   };
@@ -4959,7 +4975,11 @@ function createOutputWithImage(
       imageOffsetX: padding / effectiveDPI,
       imageOffsetY: padding / effectiveDPI,
       backgroundColor,
-      useEdgeBleed: false
+      useEdgeBleed: false,
+      effectiveDPI,
+      minPathX: 0,
+      minPathY: 0,
+      bleedInches: 0
     },
     detectedAlgorithm: 'shapes'
   };

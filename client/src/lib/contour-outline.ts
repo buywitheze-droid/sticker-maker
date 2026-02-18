@@ -4,27 +4,38 @@ import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gauss
 import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
-function contourPointsToPDFPathOps(pathPoints: Array<{x: number; y: number}>): string {
-  // Path points are in inches - scale to pixel-like coordinates for curve detection
-  // then convert results to PDF points (1 inch = 72 points)
-  const SCALE = 300; // Use 300 DPI scale for curve detection accuracy
-  const scaledPath = pathPoints.map(p => ({ x: p.x * SCALE, y: p.y * SCALE }));
-  const smoothedPath = gaussianSmoothContour(scaledPath, 2);
+function contourPointsToPDFPathOps(
+  previewPathPoints: Array<{x: number; y: number}>,
+  effectiveDPI: number,
+  pageHeightInches: number
+): string {
+  const smoothedPath = gaussianSmoothContour(previewPathPoints, 2);
   const segments = convertPolygonToCurves(smoothedPath, 70);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  const S = 72 / SCALE; // Convert from scaled pixels to PDF points
+  const pxToInch = 1 / effectiveDPI;
+  const ptsPerInch = 72;
+
+  const txPt = (px: number, py: number) => ({
+    x: px * pxToInch * ptsPerInch,
+    y: (pageHeightInches - py * pxToInch) * ptsPerInch
+  });
 
   for (const seg of segments) {
     if (seg.type === 'move' && seg.point) {
-      pathOps += `${(seg.point.x * S).toFixed(2)} ${(seg.point.y * S).toFixed(2)} m\n`;
+      const p = txPt(seg.point.x, seg.point.y);
+      pathOps += `${p.x.toFixed(2)} ${p.y.toFixed(2)} m\n`;
     } else if (seg.type === 'line' && seg.point) {
-      pathOps += `${(seg.point.x * S).toFixed(2)} ${(seg.point.y * S).toFixed(2)} l\n`;
+      const p = txPt(seg.point.x, seg.point.y);
+      pathOps += `${p.x.toFixed(2)} ${p.y.toFixed(2)} l\n`;
     } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-      pathOps += `${(seg.cp1.x * S).toFixed(2)} ${(seg.cp1.y * S).toFixed(2)} ${(seg.cp2.x * S).toFixed(2)} ${(seg.cp2.y * S).toFixed(2)} ${(seg.end.x * S).toFixed(2)} ${(seg.end.y * S).toFixed(2)} c\n`;
+      const c1 = txPt(seg.cp1.x, seg.cp1.y);
+      const c2 = txPt(seg.cp2.x, seg.cp2.y);
+      const e = txPt(seg.end.x, seg.end.y);
+      pathOps += `${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${e.x.toFixed(2)} ${e.y.toFixed(2)} c\n`;
     }
   }
 
@@ -1690,7 +1701,6 @@ export function getContourPath(
   }
 }
 
-// Cached contour data type for fast PDF export
 export interface CachedContourData {
   pathPoints: Array<{x: number; y: number}>;
   previewPathPoints: Array<{x: number; y: number}>;
@@ -1699,6 +1709,10 @@ export interface CachedContourData {
   imageOffsetX: number;
   imageOffsetY: number;
   backgroundColor: string;
+  effectiveDPI: number;
+  minPathX: number;
+  minPathY: number;
+  bleedInches: number;
 }
 
 export async function downloadContourPDF(
@@ -1718,11 +1732,16 @@ export async function downloadContourPDF(
     await new Promise(resolve => setTimeout(resolve, 50));
     
     let pathPoints: Array<{x: number; y: number}>;
+    let previewPathPoints: Array<{x: number; y: number}>;
     let widthInches: number;
     let heightInches: number;
     let imageOffsetX: number;
     let imageOffsetY: number;
     let backgroundColor: string;
+    let effectiveDPI: number;
+    let minPathX: number;
+    let minPathY: number;
+    let bleedInches: number;
     
     {
       const workerManager = getContourWorkerManager();
@@ -1730,11 +1749,16 @@ export async function downloadContourPDF(
       if (contourData) {
         console.log('[downloadContourPDF] Using cached preview contour data (instant)');
         pathPoints = contourData.pathPoints;
+        previewPathPoints = contourData.previewPathPoints;
         widthInches = contourData.widthInches;
         heightInches = contourData.heightInches;
         imageOffsetX = contourData.imageOffsetX;
         imageOffsetY = contourData.imageOffsetY;
         backgroundColor = contourData.backgroundColor;
+        effectiveDPI = contourData.effectiveDPI;
+        minPathX = contourData.minPathX;
+        minPathY = contourData.minPathY;
+        bleedInches = contourData.bleedInches;
       } else {
         console.error('[downloadContourPDF] No contour data available - generate preview first');
         return;
@@ -1751,9 +1775,9 @@ export async function downloadContourPDF(
     
     // OPTIMIZATION: Create background and design canvases in parallel
     // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
-    const bgDPI = 150; // Solid color fill doesn't need high resolution
-    const bleedInches = 0.10;
-    const bleedPixels = bleedInches * bgDPI;
+    const bgDPI = 150;
+    const bgBleedInches = 0.10;
+    const bleedPixels = bgBleedInches * bgDPI;
     const fillColor = backgroundColor || '#ffffff';
     const drawPath = pathPoints;
     
@@ -1894,7 +1918,7 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints);
+    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -1938,31 +1962,46 @@ export async function generateContourPDFBase64(
   cachedContourData?: CachedContourData
 ): Promise<string | null> {
   let pathPoints: Array<{x: number; y: number}>;
+  let previewPathPoints: Array<{x: number; y: number}>;
   let widthInches: number;
   let heightInches: number;
   let imageOffsetX: number;
   let imageOffsetY: number;
   let backgroundColor: string;
+  let effectiveDPI: number;
+  let minPathX: number;
+  let minPathY: number;
+  let bleedInches: number;
   
   // Use cached contour data if available (from preview worker) for 10x faster export
   if (cachedContourData && cachedContourData.pathPoints.length > 0) {
     console.log('[generateContourPDFBase64] Using cached contour data for fast export');
     pathPoints = cachedContourData.pathPoints;
+    previewPathPoints = cachedContourData.previewPathPoints;
     widthInches = cachedContourData.widthInches;
     heightInches = cachedContourData.heightInches;
     imageOffsetX = cachedContourData.imageOffsetX;
     imageOffsetY = cachedContourData.imageOffsetY;
     backgroundColor = cachedContourData.backgroundColor;
+    effectiveDPI = cachedContourData.effectiveDPI;
+    minPathX = cachedContourData.minPathX;
+    minPathY = cachedContourData.minPathY;
+    bleedInches = cachedContourData.bleedInches;
   } else {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
     if (contourData) {
       pathPoints = contourData.pathPoints;
+      previewPathPoints = contourData.previewPathPoints;
       widthInches = contourData.widthInches;
       heightInches = contourData.heightInches;
       imageOffsetX = contourData.imageOffsetX;
       imageOffsetY = contourData.imageOffsetY;
       backgroundColor = contourData.backgroundColor;
+      effectiveDPI = contourData.effectiveDPI;
+      minPathX = contourData.minPathX;
+      minPathY = contourData.minPathY;
+      bleedInches = contourData.bleedInches;
     } else {
       console.error('[generateContourPDFBase64] No contour data available - generate preview first');
       return null;
@@ -1977,9 +2016,9 @@ export async function generateContourPDFBase64(
   
   // OPTIMIZATION: Create background and design canvases in parallel
   // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
-  const bgDPI = 150; // Solid color fill doesn't need high resolution
-  const bleedInches = 0.10;
-  const bleedPixels = bleedInches * bgDPI;
+  const bgDPI = 150;
+  const bgBleedInches = 0.10;
+  const bleedPixels = bgBleedInches * bgDPI;
   const fillColor = backgroundColor || '#ffffff';
   const drawPath = pathPoints;
   
@@ -2120,7 +2159,7 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints);
+    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches);
     
     const existingContents = page.node.Contents();
     if (existingContents) {

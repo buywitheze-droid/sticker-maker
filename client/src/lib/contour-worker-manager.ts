@@ -43,6 +43,10 @@ export interface ContourData {
   imageOffsetY: number;
   backgroundColor: string;
   useEdgeBleed: boolean;
+  effectiveDPI: number;
+  minPathX: number;
+  minPathY: number;
+  bleedInches: number;
 }
 
 interface WorkerResponse {
