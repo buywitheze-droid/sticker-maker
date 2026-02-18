@@ -1,13 +1,29 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, convertPolygonToCurves } from "@/lib/clipper-path";
+import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
-// Path simplification placeholder - disabled for maximum cut accuracy
-// Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
-function simplifyPathForPDF(points: Array<{x: number, y: number}>, _tolerance: number): Array<{x: number, y: number}> {
-  // Return original path unchanged to guarantee die-cut accuracy
-  return points;
+function contourPointsToPDFPathOps(pathPoints: Array<{x: number; y: number}>): string {
+  const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+  const segments = convertPolygonToCurves(smoothedPath, 70);
+
+  let pathOps = '';
+  pathOps += '/CutContour CS 1 SCN\n';
+  pathOps += '0.5 w\n';
+
+  for (const seg of segments) {
+    if (seg.type === 'move' && seg.point) {
+      pathOps += `${(seg.point.x * 72).toFixed(2)} ${(seg.point.y * 72).toFixed(2)} m\n`;
+    } else if (seg.type === 'line' && seg.point) {
+      pathOps += `${(seg.point.x * 72).toFixed(2)} ${(seg.point.y * 72).toFixed(2)} l\n`;
+    } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+      pathOps += `${(seg.cp1.x * 72).toFixed(2)} ${(seg.cp1.y * 72).toFixed(2)} ${(seg.cp2.x * 72).toFixed(2)} ${(seg.cp2.y * 72).toFixed(2)} ${(seg.end.x * 72).toFixed(2)} ${(seg.end.y * 72).toFixed(2)} c\n`;
+    }
+  }
+
+  pathOps += 'h S\n';
+  return pathOps;
 }
 
 export interface ContourPathResult {
@@ -1569,13 +1585,30 @@ export function getContourPath(
     // Fill silhouette (matches worker)
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // User offset dilation (matches worker)
-    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-    const dilatedWidth = baseWidth + userOffsetPixels * 2;
-    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    // Determine if sharp corners are requested - matches worker logic
+    // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
+    const effectiveAlgorithm = strokeSettings.algorithm || 'shapes';
+    const useSharpCorners = effectiveAlgorithm === 'shapes';
     
-    // Trace boundary (matches worker - NO bridgeTouchingContours)
-    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    let boundaryPath: Point[];
+    let dilatedWidth: number;
+    let dilatedHeight: number;
+    
+    if (useSharpCorners && userOffsetPixels > 0) {
+      // Sharp mode: trace boundary from base-only dilation, then apply vector offset with miter joins
+      const baseBoundary = traceBoundary(filledMask, baseWidth, baseHeight);
+      if (baseBoundary.length < 3) return null;
+      boundaryPath = offsetPolygon(baseBoundary, userOffsetPixels, 'sharp');
+      // Bounds are approximate after vector offset
+      dilatedWidth = baseWidth + userOffsetPixels * 2;
+      dilatedHeight = baseHeight + userOffsetPixels * 2;
+    } else {
+      // Rounded mode: pixel dilation (matches worker)
+      const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+      dilatedWidth = baseWidth + userOffsetPixels * 2;
+      dilatedHeight = baseHeight + userOffsetPixels * 2;
+      boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
+    }
     
     if (boundaryPath.length < 3) return null;
     
@@ -1855,37 +1888,7 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
-    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
-    
-    let pathOps = '';
-    pathOps += '/CutContour CS 1 SCN\n';
-    pathOps += '0.5 w\n';
-    
-    const startX = simplifiedPath[0].x * 72;
-    const startY = simplifiedPath[0].y * 72;
-    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
-    
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
-      
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
-    }
-    
-    pathOps += 'h S\n';
+    const pathOps = contourPointsToPDFPathOps(pathPoints);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2111,37 +2114,7 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // OPTIMIZATION: Simplify path for faster PDF generation
-    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
-    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
-    
-    let pathOps = '';
-    pathOps += '/CutContour CS 1 SCN\n';
-    pathOps += '0.5 w\n';
-    
-    const startX = simplifiedPath[0].x * 72;
-    const startY = simplifiedPath[0].y * 72;
-    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
-    
-    // Use simplified path with reduced precision for smaller file
-    for (let i = 0; i < simplifiedPath.length; i++) {
-      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
-      const p1 = simplifiedPath[i];
-      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
-      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
-      
-      const tension = 0.5;
-      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
-      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
-      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
-      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
-      const endX = p2.x * 72;
-      const endY = p2.y * 72;
-      
-      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
-    }
-    
-    pathOps += 'h S\n';
+    const pathOps = contourPointsToPDFPathOps(pathPoints);
     
     const existingContents = page.node.Contents();
     if (existingContents) {

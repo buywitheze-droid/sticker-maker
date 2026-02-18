@@ -271,6 +271,7 @@ function processContour(
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
+    cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
   },
   effectiveDPI: number
@@ -421,10 +422,18 @@ function processContour(
     scatteredAnalysis.isScattered ? 'scattered' : 
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
-  console.log('[Worker] Detected algorithm label:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
+  // Apply user algorithm override if set
+  if (strokeSettings.algorithm) {
+    console.log('[Worker] Algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
+    detectedAlgorithm = strokeSettings.algorithm;
+  }
   
-  // Dilate the filled single-component mask by the full stroke offset
-  let dilateRadiusHiRes = totalOffsetPixels * SUPER_SAMPLE;
+  console.log('[Worker] Effective algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
+  
+  // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
+  const useSharpCorners = detectedAlgorithm === 'shapes';
+  const pixelDilateOffset = useSharpCorners ? baseOffsetPixels : totalOffsetPixels;
+  let dilateRadiusHiRes = pixelDilateOffset * SUPER_SAMPLE;
   
   // Size guard: limit dilated mask to ~16M pixels to avoid memory blowups
   const maxDilatedPixels = 16_000_000;
@@ -438,7 +447,7 @@ function processContour(
     dilateRadiusHiRes = actualDilateRadius;
   }
   
-  console.log('[Worker] Dilating main component by', totalOffsetPixels, 'px (', dilateRadiusHiRes, 'px at', SUPER_SAMPLE, 'x)');
+  console.log('[Worker] Dilating main component by', pixelDilateOffset, 'px (', dilateRadiusHiRes, 'px at', SUPER_SAMPLE, 'x)', useSharpCorners ? '(sharp mode - vector offset pending)' : '(rounded mode)');
   const dilatedMask = dilateSilhouette(filledMainMask, hiResWidth, hiResHeight, dilateRadiusHiRes);
   const dilatedWidth = hiResWidth + dilateRadiusHiRes * 2;
   const dilatedHeight = hiResHeight + dilateRadiusHiRes * 2;
@@ -454,13 +463,17 @@ function processContour(
   }
   
   // Downscale contour points from hi-res to original resolution
-  // The dilated mask origin is offset by -dilateRadiusHiRes from the hi-res mask origin
-  // The hi-res mask origin maps to (0,0) in original image space
-  // So dilated mask point (px, py) maps to: ((px - dilateRadiusHiRes) / SUPER_SAMPLE, (py - dilateRadiusHiRes) / SUPER_SAMPLE)
   let smoothedPath = dilatedContour.map(p => ({
     x: (p.x - dilateRadiusHiRes) / SUPER_SAMPLE,
     y: (p.y - dilateRadiusHiRes) / SUPER_SAMPLE
   }));
+  
+  // For sharp mode: apply user offset via Clipper with miter joins
+  if (useSharpCorners && userOffsetPixels > 0) {
+    console.log('[Worker] Applying vector offset with MITER joins:', userOffsetPixels, 'px');
+    smoothedPath = clipperVectorOffset(smoothedPath, userOffsetPixels, true);
+    console.log('[Worker] Sharp vector offset result:', smoothedPath.length, 'points');
+  }
   
   // Vector weld: expand then shrink by small amount to merge nearby path segments
   const weldPx = previewMode ? 1.0 : 3.0;
