@@ -844,32 +844,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
       let imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
       
-      // For circles and ovals, scale down the image so it fits entirely inside the shape
-      // A rectangle fits inside a circle when its diagonal ≤ diameter
-      // For an oval, the inscribed rectangle must satisfy (w/2/a)² + (h/2/b)² ≤ 1
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2;
-        const diameter = radius * 2;
-        const diagonal = Math.sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
-        if (diagonal > diameter) {
-          const scale = diameter / diagonal;
-          imageWidth *= scale;
-          imageHeight *= scale;
-        }
-      } else if (shapeSettings.type === 'oval') {
-        const a = shapeWidth / 2;  // horizontal semi-axis
-        const b = shapeHeight / 2; // vertical semi-axis
-        // Check if rectangle corners exceed ellipse boundary
-        // Corner at (imageWidth/2, imageHeight/2) must satisfy (x/a)² + (y/b)² ≤ 1
-        const halfW = imageWidth / 2;
-        const halfH = imageHeight / 2;
-        const ellipseCheck = (halfW / a) ** 2 + (halfH / b) ** 2;
-        if (ellipseCheck > 1) {
-          const scale = 1 / Math.sqrt(ellipseCheck);
-          imageWidth *= scale;
-          imageHeight *= scale;
-        }
-      }
+      // For circles and ovals, do NOT scale down the image - let it fill naturally
+      // The image will be clipped to the shape boundary below, so corners that extend
+      // beyond the circle/oval are simply cropped away, giving a tight fit
       
       const imageX = shapeX + (shapeWidth - imageWidth) / 2;
       const imageY = shapeY + (shapeHeight - imageHeight) / 2;

@@ -749,24 +749,25 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           });
         }
 
-        // Center and draw the cropped image with manual positioning
-        const imageAspect = finalImage.width / finalImage.height;
-        const shapeAspect = outputWidth / outputHeight;
+        const imageWidth = resizeSettings.widthInches * 300;
+        const imageHeight = resizeSettings.heightInches * 300;
         
-        let imageWidth, imageHeight;
-        if (imageAspect > shapeAspect) {
-          imageWidth = outputWidth * 0.8;
-          imageHeight = imageWidth / imageAspect;
-        } else {
-          imageHeight = outputHeight * 0.8;
-          imageWidth = imageHeight * imageAspect;
-        }
-        
-        // Center the design in the shape (no manual offset needed)
         const imageX = (outputWidth - imageWidth) / 2;
         const imageY = (outputHeight - imageHeight) / 2;
         
+        ctx.save();
+        ctx.beginPath();
+        if (shapeSettings.type === 'circle') {
+          const clipRadius = Math.min(outputWidth, outputHeight) / 2;
+          ctx.arc(outputWidth / 2, outputHeight / 2, clipRadius, 0, Math.PI * 2);
+        } else if (shapeSettings.type === 'oval') {
+          ctx.ellipse(outputWidth / 2, outputHeight / 2, outputWidth / 2, outputHeight / 2, 0, 0, Math.PI * 2);
+        } else {
+          ctx.rect(0, 0, outputWidth, outputHeight);
+        }
+        ctx.clip();
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
+        ctx.restore();
 
         // Download final design only
         const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');

@@ -30,16 +30,14 @@ export function calculateShapeDimensions(
   const totalOffset = offset * 2; // offset on each side
   
   if (shapeType === 'circle') {
-    const diagonal = Math.sqrt(designWidthInches * designWidthInches + designHeightInches * designHeightInches);
-    const diameter = diagonal + totalOffset;
+    const diameter = Math.max(designWidthInches, designHeightInches) + totalOffset;
     return { widthInches: diameter, heightInches: diameter };
   } else if (shapeType === 'square' || shapeType === 'rounded-square') {
     const size = Math.max(designWidthInches, designHeightInches) + totalOffset;
     return { widthInches: size, heightInches: size };
   } else if (shapeType === 'oval') {
-    const SQRT2 = Math.SQRT2;
-    let width = designWidthInches * SQRT2 + totalOffset;
-    let height = designHeightInches * SQRT2 + totalOffset;
+    let width = designWidthInches + totalOffset;
+    let height = designHeightInches + totalOffset;
     
     const minAspectRatio = 1.2;
     const currentRatio = Math.max(width, height) / Math.min(width, height);
