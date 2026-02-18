@@ -58,25 +58,37 @@ export default function ResizeModal({
     }
   };
 
+  const handleSkip = () => {
+    onConfirm(detectedWidth, detectedHeight);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleCustomConfirm();
     }
   };
 
+  const resultingSize = (() => {
+    const size = parseFloat(customSize);
+    if (!isNaN(size) && size >= 0.5) {
+      const w = aspectRatio >= 1 ? size : size * aspectRatio;
+      const h = aspectRatio >= 1 ? size / aspectRatio : size;
+      return `${w.toFixed(1)}" × ${h.toFixed(1)}"`;
+    }
+    return null;
+  })();
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="sm:max-w-xs bg-white border-gray-200">
         <DialogHeader>
           <DialogTitle className="text-center text-base font-medium text-gray-700">
-            Choose size
+            Set sticker size
           </DialogTitle>
-          <p className="text-center text-xs text-gray-500 mt-1 italic">longest side in inches</p>
-          <p className="text-center text-xs text-gray-400 mt-0.5">you can change the size later</p>
         </DialogHeader>
 
-        {/* Custom size input - always visible */}
-        <div className="py-3">
+        <div className="py-2">
+          <p className="text-xs text-gray-400 text-center mb-2">longest side in inches</p>
           <div className="flex items-center gap-2">
             <input
               type="number"
@@ -86,46 +98,30 @@ export default function ResizeModal({
               value={customSize}
               onChange={(e) => setCustomSize(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="flex-1 h-12 text-center text-xl font-medium bg-white border-2 border-gray-300 rounded-lg text-gray-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none"
+              className="flex-1 h-11 text-center text-lg font-medium bg-white border-2 border-gray-300 rounded-lg text-gray-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none"
               placeholder="Size"
               autoFocus
             />
             <span className="text-lg text-gray-500 font-medium">"</span>
             <Button 
               onClick={handleCustomConfirm}
-              className="h-12 px-6 bg-cyan-600 hover:bg-cyan-700 text-white font-medium"
+              className="h-11 px-5 bg-cyan-600 hover:bg-cyan-700 text-white font-medium text-sm"
             >
               Apply size
             </Button>
           </div>
-          {(() => {
-            const size = parseFloat(customSize);
-            if (!isNaN(size) && size >= 0.5) {
-              const w = aspectRatio >= 1 ? size : size * aspectRatio;
-              const h = aspectRatio >= 1 ? size / aspectRatio : size;
-              return (
-                <p className="text-xs text-gray-400 text-center mt-2">
-                  Resulting size: {w.toFixed(1)}" × {h.toFixed(1)}"
-                </p>
-              );
-            }
-            return (
-              <p className="text-xs text-gray-400 text-center mt-2 italic">
-                We'll scale your design so the longest side equals this value.
-              </p>
-            );
-          })()}
-        </div>
+          {resultingSize && (
+            <p className="text-xs text-gray-400 text-center mt-1.5">
+              Resulting size: {resultingSize}
+            </p>
+          )}
 
-        {/* Quick size buttons */}
-        <div className="border-t border-gray-200 pt-3">
-          <p className="text-xs text-gray-400 text-center mb-2">Quick sizes</p>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="flex gap-1.5 mt-3 justify-center">
             {QUICK_SIZES.map((size) => (
               <button
                 key={size.value}
                 onClick={() => setCustomSize(String(size.value))}
-                className={`h-9 text-sm font-medium rounded-md border transition-colors ${
+                className={`h-8 px-3 text-xs font-medium rounded-md border transition-colors ${
                   parseFloat(customSize) === size.value
                     ? "bg-cyan-600 border-cyan-600 text-white"
                     : "border-gray-200 text-gray-500 bg-gray-50 hover:bg-cyan-50 hover:border-cyan-300 hover:text-cyan-700"
@@ -135,6 +131,18 @@ export default function ResizeModal({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="border-t border-gray-100 pt-3">
+          <button
+            onClick={handleSkip}
+            className="w-full py-2.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+          >
+            Skip — keep current size
+          </button>
+          <p className="text-xs text-gray-400 text-center mt-1">
+            Current: {detectedWidth.toFixed(1)}" × {detectedHeight.toFixed(1)}"
+          </p>
         </div>
       </DialogContent>
     </Dialog>
