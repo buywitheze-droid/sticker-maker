@@ -94,7 +94,7 @@ export default function ResizeModal({
               onClick={handleCustomConfirm}
               className="h-12 px-6 bg-cyan-600 hover:bg-cyan-700 text-white font-medium"
             >
-              Go
+              Apply size
             </Button>
           </div>
         </div>
