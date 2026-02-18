@@ -56,9 +56,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const dragStartRef = useRef<{x: number; y: number; panX: number; panY: number} | null>(null);
     
     const maxPanXY = useCallback(() => {
-      const limitX = Math.max(0, (zoom - 1) * 50);
-      const limitY = Math.max(0, (zoom - 1) * 50);
-      return { x: limitX, y: limitY };
+      const limit = 25 + Math.max(0, (zoom - 1) * 50);
+      return { x: limit, y: limit };
     }, [zoom]);
     
     const clampPan = useCallback((px: number, py: number) => {
@@ -78,11 +77,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, []);
     
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
-      if (zoom <= 1) return;
       e.preventDefault();
       setIsDragging(true);
       dragStartRef.current = { x: e.clientX, y: e.clientY, panX, panY };
-    }, [zoom, panX, panY]);
+    }, [panX, panY]);
     
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
       if (!isDragging || !dragStartRef.current) return;
@@ -105,12 +103,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [isDragging]);
     
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
-      if (zoom <= 1 || e.touches.length !== 1) return;
+      if (e.touches.length !== 1) return;
       e.preventDefault();
       const t = e.touches[0];
       setIsDragging(true);
       dragStartRef.current = { x: t.clientX, y: t.clientY, panX, panY };
-    }, [zoom, panX, panY]);
+    }, [panX, panY]);
     
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
       if (!isDragging || !dragStartRef.current || e.touches.length !== 1) return;
@@ -1228,7 +1226,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     backgroundColor: getBackgroundColor(),
                     overflow: 'hidden',
                     userSelect: 'none',
-                    touchAction: zoom !== 1 ? 'none' : 'auto'
+                    touchAction: 'none'
                   }}
                 >
                 <canvas 
@@ -1240,7 +1238,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
                     transformOrigin: 'center',
                     transition: isDragging ? 'none' : 'transform 0.15s ease-out',
-                    cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                    cursor: isDragging ? 'grabbing' : 'grab'
                   }}
                 />
                 
