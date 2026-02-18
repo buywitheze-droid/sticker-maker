@@ -1687,13 +1687,11 @@ export async function downloadContourPDF(
     
     {
       const workerManager = getContourWorkerManager();
-      const cached = workerManager.getCachedExportData();
-      let exportData: typeof cached;
-      if (cached) {
-        console.log('[downloadContourPDF] Using cached full-res export data (instant)');
-        exportData = cached;
+      let exportData = await workerManager.awaitExportData();
+      if (exportData) {
+        console.log('[downloadContourPDF] Using cached/awaited full-res export data');
       } else {
-        console.log('[downloadContourPDF] No cached export - running full-res export now');
+        console.log('[downloadContourPDF] No export available - running full-res export now');
         exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
       }
       if (exportData) {

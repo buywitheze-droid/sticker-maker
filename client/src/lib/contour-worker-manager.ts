@@ -110,6 +110,8 @@ class ContourWorkerManager {
   private cachedContourData: ContourData | null = null;
   private cachedExportData: ContourData | null = null;
   private exportGeneration = 0;
+  private exportPromise: Promise<ContourData | null> | null = null;
+  private exportResolve: ((data: ContourData | null) => void) | null = null;
   private pendingExport: {
     image: HTMLImageElement;
     strokeSettings: ProcessRequest['strokeSettings'];
@@ -128,10 +130,26 @@ class ContourWorkerManager {
   getCachedExportData(): ContourData | null {
     return this.cachedExportData;
   }
+
+  async awaitExportData(): Promise<ContourData | null> {
+    if (this.cachedExportData) {
+      return this.cachedExportData;
+    }
+    if (this.exportPromise) {
+      console.log('[ContourWorker] Awaiting background export...');
+      return this.exportPromise;
+    }
+    return null;
+  }
   
   clearCache() {
     this.cachedContourData = null;
     this.cachedExportData = null;
+    if (this.exportResolve) {
+      this.exportResolve(null);
+      this.exportResolve = null;
+    }
+    this.exportPromise = null;
     this.exportGeneration++;
   }
 
@@ -171,6 +189,11 @@ class ContourWorkerManager {
     if (this.currentRequest) {
       this.currentRequest.reject(new Error('Worker crashed'));
       this.finishProcessing();
+    }
+    this.pendingExport = null;
+    if (this.exportResolve) {
+      this.exportResolve(null);
+      this.exportResolve = null;
     }
     this.initWorker();
   }
@@ -247,12 +270,19 @@ class ContourWorkerManager {
     resultCtx.putImageData(result.imageData, 0, 0);
 
     this.cachedExportData = null;
+    if (this.exportResolve) {
+      this.exportResolve(null);
+    }
     this.exportGeneration++;
+    const gen = this.exportGeneration;
+    this.exportPromise = new Promise<ContourData | null>((resolve) => {
+      this.exportResolve = resolve;
+    });
     this.pendingExport = {
       image,
       strokeSettings: { ...strokeSettings },
       resizeSettings: { ...resizeSettings },
-      generation: this.exportGeneration
+      generation: gen
     };
 
     return {
@@ -277,11 +307,23 @@ class ContourWorkerManager {
       if (generation === this.exportGeneration && exportData) {
         this.cachedExportData = exportData;
         console.log('[ContourWorker] Background export cached (gen:', generation, ')');
+        if (this.exportResolve) {
+          this.exportResolve(exportData);
+          this.exportResolve = null;
+        }
       } else {
         console.log('[ContourWorker] Background export discarded - stale generation');
+        if (generation === this.exportGeneration && this.exportResolve) {
+          this.exportResolve(null);
+          this.exportResolve = null;
+        }
       }
     } catch (e) {
       console.warn('[ContourWorker] Background export failed:', e);
+      if (generation === this.exportGeneration && this.exportResolve) {
+        this.exportResolve(null);
+        this.exportResolve = null;
+      }
     }
   }
 
