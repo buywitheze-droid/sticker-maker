@@ -1,3 +1,4 @@
+import { useState } from "react";
 import ImageEditor from "@/components/image-editor";
 import gooseImg from "@assets/goose_animated.png";
 import samuraiImg from "@assets/samurai_animated.png";
@@ -5,6 +6,7 @@ import samuraiSlashImg from "@assets/samurai_slash.png";
 import fireSlashImg from "@assets/fire_slash.png";
 
 export default function StickerMaker() {
+  const [gooseClicks, setGooseClicks] = useState(0);
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <style>{`
@@ -191,8 +193,17 @@ export default function StickerMaker() {
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center space-x-2 text-sm text-gray-500 relative z-10">
-            <span>click here to see what happens to the goose</span>
+          <div className="hidden sm:flex items-center space-x-2 text-sm relative z-10">
+            {gooseClicks >= 10 ? (
+              <span className="text-red-500 font-semibold">stop being silly and upload your Design</span>
+            ) : (
+              <button
+                onClick={() => setGooseClicks(c => c + 1)}
+                className="text-gray-500 hover:text-gray-700 cursor-pointer transition-colors"
+              >
+                click here to see what happens to the goose ({10 - gooseClicks})
+              </button>
+            )}
           </div>
         </div>
       </header>
