@@ -879,18 +879,34 @@ export default function ImageEditor() {
     return (
       <div className="min-h-[70vh] flex items-center justify-center">
         <div className="w-full max-w-xl mx-auto transition-all duration-300">
-          <UploadSection 
-            onImageUpload={handleImageUpload}
-            onPDFUpload={handlePDFUpload}
-            showCutLineInfo={false}
-            imageInfo={null}
-            resizeSettings={resizeSettings}
-            stickerSize={stickerSize}
-          />
+          {showResizeModal && detectedDimensions ? (
+            <ResizeModal
+              open={showResizeModal}
+              onClose={handleResizeModalClose}
+              onConfirm={handleResizeConfirm}
+              detectedWidth={detectedDimensions.width}
+              detectedHeight={detectedDimensions.height}
+            />
+          ) : (
+            <UploadSection 
+              onImageUpload={handleImageUpload}
+              onPDFUpload={handlePDFUpload}
+              showCutLineInfo={false}
+              imageInfo={null}
+              resizeSettings={resizeSettings}
+              stickerSize={stickerSize}
+            />
+          )}
         </div>
-        
-        {/* Resize Modal - must be here for initial upload */}
-        {detectedDimensions && (
+      </div>
+    );
+  }
+
+  // Show inline resize panel when re-uploading from loaded state
+  if (showResizeModal && detectedDimensions) {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center">
+        <div className="w-full max-w-xl mx-auto transition-all duration-300">
           <ResizeModal
             open={showResizeModal}
             onClose={handleResizeModalClose}
@@ -898,7 +914,7 @@ export default function ImageEditor() {
             detectedWidth={detectedDimensions.width}
             detectedHeight={detectedDimensions.height}
           />
-        )}
+        </div>
       </div>
     );
   }
@@ -996,16 +1012,6 @@ export default function ImageEditor() {
         </div>
       )}
 
-      {/* Resize Modal */}
-      {detectedDimensions && (
-        <ResizeModal
-          open={showResizeModal}
-          onClose={handleResizeModalClose}
-          onConfirm={handleResizeConfirm}
-          detectedWidth={detectedDimensions.width}
-          detectedHeight={detectedDimensions.height}
-        />
-      )}
     </div>
   );
 }
