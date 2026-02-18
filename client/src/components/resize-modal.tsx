@@ -97,6 +97,23 @@ export default function ResizeModal({
               Apply size
             </Button>
           </div>
+          {(() => {
+            const size = parseFloat(customSize);
+            if (!isNaN(size) && size >= 0.5) {
+              const w = aspectRatio >= 1 ? size : size * aspectRatio;
+              const h = aspectRatio >= 1 ? size / aspectRatio : size;
+              return (
+                <p className="text-xs text-gray-400 text-center mt-2">
+                  Resulting size: {w.toFixed(1)}" × {h.toFixed(1)}"
+                </p>
+              );
+            }
+            return (
+              <p className="text-xs text-gray-400 text-center mt-2 italic">
+                We'll scale your design so the longest side equals this value.
+              </p>
+            );
+          })()}
         </div>
 
         {/* Quick size buttons */}
