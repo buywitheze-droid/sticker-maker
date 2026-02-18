@@ -72,6 +72,7 @@ export default function ResizeModal({
             Choose size
           </DialogTitle>
           <p className="text-center text-xs text-gray-500 mt-1 italic">longest side in inches</p>
+          <p className="text-center text-xs text-gray-400 mt-0.5">you can change the size later</p>
         </DialogHeader>
 
         {/* Custom size input - always visible */}
