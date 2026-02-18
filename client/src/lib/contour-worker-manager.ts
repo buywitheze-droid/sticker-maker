@@ -108,16 +108,6 @@ class ContourWorkerManager {
   } | null = null;
   
   private cachedContourData: ContourData | null = null;
-  private cachedExportData: ContourData | null = null;
-  private exportGeneration = 0;
-  private exportPromise: Promise<ContourData | null> | null = null;
-  private exportResolve: ((data: ContourData | null) => void) | null = null;
-  private pendingExport: {
-    image: HTMLImageElement;
-    strokeSettings: ProcessRequest['strokeSettings'];
-    resizeSettings: ResizeSettings;
-    generation: number;
-  } | null = null;
 
   constructor() {
     this.initWorker();
@@ -126,31 +116,9 @@ class ContourWorkerManager {
   getCachedContourData(): ContourData | null {
     return this.cachedContourData;
   }
-
-  getCachedExportData(): ContourData | null {
-    return this.cachedExportData;
-  }
-
-  async awaitExportData(): Promise<ContourData | null> {
-    if (this.cachedExportData) {
-      return this.cachedExportData;
-    }
-    if (this.exportPromise) {
-      console.log('[ContourWorker] Awaiting background export...');
-      return this.exportPromise;
-    }
-    return null;
-  }
   
   clearCache() {
     this.cachedContourData = null;
-    this.cachedExportData = null;
-    if (this.exportResolve) {
-      this.exportResolve(null);
-      this.exportResolve = null;
-    }
-    this.exportPromise = null;
-    this.exportGeneration++;
   }
 
   private initWorker() {
@@ -190,11 +158,6 @@ class ContourWorkerManager {
       this.currentRequest.reject(new Error('Worker crashed'));
       this.finishProcessing();
     }
-    this.pendingExport = null;
-    if (this.exportResolve) {
-      this.exportResolve(null);
-      this.exportResolve = null;
-    }
     this.initWorker();
   }
 
@@ -206,10 +169,6 @@ class ContourWorkerManager {
       const { request, resolve, reject, onProgress } = this.pendingRequest;
       this.pendingRequest = null;
       this.processInWorker(request, onProgress).then(resolve).catch(reject);
-    } else if (this.pendingExport) {
-      const { image, strokeSettings, resizeSettings, generation } = this.pendingExport;
-      this.pendingExport = null;
-      this.runBackgroundExport(image, strokeSettings, resizeSettings, generation);
     }
   }
 
@@ -269,22 +228,6 @@ class ContourWorkerManager {
 
     resultCtx.putImageData(result.imageData, 0, 0);
 
-    this.cachedExportData = null;
-    if (this.exportResolve) {
-      this.exportResolve(null);
-    }
-    this.exportGeneration++;
-    const gen = this.exportGeneration;
-    this.exportPromise = new Promise<ContourData | null>((resolve) => {
-      this.exportResolve = resolve;
-    });
-    this.pendingExport = {
-      image,
-      strokeSettings: { ...strokeSettings },
-      resizeSettings: { ...resizeSettings },
-      generation: gen
-    };
-
     return {
       canvas: resultCanvas,
       downsampleScale: scale,
@@ -293,86 +236,6 @@ class ContourWorkerManager {
       contourData: result.contourData,
       detectedAlgorithm: result.detectedAlgorithm
     };
-  }
-
-  async runBackgroundExport(
-    image: HTMLImageElement,
-    strokeSettings: ProcessRequest['strokeSettings'],
-    resizeSettings: ResizeSettings,
-    generation: number
-  ) {
-    try {
-      console.log('[ContourWorker] Background export starting (gen:', generation, ')');
-      const exportData = await this.processForExport(image, strokeSettings, resizeSettings);
-      if (generation === this.exportGeneration && exportData) {
-        this.cachedExportData = exportData;
-        console.log('[ContourWorker] Background export cached (gen:', generation, ')');
-        if (this.exportResolve) {
-          this.exportResolve(exportData);
-          this.exportResolve = null;
-        }
-      } else {
-        console.log('[ContourWorker] Background export discarded - stale generation');
-        if (generation === this.exportGeneration && this.exportResolve) {
-          this.exportResolve(null);
-          this.exportResolve = null;
-        }
-      }
-    } catch (e) {
-      console.warn('[ContourWorker] Background export failed:', e);
-      if (generation === this.exportGeneration && this.exportResolve) {
-        this.exportResolve(null);
-        this.exportResolve = null;
-      }
-    }
-  }
-
-  async processForExport(
-    image: HTMLImageElement,
-    strokeSettings: {
-      width: number;
-      color: string;
-      enabled: boolean;
-      alphaThreshold: number;
-      backgroundColor: string;
-      useCustomBackground: boolean;
-      autoBridging: boolean;
-      autoBridgingThreshold: number;
-      cornerMode: 'rounded' | 'sharp';
-      algorithm?: 'shapes' | 'complex';
-    },
-    resizeSettings: ResizeSettings,
-    onProgress?: ProgressCallback
-  ): Promise<ContourData | null> {
-    if (!this.worker) {
-      return null;
-    }
-
-    const { canvas, scale } = downsampleImage(image);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const clonedData = new ImageData(
-      new Uint8ClampedArray(imageData.data),
-      imageData.width,
-      imageData.height
-    );
-
-    const dpiFromWidth = canvas.width / resizeSettings.widthInches;
-    const dpiFromHeight = canvas.height / resizeSettings.heightInches;
-    const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
-
-    const request: ProcessRequest = {
-      imageData: clonedData,
-      strokeSettings,
-      effectiveDPI,
-      resizeSettings: { ...resizeSettings, outputDPI: effectiveDPI },
-      previewMode: false
-    };
-
-    const result = await this.processInWorker(request, onProgress);
-    return result.contourData || null;
   }
 
   private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {

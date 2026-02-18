@@ -1687,22 +1687,17 @@ export async function downloadContourPDF(
     
     {
       const workerManager = getContourWorkerManager();
-      let exportData = await workerManager.awaitExportData();
-      if (exportData) {
-        console.log('[downloadContourPDF] Using cached/awaited full-res export data');
+      const contourData = workerManager.getCachedContourData();
+      if (contourData) {
+        console.log('[downloadContourPDF] Using cached preview contour data (instant)');
+        pathPoints = contourData.pathPoints;
+        widthInches = contourData.widthInches;
+        heightInches = contourData.heightInches;
+        imageOffsetX = contourData.imageOffsetX;
+        imageOffsetY = contourData.imageOffsetY;
+        backgroundColor = contourData.backgroundColor;
       } else {
-        console.log('[downloadContourPDF] No export available - running full-res export now');
-        exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
-      }
-      if (exportData) {
-        pathPoints = exportData.pathPoints;
-        widthInches = exportData.widthInches;
-        heightInches = exportData.heightInches;
-        imageOffsetX = exportData.imageOffsetX;
-        imageOffsetY = exportData.imageOffsetY;
-        backgroundColor = exportData.backgroundColor;
-      } else {
-        console.error('[downloadContourPDF] Worker export failed - no contour data available');
+        console.error('[downloadContourPDF] No contour data available - generate preview first');
         return;
       }
     }
@@ -1950,18 +1945,17 @@ export async function generateContourPDFBase64(
     imageOffsetY = cachedContourData.imageOffsetY;
     backgroundColor = cachedContourData.backgroundColor;
   } else {
-    console.log('[generateContourPDFBase64] No cache - running worker at export resolution');
     const workerManager = getContourWorkerManager();
-    const exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
-    if (exportData) {
-      pathPoints = exportData.pathPoints;
-      widthInches = exportData.widthInches;
-      heightInches = exportData.heightInches;
-      imageOffsetX = exportData.imageOffsetX;
-      imageOffsetY = exportData.imageOffsetY;
-      backgroundColor = exportData.backgroundColor;
+    const contourData = workerManager.getCachedContourData();
+    if (contourData) {
+      pathPoints = contourData.pathPoints;
+      widthInches = contourData.widthInches;
+      heightInches = contourData.heightInches;
+      imageOffsetX = contourData.imageOffsetX;
+      imageOffsetY = contourData.imageOffsetY;
+      backgroundColor = contourData.backgroundColor;
     } else {
-      console.error('[generateContourPDFBase64] Worker export failed - no contour data available');
+      console.error('[generateContourPDFBase64] No contour data available - generate preview first');
       return null;
     }
   }
