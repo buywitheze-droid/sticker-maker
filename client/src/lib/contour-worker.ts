@@ -1829,27 +1829,12 @@ function retainNearbyOrphans(contours: Point[][], effectiveDPI: number): Point[]
   if (contours.length <= 1) return contours;
 
   const keepNearMainDistInches = 0.25;
-  const keepNearMainDistPx = Math.max(8, Math.round(keepNearMainDistInches * effectiveDPI));
-
-  const baseExpandIn = Math.max(keepNearMainDistInches, 0.35);
-  const extraExpandIn = 0.15;
-  const expandPx = Math.max(8, Math.round((baseExpandIn + extraExpandIn) * effectiveDPI));
-
-  const boundsIntersect = (a: {minX: number; minY: number; maxX: number; maxY: number},
-                           b: {minX: number; minY: number; maxX: number; maxY: number}) =>
-    !(b.maxX < a.minX || b.minX > a.maxX || b.maxY < a.minY || b.minY > a.maxY);
-
-  const expandBounds = (b: {minX: number; minY: number; maxX: number; maxY: number}, padPx: number) => ({
-    minX: b.minX - padPx,
-    minY: b.minY - padPx,
-    maxX: b.maxX + padPx,
-    maxY: b.maxY + padPx
-  });
+  const keepNearMainDistPx = Math.max(8, keepNearMainDistInches * effectiveDPI);
 
   const withMeta = contours.map(c => ({
     points: c,
     bounds: computeBounds(c),
-    area: Math.abs(computePolygonArea(c))
+    area: computePolygonArea(c)
   }));
 
   let mainIdx = 0;
@@ -1857,59 +1842,20 @@ function retainNearbyOrphans(contours: Point[][], effectiveDPI: number): Point[]
     if (withMeta[i].area > withMeta[mainIdx].area) mainIdx = i;
   }
 
-  const main = withMeta[mainIdx];
-  const mainBounds = main.bounds;
-  const expandedMain = expandBounds(mainBounds, expandPx);
-
-  const relMin = Math.round(main.area * 0.0015);
-  const dynamicMinArea = Math.max(40, relMin);
-
-  const maxExtraArea = Math.round(main.area * 0.65);
-  let extraAreaKept = 0;
-
-  const kept: Point[][] = [main.points];
+  const kept: Point[][] = [withMeta[mainIdx].points];
+  const mainBounds = withMeta[mainIdx].bounds;
 
   for (let i = 0; i < withMeta.length; i++) {
     if (i === mainIdx) continue;
-
-    const c = withMeta[i];
-
-    if (c.area < dynamicMinArea) {
+    if (boundsWithinDistance(mainBounds, withMeta[i].bounds, keepNearMainDistPx)) {
+      console.log('[Worker] retainNearbyOrphans: keeping orphan', i,
+        'area=', Math.round(withMeta[i].area), 'px² (within', keepNearMainDistInches, 'in)');
+      kept.push(withMeta[i].points);
+    } else {
       console.log('[Worker] retainNearbyOrphans: discarding orphan', i,
-        'area=', Math.round(c.area), 'px² (below dynamicMinArea=', dynamicMinArea, ')');
-      continue;
+        'area=', Math.round(withMeta[i].area), 'px² (too far from main body)');
     }
-
-    const ok =
-      boundsIntersect(expandedMain, c.bounds) ||
-      boundsWithinDistance(mainBounds, c.bounds, keepNearMainDistPx);
-
-    if (!ok) {
-      console.log('[Worker] retainNearbyOrphans: discarding orphan', i,
-        'area=', Math.round(c.area), 'px² (too far + outside expanded region)');
-      continue;
-    }
-
-    if (extraAreaKept + c.area > maxExtraArea) {
-      console.log('[Worker] retainNearbyOrphans: discarding orphan', i,
-        'area=', Math.round(c.area), 'px² (exceeds maxExtraArea cap)');
-      continue;
-    }
-
-    console.log('[Worker] retainNearbyOrphans: keeping orphan', i,
-      'area=', Math.round(c.area), 'px² (expandPx=', expandPx, ', keepDistPx=', keepNearMainDistPx, ')');
-
-    kept.push(c.points);
-    extraAreaKept += c.area;
   }
-
-  console.log('[Worker] retainNearbyOrphans:',
-    'total=', contours.length,
-    'mainArea=', Math.round(main.area),
-    'dynamicMinArea=', dynamicMinArea,
-    'expandPx=', expandPx,
-    'kept=', kept.length
-  );
 
   return kept;
 }
