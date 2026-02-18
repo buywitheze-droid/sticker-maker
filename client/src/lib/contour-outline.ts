@@ -1686,9 +1686,16 @@ export async function downloadContourPDF(
     let backgroundColor: string;
     
     {
-      console.log('[downloadContourPDF] Running worker at full export resolution for smooth PDF contour');
       const workerManager = getContourWorkerManager();
-      const exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
+      const cached = workerManager.getCachedExportData();
+      let exportData: typeof cached;
+      if (cached) {
+        console.log('[downloadContourPDF] Using cached full-res export data (instant)');
+        exportData = cached;
+      } else {
+        console.log('[downloadContourPDF] No cached export - running full-res export now');
+        exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
+      }
       if (exportData) {
         pathPoints = exportData.pathPoints;
         widthInches = exportData.widthInches;

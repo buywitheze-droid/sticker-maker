@@ -108,6 +108,14 @@ class ContourWorkerManager {
   } | null = null;
   
   private cachedContourData: ContourData | null = null;
+  private cachedExportData: ContourData | null = null;
+  private exportGeneration = 0;
+  private pendingExport: {
+    image: HTMLImageElement;
+    strokeSettings: ProcessRequest['strokeSettings'];
+    resizeSettings: ResizeSettings;
+    generation: number;
+  } | null = null;
 
   constructor() {
     this.initWorker();
@@ -116,9 +124,15 @@ class ContourWorkerManager {
   getCachedContourData(): ContourData | null {
     return this.cachedContourData;
   }
+
+  getCachedExportData(): ContourData | null {
+    return this.cachedExportData;
+  }
   
   clearCache() {
     this.cachedContourData = null;
+    this.cachedExportData = null;
+    this.exportGeneration++;
   }
 
   private initWorker() {
@@ -169,6 +183,10 @@ class ContourWorkerManager {
       const { request, resolve, reject, onProgress } = this.pendingRequest;
       this.pendingRequest = null;
       this.processInWorker(request, onProgress).then(resolve).catch(reject);
+    } else if (this.pendingExport) {
+      const { image, strokeSettings, resizeSettings, generation } = this.pendingExport;
+      this.pendingExport = null;
+      this.runBackgroundExport(image, strokeSettings, resizeSettings, generation);
     }
   }
 
@@ -227,6 +245,16 @@ class ContourWorkerManager {
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
     resultCtx.putImageData(result.imageData, 0, 0);
+
+    this.cachedExportData = null;
+    this.exportGeneration++;
+    this.pendingExport = {
+      image,
+      strokeSettings: { ...strokeSettings },
+      resizeSettings: { ...resizeSettings },
+      generation: this.exportGeneration
+    };
+
     return {
       canvas: resultCanvas,
       downsampleScale: scale,
@@ -235,6 +263,26 @@ class ContourWorkerManager {
       contourData: result.contourData,
       detectedAlgorithm: result.detectedAlgorithm
     };
+  }
+
+  async runBackgroundExport(
+    image: HTMLImageElement,
+    strokeSettings: ProcessRequest['strokeSettings'],
+    resizeSettings: ResizeSettings,
+    generation: number
+  ) {
+    try {
+      console.log('[ContourWorker] Background export starting (gen:', generation, ')');
+      const exportData = await this.processForExport(image, strokeSettings, resizeSettings);
+      if (generation === this.exportGeneration && exportData) {
+        this.cachedExportData = exportData;
+        console.log('[ContourWorker] Background export cached (gen:', generation, ')');
+      } else {
+        console.log('[ContourWorker] Background export discarded - stale generation');
+      }
+    } catch (e) {
+      console.warn('[ContourWorker] Background export failed:', e);
+    }
   }
 
   async processForExport(
