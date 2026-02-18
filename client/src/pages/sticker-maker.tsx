@@ -192,7 +192,7 @@ export default function StickerMaker() {
           </div>
 
           <div className="hidden sm:flex items-center space-x-2 text-sm text-gray-500 relative z-10">
-            <span>Simple sticker design tool</span>
+            <span>click here to see what happens to the goose</span>
           </div>
         </div>
       </header>
