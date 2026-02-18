@@ -1,6 +1,7 @@
 import ImageEditor from "@/components/image-editor";
-import gooseLogo from "@assets/goose_silhouette.png";
-import samuraiIcon from "@assets/samurai_katana.png";
+import gooseImg from "@assets/goose_animated.png";
+import samuraiImg from "@assets/samurai_animated.png";
+import fireSlashImg from "@assets/fire_slash.png";
 
 export default function StickerMaker() {
   return (
@@ -100,9 +101,11 @@ export default function StickerMaker() {
         .slash-effect {
           animation: slashFlash 6s linear infinite;
           position: absolute;
-          top: -8px;
-          left: -6px;
-          font-size: 18px;
+          top: -14px;
+          left: 8px;
+          width: 28px;
+          height: 28px;
+          object-fit: contain;
           pointer-events: none;
           opacity: 0;
           z-index: 3;
@@ -118,14 +121,14 @@ export default function StickerMaker() {
           <div className="hidden sm:block absolute inset-0 pointer-events-none">
             <div className="goose-pos">
               <span className="goose-wobble">
-                <img src={gooseLogo} alt="" className="w-8 h-8 object-contain" />
+                <img src={gooseImg} alt="" className="w-10 h-10 object-contain" />
               </span>
             </div>
             <div className="samurai-pos" style={{ position: 'relative' }}>
-              <span className="slash-effect">&#10040;</span>
+              <img src={fireSlashImg} alt="" className="slash-effect" />
               <span className="samurai-bob">
                 <span className="katana-slash">
-                  <img src={samuraiIcon} alt="" className="w-7 h-7 object-contain" />
+                  <img src={samuraiImg} alt="" className="w-9 h-9 object-contain" />
                 </span>
               </span>
             </div>
