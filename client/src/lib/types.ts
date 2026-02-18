@@ -27,11 +27,11 @@ export interface StrokeSettings {
   enabled: boolean;
   alphaThreshold: number;
   backgroundColor: string;
-  useCustomBackground: boolean; // If true, use backgroundColor; if false, use edge-aware bleed
-  cornerMode: ContourCornerMode; // 'rounded' for smooth arcs, 'sharp' for miter corners
-  autoBridging: boolean; // If true, close narrow gaps/caves in contour
-  autoBridgingThreshold: number; // Gap threshold in inches (default 0.02)
-  algorithm?: ContourAlgorithm; // 'shapes' for simple designs, 'complex' for complex/curved designs (default: shapes)
+  useCustomBackground: boolean;
+  cornerMode: ContourCornerMode;
+  autoBridging: boolean;
+  autoBridgingThreshold: number;
+  algorithm?: ContourAlgorithm;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
@@ -46,17 +46,19 @@ export interface ResizeSettings {
 export interface ShapeSettings {
   enabled: boolean;
   type: 'square' | 'rectangle' | 'circle' | 'oval' | 'rounded-square' | 'rounded-rectangle';
-  offset: number; // Margin around design in inches (replaces manual width/height)
+  offset: number;
   fillColor: string;
   strokeEnabled: boolean;
   strokeWidth: number;
   strokeColor: string;
-  cornerRadius?: number; // Corner radius in inches for rounded shapes (default 0.25)
-  bleedEnabled?: boolean; // Whether to add color bleed outside the shape
-  bleedColor?: string; // Color for the bleed area
+  cornerRadius?: number;
+  bleedEnabled?: boolean;
+  bleedColor?: string;
 }
 
-export type StickerSize = 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5 | 5.5;
+export type CutlineVisibility = 'thin' | 'normal' | 'bold';
+
+export type StickerSize = 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5 | 5.5 | 6;
 
 export const STICKER_SIZES: { value: StickerSize; label: string }[] = [
   { value: 2, label: '2 inch' },
@@ -67,6 +69,7 @@ export const STICKER_SIZES: { value: StickerSize; label: string }[] = [
   { value: 4.5, label: '4.5 inch' },
   { value: 5, label: '5 inch' },
   { value: 5.5, label: '5.5 inch' },
+  { value: 6, label: '6 inch' },
 ];
 
 export interface SpotColorData {

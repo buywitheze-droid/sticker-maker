@@ -28,22 +28,17 @@ export function createSilhouetteContour(
   const baseOffsetInches = 0.015;
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
-  // Detect if image contains text or small complex shapes that need extra smoothing
-  const hasTextOrSmallShapes = detectTextOrSmallShapes(image, strokeSettings.alphaThreshold);
-  
-  // Extra offset for text/small shapes (0.05") to create smoother contours
-  const textExtraOffsetInches = hasTextOrSmallShapes ? 0.05 : 0;
-  const textExtraOffsetPixels = Math.round(textExtraOffsetInches * effectiveDPI);
-  
   // Auto-bridge offset (0.02") - always applied to bridge outlines within 0.02" of each other
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
   
-  // User-selected offset on top of base
-  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  let gapClosePixels = 0;
+  if (strokeSettings.autoBridging) {
+    gapClosePixels = Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI);
+  }
   
-  // Total offset is base + user selection + text extra offset (gap close doesn't add to outline size)
-  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels + textExtraOffsetPixels;
+  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   // Canvas needs extra space for the total contour offset
   const padding = totalOffsetPixels + 10;
@@ -79,13 +74,62 @@ export function createSilhouetteContour(
       }
     }
     
-    // Step 3: Use the autoBridgedMask directly
-    const bridgedMask = autoBridgedMask;
-    const bridgedWidth = image.width;
-    const bridgedHeight = image.height;
+    // Step 3: If gap closing is enabled, only fill interior gaps without changing outer boundary
+    let bridgedMask = autoBridgedMask;
+    let bridgedWidth = image.width;
+    let bridgedHeight = image.height;
     
-    // Smooth bridge logic for nearby outlines
-    {
+    if (gapClosePixels > 0) {
+      // Use morphological closing: dilate, fill holes, then erode back
+      // This closes gaps while preserving the outer boundary shape
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      
+      // Step 3a: Dilate to connect nearby elements
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
+      
+      // Step 3b: Fill interior holes in the dilated mask
+      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+      
+      // Step 3c: Find interior gap pixels only (pixels that are gaps surrounded by content)
+      bridgedMask = new Uint8Array(image.width * image.height);
+      bridgedMask.set(autoBridgedMask); // Start with original
+      
+      // Only fill pixels that bridge content in opposing directions
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
+            const srcX = x + halfGapPixels;
+            const srcY = y + halfGapPixels;
+            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
+              // Check for content in opposing directions within halfGapPixels distance
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              // Bridge if content on opposing sides (vertical or horizontal bridge)
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[y * image.width + x] = 1;
+              }
+            }
+          }
+        }
+      }
+      
+      // Step 3d: After gap closing, create smooth bridges for any outlines within 0.03" of each other
       const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
       if (smoothBridgePixels > 0) {
         // Create a distance map from the mask - for each empty pixel, find distance to nearest content
@@ -156,26 +200,23 @@ export function createSilhouetteContour(
           }
         }
       }
+      
+      bridgedWidth = image.width;
+      bridgedHeight = image.height;
     }
     
-    // Step 3 (UNIFIED): Apply morphological closing to connect all objects into ONE shape
-    // This ensures multi-object images produce a single contour (consistent with PDF export)
-    const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI));
-    const unifiedMask = unifyDisconnectedObjects(bridgedMask, bridgedWidth, bridgedHeight, unifyRadius);
-    
-    // Step 4: Dilate by base offset to create unified silhouette
-    const baseDilatedMask = dilateSilhouette(unifiedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
+    // Step 3: Dilate by base offset to create unified silhouette
+    const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
     const baseWidth = bridgedWidth + baseOffsetPixels * 2;
     const baseHeight = bridgedHeight + baseOffsetPixels * 2;
     
     // Step 4: Fill the base silhouette to create solid shape
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // Step 5: Dilate the filled silhouette by user-selected offset + text extra offset
-    const combinedUserOffset = userOffsetPixels + textExtraOffsetPixels;
-    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, combinedUserOffset);
-    const dilatedWidth = baseWidth + combinedUserOffset * 2;
-    const dilatedHeight = baseHeight + combinedUserOffset * 2;
+    // Step 5: Dilate the filled silhouette by user-selected offset
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    const dilatedWidth = baseWidth + userOffsetPixels * 2;
+    const dilatedHeight = baseHeight + userOffsetPixels * 2;
     
     // Step 5a: Auto-bridge any touching or nearly touching contours after dilation
     // This detects where contour outlines are touching and fills the gaps
@@ -190,9 +231,16 @@ export function createSilhouetteContour(
     }
     
     // Step 6: Smooth and simplify the path
-    // Apply extra smoothing for text/small shapes (window size 4 vs 2 for normal)
-    const smoothingWindow = hasTextOrSmallShapes ? 4 : 2;
-    let smoothedPath = smoothPath(boundaryPath, smoothingWindow);
+    let smoothedPath = smoothPath(boundaryPath, 2);
+    
+    // Apply gap closing using U/N shapes based on settings
+    const gapThresholdPixels = strokeSettings.autoBridging 
+      ? Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI) 
+      : 0;
+    
+    if (gapThresholdPixels > 0) {
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+    }
     
     // Step 7: Draw the contour
     const offsetX = padding - totalOffsetPixels;
@@ -208,107 +256,6 @@ export function createSilhouetteContour(
   }
   
   return canvas;
-}
-
-// Detect if image contains text or small complex shapes that benefit from extra smoothing
-// Looks for high edge-to-area ratio (lots of detail relative to size) and multiple disconnected regions
-function detectTextOrSmallShapes(image: HTMLImageElement, alphaThreshold: number): boolean {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return false;
-  
-  canvas.width = image.width;
-  canvas.height = image.height;
-  ctx.drawImage(image, 0, 0);
-  
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
-  
-  let edgeCount = 0;
-  let opaqueCount = 0;
-  let componentCount = 0;
-  
-  // Create visited array for component counting
-  const visited = new Uint8Array(canvas.width * canvas.height);
-  
-  for (let y = 1; y < canvas.height - 1; y++) {
-    for (let x = 1; x < canvas.width - 1; x++) {
-      const idx = y * canvas.width + x;
-      const alpha = data[idx * 4 + 3];
-      
-      if (alpha >= alphaThreshold) {
-        opaqueCount++;
-        
-        // Count as edge if any neighbor is transparent
-        const neighbors = [
-          data[((y - 1) * canvas.width + x) * 4 + 3],
-          data[((y + 1) * canvas.width + x) * 4 + 3],
-          data[(y * canvas.width + (x - 1)) * 4 + 3],
-          data[(y * canvas.width + (x + 1)) * 4 + 3],
-        ];
-        
-        if (neighbors.some(n => n < alphaThreshold)) {
-          edgeCount++;
-        }
-        
-        // Count connected components using simple flood fill
-        if (!visited[idx]) {
-          componentCount++;
-          const queue = [idx];
-          visited[idx] = 1;
-          
-          while (queue.length > 0 && queue.length < 10000) { // Limit to avoid infinite loops
-            const current = queue.pop()!;
-            const cx = current % canvas.width;
-            const cy = Math.floor(current / canvas.width);
-            
-            // Check 4 neighbors
-            const neighborCoords = [
-              [cx, cy - 1], [cx, cy + 1], [cx - 1, cy], [cx + 1, cy]
-            ];
-            
-            for (const [nx, ny] of neighborCoords) {
-              if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
-                const nidx = ny * canvas.width + nx;
-                if (!visited[nidx] && data[nidx * 4 + 3] >= alphaThreshold) {
-                  visited[nidx] = 1;
-                  queue.push(nidx);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  if (opaqueCount === 0) return false;
-  
-  // Calculate edge-to-area ratio (higher = more detailed/complex shapes)
-  const edgeRatio = edgeCount / opaqueCount;
-  
-  // Text typically has:
-  // - High edge ratio (> 0.15) due to thin strokes with lots of edges
-  // - Multiple components (individual letters)
-  // - Relatively small total area
-  
-  const hasHighEdgeRatio = edgeRatio > 0.12;
-  const hasMultipleComponents = componentCount >= 3;
-  const hasSmallTotalArea = opaqueCount < (canvas.width * canvas.height * 0.4);
-  
-  // Consider it text/small shapes if it has high edge ratio OR multiple small components
-  const isTextLike = (hasHighEdgeRatio && hasSmallTotalArea) || 
-                     (hasMultipleComponents && hasHighEdgeRatio);
-  
-  if (isTextLike) {
-    console.log('[detectTextOrSmallShapes] Detected text/small shapes:', {
-      edgeRatio: edgeRatio.toFixed(3),
-      componentCount,
-      opaqueRatio: (opaqueCount / (canvas.width * canvas.height)).toFixed(3)
-    });
-  }
-  
-  return isTextLike;
 }
 
 // Fill interior of silhouette using flood fill from edges
@@ -575,41 +522,11 @@ function createMaskAtResolution(image: HTMLImageElement, targetWidth: number, ta
   const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
   const data = imageData.data;
   
-  // Create binary silhouette with smart artifact filtering
-  // Filters out semi-transparent dark/grey pixels from bad background removal
+  // Create binary silhouette: 1 = any visible pixel (alpha > 0), 0 = fully transparent
+  // Using a low threshold (10) to catch even semi-transparent edges
   const mask = new Uint8Array(targetWidth * targetHeight);
   for (let i = 0; i < mask.length; i++) {
-    const idx = i * 4;
-    const r = data[idx];
-    const g = data[idx + 1];
-    const b = data[idx + 2];
-    const alpha = data[idx + 3];
-    
-    // Skip fully transparent pixels
-    if (alpha <= 10) {
-      mask[i] = 0;
-      continue;
-    }
-    
-    // For semi-transparent pixels (alpha 11-200), apply artifact filtering
-    if (alpha < 200) {
-      // Calculate brightness (0-255)
-      const brightness = (r + g + b) / 3;
-      
-      // Dark semi-transparent pixels are likely artifacts from bad background removal
-      // The darker and more transparent, the more likely it's an artifact
-      // Reject if: low alpha + dark color (common in low DPI / bad cutout edges)
-      const isDarkArtifact = brightness < 80 && alpha < 150;
-      const isGreyArtifact = brightness < 120 && alpha < 100;
-      
-      if (isDarkArtifact || isGreyArtifact) {
-        mask[i] = 0;
-        continue;
-      }
-    }
-    
-    // Accept pixel as part of the silhouette
-    mask[i] = 1;
+    mask[i] = data[i * 4 + 3] > 10 ? 1 : 0;
   }
   
   return mask;
@@ -724,148 +641,6 @@ function erodeSilhouette(mask: Uint8Array, width: number, height: number, radius
   }
   
   return eroded;
-}
-
-// Unify disconnected objects into a single shape using TRUE morphological closing
-// Closing = Dilation followed by Erosion - connects nearby objects while preserving outer boundary
-// This ensures multi-object images (cloud + wings + text) become ONE cut contour
-function unifyDisconnectedObjects(mask: Uint8Array, width: number, height: number, closingRadius: number): Uint8Array {
-  if (closingRadius <= 0) return mask;
-  
-  // Step 1: Create padded mask so erosion doesn't lose edge content
-  const paddedWidth = width + closingRadius * 2;
-  const paddedHeight = height + closingRadius * 2;
-  const paddedMask = new Uint8Array(paddedWidth * paddedHeight);
-  
-  // Copy original mask into center of padded mask
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      paddedMask[(y + closingRadius) * paddedWidth + (x + closingRadius)] = mask[y * width + x];
-    }
-  }
-  
-  // Step 2: Dilate the padded mask to connect nearby objects
-  const dilatedMask = dilateSilhouetteInPlace(paddedMask, paddedWidth, paddedHeight, closingRadius);
-  
-  // Step 3: Fill interior holes in the dilated mask
-  const filledMask = fillInteriorHolesForUnification(dilatedMask, paddedWidth, paddedHeight);
-  
-  // Step 4: Erode back to restore original boundary (this shrinks connections)
-  const erodedMask = erodeSilhouetteInPlace(filledMask, paddedWidth, paddedHeight, closingRadius);
-  
-  // Step 5: Extract center portion matching original dimensions (properly aligned)
-  const unifiedMask = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      unifiedMask[y * width + x] = erodedMask[(y + closingRadius) * paddedWidth + (x + closingRadius)];
-    }
-  }
-  
-  return unifiedMask;
-}
-
-// Dilate mask in-place (same dimensions, edge pixels become solid if neighbor is solid)
-function dilateSilhouetteInPlace(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  const result = new Uint8Array(width * height);
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let hasNeighbor = false;
-      
-      for (let dy = -radius; dy <= radius && !hasNeighbor; dy++) {
-        for (let dx = -radius; dx <= radius && !hasNeighbor; dx++) {
-          if (dx * dx + dy * dy > radius * radius) continue;
-          
-          const nx = x + dx;
-          const ny = y + dy;
-          
-          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            if (mask[ny * width + nx] === 1) {
-              hasNeighbor = true;
-            }
-          }
-        }
-      }
-      
-      result[y * width + x] = hasNeighbor ? 1 : 0;
-    }
-  }
-  
-  return result;
-}
-
-// Erode mask in-place (same dimensions, pixel only solid if all neighbors are solid)
-function erodeSilhouetteInPlace(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  const result = new Uint8Array(width * height);
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let allSolid = true;
-      
-      for (let dy = -radius; dy <= radius && allSolid; dy++) {
-        for (let dx = -radius; dx <= radius && allSolid; dx++) {
-          if (dx * dx + dy * dy > radius * radius) continue;
-          
-          const nx = x + dx;
-          const ny = y + dy;
-          
-          if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            if (mask[ny * width + nx] === 0) {
-              allSolid = false;
-            }
-          } else {
-            allSolid = false;
-          }
-        }
-      }
-      
-      result[y * width + x] = allSolid ? 1 : 0;
-    }
-  }
-  
-  return result;
-}
-
-// Fill interior holes for unification (flood fill from edges)
-function fillInteriorHolesForUnification(mask: Uint8Array, width: number, height: number): Uint8Array {
-  // Flood fill from edges to find exterior, then invert to get filled shape
-  const exterior = new Uint8Array(width * height);
-  const stack: Array<{x: number, y: number}> = [];
-  
-  // Start from all edge pixels that are empty
-  for (let x = 0; x < width; x++) {
-    if (mask[x] === 0) stack.push({x, y: 0});
-    if (mask[(height - 1) * width + x] === 0) stack.push({x, y: height - 1});
-  }
-  for (let y = 0; y < height; y++) {
-    if (mask[y * width] === 0) stack.push({x: 0, y});
-    if (mask[y * width + width - 1] === 0) stack.push({x: width - 1, y});
-  }
-  
-  // Flood fill exterior
-  while (stack.length > 0) {
-    const {x, y} = stack.pop()!;
-    
-    if (x < 0 || x >= width || y < 0 || y >= height) continue;
-    
-    const idx = y * width + x;
-    if (exterior[idx] === 1 || mask[idx] === 1) continue;
-    
-    exterior[idx] = 1;
-    
-    stack.push({x: x + 1, y});
-    stack.push({x: x - 1, y});
-    stack.push({x, y: y + 1});
-    stack.push({x, y: y - 1});
-  }
-  
-  // Result: anything not exterior is filled (solid)
-  const filled = new Uint8Array(width * height);
-  for (let i = 0; i < filled.length; i++) {
-    filled[i] = exterior[i] === 0 ? 1 : 0;
-  }
-  
-  return filled;
 }
 
 interface Point {
@@ -1025,8 +800,8 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
     });
   }
   
-  // Step 6: Apply Chaikin's corner cutting for smoother curves (1 iteration = less curvy)
-  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 1);
+  // Step 6: Apply Chaikin's corner cutting for ultra-smooth curves
+  let chaikinSmoothed = applyChaikinSmoothing(medSmoothed, 2);
   
   // Step 7: Remove any remaining intersections
   chaikinSmoothed = removeSelfIntersections(chaikinSmoothed);
@@ -1055,21 +830,8 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   // Step 10: Final intersection removal
   fineSmoothed = removeSelfIntersections(fineSmoothed);
   
-  // Simplify to reduce point count (higher tolerance = less curvy, more angular)
-  let simplified = douglasPeucker(fineSmoothed, 2.5);
-  
-  // Remove nearly-collinear points to clean up straight edges
-  // Use 2 degree tolerance - removes micro-wobbles on straight lines while preserving curves
-  simplified = removeCollinearPoints(simplified, 2.0);
-  
-  // Smooth large sweeping curves (like butterfly wings) by reducing intermediate wobble points
-  // This makes big arcs cleaner without affecting small details
-  simplified = smoothLargeCurves(simplified, 15, 0.85, 30);
-  
-  // Also smooth medium curves (8+ points) with tighter angle threshold for cutter-friendly paths
-  simplified = smoothLargeCurves(simplified, 8, 0.5, 15);
-  
-  return simplified;
+  // Simplify to reduce point count with higher tolerance for smoother result
+  return douglasPeucker(fineSmoothed, 1.5);
 }
 
 // Chaikin's corner cutting algorithm for smooth curves
@@ -1183,6 +945,242 @@ function removeNarrowConcaveRegions(points: Point[]): Point[] {
   
   // Pass 2: Remove any remaining tight loops
   result = removeTightLoops(result);
+  
+  return result;
+}
+
+// Close gaps by detecting where paths are close and applying U/N shapes
+function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
+  if (points.length < 20) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const processed = new Set<number>();
+  
+  // Calculate centroid and average distance from centroid for the entire shape
+  let centroidX = 0, centroidY = 0;
+  for (const p of points) {
+    centroidX += p.x;
+    centroidY += p.y;
+  }
+  centroidX /= n;
+  centroidY /= n;
+  
+  // Calculate average distance from centroid (the "normal" radius of the shape)
+  let totalDist = 0;
+  for (const p of points) {
+    totalDist += Math.sqrt((p.x - centroidX) ** 2 + (p.y - centroidY) ** 2);
+  }
+  const avgDistFromCentroid = totalDist / n;
+  
+  // Find all gap locations where path points are within threshold but far apart in path order
+  const gaps: Array<{i: number, j: number, dist: number}> = [];
+  
+  // Limit how much of path we can skip to avoid deleting entire outline
+  const maxSkipPoints = Math.floor(n * 0.25); // Max 25% of path per gap
+  const minSkipPoints = 15; // Must skip at least 15 points to be a real gap
+  
+  const stride = n > 1000 ? 3 : n > 500 ? 2 : 1;
+  const thresholdSq = gapThreshold * gapThreshold;
+  
+  for (let i = 0; i < n; i += stride) {
+    const pi = points[i];
+    
+    // Search ahead but limit to maxSkipPoints to avoid false gaps
+    const maxSearch = Math.min(n - 5, i + maxSkipPoints);
+    for (let j = i + minSkipPoints; j < maxSearch; j += stride) {
+      const pj = points[j];
+      const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
+      
+      if (distSq < thresholdSq) {
+        // Check if this is a narrow passage (close) vs a protrusion (keep)
+        const dist = Math.sqrt(distSq);
+        const dx = pj.x - pi.x;
+        const dy = pj.y - pi.y;
+        const lineLen = dist;
+        
+        // Check max perpendicular distance of points between i and j
+        let maxPerpDist = 0;
+        const sampleStride = Math.max(1, Math.floor((j - i) / 20));
+        for (let k = i + sampleStride; k < j; k += sampleStride) {
+          const pk = points[k];
+          const perpDist = Math.abs((pk.x - pi.x) * dy - (pk.y - pi.y) * dx) / (lineLen || 1);
+          maxPerpDist = Math.max(maxPerpDist, perpDist);
+        }
+        
+        // If path extends more than 3x the gap distance, it's a protrusion - don't close
+        if (maxPerpDist > dist * 3) {
+          continue;
+        }
+        
+        gaps.push({i, j, dist});
+        break;
+      }
+    }
+  }
+  
+  if (gaps.length === 0) return points;
+  
+  // Classify gaps into two categories:
+  // 1. Inward gaps (original detection) - these point toward the centroid and get priority
+  // 2. Geometry gaps (new detection) - J-shaped, hooks, etc. that don't point inward
+  const inwardGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  const geometryGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  
+  for (const gap of gaps) {
+    // Calculate average distance of the gap section from centroid
+    let gapSectionDist = 0;
+    let gapSectionCount = 0;
+    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
+    for (let k = gap.i; k <= gap.j; k += sampleStride) {
+      const pk = points[k];
+      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
+      gapSectionCount++;
+    }
+    const avgGapDist = gapSectionDist / gapSectionCount;
+    
+    // Inward gap: section average is LESS than shape average (dips toward center)
+    if (avgGapDist < avgDistFromCentroid * 0.95) {
+      inwardGaps.push({...gap, priority: 1}); // High priority
+    } else {
+      geometryGaps.push({...gap, priority: 2}); // Lower priority
+    }
+  }
+  
+  // Filter geometry gaps to exclude any that overlap with inward gaps
+  // This ensures inward detection behavior stays exactly as before
+  const nonOverlappingGeometryGaps = geometryGaps.filter(geoGap => {
+    for (const inwardGap of inwardGaps) {
+      // Check if ranges overlap: geoGap[i,j] overlaps with inwardGap[i,j]
+      const overlapStart = Math.max(geoGap.i, inwardGap.i);
+      const overlapEnd = Math.min(geoGap.j, inwardGap.j);
+      if (overlapStart < overlapEnd) {
+        return false; // Overlaps with an inward gap, exclude it
+      }
+    }
+    return true; // No overlap, keep it
+  });
+  
+  // Combine: inward gaps (original behavior) + non-overlapping geometry gaps
+  const exteriorGaps = [...inwardGaps, ...nonOverlappingGeometryGaps];
+  
+  // Sort by path position for processing
+  const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
+  
+  const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
+  for (const gap of sortedGaps) {
+    let minDist = gap.dist;
+    let bestI = gap.i;
+    let bestJ = gap.j;
+    
+    const searchRange = Math.min(20, Math.floor((gap.j - gap.i) / 4));
+    for (let di = -searchRange; di <= searchRange; di++) {
+      const testI = gap.i + di;
+      if (testI < 0 || testI >= n) continue;
+      
+      for (let dj = -searchRange; dj <= searchRange; dj++) {
+        const testJ = gap.j + dj;
+        if (testJ < 0 || testJ >= n || testJ <= testI + 10) continue;
+        
+        const pi = points[testI];
+        const pj = points[testJ];
+        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+        
+        if (dist < minDist) {
+          minDist = dist;
+          bestI = testI;
+          bestJ = testJ;
+        }
+      }
+    }
+    
+    refinedGaps.push({i: bestI, j: bestJ, dist: minDist});
+  }
+  
+  let currentIdx = 0;
+  
+  for (const gap of refinedGaps) {
+    if (gap.i < currentIdx) continue;
+    
+    for (let k = currentIdx; k <= gap.i; k++) {
+      if (!processed.has(k)) {
+        result.push(points[k]);
+        processed.add(k);
+      }
+    }
+    
+    const p1 = points[gap.i];
+    const p2 = points[gap.j];
+    const gapDist = gap.dist;
+    
+    if (gapDist > 0.5) {
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      result.push({ x: midX, y: midY });
+    }
+    
+    // For exterior caves, ALWAYS delete the cave interior
+    // Skip all points between i and j (the "top of the P" / cave interior)
+    for (let k = gap.i + 1; k < gap.j; k++) {
+      processed.add(k);
+    }
+    
+    currentIdx = gap.j;
+  }
+  
+  for (let k = currentIdx; k < n; k++) {
+    if (!processed.has(k)) {
+      result.push(points[k]);
+    }
+  }
+  
+  // Apply smoothing pass to eliminate wave artifacts from gap closing
+  if (result.length >= 10 && refinedGaps.length > 0) {
+    return smoothBridgeAreasForGaps(result);
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Smooth the path to eliminate wave artifacts from gap closing
+function smoothBridgeAreasForGaps(points: Point[]): Point[] {
+  if (points.length < 10) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || i === n - 1) {
+      result.push(points[i]);
+    } else {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const next = points[i + 1];
+      
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+      
+      if (len1 > 0.1 && len2 > 0.1) {
+        const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+        
+        if (dot < 0.5) {
+          result.push({
+            x: prev.x * 0.25 + curr.x * 0.5 + next.x * 0.25,
+            y: prev.y * 0.25 + curr.y * 0.5 + next.y * 0.25
+          });
+        } else {
+          result.push(curr);
+        }
+      } else {
+        result.push(curr);
+      }
+    }
+  }
   
   return result;
 }
@@ -1628,189 +1626,6 @@ function douglasPeucker(points: Point[], epsilon: number): Point[] {
   }
 }
 
-// Remove nearly-collinear points on straight segments
-// This cleans up micro-curves that should be straight lines
-// Uses angle-based detection: if deviation from straight line is < threshold degrees, remove point
-function removeCollinearPoints(points: Point[], angleTolerance: number = 2.0): Point[] {
-  if (points.length < 3) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  const cosThreshold = Math.cos((angleTolerance * Math.PI) / 180); // Convert degrees to radians
-  
-  // Always keep first point
-  result.push(points[0]);
-  
-  for (let i = 1; i < n - 1; i++) {
-    const prev = result[result.length - 1]; // Use last kept point
-    const curr = points[i];
-    const next = points[i + 1];
-    
-    // Calculate vectors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 < 0.001 || len2 < 0.001) {
-      // Skip very short segments
-      continue;
-    }
-    
-    // Normalize and calculate dot product (cosine of angle)
-    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-    
-    // If vectors are nearly parallel (angle close to 0 or 180 degrees), skip point
-    // dot > cosThreshold means angle is small (straight line)
-    if (dot > cosThreshold) {
-      // Nearly straight - skip this point (don't add to result)
-      continue;
-    }
-    
-    // Keep the point - it represents an actual curve
-    result.push(curr);
-  }
-  
-  // Always keep last point
-  result.push(points[n - 1]);
-  
-  return result;
-}
-
-// Smooth large sweeping curves (like butterfly wings) by reducing wobble points
-// Detects sequences of points that form gentle arcs and reduces them to key anchor points
-// minSpan: minimum number of consecutive points to consider as a "large curve"
-// maxAnglePerPoint: max average angle change per point (radians) for gentle curve detection
-// minSpatialExtent: minimum bounding box size in pixels to qualify as a curve worth smoothing
-function smoothLargeCurves(points: Point[], minSpan: number = 15, maxAnglePerPoint: number = 0.12, minSpatialExtent: number = 30): Point[] {
-  if (points.length < minSpan) return points;
-  
-  const result: Point[] = [];
-  const n = points.length;
-  let i = 0;
-  
-  while (i < n) {
-    result.push(points[i]);
-    
-    // Try to find a large gentle curve starting from this point
-    let curveEnd = i + 2; // Need at least 2 points to measure angle
-    let prevAngle: number | null = null;
-    let curveDirection: number | null = null; // Track sign of curvature (+1 or -1)
-    let isGentleCurve = true;
-    let totalAngleChange = 0;
-    let minX = points[i].x, maxX = points[i].x;
-    let minY = points[i].y, maxY = points[i].y;
-    
-    // Look ahead to find consecutive points forming a gentle monotonic curve
-    while (curveEnd < n - 1 && curveEnd - i < 50) {
-      const p1 = points[curveEnd - 1];
-      const p2 = points[curveEnd];
-      
-      // Track bounding box for spatial extent check
-      minX = Math.min(minX, p2.x);
-      maxX = Math.max(maxX, p2.x);
-      minY = Math.min(minY, p2.y);
-      maxY = Math.max(maxY, p2.y);
-      
-      // Calculate direction angle
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const segmentLen = Math.sqrt(dx * dx + dy * dy);
-      
-      if (segmentLen < 0.5) {
-        curveEnd++;
-        continue; // Skip very short segments
-      }
-      
-      const currentAngle = Math.atan2(dy, dx);
-      
-      if (prevAngle !== null) {
-        // Calculate angle change
-        let angleDiff = currentAngle - prevAngle;
-        // Normalize to -PI to PI
-        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-        
-        // Track curvature direction (must be monotonic for gentle arc)
-        if (Math.abs(angleDiff) > 0.01) { // Ignore tiny angle changes
-          const thisDirection = angleDiff > 0 ? 1 : -1;
-          
-          if (curveDirection === null) {
-            curveDirection = thisDirection;
-          } else if (curveDirection !== thisDirection) {
-            // Direction changed - curve is not monotonic, stop here
-            break;
-          }
-        }
-        
-        totalAngleChange += Math.abs(angleDiff);
-        
-        // Check if average angle change exceeds threshold
-        const avgAngleChangePerPoint = totalAngleChange / (curveEnd - i);
-        if (avgAngleChangePerPoint > maxAnglePerPoint) {
-          isGentleCurve = false;
-          break;
-        }
-        
-        // Check for sudden sharp turn (indicates end of gentle curve)
-        if (Math.abs(angleDiff) > 0.4) { // ~23 degrees sudden change
-          break;
-        }
-      }
-      
-      prevAngle = currentAngle;
-      curveEnd++;
-    }
-    
-    const curveLength = curveEnd - i;
-    const bboxWidth = maxX - minX;
-    const bboxHeight = maxY - minY;
-    const spatialExtent = Math.max(bboxWidth, bboxHeight);
-    
-    // Only simplify if:
-    // 1. It's a gentle curve (monotonic, low angle change)
-    // 2. Has enough points
-    // 3. Has significant spatial extent to avoid affecting small features
-    if (isGentleCurve && curveLength >= minSpan && spatialExtent > minSpatialExtent) {
-      // Keep key anchor points with geometric error checking
-      const simplified: Point[] = [];
-      const step = Math.max(4, Math.floor(curveLength / 5)); // ~5 points per large curve
-      
-      for (let k = step; k < curveLength - 1; k += step) {
-        const idx = i + k;
-        if (idx < n && idx > i) {
-          // Check deviation from line to ensure we're not over-simplifying
-          const startPt = points[i];
-          const endPt = points[Math.min(i + curveLength - 1, n - 1)];
-          const testPt = points[idx];
-          const deviation = perpendicularDistance(testPt, startPt, endPt);
-          
-          // If this point deviates significantly from straight line, keep it
-          if (deviation > 2) {
-            simplified.push(points[idx]);
-          }
-        }
-      }
-      
-      // Add simplified points
-      for (const pt of simplified) {
-        result.push(pt);
-      }
-      
-      // Move to end of this curve
-      i = curveEnd - 1;
-    } else {
-      // Not a large curve, move to next point normally
-      i++;
-    }
-  }
-  
-  return result;
-}
-
 function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
   const dx = lineEnd.x - lineStart.x;
   const dy = lineEnd.y - lineStart.y;
@@ -1888,6 +1703,11 @@ export function getContourPath(
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
   
+  let gapClosePixels = 0;
+  if (strokeSettings.autoBridging) {
+    gapClosePixels = Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI);
+  }
+  
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
@@ -1911,14 +1731,50 @@ export function getContourPath(
       }
     }
     
-    const bridgedMask = autoBridgedMask;
+    let bridgedMask = autoBridgedMask;
     
-    // CRITICAL: Apply morphological closing to unify all objects into ONE shape
-    // This ensures disconnected elements (cloud, wings, text) become a single cut contour
-    const unifyRadius = Math.max(10, Math.round(0.05 * effectiveDPI)); // ~0.05" or 10px minimum
-    const unifiedMask = unifyDisconnectedObjects(bridgedMask, image.width, image.height, unifyRadius);
+    if (gapClosePixels > 0) {
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
+      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+      
+      bridgedMask = new Uint8Array(image.width * image.height);
+      bridgedMask.set(autoBridgedMask);
+      
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
+            const srcX = x + halfGapPixels;
+            const srcY = y + halfGapPixels;
+            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[y * image.width + x] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
     
-    const baseDilatedMask = dilateSilhouette(unifiedMask, image.width, image.height, baseOffsetPixels);
+    const baseDilatedMask = dilateSilhouette(bridgedMask, image.width, image.height, baseOffsetPixels);
     const baseWidth = image.width + baseOffsetPixels * 2;
     const baseHeight = image.height + baseOffsetPixels * 2;
     
@@ -2149,9 +2005,7 @@ export async function downloadShapePDF(
     } : { r: 1, g: 1, b: 1 };
   };
   
-  // Holographic is preview-only, exports as transparent (white fallback for PDF)
-  const effectiveFillColor = shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : shapeSettings.fillColor;
-  const fillColor = hexToRgb(effectiveFillColor);
+  const fillColor = hexToRgb(shapeSettings.fillColor);
   
   // Center coordinates
   const cx = widthPts / 2;

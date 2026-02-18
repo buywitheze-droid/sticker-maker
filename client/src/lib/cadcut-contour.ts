@@ -1,15 +1,8 @@
 import { StrokeSettings } from "@/components/image-editor";
-import { offsetPolygon, simplifyPolygon, type CornerMode, type Point as MinkowskiPoint } from "./minkowski-offset";
-
-export type ContourCornerMode = CornerMode;
-
-// Default miter limit for sharp corners (15.0 preserves sharp spikes)
-const DEFAULT_MITER_LIMIT = 15.0;
 
 export function createCadCutContour(
   image: HTMLImageElement,
-  strokeSettings: StrokeSettings,
-  cornerMode: ContourCornerMode = 'sharp'
+  strokeSettings: StrokeSettings
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -30,146 +23,39 @@ export function createCadCutContour(
     const mask = createAlphaMask(image);
     if (mask.length === 0) return canvas;
     
-    // Step 2: Find edge pixels of the original mask
-    const edgePixels = findEdgePixels(mask, image.width, image.height);
+    // Step 2: Dilate the mask by offset pixels (morphological dilation)
+    const dilatedMask = dilateMask(mask, image.width, image.height, offsetPixels);
+    const dilatedWidth = image.width + offsetPixels * 2;
+    const dilatedHeight = image.height + offsetPixels * 2;
+    
+    // Step 3: Find edge pixels of the dilated mask
+    const edgePixels = findEdgePixels(dilatedMask, dilatedWidth, dilatedHeight);
     
     if (edgePixels.length < 10) {
+      // Just draw the image centered if not enough edge pixels
       ctx.drawImage(image, padding, padding);
       return canvas;
     }
     
-    // Step 3: Order edge pixels using proper boundary tracing (chain following)
-    const orderedContour = orderEdgePixelsByChaining(edgePixels);
+    // Step 4: Create ordered contour path from edge pixels
+    const contourPath = createOrderedContour(edgePixels, dilatedWidth, dilatedHeight);
     
-    // Step 4: Simplify before offset for better performance
-    const simplified = simplifyPolygon(orderedContour, 0.5);
+    // Step 5: Draw the contour outline (offset to account for canvas padding difference)
+    const offsetX = padding - offsetPixels;
+    const offsetY = padding - offsetPixels;
     
-    // Step 5: Apply Clipper-based offset for mathematically correct expansion
-    const offsetContour = offsetPolygon(simplified, offsetPixels, cornerMode, DEFAULT_MITER_LIMIT);
+    drawContour(ctx, contourPath, strokeSettings.color || '#FFFFFF', offsetX, offsetY);
     
-    if (offsetContour.length < 3) {
-      ctx.drawImage(image, padding, padding);
-      return canvas;
-    }
-    
-    // Step 6: Draw the offset contour
-    const drawOffsetX = padding;
-    const drawOffsetY = padding;
-    
-    drawContour(ctx, offsetContour, strokeSettings.color || '#FFFFFF', drawOffsetX, drawOffsetY);
-    
-    // Step 7: Draw the original image on top, centered in the canvas
+    // Step 6: Draw the original image on top, centered in the canvas
     ctx.drawImage(image, padding, padding);
     
   } catch (error) {
     console.error('CadCut contour error:', error);
+    // Fallback: just draw image
     ctx.drawImage(image, padding, padding);
   }
   
   return canvas;
-}
-
-/**
- * Get raw contour points using Clipper-based offset (for PDF/vector export)
- */
-export function getMinkowskiContourPoints(
-  image: HTMLImageElement,
-  offsetInches: number,
-  cornerMode: ContourCornerMode = 'sharp',
-  dpi: number = 300
-): MinkowskiPoint[] {
-  const offsetPixels = Math.round(offsetInches * dpi);
-  
-  // Create mask and find edges
-  const mask = createAlphaMask(image);
-  if (mask.length === 0) return [];
-  
-  const edgePixels = findEdgePixels(mask, image.width, image.height);
-  if (edgePixels.length < 10) return [];
-  
-  // Order using proper boundary tracing
-  const orderedContour = orderEdgePixelsByChaining(edgePixels);
-  
-  // Simplify before offset
-  const simplified = simplifyPolygon(orderedContour, 0.5);
-  
-  // Apply Clipper offset with proper miter limit
-  return offsetPolygon(simplified, offsetPixels, cornerMode, DEFAULT_MITER_LIMIT);
-}
-
-/**
- * Order edge pixels by following the chain of neighbors (Moore boundary tracing)
- * This produces a proper boundary traversal instead of angle sorting
- */
-function orderEdgePixelsByChaining(pixels: Point[]): Point[] {
-  if (pixels.length < 3) return pixels;
-  
-  // Create a lookup set for fast neighbor checking
-  const pixelSet = new Set<string>();
-  const pixelMap = new Map<string, Point>();
-  
-  for (const p of pixels) {
-    const key = `${Math.round(p.x)},${Math.round(p.y)}`;
-    pixelSet.add(key);
-    pixelMap.set(key, p);
-  }
-  
-  // Start from the topmost-leftmost pixel (guaranteed to be on boundary)
-  let startPixel = pixels[0];
-  for (const p of pixels) {
-    if (p.y < startPixel.y || (p.y === startPixel.y && p.x < startPixel.x)) {
-      startPixel = p;
-    }
-  }
-  
-  const result: Point[] = [startPixel];
-  const visited = new Set<string>();
-  const startKey = `${Math.round(startPixel.x)},${Math.round(startPixel.y)}`;
-  visited.add(startKey);
-  
-  // 8-connected neighbor directions (clockwise from right)
-  const directions = [
-    { dx: 1, dy: 0 },   // right
-    { dx: 1, dy: 1 },   // bottom-right
-    { dx: 0, dy: 1 },   // bottom
-    { dx: -1, dy: 1 },  // bottom-left
-    { dx: -1, dy: 0 },  // left
-    { dx: -1, dy: -1 }, // top-left
-    { dx: 0, dy: -1 },  // top
-    { dx: 1, dy: -1 },  // top-right
-  ];
-  
-  let current = startPixel;
-  let prevDir = 0;
-  
-  // Follow the boundary using chain coding
-  for (let step = 0; step < pixels.length * 2; step++) {
-    let found = false;
-    
-    // Start searching from opposite direction (backtrack prevention)
-    const searchStart = (prevDir + 5) % 8;
-    
-    for (let i = 0; i < 8; i++) {
-      const dir = (searchStart + i) % 8;
-      const nx = Math.round(current.x) + directions[dir].dx;
-      const ny = Math.round(current.y) + directions[dir].dy;
-      const key = `${nx},${ny}`;
-      
-      if (pixelSet.has(key) && !visited.has(key)) {
-        const nextPixel = pixelMap.get(key)!;
-        result.push(nextPixel);
-        visited.add(key);
-        current = nextPixel;
-        prevDir = dir;
-        found = true;
-        break;
-      }
-    }
-    
-    if (!found) break;
-  }
-  
-  return result;
 }
 
 // Performance threshold for high-detail image optimization

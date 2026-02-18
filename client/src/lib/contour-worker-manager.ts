@@ -1,15 +1,11 @@
 import ContourWorker from './contour-worker?worker';
 
-// Maximum dimension for processing - images larger than this will be downsampled
-// 4000px provides high quality contours while preventing memory issues with huge files
 const MAX_PROCESSING_DIMENSION = 4000;
 
-// Downsample an image to fit within max dimensions while maintaining aspect ratio
 function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; scale: number } {
   const maxDim = Math.max(image.width, image.height);
   
   if (maxDim <= MAX_PROCESSING_DIMENSION) {
-    // No downsampling needed
     const canvas = document.createElement('canvas');
     canvas.width = image.width;
     canvas.height = image.height;
@@ -18,7 +14,6 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
     return { canvas, scale: 1 };
   }
   
-  // Calculate scale factor to fit within max dimension
   const scale = MAX_PROCESSING_DIMENSION / maxDim;
   const newWidth = Math.round(image.width * scale);
   const newHeight = Math.round(image.height * scale);
@@ -30,7 +25,6 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
   canvas.height = newHeight;
   const ctx = canvas.getContext('2d')!;
   
-  // Use high quality scaling
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, 0, 0, newWidth, newHeight);
@@ -42,6 +36,7 @@ export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
 
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
+  previewPathPoints: Array<{x: number; y: number}>;
   widthInches: number;
   heightInches: number;
   imageOffsetX: number;
@@ -112,19 +107,16 @@ class ContourWorkerManager {
     onProgress?: ProgressCallback;
   } | null = null;
   
-  // Cache the contour data from the last successful process for fast PDF export
   private cachedContourData: ContourData | null = null;
 
   constructor() {
     this.initWorker();
   }
   
-  // Get cached contour data for PDF export
   getCachedContourData(): ContourData | null {
     return this.cachedContourData;
   }
   
-  // Clear cached data when settings change
   clearCache() {
     this.cachedContourData = null;
   }
@@ -196,13 +188,12 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
-  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; detectedAlgorithm?: DetectedAlgorithm }> {
+  ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
       return { canvas, downsampleScale: 1, imageCanvasX: 0, imageCanvasY: 0 };
     }
 
-    // Downsample large images to prevent memory issues
     const { canvas, scale } = downsampleImage(image);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Could not get canvas context');
@@ -215,11 +206,8 @@ class ContourWorkerManager {
       imageData.height
     );
 
-    // Calculate effective DPI based on DOWNSAMPLED image pixels and target size in inches
-    // This ensures stroke width scales correctly even after downsampling
     const dpiFromWidth = canvas.width / resizeSettings.widthInches;
     const dpiFromHeight = canvas.height / resizeSettings.heightInches;
-    // Use the minimum to ensure the stroke scales correctly with the actual resize
     const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
     
     const request: ProcessRequest = {
@@ -239,7 +227,62 @@ class ContourWorkerManager {
     if (!resultCtx) throw new Error('Could not get result canvas context');
 
     resultCtx.putImageData(result.imageData, 0, 0);
-    return { canvas: resultCanvas, downsampleScale: scale, imageCanvasX: result.imageCanvasX ?? 0, imageCanvasY: result.imageCanvasY ?? 0, detectedAlgorithm: result.detectedAlgorithm };
+    return {
+      canvas: resultCanvas,
+      downsampleScale: scale,
+      imageCanvasX: result.imageCanvasX ?? 0,
+      imageCanvasY: result.imageCanvasY ?? 0,
+      contourData: result.contourData,
+      detectedAlgorithm: result.detectedAlgorithm
+    };
+  }
+
+  async processForExport(
+    image: HTMLImageElement,
+    strokeSettings: {
+      width: number;
+      color: string;
+      enabled: boolean;
+      alphaThreshold: number;
+      backgroundColor: string;
+      useCustomBackground: boolean;
+      autoBridging: boolean;
+      autoBridgingThreshold: number;
+      cornerMode: 'rounded' | 'sharp';
+      algorithm?: 'shapes' | 'complex';
+    },
+    resizeSettings: ResizeSettings,
+    onProgress?: ProgressCallback
+  ): Promise<ContourData | null> {
+    if (!this.worker) {
+      return null;
+    }
+
+    const { canvas, scale } = downsampleImage(image);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const clonedData = new ImageData(
+      new Uint8ClampedArray(imageData.data),
+      imageData.width,
+      imageData.height
+    );
+
+    const dpiFromWidth = canvas.width / resizeSettings.widthInches;
+    const dpiFromHeight = canvas.height / resizeSettings.heightInches;
+    const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
+
+    const request: ProcessRequest = {
+      imageData: clonedData,
+      strokeSettings,
+      effectiveDPI,
+      resizeSettings: { ...resizeSettings, outputDPI: effectiveDPI },
+      previewMode: false
+    };
+
+    const result = await this.processInWorker(request, onProgress);
+    return result.contourData || null;
   }
 
   private processInWorker(request: ProcessRequest, onProgress?: ProgressCallback): Promise<WorkerResult> {
@@ -278,7 +321,6 @@ class ContourWorkerManager {
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
-    // Downsample large images before processing to prevent memory issues
     let processImage = image;
     const maxDim = Math.max(image.width, image.height);
     
@@ -297,7 +339,6 @@ class ContourWorkerManager {
       tempCtx.imageSmoothingQuality = 'high';
       tempCtx.drawImage(image, 0, 0, newWidth, newHeight);
       
-      // Create a new image element from the downsampled canvas
       processImage = await new Promise<HTMLImageElement>((resolve) => {
         const img = new Image();
         img.onload = () => resolve(img);
@@ -342,7 +383,7 @@ export async function processContourInWorker(
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
-): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; detectedAlgorithm?: DetectedAlgorithm }> {
+): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
   const manager = getContourWorkerManager();
   return manager.process(image, strokeSettings, resizeSettings, onProgress);
 }

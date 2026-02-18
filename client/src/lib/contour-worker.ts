@@ -22,6 +22,7 @@ interface WorkerMessage {
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
+    cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
   };
   effectiveDPI: number;
@@ -37,6 +38,7 @@ interface WorkerResponse {
   progress?: number;
   contourData?: {
     pathPoints: Array<{x: number; y: number}>;
+    previewPathPoints: Array<{x: number; y: number}>;
     widthInches: number;
     heightInches: number;
     imageOffsetX: number;
@@ -97,7 +99,13 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         processedData = upscaleImageData(result.imageData, 
           Math.round(result.imageData.width / scale), 
           Math.round(result.imageData.height / scale));
-        contourData = result.contourData;
+        contourData = {
+          ...result.contourData,
+          previewPathPoints: result.contourData.previewPathPoints.map(p => ({
+            x: p.x / scale,
+            y: p.y / scale
+          }))
+        };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
         detectedAlg = result.detectedAlgorithm;
@@ -203,6 +211,7 @@ interface ContourResult {
   imageCanvasY: number;
   contourData: {
     pathPoints: Array<{x: number; y: number}>;
+    previewPathPoints: Array<{x: number; y: number}>;
     widthInches: number;
     heightInches: number;
     imageOffsetX: number;
@@ -275,249 +284,158 @@ function processContour(
   const smoothedAlpha = boxBlurAlpha(hiResAlpha, hiResWidth, hiResHeight, blurRadius);
   console.log('[Worker] Applied alpha blur radius:', blurRadius, 'px');
   
-  // Create silhouette mask at 4x resolution
-  const hiResMask = createSilhouetteMaskFromAlpha(smoothedAlpha, hiResWidth, hiResHeight, strokeSettings.alphaThreshold);
+  const cropAlphaThreshold = 1;
+  if (cropAlphaThreshold > 0) {
+    for (let i = 0; i < smoothedAlpha.length; i++) {
+      if (smoothedAlpha[i] < cropAlphaThreshold) smoothedAlpha[i] = 0;
+    }
+  }
   
-  if (hiResMask.length === 0) {
+  const loThreshold = 20;
+  let hiThreshold = Math.max(strokeSettings.alphaThreshold, 128);
+  let hysteresisResult = buildHysteresisMaskWithRGBRescue(
+    smoothedAlpha, data, hiResWidth, hiResHeight, width, height,
+    hiThreshold, loThreshold, SUPER_SAMPLE
+  );
+  let hiResMask = hysteresisResult.mask;
+  let faintArtMode = hysteresisResult.faintArtMode;
+  
+  let hasMaskPixels = false;
+  for (let i = 0; i < hiResMask.length; i++) {
+    if (hiResMask[i] === 1) { hasMaskPixels = true; break; }
+  }
+  if (!hasMaskPixels) {
+    hiThreshold = strokeSettings.alphaThreshold;
+    hysteresisResult = buildHysteresisMaskWithRGBRescue(
+      smoothedAlpha, data, hiResWidth, hiResHeight, width, height,
+      hiThreshold, Math.min(loThreshold, hiThreshold - 1), SUPER_SAMPLE
+    );
+    hiResMask = hysteresisResult.mask;
+    faintArtMode = hysteresisResult.faintArtMode;
+    for (let i = 0; i < hiResMask.length; i++) {
+      if (hiResMask[i] === 1) { hasMaskPixels = true; break; }
+    }
+  }
+  
+  if (!hasMaskPixels) {
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
   postProgress(30);
   
-  // =============================================================================
-  // VECTOR OFFSETTING APPROACH (PyClipper / Vatti clipping algorithm)
-  // =============================================================================
-  // 1. Trace the ORIGINAL tight contour from the raw image mask (no pixel dilation)
-  // 2. Convert to Clipper path format
-  // 3. Use ClipperOffset with JT_ROUND for perfect vector offsetting
-  // 4. Straight lines stay straight, corners are perfectly rounded
-  // =============================================================================
-  
-  // Step 1: Trace contours from hi-res mask
-  // First fill any interior holes
-  const filledOriginalMask = fillSilhouette(hiResMask, hiResWidth, hiResHeight);
-  
-  // IMPORTANT: Analyze complexity on ORIGINAL mask (not filled)
-  // This preserves the gaps between letters for accurate detection
-  // For multi-letter text like "Tercos", filling would merge letters into one blob
-  const allContoursForAnalysis = traceAllContours(hiResMask, hiResWidth, hiResHeight);
-  
-  if (allContoursForAnalysis.length === 0) {
-    return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
+  const hiResDPI = effectiveDPI * SUPER_SAMPLE;
+  const minComponentAreaPx = 50;
+  const keepNearMainDistInches = 0.25;
+  const bladeWidthInches = 0.02;
+
+  const prelimComps = labelComponents(hiResMask, hiResWidth, hiResHeight);
+  const prelimDynMin = Math.max(minComponentAreaPx, 40);
+  const prelimSignificant = prelimComps.filter(c => c.area >= prelimDynMin);
+  const prelimCompositeDetected = prelimSignificant.length >= 5;
+
+  if (prelimCompositeDetected) {
+    const compositeHi = Math.max(Math.min(strokeSettings.alphaThreshold, 64), 32);
+    const compositeLo = 10;
+    console.log('[Worker] Composite design detected (' + prelimSignificant.length + ' significant components). Re-running mask with hiThreshold=' + compositeHi + ', loThreshold=' + compositeLo);
+    const compositeResult = buildHysteresisMaskWithRGBRescue(
+      smoothedAlpha, data, hiResWidth, hiResHeight, width, height,
+      compositeHi, compositeLo, SUPER_SAMPLE
+    );
+    let mergedCount = 0;
+    for (let i = 0; i < hiResMask.length; i++) {
+      if (compositeResult.mask[i] === 1 && hiResMask[i] === 0) {
+        hiResMask[i] = 1;
+        mergedCount++;
+      }
+    }
+    if (compositeResult.faintArtMode) {
+      faintArtMode = true;
+    }
+    console.log('[Worker] Composite re-mask merged', mergedCount, 'new pixels into mask, faintArtMode=', faintArtMode);
   }
+
+  const mainComponentMask = selectMainComponentWithOrphans(
+    hiResMask, hiResWidth, hiResHeight, hiResDPI,
+    minComponentAreaPx, keepNearMainDistInches, bladeWidthInches, faintArtMode
+  );
   
-  // Downscale all contours for analysis
+  const filledMainMask = fillSilhouette(mainComponentMask, hiResWidth, hiResHeight);
+  
+  postProgress(40);
+  
+  // Analyze complexity on the original mask for algorithm detection label
+  const allContoursForAnalysis = traceAllContours(hiResMask, hiResWidth, hiResHeight);
   const scaledContoursForAnalysis = allContoursForAnalysis.map(contour => 
     contour.map(p => ({
       x: p.x / SUPER_SAMPLE,
       y: p.y / SUPER_SAMPLE
     }))
   );
+  const complexity = scaledContoursForAnalysis.length > 0 
+    ? analyzeMultiContourComplexity(scaledContoursForAnalysis, effectiveDPI)
+    : { needsComplexProcessing: false, needsSmoothCorners: false, perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0 };
+  const scatteredAnalysis = scaledContoursForAnalysis.length > 0
+    ? detectScatteredDesign(scaledContoursForAnalysis, effectiveDPI)
+    : { isScattered: false, maxGapPixels: 0 };
   
-  // Analyze complexity across ALL contours
-  const complexity = analyzeMultiContourComplexity(scaledContoursForAnalysis, effectiveDPI);
-  const autoAlgorithm = complexity.needsComplexProcessing ? 'complex' : 'shapes';
+  let detectedAlgorithm: 'shapes' | 'complex' | 'scattered' = 
+    prelimCompositeDetected ? 'scattered' :
+    scatteredAnalysis.isScattered ? 'scattered' : 
+    complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
-  console.log('[Worker] Complexity analysis:', {
-    perimeterAreaRatio: complexity.perimeterAreaRatio.toFixed(3),
-    concavityScore: complexity.concavityScore.toFixed(3),
-    narrowGapCount: complexity.narrowGapCount,
-    needsComplexProcessing: complexity.needsComplexProcessing
-  });
-  console.log('[Worker] Auto-detected algorithm:', autoAlgorithm);
+  console.log('[Worker] Detected algorithm label:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
   
-  const scatteredAnalysis = detectScatteredDesign(scaledContoursForAnalysis, effectiveDPI);
+  // Dilate the filled single-component mask by the full stroke offset
+  let dilateRadiusHiRes = totalOffsetPixels * SUPER_SAMPLE;
   
-  let detectedAlgorithm: 'shapes' | 'complex' | 'scattered' = scatteredAnalysis.isScattered ? 'scattered' : autoAlgorithm;
-  
-  const hasOverride = strokeSettings.algorithm === 'shapes' || strokeSettings.algorithm === 'complex';
-  const algorithm = hasOverride ? strokeSettings.algorithm! : autoAlgorithm;
-  const useScattered = hasOverride ? false : scatteredAnalysis.isScattered;
-  
-  if (hasOverride) {
-    console.log('[Worker] Algorithm OVERRIDE:', strokeSettings.algorithm, '(auto was:', detectedAlgorithm, ')');
+  // Size guard: limit dilated mask to ~16M pixels to avoid memory blowups
+  const maxDilatedPixels = 16_000_000;
+  let actualDilateRadius = dilateRadiusHiRes;
+  const projectedWidth = hiResWidth + dilateRadiusHiRes * 2;
+  const projectedHeight = hiResHeight + dilateRadiusHiRes * 2;
+  if (projectedWidth * projectedHeight > maxDilatedPixels) {
+    const scale = Math.sqrt(maxDilatedPixels / (projectedWidth * projectedHeight));
+    actualDilateRadius = Math.max(1, Math.round(dilateRadiusHiRes * scale));
+    console.log('[Worker] Dilation radius clamped from', dilateRadiusHiRes, 'to', actualDilateRadius, 'to stay within memory limit');
+    dilateRadiusHiRes = actualDilateRadius;
   }
   
-  let processedContour: Point[];
+  console.log('[Worker] Dilating main component by', totalOffsetPixels, 'px (', dilateRadiusHiRes, 'px at', SUPER_SAMPLE, 'x)');
+  const dilatedMask = dilateSilhouette(filledMainMask, hiResWidth, hiResHeight, dilateRadiusHiRes);
+  const dilatedWidth = hiResWidth + dilateRadiusHiRes * 2;
+  const dilatedHeight = hiResHeight + dilateRadiusHiRes * 2;
   
-  if (useScattered) {
-    console.log('[Worker] SCATTERED DESIGN detected - using compound contour generation');
-    
-    const allContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
-    
-    if (allContours.length === 0) {
-      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-    }
-    
-    postProgress(40);
-    
-    const scaledContours = allContours.map(contour => 
-      contour.map(p => ({
-        x: p.x / SUPER_SAMPLE,
-        y: p.y / SUPER_SAMPLE
-      }))
-    );
-    
-    const tightEpsilon = 0.0002;
-    const simplifiedContours = scaledContours.map(contour => {
-      const simplified = approxPolyDP(contour, tightEpsilon);
-      return sanitizePolygonForOffset(simplified);
-    }).filter(c => c.length >= 3);
-    
-    console.log('[Worker] Scattered: traced', simplifiedContours.length, 'contours for compound merge');
-    
-    processedContour = processScatteredContours(
-      simplifiedContours,
-      scatteredAnalysis.maxGapPixels,
-      effectiveDPI
-    );
-    
-    processedContour = weldNarrowGaps(processedContour, 1.65);
-    
-    postProgress(50);
-    
-  } else if (algorithm === 'complex') {
-    // =============================================================================
-    // SMOOTH/COMPLEX ALGORITHM - Hysteresis + Morph Close + External Contours
-    // =============================================================================
-    // 1. Build hysteresis mask (solid >= 128, maybe >= 40) to capture semi-transparent edges
-    // 2. Morphological close to seal tiny bays before tracing
-    // 3. Fill interior holes
-    // 4. Count external components to decide single-island vs multi-island
-    // 5. Single island: trace largest external contour, simplify, offset
-    // 6. Multi island: use cluster/bridge system then extract external boundary
-    // =============================================================================
-    
-    console.log('[Worker] Complex algorithm: hysteresis + morph close pipeline');
-    
-    const hiThreshold = strokeSettings.alphaThreshold;
-    const loThreshold = Math.min(40, Math.max(1, hiThreshold - 10));
-    const complexMask = buildHysteresisMask(smoothedAlpha, hiResWidth, hiResHeight, hiThreshold, loThreshold);
-    console.log('[Worker] Hysteresis mask built: hi=', hiThreshold, 'lo=', loThreshold);
-    
-    const bladeInches = 0.02;
-    const bladePixels4x = Math.round(bladeInches * effectiveDPI * SUPER_SAMPLE);
-    const closeRadius = Math.max(2, Math.round(bladePixels4x / 2));
-    const closedMask = morphologicalClose(complexMask, hiResWidth, hiResHeight, closeRadius);
-    console.log('[Worker] Morphological close radius:', closeRadius, 'px at', SUPER_SAMPLE, 'x');
-    
-    const filledMask = fillSilhouette(closedMask, hiResWidth, hiResHeight);
-    
-    postProgress(40);
-    
-    const numComponents = countExternalComponents(filledMask, hiResWidth, hiResHeight);
-    console.log('[Worker] External components:', numComponents);
-    
-    {
-      const allComplexContours = traceAllContours(filledMask, hiResWidth, hiResHeight);
-      
-      if (allComplexContours.length === 0) {
-        return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-      }
-      
-      const scaledContours = allComplexContours.map(contour => 
-        contour.map(p => ({
-          x: p.x / SUPER_SAMPLE,
-          y: p.y / SUPER_SAMPLE
-        }))
-      );
-      
-      const tightEpsilon = 0.0002;
-      const simplifiedContours = scaledContours.map(contour => {
-        const simplified = approxPolyDP(contour, tightEpsilon);
-        return sanitizePolygonForOffset(simplified);
-      }).filter(c => c.length >= 3);
-      
-      const keptComplexContours = retainNearbyOrphans(simplifiedContours, effectiveDPI);
-      console.log('[Worker] Complex: traced', allComplexContours.length, 'contours, kept', keptComplexContours.length, 'after orphan retention');
-      
-      if (keptComplexContours.length === 1) {
-        if (numComponents <= 1) {
-          console.log('[Worker] Single island contour:', keptComplexContours[0].length, 'points');
-          processedContour = keptComplexContours[0];
-        } else {
-          const gapCloseInches = 0.08;
-          const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
-          processedContour = vectorCloseMerge(keptComplexContours[0], gapClosePixels);
-        }
-      } else {
-        const clusterThresholdInches = 0.08;
-        const clusterThresholdPixels = Math.round(clusterThresholdInches * effectiveDPI);
-        const gapCloseInches = 0.08;
-        const gapClosePixels = Math.round(gapCloseInches * effectiveDPI);
-        
-        processedContour = processContoursWithClustering(
-          keptComplexContours,
-          clusterThresholdPixels,
-          gapClosePixels,
-          effectiveDPI
-        );
-      }
-    }
-    
-    processedContour = weldNarrowGaps(processedContour, 4.0);
-    
-    postProgress(50);
-    
-  } else {
-    // =============================================================================
-    // STANDARD processing for Shapes algorithm
-    // =============================================================================
-    // Trace all contours and retain nearby orphans (e.g. stars, dots within 0.25")
-    
-    const allShapeContours = traceAllContours(filledOriginalMask, hiResWidth, hiResHeight);
-    
-    if (allShapeContours.length === 0) {
-      return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
-    }
-    
-    postProgress(40);
-    
-    const scaledShapeContours = allShapeContours.map(contour =>
-      contour.map(p => ({
-        x: p.x / SUPER_SAMPLE,
-        y: p.y / SUPER_SAMPLE
-      }))
-    );
-    
-    const tightEpsilon = 0.001;
-    const simplifiedShapeContours = scaledShapeContours.map(contour => {
-      const simplified = approxPolyDP(contour, tightEpsilon);
-      return sanitizePolygonForOffset(simplified);
-    }).filter(c => c.length >= 3);
-    
-    const keptContours = retainNearbyOrphans(simplifiedShapeContours, effectiveDPI);
-    console.log('[Worker] Shapes: traced', allShapeContours.length, 'contours, kept', keptContours.length, 'after orphan retention');
-    
-    if (keptContours.length === 1) {
-      processedContour = keptContours[0];
-    } else {
-      const mergeGapPx = Math.max(8, 0.25 * effectiveDPI);
-      processedContour = multiPathVectorMerge(keptContours, mergeGapPx);
-    }
-    
-    console.log('[Worker] Shapes processed contour:', processedContour.length, 'points');
-    
-    postProgress(50);
-  }
+  postProgress(50);
   
-  if (processedContour.length < 3) {
-    console.log('[Worker] Processed contour too small, returning empty');
+  // Trace the outer boundary of the dilated mask
+  const dilatedContour = traceBoundary(dilatedMask, dilatedWidth, dilatedHeight);
+  
+  if (dilatedContour.length < 3) {
+    console.log('[Worker] Dilated contour too small, returning empty');
     return createOutputWithImage(imageData, canvasWidth, canvasHeight, padding, effectiveDPI, effectiveBackgroundColor);
   }
   
-  // Step 3b: Apply VECTOR OFFSET using Clipper
-  // For "shapes" algorithm: use JT_MITER for sharp corners (block text like Tercos)
-  // For "complex" algorithm: use JT_ROUND for smooth corners (script fonts)
-  const useSharpCorners = algorithm === 'shapes';
-  const vectorOffsetPath = clipperVectorOffset(processedContour, totalOffsetPixels, useSharpCorners, effectiveDPI);
-  console.log('[Worker] After Clipper vector offset (+', totalOffsetPixels, 'px, sharp:', useSharpCorners, '):', vectorOffsetPath.length, 'points');
+  // Downscale contour points from hi-res to original resolution
+  // The dilated mask origin is offset by -dilateRadiusHiRes from the hi-res mask origin
+  // The hi-res mask origin maps to (0,0) in original image space
+  // So dilated mask point (px, py) maps to: ((px - dilateRadiusHiRes) / SUPER_SAMPLE, (py - dilateRadiusHiRes) / SUPER_SAMPLE)
+  let smoothedPath = dilatedContour.map(p => ({
+    x: (p.x - dilateRadiusHiRes) / SUPER_SAMPLE,
+    y: (p.y - dilateRadiusHiRes) / SUPER_SAMPLE
+  }));
+  
+  // Vector weld: expand then shrink by small amount to merge nearby path segments
+  const weldPx = previewMode ? 1.0 : 3.0;
+  smoothedPath = vectorWeld(smoothedPath, weldPx);
+  
+  // Simplify the path to reduce point count while preserving shape
+  const tightEpsilon = 0.0005;
+  smoothedPath = approxPolyDP(smoothedPath, tightEpsilon);
+  smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
+  
+  console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
   
   postProgress(60);
-  
-  // Step 4: Clean the vector offset path - remove degenerate near-duplicate points
-  // that can cause visible artifacts (lines from edge into design)
-  let smoothedPath = removeNearDuplicatePoints(vectorOffsetPath, 0.01);
   
   postProgress(70);
   
@@ -564,11 +482,10 @@ function processContour(
   }
   
   // Draw original image on top
-  // The image should be positioned where the contour's inner edge is
-  // Inner edge is at (previewMinX + totalOffsetPixels, previewMinY + totalOffsetPixels) in original coords
-  // After shifting by offset, this becomes:
-  const imageCanvasX = (previewMinX + totalOffsetPixels) + offsetX;
-  const imageCanvasY = (previewMinY + totalOffsetPixels) + offsetY;
+  // In the new pipeline, smoothedPath coordinates are in original image space
+  // (0,0) = top-left of original image. So the image canvas position is simply:
+  const imageCanvasX = 0 + offsetX;
+  const imageCanvasY = 0 + offsetY;
   console.log('[Worker] Image canvas position:', imageCanvasX.toFixed(1), imageCanvasY.toFixed(1));
   drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
   
@@ -632,6 +549,10 @@ function processContour(
     imageCanvasY: Math.round(imageCanvasY),
     contourData: {
       pathPoints: pathInInches,
+      previewPathPoints: smoothedPath.map(p => ({
+        x: p.x + offsetX,
+        y: p.y + offsetY
+      })),
       widthInches: pageWidthInches,
       heightInches: pageHeightInches,
       imageOffsetX: imageOffsetXCalc,
@@ -799,6 +720,353 @@ function createSilhouetteMaskFromAlpha(alpha: Uint8Array, width: number, height:
   return mask;
 }
 
+type LabeledComponent = { id: number; area: number; bounds: BoundingBox; pixels: number[] };
+
+function labelComponents(mask: Uint8Array, w: number, h: number): LabeledComponent[] {
+  const labels = new Int32Array(w * h).fill(-1);
+  const comps: LabeledComponent[] = [];
+  const q = new Int32Array(w * h);
+  let qh = 0, qt = 0;
+  let id = 0;
+
+  for (let i = 0; i < w * h; i++) {
+    if (mask[i] === 0 || labels[i] !== -1) continue;
+
+    let area = 0;
+    let b: BoundingBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    const pixels: number[] = [];
+
+    labels[i] = id;
+    qh = 0; qt = 0;
+    q[qt++] = i;
+
+    while (qh < qt) {
+      const idx = q[qh++];
+      area++;
+      pixels.push(idx);
+
+      const x = idx % w;
+      const y = (idx / w) | 0;
+
+      if (x < b.minX) b.minX = x;
+      if (y < b.minY) b.minY = y;
+      if (x > b.maxX) b.maxX = x;
+      if (y > b.maxY) b.maxY = y;
+
+      if (x > 0) { const ni = idx - 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (x + 1 < w) { const ni = idx + 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (y > 0) { const ni = idx - w; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (y + 1 < h) { const ni = idx + w; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (x > 0 && y > 0) { const ni = idx - w - 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (x + 1 < w && y > 0) { const ni = idx - w + 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (x > 0 && y + 1 < h) { const ni = idx + w - 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+      if (x + 1 < w && y + 1 < h) { const ni = idx + w + 1; if (mask[ni] && labels[ni] === -1) { labels[ni] = id; q[qt++] = ni; } }
+    }
+
+    comps.push({ id, area, bounds: b, pixels });
+    id++;
+  }
+
+  return comps;
+}
+
+function intersectionArea(a: BoundingBox, b: BoundingBox): number {
+  const minX = Math.max(a.minX, b.minX);
+  const minY = Math.max(a.minY, b.minY);
+  const maxX = Math.min(a.maxX, b.maxX);
+  const maxY = Math.min(a.maxY, b.maxY);
+  if (maxX < minX || maxY < minY) return 0;
+  return (maxX - minX + 1) * (maxY - minY + 1);
+}
+
+function distBounds(a: BoundingBox, b: BoundingBox): number {
+  const dx = (a.maxX < b.minX) ? (b.minX - a.maxX) : (b.maxX < a.minX) ? (a.minX - b.maxX) : 0;
+  const dy = (a.maxY < b.minY) ? (b.minY - a.maxY) : (b.maxY < a.minY) ? (a.minY - b.maxY) : 0;
+  return Math.hypot(dx, dy);
+}
+
+function pickMainComponent(comps: LabeledComponent[]): LabeledComponent {
+  const global = comps.reduce((acc, c) => unionBounds(acc, c.bounds), comps[0].bounds);
+
+  let totalArea = 0;
+  let weightedCX = 0;
+  let weightedCY = 0;
+  for (const c of comps) {
+    const cx = (c.bounds.minX + c.bounds.maxX) / 2;
+    const cy = (c.bounds.minY + c.bounds.maxY) / 2;
+    weightedCX += cx * c.area;
+    weightedCY += cy * c.area;
+    totalArea += c.area;
+  }
+  const gcx = totalArea > 0 ? weightedCX / totalArea : (global.minX + global.maxX) / 2;
+  const gcy = totalArea > 0 ? weightedCY / totalArea : (global.minY + global.maxY) / 2;
+
+  let best = comps[0];
+  let bestScore = -Infinity;
+
+  for (const c of comps) {
+    const b = c.bounds;
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+
+    const overlap = intersectionArea(b, global) / Math.max(1, boundsArea(b));
+    const dist = Math.hypot(cx - gcx, cy - gcy);
+
+    const score = (c.area) * (0.6 + 0.8 * overlap) - dist * 5.0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+
+  return best;
+}
+
+function selectMainComponentWithOrphans(
+  mask: Uint8Array, w: number, h: number, effectiveDPI: number,
+  minComponentAreaPx: number, keepNearMainDistInches: number, bladeWidthInches: number,
+  faintArtMode: boolean = false
+): Uint8Array {
+  const comps = labelComponents(mask, w, h);
+  if (comps.length === 0) return new Uint8Array(w * h);
+
+  const main = pickMainComponent(comps);
+  const outMask = new Uint8Array(w * h);
+
+  for (const idx of main.pixels) outMask[idx] = 1;
+
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+  const expandBounds = (b: BoundingBox, padPx: number) => ({
+    minX: clamp(b.minX - padPx, 0, w - 1),
+    minY: clamp(b.minY - padPx, 0, h - 1),
+    maxX: clamp(b.maxX + padPx, 0, w - 1),
+    maxY: clamp(b.maxY + padPx, 0, h - 1),
+  });
+
+  const boundsIntersect = (a: BoundingBox, b: BoundingBox) =>
+    !(b.maxX < a.minX || b.minX > a.maxX || b.maxY < a.minY || b.minY > a.maxY);
+
+  const xOverlapRatio = (a: BoundingBox, b: BoundingBox) => {
+    const left = Math.max(a.minX, b.minX);
+    const right = Math.min(a.maxX, b.maxX);
+    const overlap = Math.max(0, right - left);
+    const bw = Math.max(1, (b.maxX - b.minX));
+    return overlap / bw;
+  };
+
+  const mainBounds = main.bounds;
+  const mainW = (mainBounds.maxX - mainBounds.minX);
+  const mainH = (mainBounds.maxY - mainBounds.minY);
+
+  const relMin = Math.round(main.area * 0.0015);
+  const dynamicMinArea = Math.max(minComponentAreaPx, 40, relMin);
+
+  const significantComps = comps.filter(c => c.id !== main.id && c.area >= dynamicMinArea);
+  const compositeMode = significantComps.length >= 5;
+
+  const densityThreshold = compositeMode ? 0.005 : 0.015;
+  const baseExpandIn = compositeMode
+    ? Math.max(keepNearMainDistInches, 1.0)
+    : Math.max(keepNearMainDistInches, 0.5);
+  const extraExpandIn = compositeMode ? 0.25 : 0.15;
+  const maxExtraAreaRatio = compositeMode ? 1.0 : 0.65;
+
+  const keepNearMainDistPx = Math.max(8, Math.round(keepNearMainDistInches * effectiveDPI));
+
+  const expandPx = Math.max(8, Math.round((baseExpandIn + extraExpandIn) * effectiveDPI));
+  const expandedMain = expandBounds(mainBounds, expandPx);
+
+  const totalSignificantArea = compositeMode
+    ? significantComps.reduce((sum, c) => sum + c.area, 0) + main.area
+    : main.area;
+  const maxExtraArea = compositeMode
+    ? Math.round(totalSignificantArea * maxExtraAreaRatio)
+    : Math.round(main.area * maxExtraAreaRatio);
+  let extraAreaKept = 0;
+
+  const captionGapPx = Math.max(
+    Math.round(0.75 * effectiveDPI),
+    Math.round(0.90 * mainH)
+  );
+
+  const isCaptionLike = (b: BoundingBox) => {
+    const gap = b.minY - mainBounds.maxY;
+    if (gap < 0) return false;
+    if (compositeMode) {
+      if (gap > captionGapPx * 3) return false;
+    } else {
+      if (gap > captionGapPx) return false;
+    }
+
+    const overlap = xOverlapRatio(mainBounds, b);
+    if (overlap < 0.25) return false;
+
+    const bw = (b.maxX - b.minX);
+    const bh = (b.maxY - b.minY);
+
+    if (bw > mainW * (compositeMode ? 2.0 : 1.25)) return false;
+
+    if (bh > 0 && (bw / bh) > 12) return false;
+
+    if (!compositeMode && b.maxY > h - Math.max(2, Math.round(0.02 * h))) return false;
+
+    return true;
+  };
+
+  const passesDensity = (c: LabeledComponent) => {
+    const b = c.bounds;
+    const bw = (b.maxX - b.minX + 1);
+    const bh = (b.maxY - b.minY + 1);
+    const bboxArea = Math.max(1, bw * bh);
+    const density = (c.pixels.length / bboxArea);
+    return density >= densityThreshold;
+  };
+
+  let kept = 1;
+  let removed = 0;
+
+  const unionBoundsOf = (a: BoundingBox, b: BoundingBox): BoundingBox => ({
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  });
+
+  const isNearAny = (c: LabeledComponent, includedComps: LabeledComponent[], chainDistPx: number) => {
+    for (const inc of includedComps) {
+      if (distBounds(inc.bounds, c.bounds) <= chainDistPx) return true;
+    }
+    return false;
+  };
+
+  if (compositeMode) {
+    const areaThreshold = dynamicMinArea;
+    const candidates = comps
+      .filter(c => c.id !== main.id && c.area >= areaThreshold)
+      .sort((a, b) => b.area - a.area);
+
+    const maxKeep = 50;
+    const chainDistPx = expandPx;
+    const included: LabeledComponent[] = [main];
+    let unionIncluded: BoundingBox = { ...mainBounds };
+    const added = new Set<number>([main.id]);
+
+    let changed = true;
+    let passes = 0;
+    const maxPasses = 10;
+
+    while (changed && passes < maxPasses) {
+      changed = false;
+      passes++;
+
+      for (const c of candidates) {
+        if (added.has(c.id)) continue;
+        if (kept >= maxKeep) break;
+
+        const expandedUnion = expandBounds(unionIncluded, expandPx);
+        const ok =
+          boundsIntersect(expandedUnion, c.bounds) ||
+          isNearAny(c, included, chainDistPx) ||
+          isCaptionLike(c.bounds);
+
+        if (!ok) continue;
+        if (!passesDensity(c)) continue;
+        if (extraAreaKept + c.area > maxExtraArea) continue;
+
+        for (const idx of c.pixels) outMask[idx] = 1;
+        kept++;
+        extraAreaKept += c.area;
+        included.push(c);
+        added.add(c.id);
+        unionIncluded = unionBoundsOf(unionIncluded, c.bounds);
+        changed = true;
+      }
+    }
+
+    removed = comps.length - kept;
+    console.log('[Worker] Composite flood-fill: passes=', passes, 'chain dist=', chainDistPx, 'px');
+  } else if (faintArtMode) {
+    const faintAreaThreshold = Math.max(dynamicMinArea, 80);
+    const sortedComps = comps
+      .filter(c => c.id !== main.id && c.area >= faintAreaThreshold)
+      .sort((a, b) => b.area - a.area);
+
+    const maxKeep = 30;
+
+    for (let i = 0; i < sortedComps.length && i < maxKeep; i++) {
+      const c = sortedComps[i];
+
+      const ok =
+        boundsIntersect(expandedMain, c.bounds) ||
+        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
+        isCaptionLike(c.bounds);
+
+      if (!ok) continue;
+      if (!passesDensity(c)) { removed++; continue; }
+      if (extraAreaKept + c.area > maxExtraArea) continue;
+
+      for (const idx of c.pixels) outMask[idx] = 1;
+      kept++;
+      extraAreaKept += c.area;
+    }
+
+    removed = comps.length - kept;
+  } else {
+    for (const c of comps) {
+      if (c.id === main.id) continue;
+
+      if (c.area < dynamicMinArea) { removed++; continue; }
+
+      const ok =
+        boundsIntersect(expandedMain, c.bounds) ||
+        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
+        isCaptionLike(c.bounds);
+
+      if (!ok) { removed++; continue; }
+
+      if (!passesDensity(c)) { removed++; continue; }
+
+      if (extraAreaKept + c.area > maxExtraArea) { removed++; continue; }
+
+      for (const idx of c.pixels) outMask[idx] = 1;
+      kept++;
+      extraAreaKept += c.area;
+    }
+  }
+
+  console.log(
+    '[Worker] Component selection:',
+    'mode=', compositeMode ? 'composite' : (faintArtMode ? 'faint-art' : 'normal'),
+    'total=', comps.length,
+    'significant=', significantComps.length,
+    'main area=', main.area,
+    'dynamicMinArea=', dynamicMinArea,
+    'expandPx=', expandPx,
+    'captionGapPx=', captionGapPx,
+    'densityThreshold=', densityThreshold,
+    'kept=', kept,
+    'removed=', removed
+  );
+
+  const bladeWidthPx = Math.max(0, bladeWidthInches * effectiveDPI);
+  let closingRadiusPx = Math.round(bladeWidthPx / 2);
+
+  if (effectiveDPI < 180) closingRadiusPx = Math.max(1, closingRadiusPx);
+  else closingRadiusPx = Math.max(2, closingRadiusPx);
+
+  closingRadiusPx = Math.min(closingRadiusPx, 4);
+
+  if (kept > 1) closingRadiusPx = Math.min(closingRadiusPx, 1);
+
+  if (closingRadiusPx > 0) {
+    console.log('[Worker] Blade-safe closing radius:', closingRadiusPx, 'px (DPI:', effectiveDPI, ')');
+    return morphologicalClose(outMask, w, h, closingRadiusPx);
+  }
+
+  return outMask;
+}
+
 function buildHysteresisMask(
   alpha: Uint8Array, width: number, height: number,
   hiThreshold: number, loThreshold: number
@@ -835,6 +1103,114 @@ function buildHysteresisMask(
   }
 
   return mask;
+}
+
+type HysteresisResult = { mask: Uint8Array; faintArtMode: boolean };
+
+function buildHysteresisMaskWithRGBRescue(
+  alpha: Uint8Array, originalData: Uint8ClampedArray,
+  hiResWidth: number, hiResHeight: number,
+  origWidth: number, origHeight: number,
+  hiThreshold: number, loThreshold: number,
+  scale: number
+): HysteresisResult {
+  const mask = new Uint8Array(hiResWidth * hiResHeight);
+  const maybe = new Uint8Array(hiResWidth * hiResHeight);
+  const queue: number[] = [];
+  let seedCount = 0;
+  let maybeCount = 0;
+
+  for (let i = 0; i < alpha.length; i++) {
+    if (alpha[i] >= hiThreshold) {
+      mask[i] = 1;
+      queue.push(i);
+      seedCount++;
+    } else if (alpha[i] >= loThreshold) {
+      maybe[i] = 1;
+      maybeCount++;
+    } else {
+      const hx = i % hiResWidth;
+      const hy = (i - hx) / hiResWidth;
+      const sx = Math.min(Math.floor(hx / scale), origWidth - 1);
+      const sy = Math.min(Math.floor(hy / scale), origHeight - 1);
+      const srcIdx = (sy * origWidth + sx) * 4;
+      const r = originalData[srcIdx];
+      const g = originalData[srcIdx + 1];
+      const b = originalData[srcIdx + 2];
+      const srcAlpha = originalData[srcIdx + 3];
+      if (srcAlpha >= 2) {
+        const lum = r * 0.299 + g * 0.587 + b * 0.114;
+        const isNearWhite = r > 240 && g > 240 && b > 240;
+        const isNearBlack = r < 15 && g < 15 && b < 15;
+        if (!isNearWhite && !isNearBlack && lum > 10 && lum < 245) {
+          maybe[i] = 1;
+          maybeCount++;
+        }
+      }
+    }
+  }
+
+  while (queue.length > 0) {
+    const idx = queue.pop()!;
+    const x = idx % hiResWidth;
+    const y = (idx - x) / hiResWidth;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= hiResWidth || ny < 0 || ny >= hiResHeight) continue;
+        const nIdx = ny * hiResWidth + nx;
+        if (maybe[nIdx] === 1 && mask[nIdx] === 0) {
+          mask[nIdx] = 1;
+          queue.push(nIdx);
+        }
+      }
+    }
+  }
+
+  let solidCount = 0;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i] === 1) solidCount++;
+  }
+
+  const totalPixels = hiResWidth * hiResHeight;
+  const solidRatio = solidCount / totalPixels;
+  const seedRatio = seedCount / totalPixels;
+  const minMaybeComponentArea = Math.max(100, Math.round(totalPixels * 0.00005));
+  let faintArtMode = false;
+
+  if (seedRatio < 0.001 && solidRatio < 0.005 && maybeCount > 0) {
+    faintArtMode = true;
+    console.log('[Worker] Seedless promotion fallback: seedCount=', seedCount,
+      'seedRatio=', seedRatio.toFixed(6), 'solidCount=', solidCount,
+      'solidRatio=', solidRatio.toFixed(6), 'maybeCount=', maybeCount);
+
+    const remainingMaybe = new Uint8Array(hiResWidth * hiResHeight);
+    for (let i = 0; i < mask.length; i++) {
+      if (maybe[i] === 1 && mask[i] === 0) remainingMaybe[i] = 1;
+    }
+
+    const maybeComps = labelComponents(remainingMaybe, hiResWidth, hiResHeight);
+    let promoted = 0;
+    let promotedArea = 0;
+    const maxPromotedAreaRatio = 0.3;
+    const sortedMaybeComps = maybeComps
+      .filter(c => c.area >= minMaybeComponentArea)
+      .sort((a, b) => b.area - a.area);
+    for (const comp of sortedMaybeComps) {
+      if (promotedArea + comp.area > totalPixels * maxPromotedAreaRatio) break;
+      for (const idx of comp.pixels) mask[idx] = 1;
+      promotedArea += comp.area;
+      promoted++;
+    }
+    if (promoted === 0) {
+      faintArtMode = false;
+    }
+    console.log('[Worker] Promoted', promoted, 'maybe components (of', maybeComps.length,
+      'total, min area:', minMaybeComponentArea, ', promotedArea:', promotedArea, ')');
+  }
+
+  return { mask, faintArtMode };
 }
 
 function morphologicalClose(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
@@ -1304,6 +1680,7 @@ interface ComplexityAnalysis {
   narrowGapCount: number;
   contourCount: number;
   needsComplexProcessing: boolean;
+  needsSmoothCorners: boolean;
 }
 
 /**
@@ -1321,7 +1698,7 @@ interface ComplexityAnalysis {
  */
 function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number): ComplexityAnalysis {
   if (contours.length === 0) {
-    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 0, needsComplexProcessing: false };
+    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 0, needsComplexProcessing: false, needsSmoothCorners: false };
   }
   
   // Filter out very small contours (letter holes like in O, R, etc.)
@@ -1401,14 +1778,29 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
       a.concavityScore < 0.6        // No excessive sharp turns
     );
   
+  // Multi-component organic design detection:
+  // 3+ separate elements with transparent gaps between them (logos, illustrations)
+  // These need smooth/rounded corners because bridging creates artificial corners
+  // that look unnatural with sharp miter joins
+  // Block text is excluded - it works best with sharp corners
+  const isMultiComponentOrganic = contourCount >= 3 && !isMultiLetterBlockText;
+  
   // Script font detection:
   // Few contours (1-2) OR any single contour shows high complexity
   const needsComplexProcessing = hasComplexContour && !isMultiLetterBlockText;
+  
+  // Smooth corners should be used when:
+  // - Design needs complex processing (script fonts, intricate shapes), OR
+  // - Design has multiple organic components with gaps (logos like Acapulco)
+  // Sharp corners only for block text with simple letter shapes
+  const needsSmoothCorners = needsComplexProcessing || isMultiComponentOrganic;
   
   console.log('[Worker] Multi-contour analysis:', {
     contourCount,
     hasComplexContour,
     isMultiLetterBlockText,
+    isMultiComponentOrganic,
+    needsSmoothCorners,
     individualRatios: individualAnalyses.map(a => a.perimeterAreaRatio.toFixed(2))
   });
   
@@ -1417,7 +1809,8 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
     concavityScore,
     narrowGapCount: totalNarrowGaps,
     contourCount,
-    needsComplexProcessing
+    needsComplexProcessing,
+    needsSmoothCorners
   };
 }
 
@@ -1435,7 +1828,7 @@ function analyzeMultiContourComplexity(contours: Point[][], effectiveDPI: number
  */
 function analyzeContourComplexity(points: Point[], effectiveDPI: number): ComplexityAnalysis {
   if (points.length < 10) {
-    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 1, needsComplexProcessing: false };
+    return { perimeterAreaRatio: 0, concavityScore: 0, narrowGapCount: 0, contourCount: 1, needsComplexProcessing: false, needsSmoothCorners: false };
   }
   
   // Calculate perimeter
@@ -1542,7 +1935,8 @@ function analyzeContourComplexity(points: Point[], effectiveDPI: number): Comple
     concavityScore,
     narrowGapCount,
     contourCount: 1,
-    needsComplexProcessing
+    needsComplexProcessing,
+    needsSmoothCorners: needsComplexProcessing
   };
 }
 
@@ -1825,39 +2219,23 @@ function boundsWithinDistance(a: BoundingBox, b: BoundingBox, distance: number):
            expandedA.maxY < b.minY || b.maxY < expandedA.minY);
 }
 
-function retainNearbyOrphans(contours: Point[][], effectiveDPI: number): Point[][] {
-  if (contours.length <= 1) return contours;
+function unionBounds(a: BoundingBox, b: BoundingBox): BoundingBox {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY)
+  };
+}
 
-  const keepNearMainDistInches = 0.25;
-  const keepNearMainDistPx = Math.max(8, keepNearMainDistInches * effectiveDPI);
+function boundsArea(b: BoundingBox): number {
+  return (b.maxX - b.minX) * (b.maxY - b.minY);
+}
 
-  const withMeta = contours.map(c => ({
-    points: c,
-    bounds: computeBounds(c),
-    area: computePolygonArea(c)
-  }));
-
-  let mainIdx = 0;
-  for (let i = 1; i < withMeta.length; i++) {
-    if (withMeta[i].area > withMeta[mainIdx].area) mainIdx = i;
-  }
-
-  const kept: Point[][] = [withMeta[mainIdx].points];
-  const mainBounds = withMeta[mainIdx].bounds;
-
-  for (let i = 0; i < withMeta.length; i++) {
-    if (i === mainIdx) continue;
-    if (boundsWithinDistance(mainBounds, withMeta[i].bounds, keepNearMainDistPx)) {
-      console.log('[Worker] retainNearbyOrphans: keeping orphan', i,
-        'area=', Math.round(withMeta[i].area), 'px² (within', keepNearMainDistInches, 'in)');
-      kept.push(withMeta[i].points);
-    } else {
-      console.log('[Worker] retainNearbyOrphans: discarding orphan', i,
-        'area=', Math.round(withMeta[i].area), 'px² (too far from main body)');
-    }
-  }
-
-  return kept;
+function boundsIntersectionArea(a: BoundingBox, b: BoundingBox): number {
+  const overlapX = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+  const overlapY = Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY));
+  return overlapX * overlapY;
 }
 
 /**
@@ -1999,61 +2377,168 @@ function traceBoundaryForComponent(
 }
 
 /**
+ * Compute minimum distance between two polygons (point-to-point sampling).
+ * For efficiency, samples every Nth point on larger polygons.
+ */
+function minDistanceBetweenContours(a: Point[], b: Point[]): number {
+  let minDist = Infinity;
+  const stepA = a.length > 200 ? Math.ceil(a.length / 200) : 1;
+  const stepB = b.length > 200 ? Math.ceil(b.length / 200) : 1;
+
+  for (let i = 0; i < a.length; i += stepA) {
+    for (let j = 0; j < b.length; j += stepB) {
+      const dx = a[i].x - b[j].x;
+      const dy = a[i].y - b[j].y;
+      const d = dx * dx + dy * dy;
+      if (d < minDist) minDist = d;
+    }
+  }
+  return Math.sqrt(minDist);
+}
+
+function orphanAttach(contours: Point[][], attachDistPixels: number): Point[][] {
+  if (contours.length <= 1 || attachDistPixels <= 0) return contours;
+
+  const enriched = contours.map((pts, idx) => {
+    const area = computePolygonArea(pts);
+    const absArea = Math.abs(area);
+    const bounds = computeBounds(pts);
+    return { points: pts, area, absArea, bounds, idx };
+  });
+
+  const globalBounds = enriched.reduce((acc, c) => unionBounds(acc, c.bounds), enriched[0].bounds);
+  const gcx = (globalBounds.minX + globalBounds.maxX) / 2;
+  const gcy = (globalBounds.minY + globalBounds.maxY) / 2;
+
+  enriched.sort((a, b) => b.absArea - a.absArea);
+
+  const TOP_N = Math.min(12, enriched.length);
+  let mainIdx = 0;
+  let bestScore = -Infinity;
+
+  for (let i = 0; i < TOP_N; i++) {
+    const b = enriched[i].bounds;
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+
+    const distToCenter = Math.hypot(cx - gcx, cy - gcy);
+    const overlap = boundsIntersectionArea(b, globalBounds) / Math.max(1, boundsArea(b));
+    const score = (enriched[i].absArea) * (0.6 + 0.8 * overlap) - distToCenter * 5.0;
+
+    if (score > bestScore) {
+      bestScore = score;
+      mainIdx = i;
+    }
+  }
+
+  const chosenMain = enriched.splice(mainIdx, 1)[0];
+  enriched.unshift(chosenMain);
+
+  let mainContour = chosenMain.points;
+  let mainBounds = chosenMain.bounds;
+
+  const remaining: Point[][] = [];
+  const candidates: Point[][] = [];
+
+  for (let i = 1; i < enriched.length; i++) {
+    const c = enriched[i];
+
+    if (c.absArea < chosenMain.absArea * 0.01 && !boundsWithinDistance(mainBounds, c.bounds, attachDistPixels)) {
+      continue;
+    }
+
+    if (boundsWithinDistance(mainBounds, c.bounds, attachDistPixels)) {
+      const dist = minDistanceBetweenContours(mainContour, c.points);
+      if (dist <= attachDistPixels) {
+        candidates.push(c.points);
+        continue;
+      }
+    }
+    remaining.push(c.points);
+  }
+
+  console.log('[Worker] orphanAttach:',
+    'main absArea:', Math.round(chosenMain.absArea),
+    'signedArea:', Math.round(chosenMain.area),
+    'candidates:', candidates.length,
+    'remaining:', remaining.length,
+    'attachDist:', attachDistPixels.toFixed(1), 'px'
+  );
+
+  if (candidates.length === 0) return [mainContour, ...remaining];
+
+  const merged = multiPathVectorMerge([mainContour, ...candidates], attachDistPixels);
+  if (merged.length >= 3) {
+    mainContour = merged;
+    console.log('[Worker] orphanAttach: merged', candidates.length, 'orphans');
+    return [mainContour, ...remaining];
+  }
+
+  console.log('[Worker] orphanAttach: merge degenerate, returning unmerged');
+  return [chosenMain.points, ...remaining];
+}
+
+/**
  * Cluster contours by proximity using Union-Find algorithm
  * Returns array of clusters, each cluster is array of contour indices
  */
 function clusterContoursByProximity(
-  contours: ContourWithBounds[], 
-  thresholdPixels: number
+  contours: ContourWithBounds[],
+  thresholdPixels: number,
+  smallThresholdPixels?: number
 ): number[][] {
   const n = contours.length;
   if (n <= 1) return n === 1 ? [[0]] : [];
-  
-  // Union-Find data structure
-  const parent = new Array(n).fill(0).map((_, i) => i);
+
+  const absAreas = contours.map(c => Math.abs(c.area));
+  const maxAbsArea = Math.max(...absAreas);
+  const smallAreaCutoff = maxAbsArea * 0.25;
+
+  const hasSmallThreshold =
+    smallThresholdPixels !== undefined &&
+    smallThresholdPixels > 0;
+
+  const parent = Array.from({ length: n }, (_, i) => i);
   const rank = new Array(n).fill(0);
-  
+
   function find(x: number): number {
-    if (parent[x] !== x) {
-      parent[x] = find(parent[x]); // Path compression
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
     }
-    return parent[x];
+    return x;
   }
-  
+
   function union(x: number, y: number): void {
-    const px = find(x), py = find(y);
+    let px = find(x), py = find(y);
     if (px === py) return;
-    
-    // Union by rank
-    if (rank[px] < rank[py]) {
-      parent[px] = py;
-    } else if (rank[px] > rank[py]) {
-      parent[py] = px;
-    } else {
-      parent[py] = px;
-      rank[px]++;
-    }
+    if (rank[px] < rank[py]) parent[px] = py;
+    else if (rank[px] > rank[py]) parent[py] = px;
+    else { parent[py] = px; rank[px]++; }
   }
-  
-  // Check all pairs for proximity
+
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
-      if (boundsWithinDistance(contours[i].bounds, contours[j].bounds, thresholdPixels)) {
-        union(i, j);
+      const eitherSmall = hasSmallThreshold &&
+        (absAreas[i] < smallAreaCutoff || absAreas[j] < smallAreaCutoff);
+
+      const pairThreshold = eitherSmall ? smallThresholdPixels! : thresholdPixels;
+
+      if (boundsWithinDistance(contours[i].bounds, contours[j].bounds, pairThreshold)) {
+        const d = minDistanceBetweenContours(contours[i].points, contours[j].points);
+        if (d <= pairThreshold) union(i, j);
       }
     }
   }
-  
-  // Group indices by their root
+
   const clusters = new Map<number, number[]>();
   for (let i = 0; i < n; i++) {
     const root = find(i);
-    if (!clusters.has(root)) {
-      clusters.set(root, []);
-    }
-    clusters.get(root)!.push(i);
+    const arr = clusters.get(root);
+    if (arr) arr.push(i);
+    else clusters.set(root, [i]);
   }
-  
+
   return Array.from(clusters.values());
 }
 
@@ -2068,7 +2553,8 @@ function processContoursWithClustering(
   rawContours: Point[][],
   clusterThresholdPixels: number,
   gapClosePixels: number,
-  effectiveDPI: number
+  effectiveDPI: number,
+  smallClusterThresholdPixels?: number
 ): Point[] {
   if (rawContours.length === 0) return [];
   
@@ -2096,7 +2582,7 @@ function processContoursWithClustering(
   }
   
   // Cluster by proximity
-  const clusters = clusterContoursByProximity(contours, clusterThresholdPixels);
+  const clusters = clusterContoursByProximity(contours, clusterThresholdPixels, smallClusterThresholdPixels);
   console.log('[Worker] Clustered', contours.length, 'contours into', clusters.length, 'groups');
   
   const processedContours: Point[][] = [];
@@ -2130,12 +2616,20 @@ function processContoursWithClustering(
     }
   }
   
+  // If multiple processed contours, union them all into final result
   if (processedContours.length === 0) return [];
   if (processedContours.length === 1) return processedContours[0];
   
-  const mergeGapPx = Math.max(8, 0.25 * effectiveDPI);
-  console.log('[Worker] Final merge of', processedContours.length, 'processed clusters with', mergeGapPx.toFixed(1), 'px gap');
-  return multiPathVectorMerge(processedContours, mergeGapPx);
+  // Final merge: bridge remaining separate clusters with expand-then-shrink.
+  // Use the larger of gapClosePixels, clusterThreshold, or smallClusterThreshold
+  // so that isolated small contours (decorative stars, dots) get absorbed.
+  const finalGap = Math.max(
+    gapClosePixels,
+    clusterThresholdPixels,
+    smallClusterThresholdPixels || 0
+  );
+  console.log('[Worker] Final merge of', processedContours.length, 'processed clusters with gap:', finalGap, 'px');
+  return multiPathVectorMerge(processedContours, finalGap);
 }
 
 /**
@@ -2240,19 +2734,61 @@ function multiPathVectorMerge(contours: Point[][], gapPixels: number): Point[] {
   
   console.log('[Worker] multiPathVectorMerge: after shrink (-', gapPixels, 'px):', shrunkPaths.length, 'paths');
   
-  // Find the largest shrunk path (this is the main merged outline)
-  let resultPath = shrunkPaths[0];
-  let largestArea = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[0]));
+  let workingPaths = shrunkPaths;
   
-  for (let i = 1; i < shrunkPaths.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      resultPath = shrunkPaths[i];
+  if (workingPaths.length > 1) {
+    const retryGap = scaledGap * 2;
+    console.log('[Worker] multiPathVectorMerge: still', workingPaths.length, 'separate paths, retrying with 2x gap');
+    
+    const coExpand2 = new ClipperLib.ClipperOffset();
+    coExpand2.ArcTolerance = CLIPPER_SCALE * 0.25;
+    coExpand2.MiterLimit = 2.0;
+    for (const path of workingPaths) {
+      coExpand2.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    }
+    const expanded2: Array<Array<{X: number; Y: number}>> = [];
+    coExpand2.Execute(expanded2, retryGap);
+    
+    if (expanded2.length > 0) {
+      const clipper2 = new ClipperLib.Clipper();
+      for (const path of expanded2) {
+        clipper2.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+      }
+      const union2: Array<Array<{X: number; Y: number}>> = [];
+      clipper2.Execute(ClipperLib.ClipType.ctUnion, union2,
+        ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+      
+      if (union2.length > 0) {
+        const coShrink2 = new ClipperLib.ClipperOffset();
+        coShrink2.ArcTolerance = CLIPPER_SCALE * 0.25;
+        coShrink2.MiterLimit = 2.0;
+        for (const path of union2) {
+          coShrink2.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+        }
+        const shrunk2: Array<Array<{X: number; Y: number}>> = [];
+        coShrink2.Execute(shrunk2, -retryGap);
+        
+        if (shrunk2.length > 0 && shrunk2.length <= workingPaths.length) {
+          console.log('[Worker] multiPathVectorMerge: 2x retry reduced to', shrunk2.length, 'paths');
+          workingPaths = shrunk2;
+        }
+      }
     }
   }
   
-  // Step 4: Simplify to remove redundant collinear points
+  // Find the largest path (this is the main merged outline)
+  let resultPath = workingPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(workingPaths[0]));
+  
+  for (let i = 1; i < workingPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(workingPaths[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = workingPaths[i];
+    }
+  }
+  
+  // Simplify to remove redundant collinear points
   const simplifiedPaths = ClipperLib.Clipper.SimplifyPolygon(resultPath, ClipperLib.PolyFillType.pftNonZero);
   let finalPath = resultPath;
   if (simplifiedPaths.length > 0) {
@@ -2328,14 +2864,136 @@ function unionClusterContours(contours: Point[][]): Point[] {
 }
 
 /**
- * Welds narrow 'caves' or 'necks' in a contour using Minkowski Closing.
- * Expands the polygon by gapWidthPixels, then shrinks by the same amount.
- * This causes narrow indentations (too tight for cutting blades) to collide and seal shut.
- * 
- * @param points - Input contour points
- * @param gapWidthPixels - Width of gaps to close (default 1.5 pixels)
- * @returns Contour with narrow gaps welded shut
+ * FINAL RE-EXTRACT: Rasterize the processed contour into a binary mask,
+ * then trace external contours (equivalent to findContours RETR_EXTERNAL).
+ * Select the largest outer contour by area and filter out tiny blobs.
+ * This guarantees the cut path always wraps the entire sticker.
  */
+function extractLargestOuterContour(contour: Point[], imageWidth: number, imageHeight: number, dpi: number): Point[] {
+  if (contour.length < 3) return contour;
+  
+  try {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of contour) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    const contourW = maxX - minX;
+    const contourH = maxY - minY;
+    if (contourW < 1 || contourH < 1) {
+      console.log('[Worker] re-extract: contour too small, skipping');
+      return contour;
+    }
+
+    const pad = 4;
+    const maskW = Math.ceil(contourW) + pad * 2 + 2;
+    const maskH = Math.ceil(contourH) + pad * 2 + 2;
+    
+    if (maskW * maskH > 4000000) {
+      console.log('[Worker] re-extract: mask too large (' + maskW + 'x' + maskH + '), skipping');
+      return contour;
+    }
+    
+    const ofsX = -minX + pad;
+    const ofsY = -minY + pad;
+
+    console.log('[Worker] re-extract: mask ' + maskW + 'x' + maskH + ', offset (' + ofsX.toFixed(1) + ',' + ofsY.toFixed(1) + '), contour ' + contour.length + ' pts');
+
+    const translated = contour.map(p => ({
+      x: Math.max(0, Math.min(maskW - 1, Math.round(p.x + ofsX))),
+      y: Math.max(0, Math.min(maskH - 1, Math.round(p.y + ofsY)))
+    }));
+
+    const mask = new Uint8Array(maskW * maskH);
+    scanlineFillPolygon(mask, maskW, maskH, translated);
+
+    let fgCount = 0;
+    for (let i = 0; i < mask.length; i++) if (mask[i] === 1) fgCount++;
+    console.log('[Worker] re-extract: rasterized ' + fgCount + ' foreground pixels (' + (fgCount / mask.length * 100).toFixed(1) + '%)');
+    
+    if (fgCount === 0) {
+      console.log('[Worker] re-extract: empty mask, keeping original');
+      return contour;
+    }
+
+    const traced = traceAllContours(mask, maskW, maskH);
+    if (traced.length === 0) {
+      console.log('[Worker] re-extract: no contours found, keeping original');
+      return contour;
+    }
+
+    const withArea = traced.map(c => {
+      let a2 = 0;
+      for (let i = 0; i < c.length; i++) {
+        const j = (i + 1) % c.length;
+        a2 += c[i].x * c[j].y - c[j].x * c[i].y;
+      }
+      return { contour: c, area: Math.abs(a2 / 2) };
+    });
+
+    withArea.sort((a, b) => b.area - a.area);
+    const largestArea = withArea[0].area;
+
+    const minAreaRatio = 0.05;
+    const minAbsAreaPx = 25;
+    const kept = withArea.filter(c => c.area >= largestArea * minAreaRatio && c.area >= minAbsAreaPx);
+
+    console.log('[Worker] re-extract: traced', traced.length, 'contours, kept', kept.length, '(largest area:', Math.round(largestArea), 'px²)');
+
+    const outer = kept[0].contour;
+    const simplified = approxPolyDP(outer.map(p => ({
+      x: p.x - ofsX,
+      y: p.y - ofsY
+    })), 0.0005);
+    
+    return sanitizePolygonForOffset(simplified);
+  } catch (err) {
+    console.log('[Worker] re-extract error, keeping original:', err);
+    return contour;
+  }
+}
+
+function scanlineFillPolygon(mask: Uint8Array, width: number, height: number, polygon: Point[]): void {
+  const n = polygon.length;
+  if (n < 3) return;
+
+  let polyMinY = height, polyMaxY = 0;
+  for (const p of polygon) {
+    if (p.y < polyMinY) polyMinY = p.y;
+    if (p.y > polyMaxY) polyMaxY = p.y;
+  }
+  polyMinY = Math.max(0, polyMinY);
+  polyMaxY = Math.min(height - 1, polyMaxY);
+
+  for (let y = polyMinY; y <= polyMaxY; y++) {
+    const intersections: number[] = [];
+
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const y0 = polygon[i].y, y1 = polygon[j].y;
+      const x0 = polygon[i].x, x1 = polygon[j].x;
+
+      if ((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {
+        const t = (y - y0) / (y1 - y0);
+        intersections.push(Math.round(x0 + t * (x1 - x0)));
+      }
+    }
+
+    intersections.sort((a, b) => a - b);
+
+    for (let k = 0; k < intersections.length - 1; k += 2) {
+      const xStart = Math.max(0, intersections[k]);
+      const xEnd = Math.min(width - 1, intersections[k + 1]);
+      for (let x = xStart; x <= xEnd; x++) {
+        mask[y * width + x] = 1;
+      }
+    }
+  }
+}
+
 function weldNarrowGaps(points: Point[], gapWidthPixels: number = 1.5): Point[] {
   if (points.length < 3 || gapWidthPixels <= 0) return points;
   
@@ -2439,30 +3097,10 @@ function removeNearDuplicatePoints(points: Point[], minDist: number): Point[] {
   return result.length >= 3 ? result : points;
 }
 
-function clipperPathBounds(path: Array<{X: number; Y: number}>): {minX: number; minY: number; maxX: number; maxY: number} {
-  let minX = path[0].X, maxX = path[0].X;
-  let minY = path[0].Y, maxY = path[0].Y;
-  for (let i = 1; i < path.length; i++) {
-    if (path[i].X < minX) minX = path[i].X;
-    if (path[i].X > maxX) maxX = path[i].X;
-    if (path[i].Y < minY) minY = path[i].Y;
-    if (path[i].Y > maxY) maxY = path[i].Y;
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-function clipperBoundsWithinDist(
-  a: {minX: number; minY: number; maxX: number; maxY: number},
-  b: {minX: number; minY: number; maxX: number; maxY: number},
-  dist: number
-): boolean {
-  return !(a.maxX + dist < b.minX || b.maxX + dist < a.minX ||
-           a.maxY + dist < b.minY || b.maxY + dist < a.minY);
-}
-
-function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false, effectiveDPI: number = 100): Point[] {
+function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorners: boolean = false): Point[] {
   if (points.length < 3 || offsetPixels <= 0) return points;
   
+  // Convert to Clipper format with scaling
   const clipperPath: Array<{X: number; Y: number}> = points.map(p => ({
     X: Math.round(p.x * CLIPPER_SCALE),
     Y: Math.round(p.y * CLIPPER_SCALE)
@@ -2470,15 +3108,27 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
   
   const scaledOffset = offsetPixels * CLIPPER_SCALE;
   
+  // Create ClipperOffset object
   const co = new ClipperLib.ClipperOffset();
   
+  // Set arc tolerance for smooth round corners
+  // Lower value = smoother curves (more points), higher = more angular
+  // 0.25px tolerance gives smooth arcs without excessive points
   co.ArcTolerance = CLIPPER_SCALE * 0.25;
+  
+  // MiterLimit controls how far sharp corners extend before being beveled
+  // Higher value = sharper corners allowed; 10.0 allows very sharp corners
+  // Without this, acute angles get beveled which can look "distorted"
   co.MiterLimit = 10.0;
   
+  // Choose join type based on corner style
   const joinType = useSharpCorners ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound;
   
+  // Add path with chosen join type
+  // ET_CLOSEDPOLYGON for closed contour
   co.AddPath(clipperPath, joinType, ClipperLib.EndType.etClosedPolygon);
   
+  // Execute the offset
   const offsetPaths: Array<Array<{X: number; Y: number}>> = [];
   co.Execute(offsetPaths, scaledOffset);
   
@@ -2487,54 +3137,21 @@ function clipperVectorOffset(points: Point[], offsetPixels: number, useSharpCorn
     return points;
   }
   
-  const keepNearMainDistInches = 0.25;
-  const keepNearMainDistScaled = Math.max(8, keepNearMainDistInches * effectiveDPI) * CLIPPER_SCALE;
+  // Find the largest polygon if multiple were created
+  let resultPath = offsetPaths[0];
+  let largestArea = Math.abs(ClipperLib.Clipper.Area(offsetPaths[0]));
   
-  let mainIdx = 0;
-  let mainArea = Math.abs(ClipperLib.Clipper.Area(offsetPaths[0]));
   for (let i = 1; i < offsetPaths.length; i++) {
     const area = Math.abs(ClipperLib.Clipper.Area(offsetPaths[i]));
-    if (area > mainArea) {
-      mainArea = area;
-      mainIdx = i;
+    if (area > largestArea) {
+      largestArea = area;
+      resultPath = offsetPaths[i];
     }
-  }
-  
-  const mainBounds = clipperPathBounds(offsetPaths[mainIdx]);
-  const keptPaths = [offsetPaths[mainIdx]];
-  
-  for (let i = 0; i < offsetPaths.length; i++) {
-    if (i === mainIdx || offsetPaths[i].length < 3) continue;
-    const oBounds = clipperPathBounds(offsetPaths[i]);
-    if (clipperBoundsWithinDist(mainBounds, oBounds, keepNearMainDistScaled)) {
-      console.log('[Worker] clipperVectorOffset: retaining nearby orphan polygon', i);
-      keptPaths.push(offsetPaths[i]);
-    }
-  }
-  
-  let resultPath: Array<{X: number; Y: number}>;
-  if (keptPaths.length === 1) {
-    resultPath = keptPaths[0];
-  } else {
-    const clipper = new ClipperLib.Clipper();
-    for (const p of keptPaths) {
-      clipper.AddPath(p, ClipperLib.PolyType.ptSubject, true);
-    }
-    const unionResult: Array<Array<{X: number; Y: number}>> = [];
-    clipper.Execute(ClipperLib.ClipType.ctUnion, unionResult,
-      ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    let bestIdx = 0;
-    let bestArea = 0;
-    for (let i = 0; i < unionResult.length; i++) {
-      const a = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-      if (a > bestArea) { bestArea = a; bestIdx = i; }
-    }
-    resultPath = unionResult.length > 0 ? unionResult[bestIdx] : keptPaths[0];
-    console.log('[Worker] clipperVectorOffset: unioned', keptPaths.length, 'nearby polygons');
   }
   
   ClipperLib.Clipper.CleanPolygon(resultPath, CLIPPER_SCALE * 0.107);
   
+  // Convert back to Point format
   const result = resultPath.map(p => ({
     x: p.X / CLIPPER_SCALE,
     y: p.Y / CLIPPER_SCALE
@@ -2758,6 +3375,40 @@ function calculatePerimeter(points: Point[]): number {
  * @param epsilonFactor - multiplier for perimeter (default 0.001 = "rope tension")
  * @returns simplified polygon
  */
+function vectorWeld(path: Point[], radiusPx: number): Point[] {
+  if (path.length < 3 || radiusPx <= 0) return path;
+
+  const clipperPath = path.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+
+  const offsetDelta = Math.round(radiusPx * CLIPPER_SCALE);
+
+  const co1 = new ClipperLib.ClipperOffset();
+  co1.ArcTolerance = 0.25 * CLIPPER_SCALE;
+  co1.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const expanded: Array<Array<{X: number; Y: number}>> = [];
+  co1.Execute(expanded, offsetDelta);
+
+  if (expanded.length === 0) return path;
+
+  const co2 = new ClipperLib.ClipperOffset();
+  co2.ArcTolerance = 0.25 * CLIPPER_SCALE;
+  co2.AddPath(expanded[0], ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const shrunk: Array<Array<{X: number; Y: number}>> = [];
+  co2.Execute(shrunk, -offsetDelta);
+
+  if (shrunk.length === 0) return path;
+
+  let longest = shrunk[0];
+  for (let i = 1; i < shrunk.length; i++) {
+    if (shrunk[i].length > longest.length) longest = shrunk[i];
+  }
+
+  return longest.map(p => ({ x: p.X / CLIPPER_SCALE, y: p.Y / CLIPPER_SCALE }));
+}
+
 function approxPolyDP(points: Point[], epsilonFactor: number = 0.001): Point[] {
   if (points.length < 3) return points;
   
@@ -4235,6 +4886,7 @@ function createOutputWithImage(
     imageCanvasY: padding,
     contourData: {
       pathPoints: [],
+      previewPathPoints: [],
       widthInches,
       heightInches,
       imageOffsetX: padding / effectiveDPI,

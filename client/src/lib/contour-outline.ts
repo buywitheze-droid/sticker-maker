@@ -1,7 +1,7 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { cleanPathWithClipper, ensureClockwise, detectSelfIntersections, unionRectangles, convertPolygonToCurves, gaussianSmoothContour, polygonToSplinePath, subsamplePolygon, optimizeForCutting, type PathSegment, type CuttingOptimizedResult } from "@/lib/clipper-path";
-import { offsetPolygon, simplifyPolygon } from "@/lib/minkowski-offset";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections } from "@/lib/clipper-path";
+import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
 // Path simplification placeholder - disabled for maximum cut accuracy
 // Performance is achieved through other optimizations (JPEG backgrounds, reduced precision)
@@ -22,151 +22,6 @@ export interface ContourPathResult {
 interface Point {
   x: number;
   y: number;
-}
-
-/**
- * Convert an SVG path string to PDF path operators with proper scaling and positioning.
- * Handles M (moveto), L (lineto), C (curveto), Z (closepath) commands.
- * 
- * @param svgPath - SVG path string (coordinates in inches)
- * @param scaleX - X scale factor (pdfImageWidth / originalImageWidth in inches, then * 72 for points)
- * @param scaleY - Y scale factor (pdfImageHeight / originalImageHeight in inches, then * 72 for points)
- * @param offsetX - X offset in PDF points (image X position)
- * @param offsetY - Y offset in PDF points (image Y position)
- * @returns PDF path operators string
- */
-function svgPathToPdfOps(
-  svgPath: string, 
-  scaleX: number = 72, 
-  scaleY: number = 72,
-  offsetX: number = 0,
-  offsetY: number = 0
-): string {
-  let result = '';
-  
-  // Parse SVG path commands
-  // Split by command letters while keeping them
-  const commands = svgPath.match(/[MLCZ][^MLCZ]*/gi) || [];
-  
-  for (const cmd of commands) {
-    const type = cmd[0].toUpperCase();
-    const nums = cmd.slice(1).trim().split(/[\s,]+/).filter(s => s.length > 0).map(parseFloat);
-    
-    switch (type) {
-      case 'M': // moveto
-        if (nums.length >= 2) {
-          // Apply scale and offset - use full floating point precision
-          const x = (nums[0] * scaleX) + offsetX;
-          const y = (nums[1] * scaleY) + offsetY;
-          result += `${x.toFixed(4)} ${y.toFixed(4)} m `;
-        }
-        break;
-      case 'L': // lineto
-        if (nums.length >= 2) {
-          const x = (nums[0] * scaleX) + offsetX;
-          const y = (nums[1] * scaleY) + offsetY;
-          result += `${x.toFixed(4)} ${y.toFixed(4)} l `;
-        }
-        break;
-      case 'C': // curveto (cubic bezier)
-        if (nums.length >= 6) {
-          const cp1x = (nums[0] * scaleX) + offsetX;
-          const cp1y = (nums[1] * scaleY) + offsetY;
-          const cp2x = (nums[2] * scaleX) + offsetX;
-          const cp2y = (nums[3] * scaleY) + offsetY;
-          const x = (nums[4] * scaleX) + offsetX;
-          const y = (nums[5] * scaleY) + offsetY;
-          result += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${x.toFixed(4)} ${y.toFixed(4)} c `;
-        }
-        break;
-      case 'Z': // closepath
-        result += 'h ';
-        break;
-    }
-  }
-  
-  return result;
-}
-
-// Trace contour outlines from a binary mask using edge-following algorithm
-// Returns multiple contours (for holes and separate regions)
-function traceContourFromMask(mask: boolean[][], w: number, h: number): Point[][] {
-  const contours: Point[][] = [];
-  const visited = new Set<string>();
-  
-  // Direction vectors for 8-connected neighbors (clockwise from right)
-  const dx = [1, 1, 0, -1, -1, -1, 0, 1];
-  const dy = [0, 1, 1, 1, 0, -1, -1, -1];
-  
-  // Find edge pixels (filled pixels adjacent to empty/boundary)
-  const isEdge = (x: number, y: number): boolean => {
-    if (x < 0 || x >= w || y < 0 || y >= h) return false;
-    if (!mask[y][x]) return false;
-    // Check if any neighbor is empty or boundary
-    for (let d = 0; d < 8; d += 2) { // Check 4-connected only for edge detection
-      const nx = x + dx[d];
-      const ny = y + dy[d];
-      if (nx < 0 || nx >= w || ny < 0 || ny >= h || !mask[ny][nx]) {
-        return true;
-      }
-    }
-    return false;
-  };
-  
-  // Trace a single contour starting from an edge pixel
-  const traceContour = (startX: number, startY: number): Point[] => {
-    const contour: Point[] = [];
-    let x = startX;
-    let y = startY;
-    let dir = 0; // Start looking right
-    
-    do {
-      const key = `${x},${y}`;
-      if (!visited.has(key)) {
-        contour.push({ x: x + 0.5, y: y + 0.5 }); // Center of pixel
-        visited.add(key);
-      }
-      
-      // Find next edge pixel by rotating search direction
-      let found = false;
-      for (let i = 0; i < 8; i++) {
-        const searchDir = (dir + 6 + i) % 8; // Start from left of current direction
-        const nx = x + dx[searchDir];
-        const ny = y + dy[searchDir];
-        
-        if (isEdge(nx, ny)) {
-          x = nx;
-          y = ny;
-          dir = searchDir;
-          found = true;
-          break;
-        }
-      }
-      
-      if (!found) break;
-      
-      // Prevent infinite loops
-      if (contour.length > w * h) break;
-      
-    } while (x !== startX || y !== startY);
-    
-    return contour;
-  };
-  
-  // Find all contours by scanning for unvisited edge pixels
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const key = `${x},${y}`;
-      if (isEdge(x, y) && !visited.has(key)) {
-        const contour = traceContour(x, y);
-        if (contour.length >= 3) {
-          contours.push(contour);
-        }
-      }
-    }
-  }
-  
-  return contours;
 }
 
 function getPolygonSignedAreaInches(path: Array<{ x: number; y: number }>): number {
@@ -235,8 +90,15 @@ function closeGapsForBleedInches(points: Array<{ x: number; y: number }>, maxGap
     x: p.x * refDPI, 
     y: p.y * refDPI 
   }));
-  // Gap closing removed - return points unchanged
-  return points;
+  const gapThresholdPixels = maxGapInches * refDPI;
+  
+  // Apply gap closing multiple times with progressively smaller thresholds
+  let result = closeGapsWithShapes(pixelPoints, gapThresholdPixels);
+  result = closeGapsWithShapes(result, gapThresholdPixels * 0.5);
+  result = closeGapsWithShapes(result, gapThresholdPixels * 0.25);
+  
+  // Convert back to inches
+  return result.map(p => ({ x: p.x / refDPI, y: p.y / refDPI }));
 }
 
 export function createSilhouetteContour(
@@ -252,11 +114,17 @@ export function createSilhouetteContour(
     ? image.width / resizeSettings.widthInches
     : image.width / 5;
   
-  const baseOffsetInches = 0.015;
+  // Base offset keeps cutpath away from design edge - increased significantly to prevent any cutting into design
+  const baseOffsetInches = 0.125; // 1/8 inch minimum margin
   const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
   
   const autoBridgeInches = 0.02;
   const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
+  
+  let gapClosePixels = 0;
+  if (strokeSettings.autoBridging) {
+    gapClosePixels = Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI);
+  }
   
   const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
   
@@ -291,12 +159,52 @@ export function createSilhouetteContour(
       }
     }
     
-    const bridgedMask = autoBridgedMask;
-    const bridgedWidth = image.width;
-    const bridgedHeight = image.height;
+    let bridgedMask = autoBridgedMask;
+    let bridgedWidth = image.width;
+    let bridgedHeight = image.height;
     
-    // Smooth bridge logic for nearby outlines
-    {
+    if (gapClosePixels > 0) {
+      const halfGapPixels = Math.round(gapClosePixels / 2);
+      
+      const dilatedMask = dilateSilhouette(autoBridgedMask, image.width, image.height, halfGapPixels);
+      const dilatedWidth = image.width + halfGapPixels * 2;
+      const dilatedHeight = image.height + halfGapPixels * 2;
+      
+      const filledDilated = fillSilhouette(dilatedMask, dilatedWidth, dilatedHeight);
+      
+      bridgedMask = new Uint8Array(image.width * image.height);
+      bridgedMask.set(autoBridgedMask);
+      
+      for (let y = 1; y < image.height - 1; y++) {
+        for (let x = 1; x < image.width - 1; x++) {
+          if (autoBridgedMask[y * image.width + x] === 0) {
+            const srcX = x + halfGapPixels;
+            const srcY = y + halfGapPixels;
+            if (filledDilated[srcY * dilatedWidth + srcX] === 1) {
+              let hasContentTop = false, hasContentBottom = false;
+              let hasContentLeft = false, hasContentRight = false;
+              
+              for (let d = 1; d <= halfGapPixels && !hasContentTop; d++) {
+                if (y - d >= 0 && autoBridgedMask[(y - d) * image.width + x] === 1) hasContentTop = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentBottom; d++) {
+                if (y + d < image.height && autoBridgedMask[(y + d) * image.width + x] === 1) hasContentBottom = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentLeft; d++) {
+                if (x - d >= 0 && autoBridgedMask[y * image.width + (x - d)] === 1) hasContentLeft = true;
+              }
+              for (let d = 1; d <= halfGapPixels && !hasContentRight; d++) {
+                if (x + d < image.width && autoBridgedMask[y * image.width + (x + d)] === 1) hasContentRight = true;
+              }
+              
+              if ((hasContentTop && hasContentBottom) || (hasContentLeft && hasContentRight)) {
+                bridgedMask[y * image.width + x] = 1;
+              }
+            }
+          }
+        }
+      }
+      
       const smoothBridgePixels = Math.round(0.03 * effectiveDPI / 2);
       if (smoothBridgePixels > 0) {
         const distanceMap = new Float32Array(image.width * image.height);
@@ -359,6 +267,9 @@ export function createSilhouetteContour(
           }
         }
       }
+      
+      bridgedWidth = image.width;
+      bridgedHeight = image.height;
     }
     
     const baseDilatedMask = dilateSilhouette(bridgedMask, bridgedWidth, bridgedHeight, baseOffsetPixels);
@@ -380,16 +291,19 @@ export function createSilhouetteContour(
       return canvas;
     }
     
-    // Use RDP to straighten edges - DPI-proportional tolerance for consistent smoothness
-    // 0.005" keeps curves intact while removing minor pixel steps
-    const rdpToleranceInches = 0.005;
-    const rdpTolerance = rdpToleranceInches * effectiveDPI;
-    let smoothedPath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
-    // Prune short segments that create tiny jogs on flat edges
-    smoothedPath = pruneShortSegments(smoothedPath, 4, 30);
+    let smoothedPath = smoothPath(boundaryPath, 2);
     
     // CRITICAL: Fix crossings that occur at sharp corners after offset/dilation
     smoothedPath = fixOffsetCrossings(smoothedPath);
+    
+    // Apply gap closing using U/N shapes based on settings
+    const gapThresholdPixels = strokeSettings.autoBridging 
+      ? Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI) 
+      : 0;
+    
+    if (gapThresholdPixels > 0) {
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+    }
     
     const offsetX = padding - totalOffsetPixels;
     const offsetY = padding - totalOffsetPixels;
@@ -699,156 +613,27 @@ function traceBoundary(mask: Uint8Array, width: number, height: number): Point[]
   return path;
 }
 
-// RDP for closed polygons - handles the wrap-around at endpoints
-// Uses existing douglasPeucker function for the actual simplification
-function rdpSimplifyPolygon(points: Point[], tolerance: number): Point[] {
-  if (points.length < 4) return points;
-  
-  // For closed polygons, we need to find a good split point
-  // Use the point furthest from the centroid as our starting point
-  const centroidX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
-  const centroidY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
-  
-  let maxDist = 0;
-  let splitIndex = 0;
-  for (let i = 0; i < points.length; i++) {
-    const dist = Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
-    if (dist > maxDist) {
-      maxDist = dist;
-      splitIndex = i;
-    }
-  }
-  
-  // Rotate array so split point is at start/end
-  const rotated = [...points.slice(splitIndex), ...points.slice(0, splitIndex)];
-  
-  // Add the first point at the end to close the loop
-  rotated.push({ ...rotated[0] });
-  
-  // Simplify the open path using Douglas-Peucker
-  const simplified = douglasPeucker(rotated, tolerance);
-  
-  // Remove the duplicate closing point
-  if (simplified.length > 1) {
-    simplified.pop();
-  }
-  
-  return simplified;
-}
-
-// Chaikin's corner-cutting algorithm to smooth pixel-step jaggies in PDF export
-// Replaces each shallow-angle corner with two points for smooth curves
-// Sharp corners (>sharpAngleThreshold) are preserved to maintain diamond tips
-function smoothPolyChaikinForPDF(points: Point[], iterations: number = 2, sharpAngleThreshold: number = 60): Point[] {
-  if (points.length < 3) return points;
-  
-  let result = [...points];
-  
-  for (let iter = 0; iter < iterations; iter++) {
-    const newPoints: Point[] = [];
-    const n = result.length;
-    
-    for (let i = 0; i < n; i++) {
-      const prev = result[(i - 1 + n) % n];
-      const curr = result[i];
-      const next = result[(i + 1) % n];
-      
-      // Calculate angle at current point
-      const v1x = curr.x - prev.x;
-      const v1y = curr.y - prev.y;
-      const v2x = next.x - curr.x;
-      const v2y = next.y - curr.y;
-      
-      const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-      const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-      
-      // Calculate angle between vectors (0° = same direction, 180° = opposite)
-      let angleDegrees = 180; // default to straight line
-      if (len1 > 0.0001 && len2 > 0.0001) {
-        const dot = v1x * v2x + v1y * v2y;
-        const cosAngle = Math.max(-1, Math.min(1, dot / (len1 * len2)));
-        angleDegrees = Math.acos(cosAngle) * 180 / Math.PI;
-      }
-      
-      // Deviation from straight line (0° = straight, 180° = U-turn)
-      const deviation = 180 - angleDegrees;
-      
-      // If sharp corner (deviation > threshold), preserve the original point
-      if (deviation > sharpAngleThreshold) {
-        newPoints.push(curr);
-      } else {
-        // Apply Chaikin's corner cutting for shallow angles
-        // Q = 0.75 * P_i + 0.25 * P_{i+1} (cut 25% from this point toward next)
-        const qx = 0.75 * curr.x + 0.25 * next.x;
-        const qy = 0.75 * curr.y + 0.25 * next.y;
-        
-        // R = 0.25 * P_i + 0.75 * P_{i+1} (cut 75% from this point toward next)
-        const rx = 0.25 * curr.x + 0.75 * next.x;
-        const ry = 0.25 * curr.y + 0.75 * next.y;
-        
-        newPoints.push({ x: qx, y: qy });
-        newPoints.push({ x: rx, y: ry });
-      }
-    }
-    
-    result = newPoints;
-  }
-  
-  return result;
-}
-
-// Prune short segments that create tiny "jogs" on flat edges
-// Only removes segments if the angle change is shallow (preserves sharp corners)
-function pruneShortSegments(points: Point[], minLength: number = 4, maxAngleDegrees: number = 30): Point[] {
-  if (points.length < 4) return points;
+function smoothPath(points: Point[], windowSize: number): Point[] {
+  // MATCHES WORKER EXACTLY - simple moving average smoothing
+  if (points.length < windowSize * 2 + 1) return points;
   
   const result: Point[] = [];
   const n = points.length;
   
   for (let i = 0; i < n; i++) {
-    const prev = result.length > 0 ? result[result.length - 1] : points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-    
-    // Calculate segment length from prev to curr
-    const segmentLength = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
-    
-    // If segment is short, check if we can skip this point
-    if (segmentLength < minLength && result.length > 0) {
-      // Calculate angle change if we skip this point
-      // Vector from prev to curr
-      const v1x = curr.x - prev.x;
-      const v1y = curr.y - prev.y;
-      // Vector from curr to next
-      const v2x = next.x - curr.x;
-      const v2y = next.y - curr.y;
-      // Vector from prev to next (if we skip curr)
-      const v3x = next.x - prev.x;
-      const v3y = next.y - prev.y;
-      
-      // Calculate angle between original path (prev->curr->next) and direct path (prev->next)
-      const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-      const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-      
-      if (len1 > 0.001 && len2 > 0.001) {
-        // Angle at the current point (between incoming and outgoing vectors)
-        const dot = v1x * v2x + v1y * v2y;
-        const cosAngle = dot / (len1 * len2);
-        const angleDegrees = Math.acos(Math.max(-1, Math.min(1, cosAngle))) * 180 / Math.PI;
-        
-        // If the angle is shallow (close to 180 = straight line), skip this point
-        // angleDegrees close to 180 means nearly straight, close to 0 means sharp corner
-        if (angleDegrees > (180 - maxAngleDegrees)) {
-          // Skip this point - it's a tiny jog on a nearly straight edge
-          continue;
-        }
-      }
+    let sumX = 0, sumY = 0;
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + n) % n;
+      sumX += points[idx].x;
+      sumY += points[idx].y;
     }
-    
-    result.push(curr);
+    result.push({
+      x: sumX / (windowSize * 2 + 1),
+      y: sumY / (windowSize * 2 + 1)
+    });
   }
   
-  return result.length >= 3 ? result : points;
+  return result;
 }
 
 // Generate U-shaped merge path (for outward curves)
@@ -1132,24 +917,23 @@ function removeSpikesFromPath(points: Point[]): Point[] {
 }
 
 // Fix crossings that occur in offset contours at sharp corners
-// Uses Clipper.js SimplifyPolygon for self-intersection removal only
-// Does NOT round corners or simplify for die cutting - preserves sharp corners
+// Uses Clipper.js for robust loop removal
 function fixOffsetCrossings(points: Point[]): Point[] {
   if (points.length < 6) return points;
   
   console.log('[fixOffsetCrossings] BEFORE cleanup - checking for intersections');
   const beforeCheck = detectSelfIntersections(points);
   
-  // Use Clipper's SimplifyPolygon to remove self-intersections only
-  // This preserves sharp corners unlike removeLoopsWithClipper which rounds them
-  let result = cleanPathWithClipper(points);
+  // Use Clipper.js to remove all self-intersections and loops
+  let result = removeLoopsWithClipper(points);
   
   // Ensure consistent winding direction (clockwise for cutting)
   result = ensureClockwise(result);
   
-  // NOTE: Removed mergeClosePathPoints - it was too aggressive and destroying paths
+  // Additional cleanup pass with legacy method for any remaining issues
+  result = mergeClosePathPoints(result);
   
-  console.log('[fixOffsetCrossings] AFTER cleanup, points:', result.length);
+  console.log('[fixOffsetCrossings] AFTER cleanup - checking for intersections');
   const afterCheck = detectSelfIntersections(result);
   
   if (afterCheck.hasLoops) {
@@ -1236,6 +1020,284 @@ function lineSegmentIntersect(p1: Point, p2: Point, p3: Point, p4: Point): Point
   }
   
   return null;
+}
+
+// Close gaps by detecting where paths are close and applying U/N shapes
+function closeGapsWithShapes(points: Point[], gapThreshold: number): Point[] {
+  if (points.length < 20) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  const processed = new Set<number>();
+  
+  // OPTIMIZATION: Use larger stride for faster processing
+  const stride = n > 2000 ? 8 : n > 1000 ? 5 : n > 500 ? 3 : 2;
+  
+  // Calculate centroid using sampled points for speed
+  let centroidX = 0, centroidY = 0;
+  let sampleCount = 0;
+  for (let i = 0; i < n; i += stride) {
+    centroidX += points[i].x;
+    centroidY += points[i].y;
+    sampleCount++;
+  }
+  centroidX /= sampleCount;
+  centroidY /= sampleCount;
+  
+  // Calculate average distance from centroid using sampled points
+  let totalDist = 0;
+  for (let i = 0; i < n; i += stride) {
+    totalDist += Math.sqrt((points[i].x - centroidX) ** 2 + (points[i].y - centroidY) ** 2);
+  }
+  const avgDistFromCentroid = totalDist / sampleCount;
+  
+  // Find all gap locations where path points are within threshold but far apart in path order
+  const gaps: Array<{i: number, j: number, dist: number}> = [];
+  
+  // Limit how much of path we can skip to avoid deleting entire outline
+  const maxSkipPoints = Math.floor(n * 0.20); // Max 20% of path per gap (reduced from 25%)
+  const minSkipPoints = Math.max(15, Math.floor(n / 50)); // Scale minimum with path size
+  
+  const thresholdSq = gapThreshold * gapThreshold;
+  
+  // OPTIMIZATION: Limit max gaps to prevent excessive processing
+  const maxGaps = 20;
+  
+  for (let i = 0; i < n && gaps.length < maxGaps; i += stride) {
+    const pi = points[i];
+    
+    // Search ahead but limit to maxSkipPoints to avoid false gaps
+    const maxSearch = Math.min(n - 5, i + maxSkipPoints);
+    // Use larger inner stride for faster search
+    const innerStride = stride * 2;
+    for (let j = i + minSkipPoints; j < maxSearch; j += innerStride) {
+      const pj = points[j];
+      const distSq = (pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2;
+      
+      if (distSq < thresholdSq) {
+        // Quick check if this is a narrow passage (close) vs a protrusion (keep)
+        const dist = Math.sqrt(distSq);
+        const dx = pj.x - pi.x;
+        const dy = pj.y - pi.y;
+        const lineLen = dist;
+        
+        // Sample only ~10 points for speed
+        let maxPerpDist = 0;
+        const sampleStride = Math.max(1, Math.floor((j - i) / 10));
+        for (let k = i + sampleStride; k < j; k += sampleStride) {
+          const pk = points[k];
+          const perpDist = Math.abs((pk.x - pi.x) * dy - (pk.y - pi.y) * dx) / (lineLen || 1);
+          maxPerpDist = Math.max(maxPerpDist, perpDist);
+        }
+        
+        // If path extends more than 3x the gap distance, it's a protrusion - don't close
+        if (maxPerpDist > dist * 3) {
+          continue;
+        }
+        
+        gaps.push({i, j, dist});
+        break;
+      }
+    }
+  }
+  
+  console.log('[closeGapsWithShapes] Scanned', n, 'points, stride:', stride, ', threshold:', gapThreshold.toFixed(0), 'px, gaps:', gaps.length);
+  
+  if (gaps.length === 0) {
+    console.log('[closeGapsWithShapes] No gaps found');
+    return points;
+  }
+  
+  console.log('[closeGapsWithShapes] Found', gaps.length, 'potential gaps');
+  
+  // Classify gaps into two categories:
+  // 1. Inward gaps (original detection) - these point toward the centroid and get priority
+  // 2. Geometry gaps (new detection) - J-shaped, hooks, etc. that don't point inward
+  const inwardGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  const geometryGaps: Array<{i: number, j: number, dist: number, priority: number}> = [];
+  
+  for (const gap of gaps) {
+    // Calculate average distance of the gap section from centroid
+    let gapSectionDist = 0;
+    let gapSectionCount = 0;
+    const sampleStride = Math.max(1, Math.floor((gap.j - gap.i) / 10));
+    for (let k = gap.i; k <= gap.j; k += sampleStride) {
+      const pk = points[k];
+      gapSectionDist += Math.sqrt((pk.x - centroidX) ** 2 + (pk.y - centroidY) ** 2);
+      gapSectionCount++;
+    }
+    const avgGapDist = gapSectionDist / gapSectionCount;
+    
+    // Inward gap: section average is LESS than shape average (dips toward center)
+    if (avgGapDist < avgDistFromCentroid * 0.95) {
+      inwardGaps.push({...gap, priority: 1}); // High priority
+      console.log('[closeGapsWithShapes] Inward gap at', gap.i, '-', gap.j);
+    } else {
+      geometryGaps.push({...gap, priority: 2}); // Lower priority
+      console.log('[closeGapsWithShapes] Geometry gap at', gap.i, '-', gap.j);
+    }
+  }
+  
+  // Filter geometry gaps to exclude any that overlap with inward gaps
+  // This ensures inward detection behavior stays exactly as before
+  const nonOverlappingGeometryGaps = geometryGaps.filter(geoGap => {
+    for (const inwardGap of inwardGaps) {
+      // Check if ranges overlap: geoGap[i,j] overlaps with inwardGap[i,j]
+      const overlapStart = Math.max(geoGap.i, inwardGap.i);
+      const overlapEnd = Math.min(geoGap.j, inwardGap.j);
+      if (overlapStart < overlapEnd) {
+        return false; // Overlaps with an inward gap, exclude it
+      }
+    }
+    return true; // No overlap, keep it
+  });
+  
+  // Combine: inward gaps (original behavior) + non-overlapping geometry gaps
+  const exteriorGaps = [...inwardGaps, ...nonOverlappingGeometryGaps];
+  
+  console.log('[closeGapsWithShapes] Inward gaps:', inwardGaps.length, 'Non-overlapping geometry gaps:', nonOverlappingGeometryGaps.length);
+  
+  if (exteriorGaps.length === 0) {
+    console.log('[closeGapsWithShapes] No gaps to close');
+    return points;
+  }
+  
+  // For each gap, find the NARROWEST point (peak-to-peak) and bridge there
+  // This preserves both sides of the gap instead of cutting one off
+  
+  // Sort gaps by path position
+  const sortedGaps = [...exteriorGaps].sort((a, b) => a.i - b.i);
+  
+  // Find the actual narrowest point for each gap
+  const refinedGaps: Array<{i: number, j: number, dist: number}> = [];
+  for (const gap of sortedGaps) {
+    let minDist = gap.dist;
+    let bestI = gap.i;
+    let bestJ = gap.j;
+    
+    // Search around the initial gap points to find the true narrowest crossing
+    const searchRange = Math.min(20, Math.floor((gap.j - gap.i) / 4));
+    for (let di = -searchRange; di <= searchRange; di++) {
+      const testI = gap.i + di;
+      if (testI < 0 || testI >= n) continue;
+      
+      for (let dj = -searchRange; dj <= searchRange; dj++) {
+        const testJ = gap.j + dj;
+        if (testJ < 0 || testJ >= n || testJ <= testI + 10) continue;
+        
+        const pi = points[testI];
+        const pj = points[testJ];
+        const dist = Math.sqrt((pi.x - pj.x) ** 2 + (pi.y - pj.y) ** 2);
+        
+        if (dist < minDist) {
+          minDist = dist;
+          bestI = testI;
+          bestJ = testJ;
+        }
+      }
+    }
+    
+    refinedGaps.push({i: bestI, j: bestJ, dist: minDist});
+  }
+  
+  // Process path, bridging at the narrowest point of each gap
+  let currentIdx = 0;
+  
+  for (const gap of refinedGaps) {
+    // Skip overlapping gaps
+    if (gap.i < currentIdx) continue;
+    
+    // Add points before the gap bridge point
+    for (let k = currentIdx; k <= gap.i; k++) {
+      if (!processed.has(k)) {
+        result.push(points[k]);
+        processed.add(k);
+      }
+    }
+    
+    // Create a minimal bridge at the narrowest point
+    const p1 = points[gap.i];
+    const p2 = points[gap.j];
+    const gapDist = gap.dist;
+    
+    if (gapDist > 0.5) {
+      // Add just 3 points for a small smooth bridge (minimal distortion)
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      result.push({ x: midX, y: midY });
+    }
+    
+    // For exterior caves (already filtered above), ALWAYS delete the cave interior
+    // Skip all points between i and j (the "top of the P" / cave interior)
+    for (let k = gap.i + 1; k < gap.j; k++) {
+      processed.add(k);
+    }
+    
+    currentIdx = gap.j;
+  }
+  
+  // Add remaining points
+  for (let k = currentIdx; k < n; k++) {
+    if (!processed.has(k)) {
+      result.push(points[k]);
+    }
+  }
+  
+  // Apply smoothing pass to eliminate wave artifacts from gap closing
+  // This is especially important for medium/small offsets
+  if (result.length >= 10 && refinedGaps.length > 0) {
+    return smoothBridgeAreas(result);
+  }
+  
+  return result.length >= 3 ? result : points;
+}
+
+// Smooth the path to eliminate wave artifacts, especially around bridge areas
+function smoothBridgeAreas(points: Point[]): Point[] {
+  if (points.length < 10) return points;
+  
+  const n = points.length;
+  const result: Point[] = [];
+  
+  // Apply 3-point weighted average smoothing (preserves shape while reducing waves)
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || i === n - 1) {
+      result.push(points[i]);
+    } else {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const next = points[i + 1];
+      
+      // Check if this point creates a sharp angle (wave artifact)
+      const dx1 = curr.x - prev.x;
+      const dy1 = curr.y - prev.y;
+      const dx2 = next.x - curr.x;
+      const dy2 = next.y - curr.y;
+      
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+      
+      if (len1 > 0.1 && len2 > 0.1) {
+        // Calculate angle between segments
+        const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
+        
+        // If sharp angle (less than ~120 degrees), smooth it
+        if (dot < 0.5) {
+          // Weighted average toward neighbors (flatten the wave)
+          result.push({
+            x: prev.x * 0.25 + curr.x * 0.5 + next.x * 0.25,
+            y: prev.y * 0.25 + curr.y * 0.5 + next.y * 0.25
+          });
+        } else {
+          result.push(curr);
+        }
+      } else {
+        result.push(curr);
+      }
+    }
+  }
+  
+  return result;
 }
 
 // Merge points that are very close together (indicating a near-crossing)
@@ -1448,10 +1510,15 @@ export function getContourPath(
   
   console.log('[getContourPath] Scale:', scale.toFixed(2), 'processSize:', processWidth, 'x', processHeight, 'effectiveDPI:', effectiveDPI.toFixed(0));
   
-  // Calculate total offset in pixels (base margin + user-specified width)
-  const baseOffsetInches = 0.015;
-  const userOffsetInches = strokeSettings.width;
-  const totalOffsetPixels = Math.round((baseOffsetInches + userOffsetInches) * effectiveDPI);
+  // Base offset keeps cutpath away from design edge - increased significantly to prevent any cutting into design
+  const baseOffsetInches = 0.125; // 1/8 inch minimum margin
+  const baseOffsetPixels = Math.round(baseOffsetInches * effectiveDPI);
+  
+  const autoBridgeInches = 0.02;
+  const autoBridgePixels = Math.round(autoBridgeInches * effectiveDPI);
+  
+  const userOffsetPixels = Math.round(strokeSettings.width * effectiveDPI);
+  const totalOffsetPixels = baseOffsetPixels + userOffsetPixels;
   
   try {
     // Create scaled canvas for faster processing
@@ -1468,66 +1535,91 @@ export function getContourPath(
     const imageData = tempCtx.getImageData(0, 0, processWidth, processHeight);
     const data = imageData.data;
     
-    // Create silhouette mask with alpha threshold
+    // Create silhouette mask with alpha threshold (matches worker)
     const silhouetteMask = new Uint8Array(processWidth * processHeight);
-    const threshold = strokeSettings.alphaThreshold || 128;
+    const threshold = strokeSettings.alphaThreshold || 10;
     for (let i = 0; i < silhouetteMask.length; i++) {
       silhouetteMask[i] = data[i * 4 + 3] >= threshold ? 1 : 0;
     }
     
     if (silhouetteMask.length === 0) return null;
     
-    // PURE VECTOR PIPELINE: No raster dilation - trace original mask directly
-    // Then apply ALL offsets using Clipper for mathematically correct sharp corners
+    // Auto bridge step (matches worker) - uses processWidth/Height for speed
+    let autoBridgedMask = silhouetteMask;
+    if (autoBridgePixels > 0) {
+      const halfAutoBridge = Math.round(autoBridgePixels / 2);
+      const dilatedAuto = dilateSilhouette(silhouetteMask, processWidth, processHeight, halfAutoBridge);
+      const dilatedAutoWidth = processWidth + halfAutoBridge * 2;
+      const dilatedAutoHeight = processHeight + halfAutoBridge * 2;
+      const filledAuto = fillSilhouette(dilatedAuto, dilatedAutoWidth, dilatedAutoHeight);
+      
+      autoBridgedMask = new Uint8Array(processWidth * processHeight);
+      for (let y = 0; y < processHeight; y++) {
+        for (let x = 0; x < processWidth; x++) {
+          autoBridgedMask[y * processWidth + x] = filledAuto[(y + halfAutoBridge) * dilatedAutoWidth + (x + halfAutoBridge)];
+        }
+      }
+    }
     
-    // Fill any interior holes in the silhouette (keeps original size)
-    const filledMask = fillSilhouette(silhouetteMask, processWidth, processHeight);
+    // Base dilation (matches worker - NO gap closing through mask dilation)
+    const baseDilatedMask = dilateSilhouette(autoBridgedMask, processWidth, processHeight, baseOffsetPixels);
+    const baseWidth = processWidth + baseOffsetPixels * 2;
+    const baseHeight = processHeight + baseOffsetPixels * 2;
     
-    // Trace boundary from the ORIGINAL filled mask (no dilation)
-    const boundaryPath = traceBoundary(filledMask, processWidth, processHeight);
+    // Fill silhouette (matches worker)
+    const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
+    
+    // User offset dilation (matches worker)
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    const dilatedWidth = baseWidth + userOffsetPixels * 2;
+    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    
+    // Trace boundary (matches worker - NO bridgeTouchingContours)
+    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) return null;
     
-    console.log('[getContourPath] Traced boundary from original mask:', boundaryPath.length, 'points');
+    // Smooth path (matches worker)
+    let smoothedPath = smoothPath(boundaryPath, 2);
+    console.log('[getContourPath] After smooth, path points:', smoothedPath.length);
     
-    // Use RDP algorithm to straighten edges - DPI-proportional tolerance for consistent smoothness
-    // 0.005" keeps curves intact while removing minor pixel steps
-    const rdpToleranceInches = 0.005;
-    const rdpTolerance = rdpToleranceInches * effectiveDPI;
-    let smoothedBasePath = rdpSimplifyPolygon(boundaryPath, rdpTolerance);
-    console.log('[getContourPath] After RDP simplify (tolerance', rdpTolerance.toFixed(2), 'px):', smoothedBasePath.length, 'points');
-    
-    // Prune short segments that create tiny jogs on flat edges
-    smoothedBasePath = pruneShortSegments(smoothedBasePath, 4, 30);
-    console.log('[getContourPath] After prune short segments:', smoothedBasePath.length, 'points');
-    
-    // Apply TOTAL offset using Clipper (base + user offset combined)
-    // This preserves sharp corners with miter joins (miterLimit = 15.0)
-    // NOTE: No pre-simplification - Clipper handles full paths efficiently and
-    // aggressive simplification destroys shape accuracy
-    const offsetPath = offsetPolygon(smoothedBasePath, totalOffsetPixels, 'sharp', 15.0);
-    
-    console.log('[getContourPath] After Clipper offset (total:', totalOffsetPixels, 'px):', offsetPath.length, 'points');
-    
-    // Shift path coordinates to account for offset expansion
-    let smoothedPath = offsetPath.map(p => ({
-      x: p.x + totalOffsetPixels,
-      y: p.y + totalOffsetPixels
-    }));
-    
-    // Final dimensions after offset
-    const dilatedWidth = processWidth + totalOffsetPixels * 2;
-    const dilatedHeight = processHeight + totalOffsetPixels * 2;
-    
-    // Fix any self-intersections that might occur after offset
+    // Fix crossings (matches worker)
     smoothedPath = fixOffsetCrossings(smoothedPath);
-    console.log('[getContourPath] After fixOffsetCrossings:', smoothedPath.length, 'points');
+    console.log('[getContourPath] After fixOffsetCrossings, path points:', smoothedPath.length);
     
-    // Use CleanPolygon for point reduction instead of blind downsampling
-    // This preserves shape accuracy while reducing point count
-    if (smoothedPath.length > 800) {
-      smoothedPath = simplifyPolygon(smoothedPath, 0.25);
-      console.log('[getContourPath] After final CleanPolygon:', smoothedPath.length, 'points');
+    // OPTIMIZATION: Simplify path BEFORE gap closing to reduce point count
+    // This dramatically speeds up gap detection
+    if (smoothedPath.length > 500) {
+      const targetPoints = 400;
+      const step = smoothedPath.length / targetPoints;
+      const simplified: Point[] = [];
+      for (let i = 0; i < targetPoints; i++) {
+        simplified.push(smoothedPath[Math.floor(i * step)]);
+      }
+      smoothedPath = simplified;
+      console.log('[getContourPath] Simplified path to', smoothedPath.length, 'points for gap closing');
+    }
+    
+    // Apply gap closing using U/N shapes based on settings (matches worker)
+    const gapThresholdPixels = strokeSettings.autoBridging 
+      ? Math.round(strokeSettings.autoBridgingThreshold * effectiveDPI) 
+      : 0;
+    
+    if (gapThresholdPixels > 0) {
+      console.log('[getContourPath] Starting gap closing with threshold:', gapThresholdPixels);
+      const startTime = performance.now();
+      smoothedPath = closeGapsWithShapes(smoothedPath, gapThresholdPixels);
+      console.log('[getContourPath] Gap closing took:', (performance.now() - startTime).toFixed(0), 'ms');
+      
+      // Ensure path is properly closed after gap processing
+      if (smoothedPath.length > 2) {
+        const first = smoothedPath[0];
+        const last = smoothedPath[smoothedPath.length - 1];
+        const closeDist = Math.sqrt((first.x - last.x) ** 2 + (first.y - last.y) ** 2);
+        if (closeDist > 2) {
+          smoothedPath.push({ x: first.x, y: first.y });
+        }
+      }
     }
     
     // Add bleed to dimensions so expanded background fits within page
@@ -1551,7 +1643,7 @@ export function getContourPath(
       heightInches,
       imageOffsetX,
       imageOffsetY,
-      backgroundColor: strokeSettings.backgroundColor === 'holographic' ? 'transparent' : strokeSettings.backgroundColor
+      backgroundColor: strokeSettings.backgroundColor
     };
   } catch (error) {
     console.error('Error getting contour path:', error);
@@ -1562,181 +1654,12 @@ export function getContourPath(
 // Cached contour data type for fast PDF export
 export interface CachedContourData {
   pathPoints: Array<{x: number; y: number}>;
+  previewPathPoints: Array<{x: number; y: number}>;
   widthInches: number;
   heightInches: number;
   imageOffsetX: number;
   imageOffsetY: number;
   backgroundColor: string;
-  useEdgeBleed?: boolean;
-}
-
-export interface SpotColorInput {
-  hex: string;
-  rgb: { r: number; g: number; b: number };
-  spotWhite: boolean;
-  spotGloss: boolean;
-  spotWhiteName?: string;
-  spotGlossName?: string;
-}
-
-// Detect if design is "solid" (few internal gaps) or has many gaps
-// Returns true if the design is solid enough to use edge-aware bleed
-function detectSolidDesign(image: HTMLImageElement, alphaThreshold: number = 128): boolean {
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return true;
-  
-  ctx.drawImage(image, 0, 0);
-  const imageData = ctx.getImageData(0, 0, image.width, image.height);
-  const data = imageData.data;
-  const width = image.width;
-  const height = image.height;
-  
-  let opaqueCount = 0;
-  let edgeCount = 0;
-  
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      if (data[idx + 3] >= alphaThreshold) {
-        opaqueCount++;
-        
-        let isEdge = false;
-        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
-          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
-              isEdge = true;
-            } else {
-              const nidx = (ny * width + nx) * 4;
-              if (data[nidx + 3] < alphaThreshold) isEdge = true;
-            }
-          }
-        }
-        if (isEdge) edgeCount++;
-      }
-    }
-  }
-  
-  if (opaqueCount === 0) return false;
-  
-  const edgeRatio = edgeCount / opaqueCount;
-  return edgeRatio < 0.25;
-}
-
-// Create an edge-extended canvas for bleed area using efficient BFS propagation
-// Note: BFS fills all transparent regions including internal holes, which is intentional
-// because the original image (with transparency preserved) is drawn on top in the final render
-function createEdgeExtendedCanvas(
-  image: HTMLImageElement,
-  extendRadius: number
-): HTMLCanvasElement {
-  // Get original image data
-  const srcCanvas = document.createElement('canvas');
-  srcCanvas.width = image.width;
-  srcCanvas.height = image.height;
-  const srcCtx = srcCanvas.getContext('2d');
-  if (!srcCtx) return srcCanvas;
-  
-  srcCtx.drawImage(image, 0, 0);
-  const srcData = srcCtx.getImageData(0, 0, image.width, image.height);
-  const data = srcData.data;
-  const width = image.width;
-  const height = image.height;
-  
-  // Create output canvas with extended size
-  const newWidth = width + extendRadius * 2;
-  const newHeight = height + extendRadius * 2;
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = newWidth;
-  outCanvas.height = newHeight;
-  const outCtx = outCanvas.getContext('2d');
-  if (!outCtx) return outCanvas;
-  
-  const outData = outCtx.createImageData(newWidth, newHeight);
-  const out = outData.data;
-  
-  // Track which output pixels have been assigned colors
-  const assigned = new Uint8Array(newWidth * newHeight);
-  
-  // BFS queue for propagation: [x, y, sourceR, sourceG, sourceB]
-  const queue: Array<[number, number, number, number, number]> = [];
-  
-  // First pass: copy original opaque pixels and find edge pixels for BFS seeds
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const srcIdx = (y * width + x) * 4;
-      if (data[srcIdx + 3] > 128) {
-        // Copy to output at offset position
-        const outX = x + extendRadius;
-        const outY = y + extendRadius;
-        const outIdx = (outY * newWidth + outX) * 4;
-        out[outIdx] = data[srcIdx];
-        out[outIdx + 1] = data[srcIdx + 1];
-        out[outIdx + 2] = data[srcIdx + 2];
-        out[outIdx + 3] = data[srcIdx + 3];
-        assigned[outY * newWidth + outX] = 1;
-        
-        // Check if this is an edge pixel (has transparent neighbor)
-        let isEdge = false;
-        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
-          for (let dx = -1; dx <= 1 && !isEdge; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
-              isEdge = true;
-            } else {
-              const nidx = (ny * width + nx) * 4;
-              if (data[nidx + 3] < 128) isEdge = true;
-            }
-          }
-        }
-        
-        // Add edge pixels to BFS queue - they will propagate their color outward
-        if (isEdge) {
-          queue.push([outX, outY, data[srcIdx], data[srcIdx + 1], data[srcIdx + 2]]);
-        }
-      }
-    }
-  }
-  
-  // BFS propagation: spread edge colors outward
-  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
-  let queueIdx = 0;
-  
-  while (queueIdx < queue.length) {
-    const [cx, cy, r, g, b] = queue[queueIdx++];
-    
-    for (const [dx, dy] of directions) {
-      const nx = cx + dx;
-      const ny = cy + dy;
-      
-      // Check bounds
-      if (nx < 0 || nx >= newWidth || ny < 0 || ny >= newHeight) continue;
-      
-      // Skip if already assigned
-      if (assigned[ny * newWidth + nx]) continue;
-      
-      // Mark as assigned and set color
-      assigned[ny * newWidth + nx] = 1;
-      const outIdx = (ny * newWidth + nx) * 4;
-      out[outIdx] = r;
-      out[outIdx + 1] = g;
-      out[outIdx + 2] = b;
-      out[outIdx + 3] = 255;
-      
-      // Add to queue for further propagation
-      queue.push([nx, ny, r, g, b]);
-    }
-  }
-  
-  outCtx.putImageData(outData, 0, 0);
-  return outCanvas;
 }
 
 export async function downloadContourPDF(
@@ -1744,9 +1667,7 @@ export async function downloadContourPDF(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
-  cachedContourData?: CachedContourData,
-  spotColors?: SpotColorInput[],
-  singleArtboard: boolean = false
+  cachedContourData?: CachedContourData
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -1761,46 +1682,42 @@ export async function downloadContourPDF(
     let imageOffsetX: number;
     let imageOffsetY: number;
     let backgroundColor: string;
-    let useEdgeBleed: boolean = true; // Default to edge bleed for fallback
     
-    // Use cached worker contour data that matches the preview exactly
-    // Spline smoothing will convert these points to smooth bezier curves for PDF
-    if (cachedContourData && cachedContourData.pathPoints && cachedContourData.pathPoints.length > 0) {
-      console.log('[downloadContourPDF] Using cached worker contour data:', cachedContourData.pathPoints.length, 'points');
+    // Use cached contour data if available (from preview worker) for instant PDF export
+    if (cachedContourData && cachedContourData.pathPoints.length > 0) {
+      console.log('[downloadContourPDF] Using cached contour data');
+      
+      // The cached data is already generated with the correct DPI based on resize settings
+      // Use it directly without rescaling
       pathPoints = cachedContourData.pathPoints;
       widthInches = cachedContourData.widthInches;
       heightInches = cachedContourData.heightInches;
       imageOffsetX = cachedContourData.imageOffsetX;
       imageOffsetY = cachedContourData.imageOffsetY;
       backgroundColor = cachedContourData.backgroundColor;
-      useEdgeBleed = cachedContourData.useEdgeBleed ?? !strokeSettings.useCustomBackground;
+      
+      console.log('[downloadContourPDF] Using cached dimensions:', {
+        size: `${widthInches.toFixed(2)}x${heightInches.toFixed(2)}`,
+        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`
+      });
     } else {
-      console.log('[downloadContourPDF] No cached data, computing contour path');
-      const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-      if (!contourResult) {
-        console.error('Failed to generate contour path');
+      console.log('[downloadContourPDF] No cache - running worker at export resolution');
+      const workerManager = getContourWorkerManager();
+      const exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
+      if (exportData) {
+        pathPoints = exportData.pathPoints;
+        widthInches = exportData.widthInches;
+        heightInches = exportData.heightInches;
+        imageOffsetX = exportData.imageOffsetX;
+        imageOffsetY = exportData.imageOffsetY;
+        backgroundColor = exportData.backgroundColor;
+      } else {
+        console.error('[downloadContourPDF] Worker export failed - no contour data available');
         return;
       }
-      pathPoints = contourResult.pathPoints;
-      widthInches = contourResult.widthInches;
-      heightInches = contourResult.heightInches;
-      imageOffsetX = contourResult.imageOffsetX;
-      imageOffsetY = contourResult.imageOffsetY;
-      backgroundColor = contourResult.backgroundColor;
-      useEdgeBleed = !strokeSettings.useCustomBackground;
     }
     
-    console.log('[downloadContourPDF] Edge bleed mode:', useEdgeBleed);
-    
     console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
-    
-    // Debug: log path bounds to verify coordinates
-    const pathXs = pathPoints.map(p => p.x);
-    const pathYs = pathPoints.map(p => p.y);
-    console.log('[downloadContourPDF] Path bounds (inches): X:', Math.min(...pathXs).toFixed(3), 'to', Math.max(...pathXs).toFixed(3), 
-                'Y:', Math.min(...pathYs).toFixed(3), 'to', Math.max(...pathYs).toFixed(3));
-    console.log('[downloadContourPDF] Page size (inches):', widthInches.toFixed(3), 'x', heightInches.toFixed(3));
-    console.log('[downloadContourPDF] Image offset (inches):', imageOffsetX.toFixed(3), 'x', imageOffsetY.toFixed(3));
   
     const widthPts = widthInches * 72;
     const heightPts = heightInches * 72;
@@ -1808,31 +1725,16 @@ export async function downloadContourPDF(
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([widthPts, heightPts]);
     
-    // Background setup
-    const bgDPI = 150;
+    // OPTIMIZATION: Create background and design canvases in parallel
+    // Background uses lower DPI (150) since it's solid color - doesn't need 300 DPI
+    const bgDPI = 150; // Solid color fill doesn't need high resolution
     const bleedInches = 0.10;
     const bleedPixels = bleedInches * bgDPI;
+    const fillColor = backgroundColor || '#ffffff';
     const drawPath = pathPoints;
-    // Holographic and transparent mean no background fill - skip background layer
-    const isTransparentBackground = !backgroundColor || backgroundColor === 'transparent' || backgroundColor === 'holographic';
-    const fillColor = isTransparentBackground ? 'transparent' : backgroundColor;
     
-    // For edge bleed mode, create edge-extended canvas; for custom background, use solid color
-    let edgeExtendedCanvas: HTMLCanvasElement | null = null;
-    if (useEdgeBleed && !isTransparentBackground) {
-      const imageDPI = image.width / resizeSettings.widthInches;
-      const extendRadiusImagePixels = Math.round(imageOffsetX * imageDPI);
-      edgeExtendedCanvas = createEdgeExtendedCanvas(image, extendRadiusImagePixels);
-    }
-    
-    // Create background canvas (edge-aware for solid designs, solid color for designs with gaps)
-    // Skip entirely for transparent/holographic backgrounds
-    const createBackgroundBlob = (): Promise<Blob | null> => {
-      // Skip background layer for transparent backgrounds
-      if (isTransparentBackground) {
-        return Promise.resolve(null);
-      }
-      
+    // Create background canvas (lower DPI for speed)
+    const createBackgroundBlob = (): Promise<Blob> => {
       return new Promise((resolve, reject) => {
         const bgCanvas = document.createElement('canvas');
         const bgCtx = bgCanvas.getContext('2d');
@@ -1844,7 +1746,12 @@ export async function downloadContourPDF(
         bgCanvas.width = Math.round(widthInches * bgDPI);
         bgCanvas.height = Math.round(heightInches * bgDPI);
         
-        // Create clip path from contour (with bleed)
+        bgCtx.fillStyle = fillColor;
+        bgCtx.strokeStyle = fillColor;
+        bgCtx.lineWidth = bleedPixels * 2;
+        bgCtx.lineJoin = 'round';
+        bgCtx.lineCap = 'round';
+        
         if (drawPath.length > 0) {
           bgCtx.beginPath();
           bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
@@ -1852,29 +1759,8 @@ export async function downloadContourPDF(
             bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
           }
           bgCtx.closePath();
-          
-          // Stroke with bleed to expand the clip area
-          bgCtx.lineWidth = bleedPixels * 2;
-          bgCtx.lineJoin = 'round';
-          bgCtx.lineCap = 'round';
-          
-          if (useEdgeBleed && edgeExtendedCanvas) {
-            // Edge-aware bleed: extends edge colors outward
-            bgCtx.strokeStyle = 'white';
-            bgCtx.stroke();
-            bgCtx.fillStyle = 'white';
-            bgCtx.fill();
-            
-            // Draw edge-extended image using composite
-            bgCtx.globalCompositeOperation = 'source-in';
-            bgCtx.drawImage(edgeExtendedCanvas, 0, 0, bgCanvas.width, bgCanvas.height);
-          } else {
-            // Custom background: use solid color bleed
-            bgCtx.strokeStyle = fillColor;
-            bgCtx.stroke();
-            bgCtx.fillStyle = fillColor;
-            bgCtx.fill();
-          }
+          bgCtx.stroke();
+          bgCtx.fill();
         }
         
         // Flip for PDF coordinate system
@@ -1923,36 +1809,29 @@ export async function downloadContourPDF(
       createDesignBlob()
     ]);
     
-    // Convert design blob to bytes (background may be null for transparent)
-    const pngBytes = await designBlob.arrayBuffer().then(buf => new Uint8Array(buf));
+    // Convert blobs to bytes in parallel
+    const [bgPngBytes, pngBytes] = await Promise.all([
+      bgBlob.arrayBuffer().then(buf => new Uint8Array(buf)),
+      designBlob.arrayBuffer().then(buf => new Uint8Array(buf))
+    ]);
     
-    // Only draw background if we have one (skip for transparent/holographic)
-    if (bgBlob) {
-      const bgPngBytes = await bgBlob.arrayBuffer().then(buf => new Uint8Array(buf));
-      const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
-      
-      // Draw the background raster image first
-      page.drawImage(bgPngImage, {
-        x: 0,
-        y: 0,
-        width: widthPts,
-        height: heightPts,
-      });
-    }
+    // Embed images in PDF as PNG for better quality
+    const bgPngImage = await pdfDoc.embedPng(bgPngBytes);
+    
+    // Draw the background raster image first
+    page.drawImage(bgPngImage, {
+      x: 0,
+      y: 0,
+      width: widthPts,
+      height: heightPts,
+    });
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // CRITICAL: Calculate image dimensions from cached contour data to match the contour path
-  // The contour was computed at a specific DPI, so we must use consistent dimensions
-  // imageOffset already includes bleed + totalOffset, so:
-  // image = page - 2*imageOffset (gives centered image with correct margins)
   const imageXPts = imageOffsetX * 72;
-  const imageYPts = imageOffsetY * 72;
-  const imageWidthPts = (widthInches * 72) - (imageOffsetX * 72 * 2);
-  const imageHeightPts = (heightInches * 72) - (imageOffsetY * 72 * 2);
-  
-  console.log('[PDF] Image dimensions (from contour data):', 
-    imageWidthPts.toFixed(2), 'x', imageHeightPts.toFixed(2), 'pts');
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageYPts = heightPts - (imageOffsetY * 72) - imageHeightPts;
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -1991,364 +1870,55 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // NOTE: Chaikin smoothing is now applied in the worker, so cached data is already smooth
-    // No double-smoothing needed - use pathPoints directly
-    const smoothedPath = pathPoints;
-    console.log('[PDF] Using cached path (Chaikin applied in worker):', smoothedPath.length, 'pts');
+    // OPTIMIZATION: Simplify path for faster PDF generation
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
-    // Guard for empty/degenerate paths
-    if (smoothedPath.length < 3) {
-      console.log('[PDF] Path too short, skipping CutContour');
-    } else {
-      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (from worker cache)');
+    let pathOps = '';
+    pathOps += '/CutContour CS 1 SCN\n';
+    pathOps += '0.5 w\n';
+    
+    const startX = simplifiedPath[0].x * 72;
+    const startY = simplifiedPath[0].y * 72;
+    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
+    
+    // Use simplified path with reduced precision for smaller file
+    for (let i = 0; i < simplifiedPath.length; i++) {
+      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
+      const p1 = simplifiedPath[i];
+      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
+      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
       
-      let pathOps = '';
-      pathOps += '/CutContour CS 1 SCN\n';
-      pathOps += '0.5 w\n';
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+      const endX = p2.x * 72;
+      const endY = p2.y * 72;
       
-      // Use the EXACT same approach as the preview worker: direct line segments
-      // No curve fitting or smoothing - this ensures PDF matches preview exactly
-      console.log('[PDF] Using direct line segments (matching preview worker)');
+      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+    }
+    
+    pathOps += 'h S\n';
+    
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
       
-      // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
-      const scale = 72;
-      
-      // Debug: Log coordinate transform details
-      console.log('[PDF] Coordinate system check:');
-      console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
-      console.log('  - Image position (pts):', imageXPts, ',', imageYPts);
-      console.log('  - Image size (pts):', imageWidthPts, 'x', imageHeightPts);
-      if (smoothedPath.length > 0) {
-        const xs = smoothedPath.map(p => p.x);
-        const ys = smoothedPath.map(p => p.y);
-        console.log('  - Path X range (inches):', Math.min(...xs).toFixed(4), 'to', Math.max(...xs).toFixed(4));
-        console.log('  - Path Y range (inches):', Math.min(...ys).toFixed(4), 'to', Math.max(...ys).toFixed(4));
-        console.log('  - First point (pts):', smoothedPath[0].x * 72, ',', smoothedPath[0].y * 72);
-      }
-      
-      // Build path operators directly from points - same as preview canvas
-      if (smoothedPath.length > 0) {
-        const first = smoothedPath[0];
-        pathOps += `${(first.x * scale).toFixed(4)} ${(first.y * scale).toFixed(4)} m `;
-        
-        for (let i = 1; i < smoothedPath.length; i++) {
-          const pt = smoothedPath[i];
-          pathOps += `${(pt.x * scale).toFixed(4)} ${(pt.y * scale).toFixed(4)} l `;
-        }
-        
-        pathOps += 'h S\n'; // close path and stroke
-      }
-      
-      console.log('[PDF] Rendered', smoothedPath.length, 'line segments');
-      
-      const existingContents = page.node.Contents();
-      if (existingContents) {
-        const contentStream = context.stream(pathOps);
-        const contentStreamRef = context.register(contentStream);
-        
-        if (existingContents instanceof PDFArray) {
-          existingContents.push(contentStreamRef);
-        } else {
-          const newContents = context.obj([existingContents, contentStreamRef]);
-          page.node.set(PDFName.of('Contents'), newContents);
-        }
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
       }
     }
   }
   
-  // Add spot color layers (RDG_WHITE and RDG_GLOSS) if any colors are marked
-  if (spotColors && spotColors.length > 0) {
-    const context = pdfDoc.context;
-    const resources = page.node.Resources();
-    
-    // Check if any colors are marked for white or gloss
-    const hasWhite = spotColors.some(c => c.spotWhite);
-    const hasGloss = spotColors.some(c => c.spotGloss);
-    
-    if (hasWhite || hasGloss) {
-      // Create spot color masks by extracting matching pixels from the design
-      const maskCanvas = document.createElement('canvas');
-      const maskCtx = maskCanvas.getContext('2d');
-      if (maskCtx) {
-        maskCanvas.width = image.width;
-        maskCanvas.height = image.height;
-        maskCtx.drawImage(image, 0, 0);
-        const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-        const data = imageData.data;
-        
-        // Create spot color layer using merged rectangles for clean filled shapes
-        const createSpotColorLayer = async (
-          colorName: string,
-          markedColors: SpotColorInput[],
-          tintCMYK: [number, number, number, number],
-          targetPage: typeof page
-        ): Promise<void> => {
-          const w = maskCanvas.width;
-          const h = maskCanvas.height;
-          
-          // Create binary mask - only match pixels where the selected spot color is the CLOSEST match
-          // This ensures each pixel belongs to only one spot color (the dominant visible one)
-          const binaryMask: boolean[][] = [];
-          const colorTolerance = 60; // Maximum distance to consider a match
-          const alphaThreshold = 240; // Require fully opaque pixels to avoid background artifacts and blended areas
-          
-          // Build set of marked color hex values for quick lookup
-          const markedHexSet = new Set(markedColors.map(mc => mc.hex));
-          
-          // Build indexed list of ALL spot colors for comparison
-          const allSpotColorsIndexed = spotColors.map((c, idx) => ({ 
-            rgb: c.rgb, 
-            hex: c.hex,
-            index: idx
-          }));
-          
-          for (let y = 0; y < h; y++) {
-            binaryMask[y] = [];
-            for (let x = 0; x < w; x++) {
-              const i = (y * w + x) * 4;
-              const r = data[i];
-              const g = data[i + 1];
-              const b = data[i + 2];
-              const a = data[i + 3];
-              
-              // Skip pixels that aren't sufficiently opaque
-              // This filters out blended/anti-aliased edge pixels where colors mix
-              if (a < alphaThreshold) {
-                binaryMask[y][x] = false;
-                continue;
-              }
-              
-              // Find the closest spot color to this pixel among ALL extracted colors
-              let closestHex = '';
-              let closestDistance = Infinity;
-              
-              for (const sc of allSpotColorsIndexed) {
-                const dr = r - sc.rgb.r;
-                const dg = g - sc.rgb.g;
-                const db = b - sc.rgb.b;
-                const distance = Math.sqrt(dr*dr + dg*dg + db*db);
-                
-                if (distance < closestDistance) {
-                  closestDistance = distance;
-                  closestHex = sc.hex;
-                }
-              }
-              
-              // Only match if:
-              // 1. The closest color is within tolerance
-              // 2. The closest color is one of the marked colors for this layer (by hex)
-              const matches = closestDistance < colorTolerance && markedHexSet.has(closestHex);
-              
-              binaryMask[y][x] = matches;
-            }
-          }
-          
-          // Check if any pixels match
-          let hasMatch = false;
-          outer: for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-              if (binaryMask[y][x]) {
-                hasMatch = true;
-                break outer;
-              }
-            }
-          }
-          
-          if (!hasMatch) {
-            console.log(`[PDF] No matching pixels found for ${colorName}`);
-            return;
-          }
-          
-          // Create separation color space for this spot color
-          const tintFunction = context.obj({
-            FunctionType: 2,
-            Domain: [0, 1],
-            C0: [0, 0, 0, 0],
-            C1: tintCMYK,
-            N: 1,
-          });
-          const tintRef = context.register(tintFunction);
-          
-          const separation = context.obj([
-            PDFName.of('Separation'),
-            PDFName.of(colorName),
-            PDFName.of('DeviceCMYK'),
-            tintRef,
-          ]);
-          const sepRef = context.register(separation);
-          
-          // Ensure Resources dictionary exists on page
-          let pageResources = targetPage.node.Resources();
-          if (!pageResources) {
-            pageResources = context.obj({});
-            targetPage.node.set(PDFName.of('Resources'), pageResources);
-          }
-          
-          let colorSpaceDict = pageResources.get(PDFName.of('ColorSpace'));
-          if (!colorSpaceDict) {
-            colorSpaceDict = context.obj({});
-            (pageResources as PDFDict).set(PDFName.of('ColorSpace'), colorSpaceDict);
-          }
-          (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
-          
-          // Convert pixel coordinates to PDF points
-          const scaleX = (resizeSettings.widthInches * 72) / w;
-          const scaleY = (resizeSettings.heightInches * 72) / h;
-          const offsetX = imageOffsetX * 72;
-          const offsetY = imageOffsetY * 72;
-          
-          // PDF Y-axis is flipped (0 at bottom)
-          const toY = (py: number) => offsetY + (h - py) * scaleY;
-          const toX = (px: number) => offsetX + px * scaleX;
-          
-          // Create a single compound path by using scanline rectangles
-          // Merged into maximal horizontal strips for fewer objects
-          
-          // Step 1: Collect horizontal spans with run-length encoding
-          const spans: Array<{y: number; x1: number; x2: number}> = [];
-          
-          for (let y = 0; y < h; y++) {
-            let inSpan = false;
-            let spanStart = 0;
-            
-            for (let x = 0; x <= w; x++) {
-              const filled = x < w && binaryMask[y][x];
-              
-              if (filled && !inSpan) {
-                inSpan = true;
-                spanStart = x;
-              } else if (!filled && inSpan) {
-                inSpan = false;
-                spans.push({ y, x1: spanStart, x2: x });
-              }
-            }
-          }
-          
-          if (spans.length === 0) {
-            console.log(`[PDF] No matching pixels for ${colorName}`);
-            return;
-          }
-          
-          // Step 2: Merge spans vertically where possible
-          // Group by y, then merge adjacent rows with matching x-ranges
-          const spansByY = new Map<number, Array<{x1: number; x2: number}>>();
-          for (const span of spans) {
-            if (!spansByY.has(span.y)) spansByY.set(span.y, []);
-            spansByY.get(span.y)!.push({x1: span.x1, x2: span.x2});
-          }
-          
-          // Create merged rectangular regions
-          const regions: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
-          const processed = new Set<string>();
-          
-          for (const span of spans) {
-            const key = `${span.y},${span.x1},${span.x2}`;
-            if (processed.has(key)) continue;
-            processed.add(key);
-            
-            let y1 = span.y;
-            let y2 = span.y;
-            
-            // Extend upward
-            for (let y = span.y - 1; y >= 0; y--) {
-              const rowSpans = spansByY.get(y) || [];
-              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
-                y1 = y;
-                processed.add(`${y},${span.x1},${span.x2}`);
-              } else break;
-            }
-            
-            // Extend downward
-            for (let y = span.y + 1; y < h; y++) {
-              const rowSpans = spansByY.get(y) || [];
-              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
-                y2 = y;
-                processed.add(`${y},${span.x1},${span.x2}`);
-              } else break;
-            }
-            
-            regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
-          }
-          
-          // Step 3: Draw merged rectangular regions (fast and accurate)
-          let spotOps = `q /${colorName} cs 1 scn\n`;
-          
-          for (const r of regions) {
-            const x1 = toX(r.x1);
-            const y1 = toY(r.y2 + 1);
-            const x2 = toX(r.x2);
-            const y2 = toY(r.y1);
-            const rw = x2 - x1;
-            const rh = y2 - y1;
-            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${rw.toFixed(2)} ${rh.toFixed(2)} re\n`;
-          }
-          
-          console.log(`[PDF] ${colorName}: ${regions.length} rectangles`);
-          
-          // Single fill command for all polygons
-          spotOps += 'f\nQ\n';
-          
-          // Add content stream to page
-          const spotStream = context.stream(spotOps);
-          const spotStreamRef = context.register(spotStream);
-          
-          const existingContents = targetPage.node.Contents();
-          if (existingContents) {
-            if (existingContents instanceof PDFArray) {
-              existingContents.push(spotStreamRef);
-            } else {
-              const newContents = context.obj([existingContents, spotStreamRef]);
-              targetPage.node.set(PDFName.of('Contents'), newContents);
-            }
-          } else {
-            targetPage.node.set(PDFName.of('Contents'), spotStreamRef);
-          }
-          
-          console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} solid regions`);
-        };
-        
-        // Get custom spot color names from first marked color (all should have same name)
-        const whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
-        const glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
-        
-        if (singleArtboard) {
-          // Add White and Gloss spot color layers on the SAME page (same artboard, different layers)
-          if (hasWhite) {
-            const whiteColors = spotColors.filter(c => c.spotWhite);
-            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], page);
-          }
-          
-          if (hasGloss) {
-            const glossColors = spotColors.filter(c => c.spotGloss);
-            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], page);
-          }
-        } else {
-          // Create SEPARATE pages for White and Gloss spot colors (original behavior)
-          if (hasWhite) {
-            const whitePage = pdfDoc.addPage([widthPts, heightPts]);
-            const whiteColors = spotColors.filter(c => c.spotWhite);
-            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], whitePage);
-          }
-          
-          if (hasGloss) {
-            const glossPage = pdfDoc.addPage([widthPts, heightPts]);
-            const glossColors = spotColors.filter(c => c.spotGloss);
-            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], glossPage);
-          }
-        }
-      }
-    }
-  }
-  
-  // Get custom names for metadata
-  const whiteName = spotColors?.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
-  const glossName = spotColors?.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
-  
-  pdfDoc.setTitle('Sticker with CutContour and Spot Colors');
-  pdfDoc.setSubject(singleArtboard 
-    ? `Single artboard with Design + CutContour + ${whiteName} + ${glossName}`
-    : `Page 1: Raster + CutContour, Page 2: ${whiteName}, Page 3: ${glossName}`);
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', whiteName, glossName]);
+  pdfDoc.setTitle('Sticker with CutContour');
+  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -2390,19 +1960,20 @@ export async function generateContourPDFBase64(
     imageOffsetY = cachedContourData.imageOffsetY;
     backgroundColor = cachedContourData.backgroundColor;
   } else {
-    // Fallback: compute contour path (slower)
-    console.log('[generateContourPDFBase64] Computing contour path (no cache)');
-    const contourResult = getContourPath(image, strokeSettings, resizeSettings);
-    if (!contourResult) {
-      console.error('Failed to generate contour path');
+    console.log('[generateContourPDFBase64] No cache - running worker at export resolution');
+    const workerManager = getContourWorkerManager();
+    const exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
+    if (exportData) {
+      pathPoints = exportData.pathPoints;
+      widthInches = exportData.widthInches;
+      heightInches = exportData.heightInches;
+      imageOffsetX = exportData.imageOffsetX;
+      imageOffsetY = exportData.imageOffsetY;
+      backgroundColor = exportData.backgroundColor;
+    } else {
+      console.error('[generateContourPDFBase64] Worker export failed - no contour data available');
       return null;
     }
-    pathPoints = contourResult.pathPoints;
-    widthInches = contourResult.widthInches;
-    heightInches = contourResult.heightInches;
-    imageOffsetX = contourResult.imageOffsetX;
-    imageOffsetY = contourResult.imageOffsetY;
-    backgroundColor = contourResult.backgroundColor;
   }
   
   const widthPts = widthInches * 72;
@@ -2514,14 +2085,10 @@ export async function generateContourPDFBase64(
   
   const pngImage = await pdfDoc.embedPng(pngBytes);
   
-  // CRITICAL: Calculate image dimensions from cached contour data to match the contour path
   const imageXPts = imageOffsetX * 72;
-  const imageYPts = imageOffsetY * 72;
-  const imageWidthPts = (widthInches * 72) - (imageOffsetX * 72 * 2);
-  const imageHeightPts = (heightInches * 72) - (imageOffsetY * 72 * 2);
-  
-  console.log('[PDF] Image dimensions (from contour data):', 
-    imageWidthPts.toFixed(2), 'x', imageHeightPts.toFixed(2), 'pts');
+  const imageWidthPts = resizeSettings.widthInches * 72;
+  const imageHeightPts = resizeSettings.heightInches * 72;
+  const imageYPts = heightPts - (imageOffsetY * 72) - imageHeightPts;
   
   page.drawImage(pngImage, {
     x: imageXPts,
@@ -2560,67 +2127,48 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    // NOTE: Chaikin smoothing is now applied in the worker, so cached data is already smooth
-    // No double-smoothing needed - use pathPoints directly
-    const smoothedPath = pathPoints;
-    console.log('[PDF] Using cached path (Chaikin applied in worker):', smoothedPath.length, 'pts');
+    // OPTIMIZATION: Simplify path for faster PDF generation
+    const simplifiedPath = simplifyPathForPDF(pathPoints, 0.005);
+    console.log('[PDF] Path simplified from', pathPoints.length, 'to', simplifiedPath.length, 'points');
     
-    // Guard for empty/degenerate paths
-    if (smoothedPath.length < 3) {
-      console.log('[PDF] Path too short, skipping CutContour');
-    } else {
-      console.log('[PDF] CutContour path:', smoothedPath.length, 'pts (from worker cache)');
+    let pathOps = '';
+    pathOps += '/CutContour CS 1 SCN\n';
+    pathOps += '0.5 w\n';
+    
+    const startX = simplifiedPath[0].x * 72;
+    const startY = simplifiedPath[0].y * 72;
+    pathOps += `${startX.toFixed(2)} ${startY.toFixed(2)} m\n`;
+    
+    // Use simplified path with reduced precision for smaller file
+    for (let i = 0; i < simplifiedPath.length; i++) {
+      const p0 = simplifiedPath[(i - 1 + simplifiedPath.length) % simplifiedPath.length];
+      const p1 = simplifiedPath[i];
+      const p2 = simplifiedPath[(i + 1) % simplifiedPath.length];
+      const p3 = simplifiedPath[(i + 2) % simplifiedPath.length];
       
-      let pathOps = '';
-      pathOps += '/CutContour CS 1 SCN\n';
-      pathOps += '0.5 w\n';
+      const tension = 0.5;
+      const cp1x = (p1.x + (p2.x - p0.x) * tension / 3) * 72;
+      const cp1y = (p1.y + (p2.y - p0.y) * tension / 3) * 72;
+      const cp2x = (p2.x - (p3.x - p1.x) * tension / 3) * 72;
+      const cp2y = (p2.y - (p3.y - p1.y) * tension / 3) * 72;
+      const endX = p2.x * 72;
+      const endY = p2.y * 72;
       
-      // Use the EXACT same approach as the preview worker: direct line segments
-      // No curve fitting or smoothing - this ensures PDF matches preview exactly
-      console.log('[PDF] Using direct line segments (matching preview worker)');
+      pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${endX.toFixed(2)} ${endY.toFixed(2)} c\n`;
+    }
+    
+    pathOps += 'h S\n';
+    
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(pathOps);
+      const contentStreamRef = context.register(contentStream);
       
-      // Scale factor: contour coordinates are in inches, PDF uses points (72 pts/inch)
-      const scale = 72;
-      
-      // Debug: Log coordinate transform details
-      console.log('[PDF] Coordinate system check:');
-      console.log('  - Page size (pts):', widthInches * 72, 'x', heightInches * 72);
-      console.log('  - Image position (pts):', imageXPts, ',', imageYPts);
-      console.log('  - Image size (pts):', imageWidthPts, 'x', imageHeightPts);
-      if (smoothedPath.length > 0) {
-        const xs = smoothedPath.map(p => p.x);
-        const ys = smoothedPath.map(p => p.y);
-        console.log('  - Path X range (inches):', Math.min(...xs).toFixed(4), 'to', Math.max(...xs).toFixed(4));
-        console.log('  - Path Y range (inches):', Math.min(...ys).toFixed(4), 'to', Math.max(...ys).toFixed(4));
-        console.log('  - First point (pts):', smoothedPath[0].x * 72, ',', smoothedPath[0].y * 72);
-      }
-      
-      // Build path operators directly from points - same as preview canvas
-      if (smoothedPath.length > 0) {
-        const first = smoothedPath[0];
-        pathOps += `${(first.x * scale).toFixed(4)} ${(first.y * scale).toFixed(4)} m `;
-        
-        for (let i = 1; i < smoothedPath.length; i++) {
-          const pt = smoothedPath[i];
-          pathOps += `${(pt.x * scale).toFixed(4)} ${(pt.y * scale).toFixed(4)} l `;
-        }
-        
-        pathOps += 'h S\n'; // close path and stroke
-      }
-      
-      console.log('[PDF] Rendered', smoothedPath.length, 'line segments');
-      
-      const existingContents = page.node.Contents();
-      if (existingContents) {
-        const contentStream = context.stream(pathOps);
-        const contentStreamRef = context.register(contentStream);
-        
-        if (existingContents instanceof PDFArray) {
-          existingContents.push(contentStreamRef);
-        } else {
-          const newContents = context.obj([existingContents, contentStreamRef]);
-          page.node.set(PDFName.of('Contents'), newContents);
-        }
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
       }
     }
   }

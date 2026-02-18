@@ -688,11 +688,9 @@ function isCurvedPath(points: Point[], minDeviation: number = 3): boolean {
   return maxDeviation >= minDeviation && isConsistentDirection;
 }
 
-// Fit a cubic Bezier curve to a set of points (2 anchor points + 2 control points)
+// Fit a cubic Bezier curve to a set of points with adaptive control points
 function fitBezierCurve(points: Point[]): { cp1: Point; cp2: Point; end: Point } | null {
-  if (points.length < 2) {
-    return null;
-  }
+  if (points.length < 3) return null;
   
   const start = points[0];
   const end = points[points.length - 1];

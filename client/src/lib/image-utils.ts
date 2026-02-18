@@ -153,9 +153,8 @@ function drawShapeBackground(
   const centerY = height / 2;
   const cornerRadius = (shapeSettings.cornerRadius || 0.25) * dpi;
   
-  // Fill the shape (holographic is preview-only, exports as transparent)
-  const effectiveFillColor = shapeSettings.fillColor === 'holographic' ? 'transparent' : shapeSettings.fillColor;
-  ctx.fillStyle = effectiveFillColor;
+  // Fill the shape
+  ctx.fillStyle = shapeSettings.fillColor;
   ctx.beginPath();
   
   if (shapeSettings.type === 'circle') {
