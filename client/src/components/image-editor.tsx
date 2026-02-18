@@ -234,11 +234,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     });
     setDetectedAlgorithm(undefined);
     
-    // Apply detected shape or default settings
+    const autoType = detectedShapeType || 'square';
+    const isCircularType = autoType === 'circle' || autoType === 'oval';
     const newShapeSettings: ShapeSettings = {
       enabled: shouldAutoApplyShape,
-      type: detectedShapeType || 'square',
-      offset: 0.25,
+      type: autoType,
+      offset: isCircularType ? 0.05 : 0.25,
       fillColor: '#FFFFFF',
       strokeEnabled: false,
       strokeWidth: 2,
@@ -347,10 +348,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       });
       setDetectedAlgorithm(undefined);
       
+      const autoType2 = detectedShapeType || 'square';
+      const isCircularType2 = autoType2 === 'circle' || autoType2 === 'oval';
       const newShapeSettings: ShapeSettings = {
         enabled: shouldAutoApplyShape,
-        type: detectedShapeType || 'square',
-        offset: 0.25,
+        type: autoType2,
+        offset: isCircularType2 ? 0.05 : 0.25,
         fillColor: '#FFFFFF',
         strokeEnabled: false,
         strokeWidth: 2,
@@ -637,7 +640,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       
       if (wasCircular !== isCircular) {
         // Switch to appropriate default offset for new shape category
-        updated.offset = isCircular ? 0.40 : 0.125; // Tiny for circular, Small for rectangular
+        updated.offset = isCircular ? 0.05 : 0.125; // Tight fit for circular, Small for rectangular
       }
     }
     
