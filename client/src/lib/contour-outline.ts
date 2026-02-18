@@ -1685,25 +1685,8 @@ export async function downloadContourPDF(
     let imageOffsetY: number;
     let backgroundColor: string;
     
-    // Use cached contour data if available (from preview worker) for instant PDF export
-    if (cachedContourData && cachedContourData.pathPoints.length > 0) {
-      console.log('[downloadContourPDF] Using cached contour data');
-      
-      // The cached data is already generated with the correct DPI based on resize settings
-      // Use it directly without rescaling
-      pathPoints = cachedContourData.pathPoints;
-      widthInches = cachedContourData.widthInches;
-      heightInches = cachedContourData.heightInches;
-      imageOffsetX = cachedContourData.imageOffsetX;
-      imageOffsetY = cachedContourData.imageOffsetY;
-      backgroundColor = cachedContourData.backgroundColor;
-      
-      console.log('[downloadContourPDF] Using cached dimensions:', {
-        size: `${widthInches.toFixed(2)}x${heightInches.toFixed(2)}`,
-        imageOffset: `${imageOffsetX.toFixed(3)}x${imageOffsetY.toFixed(3)}`
-      });
-    } else {
-      console.log('[downloadContourPDF] No cache - running worker at export resolution');
+    {
+      console.log('[downloadContourPDF] Running worker at full export resolution for smooth PDF contour');
       const workerManager = getContourWorkerManager();
       const exportData = await workerManager.processForExport(image, strokeSettings, resizeSettings);
       if (exportData) {
