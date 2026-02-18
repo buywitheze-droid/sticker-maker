@@ -15,10 +15,10 @@ export default function StickerMaker() {
           100% { left: -10%; }
         }
         @keyframes samuraiRun {
-          0%   { left: -22%; }
-          85%  { left: 93%; }
-          85.1% { left: -22%; }
-          100% { left: -22%; }
+          0%   { left: -15%; }
+          85%  { left: 100%; }
+          85.1% { left: -15%; }
+          100% { left: -15%; }
         }
         @keyframes gooseWobble {
           0%, 100% { transform: translateY(0px) rotate(0deg); }
