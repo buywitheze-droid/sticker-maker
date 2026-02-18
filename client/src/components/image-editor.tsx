@@ -22,7 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
 
-export default function ImageEditor() {
+export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: () => void } = {}) {
   const { toast } = useToast();
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
@@ -97,6 +97,12 @@ export default function ImageEditor() {
 
     setCadCutBounds(bounds);
   }, [imageInfo]);
+
+  useEffect(() => {
+    if (imageInfo && onDesignUploaded) {
+      onDesignUploaded();
+    }
+  }, [imageInfo, onDesignUploaded]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {

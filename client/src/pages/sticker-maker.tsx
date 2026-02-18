@@ -7,6 +7,8 @@ import fireSlashImg from "@assets/fire_slash.png";
 
 export default function StickerMaker() {
   const [gooseClicks, setGooseClicks] = useState(0);
+  const [designUploaded, setDesignUploaded] = useState(false);
+  const [countdownCompleted, setCountdownCompleted] = useState(false);
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <style>{`
@@ -194,11 +196,19 @@ export default function StickerMaker() {
           </div>
 
           <div className="hidden sm:flex items-center space-x-2 text-sm relative z-10">
-            {gooseClicks >= 10 ? (
+            {designUploaded ? (
+              <span className={`font-semibold ${countdownCompleted ? 'text-green-500' : 'text-amber-500'}`}>
+                {countdownCompleted ? 'good boy' : 'Feeding your Sticker Addiction!'}
+              </span>
+            ) : gooseClicks >= 10 ? (
               <span className="text-red-500 font-semibold">stop being silly and upload your Design</span>
             ) : (
               <button
-                onClick={() => setGooseClicks(c => c + 1)}
+                onClick={() => setGooseClicks(c => {
+                  const next = c + 1;
+                  if (next >= 10) setCountdownCompleted(true);
+                  return next;
+                })}
                 className="text-gray-500 hover:text-gray-700 cursor-pointer transition-colors"
               >
                 click here to see what happens to the goose ({10 - gooseClicks})
@@ -209,7 +219,7 @@ export default function StickerMaker() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        <ImageEditor />
+        <ImageEditor onDesignUploaded={() => setDesignUploaded(true)} />
       </main>
     </div>
   );
