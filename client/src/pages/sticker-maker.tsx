@@ -9,10 +9,10 @@ export default function StickerMaker() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <style>{`
         @keyframes gooseRun {
-          0%   { left: -10%; }
-          85%  { left: 105%; }
-          85.1% { left: -10%; }
-          100% { left: -10%; }
+          0%   { left: -8%; }
+          85%  { left: 103%; }
+          85.1% { left: -8%; }
+          100% { left: -8%; }
         }
         @keyframes samuraiRun {
           0%   { left: -15%; }
@@ -143,7 +143,7 @@ export default function StickerMaker() {
           <div className="hidden sm:block absolute inset-0 pointer-events-none">
             <div className="goose-pos">
               <span className="goose-wobble">
-                <img src={gooseImg} alt="" className="w-10 h-10 object-contain" />
+                <img src={gooseImg} alt="" className="w-8 h-8 object-contain" />
               </span>
             </div>
             <div className="samurai-pos" style={{ position: 'relative' }}>
