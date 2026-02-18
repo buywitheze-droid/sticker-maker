@@ -869,7 +869,7 @@ function selectMainComponentWithOrphans(
   const baseExpandIn = compositeMode
     ? Math.max(keepNearMainDistInches, 1.0)
     : Math.max(keepNearMainDistInches, 0.5);
-  const extraExpandIn = compositeMode ? 0.25 : 0.15;
+  const extraExpandIn = compositeMode ? 0.30 : 0.15;
   const maxExtraAreaRatio = compositeMode ? 1.0 : 0.65;
 
   const keepNearMainDistPx = Math.max(8, Math.round(keepNearMainDistInches * effectiveDPI));
