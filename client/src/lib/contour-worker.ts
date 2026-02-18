@@ -99,12 +99,50 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         processedData = upscaleImageData(result.imageData, 
           Math.round(result.imageData.width / scale), 
           Math.round(result.imageData.height / scale));
+
+        const rescaledPreviewPts = result.contourData.previewPathPoints.map(p => ({
+          x: p.x / scale,
+          y: p.y / scale
+        }));
+
+        const rescaledImgX = result.imageCanvasX / scale;
+        const rescaledImgY = result.imageCanvasY / scale;
+
+        const smoothPts = rescaledPreviewPts.map(p => ({
+          x: p.x - rescaledImgX,
+          y: p.y - rescaledImgY
+        }));
+
+        const bleedInches = 0.10;
+        const spXs = smoothPts.map(p => p.x);
+        const spYs = smoothPts.map(p => p.y);
+        const spMinX = Math.min(...spXs);
+        const spMinY = Math.min(...spYs);
+        const spMaxX = Math.max(...spXs);
+        const spMaxY = Math.max(...spYs);
+        const pathWPx = spMaxX - spMinX;
+        const pathHPx = spMaxY - spMinY;
+        const pathWIn = pathWPx / effectiveDPI;
+        const pathHIn = pathHPx / effectiveDPI;
+        const pageW = pathWIn + (bleedInches * 2);
+        const pageH = pathHIn + (bleedInches * 2);
+
+        const recomputedPathPoints = smoothPts.map(p => ({
+          x: ((p.x - spMinX) / effectiveDPI) + bleedInches,
+          y: pageH - (((p.y - spMinY) / effectiveDPI) + bleedInches)
+        }));
+        const recomputedImgOffX = ((0 - spMinX) / effectiveDPI) + bleedInches;
+        const recomputedImgOffY = ((0 - spMinY) / effectiveDPI) + bleedInches;
+
         contourData = {
-          ...result.contourData,
-          previewPathPoints: result.contourData.previewPathPoints.map(p => ({
-            x: p.x / scale,
-            y: p.y / scale
-          }))
+          pathPoints: recomputedPathPoints,
+          previewPathPoints: rescaledPreviewPts,
+          widthInches: pageW,
+          heightInches: pageH,
+          imageOffsetX: recomputedImgOffX,
+          imageOffsetY: recomputedImgOffY,
+          backgroundColor: result.contourData.backgroundColor,
+          useEdgeBleed: result.contourData.useEdgeBleed
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);

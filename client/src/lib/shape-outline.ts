@@ -86,7 +86,9 @@ export async function downloadShapePDF(
   image: HTMLImageElement,
   shapeSettings: ShapeSettings,
   resizeSettings: ResizeSettings,
-  filename: string
+  filename: string,
+  _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
+  _singleArtboard?: boolean
 ): Promise<void> {
   // Calculate shape size based on design size + offset
   const { widthInches, heightInches } = calculateShapeDimensions(

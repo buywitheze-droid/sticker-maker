@@ -1667,7 +1667,9 @@ export async function downloadContourPDF(
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
-  cachedContourData?: CachedContourData
+  cachedContourData?: CachedContourData,
+  _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
+  _singleArtboard?: boolean
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
