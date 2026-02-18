@@ -1,7 +1,6 @@
 import ImageEditor from "@/components/image-editor";
 import gooseLogo from "@assets/goose_silhouette.png";
 import samuraiIcon from "@assets/samurai_katana.png";
-import broLogo from "@assets/bro_logo.png";
 
 export default function StickerMaker() {
   return (
@@ -30,16 +29,46 @@ export default function StickerMaker() {
           50% { transform: translateY(-3px); }
         }
         @keyframes katanaSlash {
-          0%, 20% { transform: rotate(0deg); }
-          22% { transform: rotate(-50deg); }
-          25% { transform: rotate(35deg); }
-          28%, 48% { transform: rotate(0deg); }
-          50% { transform: rotate(-45deg); }
-          53% { transform: rotate(30deg); }
-          56%, 73% { transform: rotate(0deg); }
-          75% { transform: rotate(-50deg); }
-          78% { transform: rotate(35deg); }
-          81%, 100% { transform: rotate(0deg); }
+          0%, 8% { transform: rotate(0deg); }
+          10% { transform: rotate(-55deg); }
+          12% { transform: rotate(40deg); }
+          14%, 22% { transform: rotate(0deg); }
+          24% { transform: rotate(-50deg); }
+          26% { transform: rotate(35deg); }
+          28%, 36% { transform: rotate(0deg); }
+          38% { transform: rotate(-55deg); }
+          40% { transform: rotate(40deg); }
+          42%, 50% { transform: rotate(0deg); }
+          52% { transform: rotate(-50deg); }
+          54% { transform: rotate(35deg); }
+          56%, 64% { transform: rotate(0deg); }
+          66% { transform: rotate(-55deg); }
+          68% { transform: rotate(40deg); }
+          70%, 78% { transform: rotate(0deg); }
+          80% { transform: rotate(-50deg); }
+          82% { transform: rotate(35deg); }
+          84%, 100% { transform: rotate(0deg); }
+        }
+        @keyframes slashFlash {
+          0%, 9% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          10% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          13% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          14%, 23% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          24% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          27% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          28%, 37% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          38% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          41% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          42%, 51% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          52% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          55% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          56%, 65% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          66% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          69% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          70%, 79% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
+          80% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+          83% { opacity: 0; transform: scale(1.5) rotate(45deg); }
+          84%, 100% { opacity: 0; }
         }
         .goose-pos {
           animation: gooseRun 6s linear infinite;
@@ -68,12 +97,21 @@ export default function StickerMaker() {
           transform-origin: bottom center;
           display: inline-block;
         }
+        .slash-effect {
+          animation: slashFlash 6s linear infinite;
+          position: absolute;
+          top: -8px;
+          left: -6px;
+          font-size: 18px;
+          pointer-events: none;
+          opacity: 0;
+          z-index: 3;
+        }
       `}</style>
 
-      <header className="bg-white/95 backdrop-blur border-b border-gray-200 px-6 py-4 relative overflow-hidden">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 relative overflow-hidden">
         <div className="max-w-7xl mx-auto flex items-center justify-between relative" style={{ minHeight: '32px' }}>
           <div className="flex items-center space-x-3 relative z-10">
-            <img src={broLogo} alt="Sticker Outline Bro" className="w-8 h-8 object-contain" />
             <h1 className="text-xl text-gray-900 font-semibold tracking-tight">Sticker Outline Bro</h1>
           </div>
 
@@ -83,7 +121,8 @@ export default function StickerMaker() {
                 <img src={gooseLogo} alt="" className="w-8 h-8 object-contain" />
               </span>
             </div>
-            <div className="samurai-pos">
+            <div className="samurai-pos" style={{ position: 'relative' }}>
+              <span className="slash-effect">&#10040;</span>
               <span className="samurai-bob">
                 <span className="katana-slash">
                   <img src={samuraiIcon} alt="" className="w-7 h-7 object-contain" />
