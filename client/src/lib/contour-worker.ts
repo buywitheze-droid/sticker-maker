@@ -472,7 +472,23 @@ function processContour(
   smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
   
   console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
-  
+
+  if (detectedAlgorithm === 'scattered') {
+    const iterations = 3;
+    for (let iter = 0; iter < iterations; iter++) {
+      const result: Array<{x: number; y: number}> = [];
+      const n = smoothedPath.length;
+      for (let i = 0; i < n; i++) {
+        const p0 = smoothedPath[i];
+        const p1 = smoothedPath[(i + 1) % n];
+        result.push({ x: 0.75 * p0.x + 0.25 * p1.x, y: 0.75 * p0.y + 0.25 * p1.y });
+        result.push({ x: 0.25 * p0.x + 0.75 * p1.x, y: 0.25 * p0.y + 0.75 * p1.y });
+      }
+      smoothedPath = result;
+    }
+    console.log('[Worker] Chaikin smoothing applied for scattered mode:', smoothedPath.length, 'points');
+  }
+
   postProgress(60);
   
   postProgress(70);
