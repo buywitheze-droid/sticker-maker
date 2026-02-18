@@ -1,6 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
-import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, convertPolygonToCurves } from "@/lib/clipper-path";
+import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, convertPolygonToCurves, polygonToSplinePath, subsamplePolygon } from "@/lib/clipper-path";
 import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
@@ -9,8 +9,11 @@ function contourPointsToPDFPathOps(
   effectiveDPI: number,
   pageHeightInches: number
 ): string {
-  const smoothedPath = gaussianSmoothContour(previewPathPoints, 2);
-  const segments = convertPolygonToCurves(smoothedPath, 70);
+  const simplified = previewPathPoints.length > 200
+    ? subsamplePolygon(previewPathPoints, 200)
+    : previewPathPoints;
+
+  const segments = polygonToSplinePath(simplified, 0.5);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
