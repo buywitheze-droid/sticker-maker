@@ -9,10 +9,10 @@ export default function StickerMaker() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <style>{`
         @keyframes gooseRun {
-          0%   { left: -2%; }
-          85%  { left: 110%; }
-          85.1% { left: -2%; }
-          100% { left: -2%; }
+          0%   { left: -6%; }
+          85%  { left: 106%; }
+          85.1% { left: -6%; }
+          100% { left: -6%; }
         }
         @keyframes samuraiRun {
           0%   { left: -15%; }
