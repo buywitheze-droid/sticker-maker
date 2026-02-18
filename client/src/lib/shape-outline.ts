@@ -1,6 +1,48 @@
 import type { ShapeSettings, ResizeSettings } from "@/lib/types";
-import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, PDFDict, type PDFImage } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
+
+async function createClippedShapeImage(
+  image: HTMLImageElement,
+  shapeSettings: ShapeSettings,
+  resizeSettings: ResizeSettings,
+  shapeWidthInches: number,
+  shapeHeightInches: number,
+  pdfDoc: PDFDocument
+): Promise<PDFImage> {
+  const clipDPI = 300;
+  const clipW = Math.round(shapeWidthInches * clipDPI);
+  const clipH = Math.round(shapeHeightInches * clipDPI);
+  const clipCanvas = document.createElement('canvas');
+  clipCanvas.width = clipW;
+  clipCanvas.height = clipH;
+  const clipCtx = clipCanvas.getContext('2d')!;
+  
+  clipCtx.save();
+  clipCtx.beginPath();
+  if (shapeSettings.type === 'circle') {
+    const r = Math.min(clipW, clipH) / 2;
+    clipCtx.arc(clipW / 2, clipH / 2, r, 0, Math.PI * 2);
+  } else {
+    clipCtx.ellipse(clipW / 2, clipH / 2, clipW / 2, clipH / 2, 0, 0, Math.PI * 2);
+  }
+  clipCtx.clip();
+  
+  const croppedCanvas = cropImageToContent(image);
+  const sourceImage = croppedCanvas || image;
+  const imgW = resizeSettings.widthInches * clipDPI;
+  const imgH = resizeSettings.heightInches * clipDPI;
+  const imgX = (clipW - imgW) / 2;
+  const imgY = (clipH - imgH) / 2;
+  clipCtx.drawImage(sourceImage, imgX, imgY, imgW, imgH);
+  clipCtx.restore();
+  
+  const clippedBlob = await new Promise<Blob>((resolve) => {
+    clipCanvas.toBlob((b) => resolve(b!), 'image/png');
+  });
+  const clippedBytes = new Uint8Array(await clippedBlob.arrayBuffer());
+  return pdfDoc.embedPng(clippedBytes);
+}
 
 // Helper function to generate PDF path operations for a rounded rectangle
 function getRoundedRectPath(x: number, y: number, width: number, height: number, radius: number): string {
@@ -206,16 +248,31 @@ export async function downloadShapePDF(
   let imageWidth = resizeSettings.widthInches * 72;
   let imageHeight = resizeSettings.heightInches * 72;
   
-  // Center the image in the page (which includes bleed)
-  const imageX = (widthPts - imageWidth) / 2;
-  const imageY = (heightPts - imageHeight) / 2;
-  
-  page.drawImage(pngImage, {
-    x: imageX,
-    y: imageY,
-    width: imageWidth,
-    height: imageHeight,
-  });
+  // For circles and ovals, clip the image to the shape boundary
+  // Render on a canvas with shape clipping, then embed the clipped result
+  if (shapeSettings.type === 'circle' || shapeSettings.type === 'oval') {
+    const clippedImage = await createClippedShapeImage(image, shapeSettings, resizeSettings, widthInches, heightInches, pdfDoc);
+    
+    const clippedImageX = (widthPts - shapeWidthPts) / 2;
+    const clippedImageY = (heightPts - shapeHeightPts) / 2;
+    
+    page.drawImage(clippedImage, {
+      x: clippedImageX,
+      y: clippedImageY,
+      width: shapeWidthPts,
+      height: shapeHeightPts,
+    });
+  } else {
+    const imageX = (widthPts - imageWidth) / 2;
+    const imageY = (heightPts - imageHeight) / 2;
+    
+    page.drawImage(pngImage, {
+      x: imageX,
+      y: imageY,
+      width: imageWidth,
+      height: imageHeight,
+    });
+  }
   
   let resources = page.node.Resources();
   
@@ -379,16 +436,24 @@ export async function generateShapePDFBase64(
   let imageWidth = resizeSettings.widthInches * 72;
   let imageHeight = resizeSettings.heightInches * 72;
   
-  // Center the image in the shape
-  const imageX = (widthPts - imageWidth) / 2;
-  const imageY = (heightPts - imageHeight) / 2;
-  
-  page.drawImage(pngImage, {
-    x: imageX,
-    y: imageY,
-    width: imageWidth,
-    height: imageHeight,
-  });
+  if (shapeSettings.type === 'circle' || shapeSettings.type === 'oval') {
+    const clippedImage = await createClippedShapeImage(image, shapeSettings, resizeSettings, widthInches, heightInches, pdfDoc);
+    page.drawImage(clippedImage, {
+      x: 0,
+      y: 0,
+      width: widthPts,
+      height: heightPts,
+    });
+  } else {
+    const imageX = (widthPts - imageWidth) / 2;
+    const imageY = (heightPts - imageHeight) / 2;
+    page.drawImage(pngImage, {
+      x: imageX,
+      y: imageY,
+      width: imageWidth,
+      height: imageHeight,
+    });
+  }
   
   let resources = page.node.Resources();
   
