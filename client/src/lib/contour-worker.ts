@@ -2057,7 +2057,7 @@ function processScatteredContours(
   if (contours.length === 0) return [];
   if (contours.length === 1) return contours[0];
 
-  const expandDistance = Math.ceil(maxGapPixels / 2) + Math.round(0.02 * effectiveDPI);
+  const expandDistance = Math.ceil(maxGapPixels / 2) + Math.round(0.023 * effectiveDPI);
 
   console.log('[Worker] processScatteredContours: bridging', contours.length,
     'contours with expand distance:', expandDistance, 'px (',
