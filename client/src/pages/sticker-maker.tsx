@@ -1,6 +1,7 @@
 import ImageEditor from "@/components/image-editor";
 import gooseImg from "@assets/goose_animated.png";
 import samuraiImg from "@assets/samurai_animated.png";
+import samuraiSlashImg from "@assets/samurai_slash.png";
 import fireSlashImg from "@assets/fire_slash.png";
 
 export default function StickerMaker() {
@@ -29,26 +30,35 @@ export default function StickerMaker() {
           0%, 100% { transform: translateY(0px); }
           50% { transform: translateY(-3px); }
         }
-        @keyframes katanaSlash {
-          0%, 8% { transform: rotate(0deg); }
-          10% { transform: rotate(-55deg); }
-          12% { transform: rotate(40deg); }
-          14%, 22% { transform: rotate(0deg); }
-          24% { transform: rotate(-50deg); }
-          26% { transform: rotate(35deg); }
-          28%, 36% { transform: rotate(0deg); }
-          38% { transform: rotate(-55deg); }
-          40% { transform: rotate(40deg); }
-          42%, 50% { transform: rotate(0deg); }
-          52% { transform: rotate(-50deg); }
-          54% { transform: rotate(35deg); }
-          56%, 64% { transform: rotate(0deg); }
-          66% { transform: rotate(-55deg); }
-          68% { transform: rotate(40deg); }
-          70%, 78% { transform: rotate(0deg); }
-          80% { transform: rotate(-50deg); }
-          82% { transform: rotate(35deg); }
-          84%, 100% { transform: rotate(0deg); }
+        @keyframes samuraiNormal {
+          0%, 9% { opacity: 1; }
+          10%, 13% { opacity: 0; }
+          14%, 23% { opacity: 1; }
+          24%, 27% { opacity: 0; }
+          28%, 37% { opacity: 1; }
+          38%, 41% { opacity: 0; }
+          42%, 51% { opacity: 1; }
+          52%, 55% { opacity: 0; }
+          56%, 65% { opacity: 1; }
+          66%, 69% { opacity: 0; }
+          70%, 79% { opacity: 1; }
+          80%, 83% { opacity: 0; }
+          84%, 100% { opacity: 1; }
+        }
+        @keyframes samuraiAttack {
+          0%, 9% { opacity: 0; }
+          10%, 13% { opacity: 1; }
+          14%, 23% { opacity: 0; }
+          24%, 27% { opacity: 1; }
+          28%, 37% { opacity: 0; }
+          38%, 41% { opacity: 1; }
+          42%, 51% { opacity: 0; }
+          52%, 55% { opacity: 1; }
+          56%, 65% { opacity: 0; }
+          66%, 69% { opacity: 1; }
+          70%, 79% { opacity: 0; }
+          80%, 83% { opacity: 1; }
+          84%, 100% { opacity: 0; }
         }
         @keyframes slashFlash {
           0%, 9% { opacity: 0; transform: scale(0.3) rotate(-30deg); }
@@ -93,10 +103,22 @@ export default function StickerMaker() {
           animation: samuraiBob 0.35s ease-in-out infinite;
           display: inline-block;
         }
-        .katana-slash {
-          animation: katanaSlash 6s linear infinite;
-          transform-origin: bottom center;
+        .samurai-frame {
+          position: relative;
           display: inline-block;
+          width: 36px;
+          height: 36px;
+        }
+        .samurai-frame img {
+          position: absolute;
+          top: 0;
+          left: 0;
+        }
+        .samurai-normal {
+          animation: samuraiNormal 6s linear infinite;
+        }
+        .samurai-attack {
+          animation: samuraiAttack 6s linear infinite;
         }
         .slash-effect {
           animation: slashFlash 6s linear infinite;
@@ -127,8 +149,9 @@ export default function StickerMaker() {
             <div className="samurai-pos" style={{ position: 'relative' }}>
               <img src={fireSlashImg} alt="" className="slash-effect" />
               <span className="samurai-bob">
-                <span className="katana-slash">
-                  <img src={samuraiImg} alt="" className="w-9 h-9 object-contain" />
+                <span className="samurai-frame">
+                  <img src={samuraiImg} alt="" className="w-9 h-9 object-contain samurai-normal" />
+                  <img src={samuraiSlashImg} alt="" className="w-9 h-9 object-contain samurai-attack" />
                 </span>
               </span>
             </div>
