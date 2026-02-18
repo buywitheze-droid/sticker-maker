@@ -55,33 +55,42 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [isDragging, setIsDragging] = useState(false);
     const dragStartRef = useRef<{x: number; y: number; panX: number; panY: number} | null>(null);
     
-    // Drag-to-pan handlers
+    const maxPanXY = useCallback(() => {
+      const limitX = Math.max(0, (zoom - 1) * 50);
+      const limitY = Math.max(0, (zoom - 1) * 50);
+      return { x: limitX, y: limitY };
+    }, [zoom]);
+    
+    const clampPan = useCallback((px: number, py: number) => {
+      const limit = maxPanXY();
+      return {
+        x: Math.max(-limit.x, Math.min(limit.x, px)),
+        y: Math.max(-limit.y, Math.min(limit.y, py)),
+      };
+    }, [maxPanXY]);
+    
+    const pxToPanXY = useCallback((dxPx: number, dyPx: number) => {
+      const el = canvasRef.current;
+      if (!el) return { dx: 0, dy: 0 };
+      const w = Math.max(el.clientWidth, 1);
+      const h = Math.max(el.clientHeight, 1);
+      return { dx: (dxPx / w) * 100, dy: (dyPx / h) * 100 };
+    }, []);
+    
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
-      if (zoom === 1) return; // Only allow panning when zoomed
+      if (zoom <= 1) return;
       e.preventDefault();
       setIsDragging(true);
-      dragStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        panX,
-        panY
-      };
+      dragStartRef.current = { x: e.clientX, y: e.clientY, panX, panY };
     }, [zoom, panX, panY]);
     
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
       if (!isDragging || !dragStartRef.current) return;
-      
-      const deltaX = e.clientX - dragStartRef.current.x;
-      const deltaY = e.clientY - dragStartRef.current.y;
-      
-      // Convert pixel movement to pan percentage (400px canvas = 100%)
-      const sensitivity = 0.6; // Increased 20% for faster panning
-      const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
-      const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
-      
-      setPanX(newPanX);
-      setPanY(newPanY);
-    }, [isDragging]);
+      const d = pxToPanXY(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y);
+      const clamped = clampPan(dragStartRef.current.panX + d.dx, dragStartRef.current.panY + d.dy);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
+    }, [isDragging, pxToPanXY, clampPan]);
     
     const handleMouseUp = useCallback(() => {
       setIsDragging(false);
@@ -95,36 +104,23 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
     }, [isDragging]);
     
-    // Touch handlers for mobile pan
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
-      if (zoom === 1 || e.touches.length !== 1) return;
-      e.preventDefault(); // Prevent scroll interference when zoomed
-      const touch = e.touches[0];
+      if (zoom <= 1 || e.touches.length !== 1) return;
+      e.preventDefault();
+      const t = e.touches[0];
       setIsDragging(true);
-      dragStartRef.current = {
-        x: touch.clientX,
-        y: touch.clientY,
-        panX,
-        panY
-      };
+      dragStartRef.current = { x: t.clientX, y: t.clientY, panX, panY };
     }, [zoom, panX, panY]);
     
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
       if (!isDragging || !dragStartRef.current || e.touches.length !== 1) return;
-      e.preventDefault(); // Prevent scrolling while panning
-      const touch = e.touches[0];
-      
-      const deltaX = touch.clientX - dragStartRef.current.x;
-      const deltaY = touch.clientY - dragStartRef.current.y;
-      
-      // Reduced sensitivity for mobile (50% of desktop) for more precise control
-      const sensitivity = 0.3;
-      const newPanX = Math.max(-100, Math.min(100, dragStartRef.current.panX + (deltaX * sensitivity)));
-      const newPanY = Math.max(-100, Math.min(100, dragStartRef.current.panY + (deltaY * sensitivity)));
-      
-      setPanX(newPanX);
-      setPanY(newPanY);
-    }, [isDragging]);
+      e.preventDefault();
+      const t = e.touches[0];
+      const d = pxToPanXY(t.clientX - dragStartRef.current.x, t.clientY - dragStartRef.current.y);
+      const clamped = clampPan(dragStartRef.current.panX + d.dx, dragStartRef.current.panY + d.dy);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
+    }, [isDragging, pxToPanXY, clampPan]);
     
     const handleTouchEnd = useCallback(() => {
       setIsDragging(false);
@@ -1237,12 +1233,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 >
                 <canvas 
                   ref={canvasRef}
-                  className="relative z-10 block transition-all duration-200"
+                  className="relative z-10 block"
                   style={{ 
                     maxWidth: '100%',
                     maxHeight: '100%',
                     transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
-                    transformOrigin: 'center'
+                    transformOrigin: 'center',
+                    transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+                    cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                   }}
                 />
                 
@@ -1272,22 +1270,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       onClick={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const y = (e.clientY - rect.top) / rect.height;
-                        setPanY(100 - (y * 200));
+                        const limit = maxPanXY().y;
+                        setPanY(limit - (y * limit * 2));
                       }}
                     >
                       <div 
                         className="absolute left-0 right-0 h-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
-                        style={{ top: `${((100 - panY) / 200) * 100}%`, transform: 'translateY(-50%)' }}
+                        style={{ top: `${maxPanXY().y > 0 ? ((maxPanXY().y - panY) / (maxPanXY().y * 2)) * 100 : 50}%`, transform: 'translateY(-50%)' }}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           const startY = e.clientY;
                           const startPan = panY;
                           const parent = e.currentTarget.parentElement!;
                           const height = parent.getBoundingClientRect().height;
+                          const limit = maxPanXY().y;
                           
                           const onMove = (ev: MouseEvent) => {
-                            const delta = (ev.clientY - startY) / height * 200;
-                            setPanY(Math.max(-100, Math.min(100, startPan - delta)));
+                            const delta = (ev.clientY - startY) / height * limit * 2;
+                            setPanY(Math.max(-limit, Math.min(limit, startPan - delta)));
                           };
                           const onUp = () => {
                             document.removeEventListener('mousemove', onMove);
@@ -1310,22 +1310,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       onClick={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const x = (e.clientX - rect.left) / rect.width;
-                        setPanX((x * 200) - 100);
+                        const limit = maxPanXY().x;
+                        setPanX((x * limit * 2) - limit);
                       }}
                     >
                       <div 
                         className="absolute top-0 bottom-0 w-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
-                        style={{ left: `${((panX + 100) / 200) * 100}%`, transform: 'translateX(-50%)' }}
+                        style={{ left: `${maxPanXY().x > 0 ? ((panX + maxPanXY().x) / (maxPanXY().x * 2)) * 100 : 50}%`, transform: 'translateX(-50%)' }}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           const startX = e.clientX;
                           const startPan = panX;
                           const parent = e.currentTarget.parentElement!;
                           const width = parent.getBoundingClientRect().width;
+                          const limit = maxPanXY().x;
                           
                           const onMove = (ev: MouseEvent) => {
-                            const delta = (ev.clientX - startX) / width * 200;
-                            setPanX(Math.max(-100, Math.min(100, startPan + delta)));
+                            const delta = (ev.clientX - startX) / width * limit * 2;
+                            setPanX(Math.max(-limit, Math.min(limit, startPan + delta)));
                           };
                           const onUp = () => {
                             document.removeEventListener('mousemove', onMove);
