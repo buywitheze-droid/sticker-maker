@@ -5,20 +5,26 @@ import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
 function contourPointsToPDFPathOps(pathPoints: Array<{x: number; y: number}>): string {
-  const smoothedPath = gaussianSmoothContour(pathPoints, 2);
+  // Path points are in inches - scale to pixel-like coordinates for curve detection
+  // then convert results to PDF points (1 inch = 72 points)
+  const SCALE = 300; // Use 300 DPI scale for curve detection accuracy
+  const scaledPath = pathPoints.map(p => ({ x: p.x * SCALE, y: p.y * SCALE }));
+  const smoothedPath = gaussianSmoothContour(scaledPath, 2);
   const segments = convertPolygonToCurves(smoothedPath, 70);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
+  const S = 72 / SCALE; // Convert from scaled pixels to PDF points
+
   for (const seg of segments) {
     if (seg.type === 'move' && seg.point) {
-      pathOps += `${(seg.point.x * 72).toFixed(2)} ${(seg.point.y * 72).toFixed(2)} m\n`;
+      pathOps += `${(seg.point.x * S).toFixed(2)} ${(seg.point.y * S).toFixed(2)} m\n`;
     } else if (seg.type === 'line' && seg.point) {
-      pathOps += `${(seg.point.x * 72).toFixed(2)} ${(seg.point.y * 72).toFixed(2)} l\n`;
+      pathOps += `${(seg.point.x * S).toFixed(2)} ${(seg.point.y * S).toFixed(2)} l\n`;
     } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-      pathOps += `${(seg.cp1.x * 72).toFixed(2)} ${(seg.cp1.y * 72).toFixed(2)} ${(seg.cp2.x * 72).toFixed(2)} ${(seg.cp2.y * 72).toFixed(2)} ${(seg.end.x * 72).toFixed(2)} ${(seg.end.y * 72).toFixed(2)} c\n`;
+      pathOps += `${(seg.cp1.x * S).toFixed(2)} ${(seg.cp1.y * S).toFixed(2)} ${(seg.cp2.x * S).toFixed(2)} ${(seg.cp2.y * S).toFixed(2)} ${(seg.end.x * S).toFixed(2)} ${(seg.end.y * S).toFixed(2)} c\n`;
     }
   }
 
