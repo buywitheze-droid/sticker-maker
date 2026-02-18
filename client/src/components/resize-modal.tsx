@@ -123,8 +123,12 @@ export default function ResizeModal({
             {QUICK_SIZES.map((size) => (
               <button
                 key={size.value}
-                onClick={() => handleSizeSelect(size.value)}
-                className="h-9 text-sm font-medium rounded-md border border-gray-200 text-gray-500 bg-gray-50 hover:bg-cyan-50 hover:border-cyan-300 hover:text-cyan-700 transition-colors"
+                onClick={() => setCustomSize(String(size.value))}
+                className={`h-9 text-sm font-medium rounded-md border transition-colors ${
+                  parseFloat(customSize) === size.value
+                    ? "bg-cyan-600 border-cyan-600 text-white"
+                    : "border-gray-200 text-gray-500 bg-gray-50 hover:bg-cyan-50 hover:border-cyan-300 hover:text-cyan-700"
+                }`}
               >
                 {size.label}
               </button>
