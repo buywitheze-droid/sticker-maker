@@ -9,10 +9,10 @@ export default function StickerMaker() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <style>{`
         @keyframes gooseRun {
-          0%   { left: -8%; }
-          85%  { left: 103%; }
-          85.1% { left: -8%; }
-          100% { left: -8%; }
+          0%   { left: -10%; }
+          85%  { left: 98%; }
+          85.1% { left: -10%; }
+          100% { left: -10%; }
         }
         @keyframes samuraiRun {
           0%   { left: -15%; }
@@ -20,11 +20,45 @@ export default function StickerMaker() {
           85.1% { left: -15%; }
           100% { left: -15%; }
         }
-        @keyframes gooseWobble {
-          0%, 100% { transform: translateY(0px) rotate(0deg); }
-          25% { transform: translateY(-3px) rotate(-3deg); }
-          50% { transform: translateY(0px) rotate(2deg); }
-          75% { transform: translateY(-2px) rotate(-2deg); }
+        @keyframes gooseBounce {
+          0%   { transform: translateY(0px) rotate(0deg); }
+          3%   { transform: translateY(-3px) rotate(-2deg); }
+          6%   { transform: translateY(0px) rotate(2deg); }
+          9%   { transform: translateY(-2px) rotate(-1deg); }
+          10%  { transform: translateY(-14px) rotate(-8deg); }
+          12%  { transform: translateY(-16px) rotate(4deg); }
+          14%  { transform: translateY(0px) rotate(0deg); }
+          17%  { transform: translateY(-3px) rotate(-2deg); }
+          20%  { transform: translateY(0px) rotate(2deg); }
+          23%  { transform: translateY(-2px) rotate(-1deg); }
+          24%  { transform: translateY(-14px) rotate(-8deg); }
+          26%  { transform: translateY(-16px) rotate(4deg); }
+          28%  { transform: translateY(0px) rotate(0deg); }
+          31%  { transform: translateY(-3px) rotate(-2deg); }
+          34%  { transform: translateY(0px) rotate(2deg); }
+          37%  { transform: translateY(-2px) rotate(-1deg); }
+          38%  { transform: translateY(-14px) rotate(-8deg); }
+          40%  { transform: translateY(-16px) rotate(4deg); }
+          42%  { transform: translateY(0px) rotate(0deg); }
+          45%  { transform: translateY(-3px) rotate(-2deg); }
+          48%  { transform: translateY(0px) rotate(2deg); }
+          51%  { transform: translateY(-2px) rotate(-1deg); }
+          52%  { transform: translateY(-14px) rotate(-8deg); }
+          54%  { transform: translateY(-16px) rotate(4deg); }
+          56%  { transform: translateY(0px) rotate(0deg); }
+          59%  { transform: translateY(-3px) rotate(-2deg); }
+          62%  { transform: translateY(0px) rotate(2deg); }
+          65%  { transform: translateY(-2px) rotate(-1deg); }
+          66%  { transform: translateY(-14px) rotate(-8deg); }
+          68%  { transform: translateY(-16px) rotate(4deg); }
+          70%  { transform: translateY(0px) rotate(0deg); }
+          73%  { transform: translateY(-3px) rotate(-2deg); }
+          76%  { transform: translateY(0px) rotate(2deg); }
+          79%  { transform: translateY(-2px) rotate(-1deg); }
+          80%  { transform: translateY(-14px) rotate(-8deg); }
+          82%  { transform: translateY(-16px) rotate(4deg); }
+          84%  { transform: translateY(0px) rotate(0deg); }
+          100% { transform: translateY(0px) rotate(0deg); }
         }
         @keyframes samuraiBob {
           0%, 100% { transform: translateY(0px); }
@@ -89,7 +123,7 @@ export default function StickerMaker() {
           z-index: 2;
         }
         .goose-wobble {
-          animation: gooseWobble 0.5s ease-in-out infinite;
+          animation: gooseBounce 6s linear infinite;
           display: inline-block;
         }
         .samurai-pos {
