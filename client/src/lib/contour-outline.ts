@@ -4,41 +4,68 @@ import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gauss
 import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
+function simplifyPathForPDF(points: Array<{x: number; y: number}>, epsilon: number = 1.0): Array<{x: number; y: number}> {
+  if (points.length <= 2) return points;
+
+  let maxDist = 0;
+  let maxIdx = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = perpendicularDistance(points[i], start, end);
+    if (d > maxDist) {
+      maxDist = d;
+      maxIdx = i;
+    }
+  }
+
+  if (maxDist > epsilon) {
+    const left = simplifyPathForPDF(points.slice(0, maxIdx + 1), epsilon);
+    const right = simplifyPathForPDF(points.slice(maxIdx), epsilon);
+    return left.slice(0, -1).concat(right);
+  }
+
+  return [start, end];
+}
+
+function perpendicularDistance(
+  point: {x: number; y: number},
+  lineStart: {x: number; y: number},
+  lineEnd: {x: number; y: number}
+): number {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) {
+    const ex = point.x - lineStart.x;
+    const ey = point.y - lineStart.y;
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  const num = Math.abs(dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x);
+  return num / Math.sqrt(lenSq);
+}
+
 function contourPointsToPDFPathOps(
   previewPathPoints: Array<{x: number; y: number}>,
   effectiveDPI: number,
   pageHeightInches: number
 ): string {
-  const simplified = previewPathPoints.length > 200
-    ? subsamplePolygon(previewPathPoints, 200)
-    : previewPathPoints;
-
-  const segments = polygonToSplinePath(simplified, 0.5);
+  const simplified = simplifyPathForPDF(previewPathPoints, 1.5);
+  console.log(`[PDF CutContour] Simplified ${previewPathPoints.length} points to ${simplified.length} points`);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  const pxToInch = 1 / effectiveDPI;
-  const ptsPerInch = 72;
+  for (let i = 0; i < simplified.length; i++) {
+    const xPts = (simplified[i].x / effectiveDPI) * 72;
+    const yPts = (pageHeightInches - simplified[i].y / effectiveDPI) * 72;
 
-  const txPt = (px: number, py: number) => ({
-    x: px * pxToInch * ptsPerInch,
-    y: (pageHeightInches - py * pxToInch) * ptsPerInch
-  });
-
-  for (const seg of segments) {
-    if (seg.type === 'move' && seg.point) {
-      const p = txPt(seg.point.x, seg.point.y);
-      pathOps += `${p.x.toFixed(2)} ${p.y.toFixed(2)} m\n`;
-    } else if (seg.type === 'line' && seg.point) {
-      const p = txPt(seg.point.x, seg.point.y);
-      pathOps += `${p.x.toFixed(2)} ${p.y.toFixed(2)} l\n`;
-    } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-      const c1 = txPt(seg.cp1.x, seg.cp1.y);
-      const c2 = txPt(seg.cp2.x, seg.cp2.y);
-      const e = txPt(seg.end.x, seg.end.y);
-      pathOps += `${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${e.x.toFixed(2)} ${e.y.toFixed(2)} c\n`;
+    if (i === 0) {
+      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} m\n`;
+    } else {
+      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} l\n`;
     }
   }
 
@@ -1472,24 +1499,6 @@ function douglasPeucker(points: Point[], epsilon: number): Point[] {
   } else {
     return [first, last];
   }
-}
-
-function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
-  const dx = lineEnd.x - lineStart.x;
-  const dy = lineEnd.y - lineStart.y;
-  
-  if (dx === 0 && dy === 0) {
-    return Math.sqrt((point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2);
-  }
-  
-  const t = Math.max(0, Math.min(1,
-    ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / (dx * dx + dy * dy)
-  ));
-  
-  const nearestX = lineStart.x + t * dx;
-  const nearestY = lineStart.y + t * dy;
-  
-  return Math.sqrt((point.x - nearestX) ** 2 + (point.y - nearestY) ** 2);
 }
 
 function drawSmoothContour(ctx: CanvasRenderingContext2D, contour: Point[], color: string, offsetX: number, offsetY: number): void {
