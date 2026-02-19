@@ -432,12 +432,22 @@ export default function ControlsSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0">Zero Hero</SelectItem>
-                    <SelectItem value="0.02">Small</SelectItem>
-                    <SelectItem value="0.04">Medium</SelectItem>
-                    <SelectItem value="0.07">Large</SelectItem>
-                    <SelectItem value="0.14">Extra Large</SelectItem>
-                    <SelectItem value="0.25">Huge</SelectItem>
+                    {detectedAlgorithm === 'scattered' ? (
+                      <>
+                        <SelectItem value="0.07">Small</SelectItem>
+                        <SelectItem value="0.14">Medium</SelectItem>
+                        <SelectItem value="0.25">Large</SelectItem>
+                      </>
+                    ) : (
+                      <>
+                        <SelectItem value="0">Zero Hero</SelectItem>
+                        <SelectItem value="0.02">Small</SelectItem>
+                        <SelectItem value="0.04">Medium</SelectItem>
+                        <SelectItem value="0.07">Large</SelectItem>
+                        <SelectItem value="0.14">Extra Large</SelectItem>
+                        <SelectItem value="0.25">Huge</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
