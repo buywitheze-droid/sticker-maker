@@ -51,25 +51,49 @@ function contourPointsToPDFPathOps(
   effectiveDPI: number,
   pageHeightInches: number
 ): string {
-  const simplified = simplifyPathForPDF(previewPathPoints, 1.5);
-  console.log(`[PDF CutContour] Simplified ${previewPathPoints.length} points to ${simplified.length} points`);
+  const toX = (px: number) => (px / effectiveDPI) * 72;
+  const toY = (py: number) => (pageHeightInches - py / effectiveDPI) * 72;
+
+  const pxXs = previewPathPoints.map(p => p.x);
+  const pxYs = previewPathPoints.map(p => p.y);
+  console.log(`[PDF CutContour] Input: ${previewPathPoints.length} pts, DPI: ${effectiveDPI}, page: ${pageHeightInches.toFixed(3)}in`);
+  console.log(`[PDF CutContour] Path bounds (px): x[${Math.min(...pxXs).toFixed(1)}..${Math.max(...pxXs).toFixed(1)}] y[${Math.min(...pxYs).toFixed(1)}..${Math.max(...pxYs).toFixed(1)}]`);
+  console.log(`[PDF CutContour] Path bounds (pts): x[${toX(Math.min(...pxXs)).toFixed(2)}..${toX(Math.max(...pxXs)).toFixed(2)}] y[${toY(Math.max(...pxYs)).toFixed(2)}..${toY(Math.min(...pxYs)).toFixed(2)}]`);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  for (let i = 0; i < simplified.length; i++) {
-    const xPts = (simplified[i].x / effectiveDPI) * 72;
-    const yPts = (pageHeightInches - simplified[i].y / effectiveDPI) * 72;
+  if (previewPathPoints.length < 3) {
+    console.log(`[PDF CutContour] Too few points (${previewPathPoints.length}), using simple line path`);
+    for (let i = 0; i < previewPathPoints.length; i++) {
+      const x = toX(previewPathPoints[i].x).toFixed(4);
+      const y = toY(previewPathPoints[i].y).toFixed(4);
+      pathOps += i === 0 ? `${x} ${y} m\n` : `${x} ${y} l\n`;
+    }
+    if (previewPathPoints.length > 0) pathOps += 'h S\n';
+    return pathOps;
+  }
 
-    if (i === 0) {
-      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} m\n`;
-    } else {
-      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} l\n`;
+  const segments = convertPolygonToCurves(previewPathPoints, 30, 5);
+
+  let curveCount = 0;
+  let lineCount = 0;
+
+  for (const seg of segments) {
+    if (seg.type === 'move' && seg.point) {
+      pathOps += `${toX(seg.point.x).toFixed(4)} ${toY(seg.point.y).toFixed(4)} m\n`;
+    } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
+      pathOps += `${toX(seg.cp1.x).toFixed(4)} ${toY(seg.cp1.y).toFixed(4)} ${toX(seg.cp2.x).toFixed(4)} ${toY(seg.cp2.y).toFixed(4)} ${toX(seg.end.x).toFixed(4)} ${toY(seg.end.y).toFixed(4)} c\n`;
+      curveCount++;
+    } else if (seg.type === 'line' && seg.point) {
+      pathOps += `${toX(seg.point.x).toFixed(4)} ${toY(seg.point.y).toFixed(4)} l\n`;
+      lineCount++;
     }
   }
 
   pathOps += 'h S\n';
+  console.log(`[PDF CutContour] Output: ${curveCount} curves + ${lineCount} lines`);
   return pathOps;
 }
 
@@ -1779,6 +1803,8 @@ export async function downloadContourPDF(
     }
     
     console.log('[downloadContourPDF] Contour data ready in', (performance.now() - startTime).toFixed(0), 'ms');
+    console.log('[downloadContourPDF] Page:', widthInches.toFixed(3), 'x', heightInches.toFixed(3), 'in, DPI:', effectiveDPI, ', pathPts:', previewPathPoints.length, ', bleed:', bleedInches);
+    console.log('[downloadContourPDF] Image offset:', imageOffsetX.toFixed(3), imageOffsetY.toFixed(3), 'in');
   
     const widthPts = widthInches * 72;
     const heightPts = heightInches * 72;
