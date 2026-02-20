@@ -803,9 +803,27 @@ function analyzeShapeFromMask(
   const rx = bboxW / 2;
   const ry = bboxH / 2;
 
+  let circleFit = 0;
+  if (boundary.length >= 10) {
+    const cxF = bboxCx;
+    const cyF = bboxCy;
+    const step = Math.max(1, Math.floor(boundary.length / 100));
+    let sumDev = 0;
+    let fitCount = 0;
+    for (let i = 0; i < boundary.length; i += step) {
+      const dx = (boundary[i].x - cxF) / rx;
+      const dy = (boundary[i].y - cyF) / ry;
+      const normalizedDist = Math.sqrt(dx * dx + dy * dy);
+      sumDev += Math.abs(normalizedDist - 1.0);
+      fitCount++;
+    }
+    const meanDev = sumDev / fitCount;
+    circleFit = Math.max(0, 1.0 - meanDev);
+  }
+
   console.log('[Shapes] Analysis: circularity:', circularity.toFixed(3),
     'solidity:', solidity.toFixed(3), 'aspect:', aspectRatio.toFixed(3),
-    'circleAreaRatio:', circleAreaRatio.toFixed(3),
+    'circleAreaRatio:', circleAreaRatio.toFixed(3), 'circleFit:', circleFit.toFixed(3),
     'centroid vs bbox center offset:', Math.abs(centroidCx - bboxCx).toFixed(1), Math.abs(centroidCy - bboxCy).toFixed(1));
 
   let shapeType: ShapeAnalysis['type'];
@@ -818,15 +836,15 @@ function analyzeShapeFromMask(
       shapeType = 'rectangle';
     }
   } else if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70) {
+    solidity > 0.70 && circularity > 0.70 && circleFit > 0.85) {
     shapeType = 'circle';
   } else if (!isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70) {
+    solidity > 0.70 && circularity > 0.70 && circleFit > 0.80) {
     shapeType = 'ellipse';
   } else {
     console.log('[Shapes] No shape match - circularity:', circularity.toFixed(3),
       'solidity:', solidity.toFixed(3), 'circleAreaRatio:', circleAreaRatio.toFixed(3),
-      'aspect:', aspectRatio.toFixed(3));
+      'aspect:', aspectRatio.toFixed(3), 'circleFit:', circleFit.toFixed(3));
     return null;
   }
 
