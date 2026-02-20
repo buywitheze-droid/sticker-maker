@@ -37,6 +37,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     autoBridging: true, // Auto-bridge narrow gaps in contour
     autoBridgingThreshold: 0.02, // Gap threshold in inches
     algorithm: undefined,
+    contourMode: undefined,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -231,6 +232,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       autoBridging: true,
       autoBridgingThreshold: 0.02,
       algorithm: undefined,
+      contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);
     
@@ -345,6 +347,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         autoBridging: true,
         autoBridgingThreshold: 0.02,
         algorithm: undefined,
+        contourMode: undefined,
       });
       setDetectedAlgorithm(undefined);
       
@@ -428,6 +431,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       autoBridging: true,
       autoBridgingThreshold: 0.02,
       algorithm: undefined,
+      contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);
     setShapeSettings({

@@ -33,6 +33,7 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
 }
 
 export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
+export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
 
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
@@ -88,6 +89,7 @@ interface ProcessRequest {
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    contourMode?: ContourMode;
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -189,6 +191,7 @@ class ContourWorkerManager {
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
+      contourMode?: ContourMode;
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -275,6 +278,7 @@ class ContourWorkerManager {
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
+      contourMode?: ContourMode;
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -337,6 +341,7 @@ export async function processContourInWorker(
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    contourMode?: ContourMode;
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback

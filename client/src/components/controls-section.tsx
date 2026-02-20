@@ -373,7 +373,7 @@ export default function ControlsSection({
             
             {showContourOptions && (
               <div className="space-y-3 px-4 pb-3">
-              {/* Auto-detection Info + Algorithm Toggle */}
+              {/* Auto-detection Info + Mode Selector */}
               <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 space-y-2">
                 <p className="text-xs text-gray-600">
                   <span className="font-medium">Smart Detection:</span>{' '}
@@ -383,35 +383,39 @@ export default function ControlsSection({
                    'Detecting...'}
                 </p>
                 {detectedAlgorithm && strokeSettings.enabled && (() => {
-                  const effectiveAlgo = strokeSettings.algorithm ?? (detectedAlgorithm === 'scattered' ? 'complex' : detectedAlgorithm);
-                  const isOverridden = strokeSettings.algorithm !== undefined;
+                  const autoMode = detectedAlgorithm === 'complex' ? 'smooth' as const
+                    : detectedAlgorithm === 'scattered' ? 'scattered' as const
+                    : 'sharp' as const;
+                  const effectiveMode = strokeSettings.contourMode ?? autoMode;
+                  const isOverridden = strokeSettings.contourMode !== undefined;
+                  const modes = [
+                    { key: 'sharp' as const, label: 'Sharp' },
+                    { key: 'smooth' as const, label: 'Smooth' },
+                    { key: 'shapes' as const, label: 'Shapes' },
+                    { key: 'scattered' as const, label: 'Scattered' },
+                  ];
                   return (
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] text-gray-500">Mode:</span>
-                      <button
-                        className={`text-[10px] px-2 py-0.5 rounded-l border transition-colors ${
-                          effectiveAlgo === 'shapes'
-                            ? 'bg-blue-500 text-white border-blue-500'
-                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
-                        }`}
-                        onClick={() => onStrokeChange({ algorithm: 'shapes' })}
-                      >
-                        Sharp
-                      </button>
-                      <button
-                        className={`text-[10px] px-2 py-0.5 rounded-r border border-l-0 transition-colors ${
-                          effectiveAlgo === 'complex'
-                            ? 'bg-blue-500 text-white border-blue-500'
-                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
-                        }`}
-                        onClick={() => onStrokeChange({ algorithm: 'complex' })}
-                      >
-                        Smooth
-                      </button>
+                      {modes.map((mode, i) => (
+                        <button
+                          key={mode.key}
+                          className={`text-[10px] px-2 py-0.5 border transition-colors ${
+                            i === 0 ? 'rounded-l' : i === modes.length - 1 ? 'rounded-r' : ''
+                          } ${i > 0 ? 'border-l-0' : ''} ${
+                            effectiveMode === mode.key
+                              ? 'bg-blue-500 text-white border-blue-500'
+                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                          }`}
+                          onClick={() => onStrokeChange({ contourMode: mode.key })}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
                       {isOverridden && (
                         <button
                           className="text-[10px] px-1.5 py-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-                          onClick={() => onStrokeChange({ algorithm: undefined })}
+                          onClick={() => onStrokeChange({ contourMode: undefined })}
                           title="Reset to auto-detected"
                         >
                           Reset

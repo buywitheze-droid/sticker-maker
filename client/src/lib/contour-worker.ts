@@ -24,6 +24,7 @@ interface WorkerMessage {
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    contourMode?: 'sharp' | 'smooth' | 'shapes' | 'scattered';
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -285,6 +286,7 @@ function processContour(
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    contourMode?: 'sharp' | 'smooth' | 'shapes' | 'scattered';
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -433,17 +435,43 @@ function processContour(
     prelimCompositeDetected ? 'scattered' :
     scatteredAnalysis.isScattered ? 'scattered' : 
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
-  
-  // Apply user algorithm override if set
-  if (strokeSettings.algorithm) {
-    console.log('[Worker] Algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
-    detectedAlgorithm = strokeSettings.algorithm;
+
+  // Resolve effective contour mode
+  // Priority: contourMode (explicit user override) > algorithm (legacy) > auto-detection
+  type EffectiveMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
+  let effectiveMode: EffectiveMode;
+  if (strokeSettings.contourMode) {
+    effectiveMode = strokeSettings.contourMode;
+    console.log('[Worker] ContourMode override:', effectiveMode, '(auto-detected was:', detectedAlgorithm + ')');
+  } else if (strokeSettings.algorithm) {
+    effectiveMode = strokeSettings.algorithm === 'complex' ? 'smooth' : 'sharp';
+    console.log('[Worker] Legacy algorithm override:', strokeSettings.algorithm, '→', effectiveMode);
+  } else {
+    const autoMode: EffectiveMode =
+      detectedAlgorithm === 'scattered' ? 'scattered' :
+      detectedAlgorithm === 'complex' ? 'smooth' : 'sharp';
+    effectiveMode = autoMode;
+  }
+
+  console.log('[Worker] Effective mode:', effectiveMode, '| Detected algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
+
+  // Shapes mode: generate perfect geometric primitives as a separate code path
+  if (effectiveMode === 'shapes') {
+    console.log('[Worker] SHAPES MODE: generating perfect geometric contour');
+    const shapesResult = processShapesMode(
+      imageData, filledMainMask, hiResMask, hiResWidth, hiResHeight,
+      SUPER_SAMPLE, width, height, effectiveDPI, totalOffsetPixels, baseOffsetPixels,
+      userOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding,
+      strokeSettings, effectiveBackgroundColor, isHolographic, previewMode,
+      detectedAlgorithm
+    );
+    if (shapesResult) return shapesResult;
+    console.log('[Worker] Shapes mode fallback: using sharp mode instead');
+    effectiveMode = 'sharp';
   }
   
-  console.log('[Worker] Effective algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
-  
-  // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
-  const useSharpCorners = detectedAlgorithm === 'shapes';
+  // Sharp corners for 'sharp' mode, rounded for 'smooth' and 'scattered'
+  const useSharpCorners = effectiveMode === 'sharp';
   const pixelDilateOffset = useSharpCorners ? baseOffsetPixels : totalOffsetPixels;
   let dilateRadiusHiRes = pixelDilateOffset * SUPER_SAMPLE;
   
@@ -498,7 +526,7 @@ function processContour(
   
   console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
 
-  if (detectedAlgorithm === 'scattered') {
+  if (effectiveMode === 'scattered') {
     const iterations = 3;
     for (let iter = 0; iter < iterations; iter++) {
       const result: Array<{x: number; y: number}> = [];
@@ -638,6 +666,276 @@ function processContour(
       imageOffsetY: imageOffsetYCalc,
       backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
       useEdgeBleed: useEdgeBleed,
+      effectiveDPI,
+      minPathX,
+      minPathY,
+      bleedInches
+    },
+    detectedAlgorithm
+  };
+}
+
+// ===== SHAPES MODE: Dedicated processing branch =====
+// Generates perfect geometric contours (circle, ellipse, rectangle, rounded-rect)
+// by analyzing the design silhouette and fitting the best primitive shape.
+// This is a completely separate code path from sharp/smooth/scattered.
+
+interface ShapeAnalysis {
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  angle: number;
+  circularity: number;
+  solidity: number;
+  aspectRatio: number;
+}
+
+function analyzeShapeFromMask(
+  mask: Uint8Array, maskWidth: number, maskHeight: number
+): ShapeAnalysis | null {
+  let minX = maskWidth, minY = maskHeight, maxX = 0, maxY = 0;
+  let sumX = 0, sumY = 0, count = 0;
+
+  for (let y = 0; y < maskHeight; y++) {
+    for (let x = 0; x < maskWidth; x++) {
+      if (mask[y * maskWidth + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        sumX += x;
+        sumY += y;
+        count++;
+      }
+    }
+  }
+
+  if (count < 10) return null;
+
+  const cx = sumX / count;
+  const cy = sumY / count;
+  const bboxW = maxX - minX + 1;
+  const bboxH = maxY - minY + 1;
+  const bboxArea = bboxW * bboxH;
+  const solidity = count / bboxArea;
+  const aspectRatio = bboxW / bboxH;
+
+  let perimeter = 0;
+  for (let y = 0; y < maskHeight; y++) {
+    for (let x = 0; x < maskWidth; x++) {
+      if (!mask[y * maskWidth + x]) continue;
+      let isEdge = false;
+      for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+        for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= maskWidth || ny < 0 || ny >= maskHeight || !mask[ny * maskWidth + nx]) {
+            isEdge = true;
+          }
+        }
+      }
+      if (isEdge) perimeter++;
+    }
+  }
+
+  const circularity = perimeter > 0 ? (4 * Math.PI * count) / (perimeter * perimeter) : 0;
+
+  const rx = bboxW / 2;
+  const ry = bboxH / 2;
+
+  let shapeType: ShapeAnalysis['type'];
+  if (circularity > 0.80 && Math.abs(aspectRatio - 1) < 0.15) {
+    shapeType = 'circle';
+  } else if (circularity > 0.75) {
+    shapeType = 'ellipse';
+  } else if (solidity > 0.90 && circularity > 0.60) {
+    shapeType = 'rounded-rect';
+  } else if (solidity > 0.85) {
+    shapeType = 'rectangle';
+  } else {
+    return null;
+  }
+
+  console.log('[Shapes] Detected:', shapeType,
+    'circularity:', circularity.toFixed(3),
+    'solidity:', solidity.toFixed(3),
+    'aspect:', aspectRatio.toFixed(3));
+
+  return { type: shapeType, cx, cy, rx, ry, angle: 0, circularity, solidity, aspectRatio };
+}
+
+function generateShapeContour(
+  shape: ShapeAnalysis,
+  offsetPixels: number,
+  numPoints: number = 64
+): Point[] {
+  const { type, cx, cy, rx, ry } = shape;
+  const points: Point[] = [];
+
+  if (type === 'circle' || type === 'ellipse') {
+    const oRx = rx + offsetPixels;
+    const oRy = ry + offsetPixels;
+    for (let i = 0; i < numPoints; i++) {
+      const angle = (2 * Math.PI * i) / numPoints;
+      points.push({
+        x: cx + oRx * Math.cos(angle),
+        y: cy + oRy * Math.sin(angle)
+      });
+    }
+  } else {
+    const left = cx - rx - offsetPixels;
+    const right = cx + rx + offsetPixels;
+    const top = cy - ry - offsetPixels;
+    const bottom = cy + ry + offsetPixels;
+
+    if (type === 'rounded-rect') {
+      const cornerR = Math.min(offsetPixels * 0.5, Math.min(rx, ry) * 0.3);
+      const arcPoints = Math.max(4, Math.floor(numPoints / 8));
+
+      for (let i = 0; i <= arcPoints; i++) {
+        const a = Math.PI + (Math.PI / 2) * (i / arcPoints);
+        points.push({ x: left + cornerR + cornerR * Math.cos(a), y: top + cornerR + cornerR * Math.sin(a) });
+      }
+      for (let i = 0; i <= arcPoints; i++) {
+        const a = (3 * Math.PI / 2) + (Math.PI / 2) * (i / arcPoints);
+        points.push({ x: right - cornerR + cornerR * Math.cos(a), y: top + cornerR + cornerR * Math.sin(a) });
+      }
+      for (let i = 0; i <= arcPoints; i++) {
+        const a = 0 + (Math.PI / 2) * (i / arcPoints);
+        points.push({ x: right - cornerR + cornerR * Math.cos(a), y: bottom - cornerR + cornerR * Math.sin(a) });
+      }
+      for (let i = 0; i <= arcPoints; i++) {
+        const a = (Math.PI / 2) + (Math.PI / 2) * (i / arcPoints);
+        points.push({ x: left + cornerR + cornerR * Math.cos(a), y: bottom - cornerR + cornerR * Math.sin(a) });
+      }
+    } else {
+      points.push({ x: left, y: top });
+      points.push({ x: right, y: top });
+      points.push({ x: right, y: bottom });
+      points.push({ x: left, y: bottom });
+    }
+  }
+
+  return points;
+}
+
+function processShapesMode(
+  imageData: ImageData,
+  filledMainMask: Uint8Array,
+  hiResMask: Uint8Array,
+  hiResWidth: number,
+  hiResHeight: number,
+  SUPER_SAMPLE: number,
+  width: number,
+  height: number,
+  effectiveDPI: number,
+  totalOffsetPixels: number,
+  baseOffsetPixels: number,
+  userOffsetPixels: number,
+  bleedPixels: number,
+  bleedInches: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  padding: number,
+  strokeSettings: {
+    color: string;
+    useCustomBackground: boolean;
+    backgroundColor: string;
+  },
+  effectiveBackgroundColor: string,
+  isHolographic: boolean,
+  previewMode: boolean | undefined,
+  detectedAlgorithm: 'shapes' | 'complex' | 'scattered'
+): ContourResult | null {
+  const hiResShape = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
+  if (!hiResShape) {
+    console.log('[Shapes] No geometric shape detected, falling back');
+    return null;
+  }
+
+  const shape: ShapeAnalysis = {
+    ...hiResShape,
+    cx: hiResShape.cx / SUPER_SAMPLE,
+    cy: hiResShape.cy / SUPER_SAMPLE,
+    rx: hiResShape.rx / SUPER_SAMPLE,
+    ry: hiResShape.ry / SUPER_SAMPLE,
+  };
+
+  let smoothedPath = generateShapeContour(shape, totalOffsetPixels);
+  console.log('[Shapes] Generated', shape.type, 'contour with', smoothedPath.length, 'points, offset:', totalOffsetPixels, 'px');
+
+  const weldPx = previewMode ? 1.0 : 3.0;
+  smoothedPath = vectorWeld(smoothedPath, weldPx);
+  smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
+
+  const previewPathXs = smoothedPath.map(p => p.x);
+  const previewPathYs = smoothedPath.map(p => p.y);
+  const previewMinX = Math.min(...previewPathXs);
+  const previewMinY = Math.min(...previewPathYs);
+
+  const offsetX = bleedPixels - previewMinX;
+  const offsetY = bleedPixels - previewMinY;
+
+  const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
+
+  const useEdgeBleed = !strokeSettings.useCustomBackground;
+
+  if (useEdgeBleed) {
+    const extendRadius = totalOffsetPixels + bleedPixels;
+    const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
+    const extendedImageOffsetX = padding - extendRadius;
+    const extendedImageOffsetY = padding - extendRadius;
+    drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
+  } else {
+    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
+  }
+
+  const imageCanvasX = 0 + offsetX;
+  const imageCanvasY = 0 + offsetY;
+  drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
+
+  const pathXs = smoothedPath.map(p => p.x);
+  const pathYs = smoothedPath.map(p => p.y);
+  const minPathX = Math.min(...pathXs);
+  const minPathY = Math.min(...pathYs);
+  const maxPathX = Math.max(...pathXs);
+  const maxPathY = Math.max(...pathYs);
+
+  const pathWidthPixels = maxPathX - minPathX;
+  const pathHeightPixels = maxPathY - minPathY;
+  const pathWidthInches = pathWidthPixels / effectiveDPI;
+  const pathHeightInches = pathHeightPixels / effectiveDPI;
+  const pageWidthInches = pathWidthInches + (bleedInches * 2);
+  const pageHeightInches = pathHeightInches + (bleedInches * 2);
+
+  const pathInInches = smoothedPath.map(p => ({
+    x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
+    y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
+  }));
+
+  const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
+  const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
+
+  console.log('[Shapes] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
+
+  return {
+    imageData: new ImageData(output, canvasWidth, canvasHeight),
+    imageCanvasX: Math.round(imageCanvasX),
+    imageCanvasY: Math.round(imageCanvasY),
+    contourData: {
+      pathPoints: pathInInches,
+      previewPathPoints: smoothedPath.map(p => ({
+        x: p.x + offsetX,
+        y: p.y + offsetY
+      })),
+      widthInches: pageWidthInches,
+      heightInches: pageHeightInches,
+      imageOffsetX: imageOffsetXCalc,
+      imageOffsetY: imageOffsetYCalc,
+      backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
+      useEdgeBleed,
       effectiveDPI,
       minPathX,
       minPathY,

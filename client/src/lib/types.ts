@@ -21,6 +21,8 @@ export type ContourCornerMode = 'rounded' | 'sharp';
 
 export type ContourAlgorithm = 'shapes' | 'complex';
 
+export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
+
 export interface StrokeSettings {
   width: number;
   color: string;
@@ -32,6 +34,7 @@ export interface StrokeSettings {
   autoBridging: boolean;
   autoBridgingThreshold: number;
   algorithm?: ContourAlgorithm;
+  contourMode?: ContourMode;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';
