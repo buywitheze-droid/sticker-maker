@@ -282,6 +282,7 @@ interface ContourResult {
     minPathY: number;
     bleedInches: number;
     shapeInfo?: ShapeInfoForPDF;
+    nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
   };
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
@@ -809,24 +810,19 @@ function analyzeShapeFromMask(
 
   let shapeType: ShapeAnalysis['type'];
   const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
-  const isCircleLike = circularity > 0.70 && circleAreaRatio > 0.85 && circleAreaRatio < 1.15;
 
-  const isCircleBySolidity = isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70 && solidity < 0.88;
-
-  const isEllipseBySolidity = !isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70 && solidity < 0.88;
-
-  if ((isCircleLike && isNearSquareAspect && solidity > 0.70) || isCircleBySolidity) {
+  if (solidity > 0.85) {
+    if (circularity > 0.75) {
+      shapeType = 'rounded-rect';
+    } else {
+      shapeType = 'rectangle';
+    }
+  } else if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
+    solidity > 0.70) {
     shapeType = 'circle';
-  } else if ((circularity > 0.70 && solidity > 0.70 && !isNearSquareAspect) || isEllipseBySolidity) {
+  } else if (!isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
+    solidity > 0.70) {
     shapeType = 'ellipse';
-  } else if (solidity > 0.92 && isNearSquareAspect) {
-    shapeType = 'rectangle';
-  } else if (solidity > 0.88 && circularity > 0.55) {
-    shapeType = 'rounded-rect';
-  } else if (solidity > 0.85) {
-    shapeType = 'rectangle';
   } else {
     console.log('[Shapes] No shape match - circularity:', circularity.toFixed(3),
       'solidity:', solidity.toFixed(3), 'circleAreaRatio:', circleAreaRatio.toFixed(3),
