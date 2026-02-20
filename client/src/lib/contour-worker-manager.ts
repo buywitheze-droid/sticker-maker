@@ -47,6 +47,7 @@ export interface ContourData {
   minPathX: number;
   minPathY: number;
   bleedInches: number;
+  psaShapeType?: string;
 }
 
 interface WorkerResponse {

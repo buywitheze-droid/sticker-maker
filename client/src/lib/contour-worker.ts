@@ -58,6 +58,7 @@ interface WorkerResponse {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
+    psaShapeType?: string;
   };
   detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
@@ -159,7 +160,8 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           effectiveDPI,
           minPathX: spMinX,
           minPathY: spMinY,
-          bleedInches
+          bleedInches,
+          psaShapeType: result.contourData.psaShapeType
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -277,6 +279,7 @@ interface ContourResult {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
+    psaShapeType?: string;
   };
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
@@ -1394,7 +1397,8 @@ function processContour(
       effectiveDPI,
       minPathX,
       minPathY,
-      bleedInches
+      bleedInches,
+      psaShapeType: psaShapeType !== 'none' ? psaShapeType : undefined
     },
     detectedAlgorithm
   };
