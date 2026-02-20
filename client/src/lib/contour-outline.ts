@@ -56,7 +56,9 @@ function contourPointsToPDFPathOps(
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  if (shapeInfo && (shapeInfo.type === 'circle' || shapeInfo.type === 'ellipse')) {
+  const hasNonShapeElements = nonShapeContourPaths && nonShapeContourPaths.length > 0;
+
+  if (shapeInfo && !hasNonShapeElements && (shapeInfo.type === 'circle' || shapeInfo.type === 'ellipse')) {
     const cx = shapeInfo.cxInches * 72;
     const cy = shapeInfo.cyInches * 72;
     const rx = shapeInfo.rxInches * 72;
@@ -75,28 +77,10 @@ function contourPointsToPDFPathOps(
 
     console.log(`[PDF CutContour] Perfect ${shapeInfo.type}: cx=${(cx).toFixed(2)}pt cy=${(cy).toFixed(2)}pt rx=${(rx).toFixed(2)}pt ry=${(ry).toFixed(2)}pt`);
 
-    if (nonShapeContourPaths && nonShapeContourPaths.length > 0) {
-      for (let p = 0; p < nonShapeContourPaths.length; p++) {
-        const contour = nonShapeContourPaths[p];
-        const simplified = simplifyPathForPDF(contour, 0.01);
-        console.log(`[PDF CutContour] Additional subpath ${p}: ${contour.length} → ${simplified.length} points`);
-        for (let i = 0; i < simplified.length; i++) {
-          const xPts = simplified[i].x * 72;
-          const yPts = simplified[i].y * 72;
-          if (i === 0) {
-            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
-          } else {
-            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
-          }
-        }
-        pathOps += 'h S\n';
-      }
-    }
-
     return pathOps;
   }
 
-  if (shapeInfo && shapeInfo.type === 'rectangle') {
+  if (shapeInfo && !hasNonShapeElements && shapeInfo.type === 'rectangle') {
     const x = (shapeInfo.cxInches - shapeInfo.rxInches) * 72;
     const y = (shapeInfo.cyInches - shapeInfo.ryInches) * 72;
     const w = shapeInfo.rxInches * 2 * 72;
@@ -107,25 +91,11 @@ function contourPointsToPDFPathOps(
 
     console.log(`[PDF CutContour] Perfect rectangle: x=${x.toFixed(2)}pt y=${y.toFixed(2)}pt w=${w.toFixed(2)}pt h=${h.toFixed(2)}pt`);
 
-    if (nonShapeContourPaths && nonShapeContourPaths.length > 0) {
-      for (let p = 0; p < nonShapeContourPaths.length; p++) {
-        const contour = nonShapeContourPaths[p];
-        const simplified = simplifyPathForPDF(contour, 0.01);
-        console.log(`[PDF CutContour] Additional subpath ${p}: ${contour.length} → ${simplified.length} points`);
-        for (let i = 0; i < simplified.length; i++) {
-          const xPts = simplified[i].x * 72;
-          const yPts = simplified[i].y * 72;
-          if (i === 0) {
-            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
-          } else {
-            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
-          }
-        }
-        pathOps += 'h S\n';
-      }
-    }
-
     return pathOps;
+  }
+
+  if (hasNonShapeElements) {
+    console.log(`[PDF CutContour] Hybrid design detected — using smooth Clipper.js union polygon instead of separate Bezier + subpaths`);
   }
 
   const simplified = simplifyPathForPDF(pathPointsInches, 0.01);
