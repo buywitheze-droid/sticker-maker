@@ -21,6 +21,14 @@ export type ContourCornerMode = 'rounded' | 'sharp';
 
 export type ContourAlgorithm = 'shapes' | 'complex';
 
+export interface PSASettings {
+  enabled: boolean;
+  confidenceThreshold: number;
+  mergeDistInches: number;
+  bridgeRadiusInches: number;
+  minShapeAreaIn2: number;
+}
+
 export interface StrokeSettings {
   width: number;
   color: string;
@@ -32,6 +40,7 @@ export interface StrokeSettings {
   autoBridging: boolean;
   autoBridgingThreshold: number;
   algorithm?: ContourAlgorithm;
+  psa?: PSASettings;
 }
 
 export type StrokeMode = 'none' | 'contour' | 'shape';

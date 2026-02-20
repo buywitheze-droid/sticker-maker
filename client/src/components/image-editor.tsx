@@ -37,6 +37,13 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     autoBridging: true, // Auto-bridge narrow gaps in contour
     autoBridgingThreshold: 0.02, // Gap threshold in inches
     algorithm: undefined,
+    psa: {
+      enabled: true,
+      confidenceThreshold: 0.75,
+      mergeDistInches: 0.06,
+      bridgeRadiusInches: 0.02,
+      minShapeAreaIn2: 0.01,
+    },
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,

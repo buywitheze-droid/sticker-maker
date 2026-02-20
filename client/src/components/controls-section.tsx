@@ -421,6 +421,25 @@ export default function ControlsSection({
                   );
                 })()}
               </div>
+
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-gray-500 font-medium">Shape Assist</Label>
+                <button
+                  className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                    strokeSettings.psa?.enabled !== false
+                      ? 'bg-green-500 text-white border-green-500'
+                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                  }`}
+                  onClick={() => onStrokeChange({
+                    psa: {
+                      ...(strokeSettings.psa || { confidenceThreshold: 0.75, mergeDistInches: 0.06, bridgeRadiusInches: 0.02, minShapeAreaIn2: 0.01 }),
+                      enabled: !(strokeSettings.psa?.enabled !== false),
+                    }
+                  })}
+                >
+                  {strokeSettings.psa?.enabled !== false ? 'On' : 'Off'}
+                </button>
+              </div>
               
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Contour Margin</Label>

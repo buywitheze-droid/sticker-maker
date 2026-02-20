@@ -88,6 +88,7 @@ interface ProcessRequest {
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -189,6 +190,7 @@ class ContourWorkerManager {
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
+      psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -275,6 +277,7 @@ class ContourWorkerManager {
       autoBridgingThreshold: number;
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
+      psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -337,6 +340,7 @@ export async function processContourInWorker(
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
+    psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
