@@ -1051,9 +1051,8 @@ function processContour(
     console.log('[Worker] Composite re-mask merged', mergedCount, 'new pixels into mask, faintArtMode=', faintArtMode);
   }
 
-  const mainComponentMask = selectMainComponentWithOrphans(
-    hiResMask, hiResWidth, hiResHeight, hiResDPI,
-    minComponentAreaPx, keepNearMainDistInches, bladeWidthInches, faintArtMode
+  const { mainMask: mainComponentMask, mainComp: mainCompInfo, allComps: allHiResComps } = selectMainComponentOnly(
+    hiResMask, hiResWidth, hiResHeight, hiResDPI, bladeWidthInches
   );
   
   const filledMainMask = fillSilhouette(mainComponentMask, hiResWidth, hiResHeight);
@@ -1181,6 +1180,51 @@ function processContour(
     console.log('[Worker] Sharp vector offset result:', smoothedPath.length, 'points');
   } else if (!psaResult && !useSharpCorners) {
     // Standard path already includes totalOffsetPixels via dilation
+  }
+  
+  // Geometric orphan retention: build keepZone from main path, test each orphan
+  if (allHiResComps.length > 1) {
+    const psaClassifyForOrphans = (psaSettings?.enabled)
+      ? (comp: LabeledComponent, w: number, h: number) => {
+          const boundary = traceComponentBoundary(comp, w, h);
+          if (boundary.length < 10) return { type: 'none' as string, confidence: 0 };
+          return psaClassifyShape(boundary, psaSettings!.confidenceThreshold ?? 0.75);
+        }
+      : null;
+
+    const orphanResult = geometricOrphanRetention(
+      smoothedPath,
+      mainCompInfo,
+      allHiResComps,
+      hiResWidth,
+      hiResHeight,
+      effectiveDPI,
+      SUPER_SAMPLE,
+      keepNearMainDistInches,
+      minComponentAreaPx,
+      useSharpCorners,
+      psaSettings,
+      psaClassifyForOrphans
+    );
+
+    if (orphanResult.retainedPaths.length > 0) {
+      const scaledOrphanPaths = orphanResult.retainedPaths.map(p =>
+        p.map(pt => ({ x: pt.x / SUPER_SAMPLE, y: pt.y / SUPER_SAMPLE }))
+      );
+
+      const offsetOrphanPaths = scaledOrphanPaths.map(p =>
+        clipperVectorOffset(p, totalOffsetPixels, useSharpCorners)
+      );
+
+      smoothedPath = softUnionPaths(
+        smoothedPath,
+        offsetOrphanPaths,
+        effectiveDPI,
+        psaSettings?.mergeDistInches ?? 0.06,
+        psaSettings?.bridgeRadiusInches ?? 0.02
+      );
+      console.log('[Worker] Geometric orphan retention: merged', orphanResult.retainedPaths.length, 'orphans into main path');
+    }
   }
   
   // Vector weld: expand then shrink by small amount to merge nearby path segments
@@ -1601,249 +1645,253 @@ function pickMainComponent(comps: LabeledComponent[]): LabeledComponent {
   return best;
 }
 
-function selectMainComponentWithOrphans(
+interface MainComponentResult {
+  mainMask: Uint8Array;
+  mainComp: LabeledComponent;
+  allComps: LabeledComponent[];
+}
+
+function selectMainComponentOnly(
   mask: Uint8Array, w: number, h: number, effectiveDPI: number,
-  minComponentAreaPx: number, keepNearMainDistInches: number, bladeWidthInches: number,
-  faintArtMode: boolean = false
-): Uint8Array {
+  bladeWidthInches: number
+): MainComponentResult {
   const comps = labelComponents(mask, w, h);
-  if (comps.length === 0) return new Uint8Array(w * h);
+  if (comps.length === 0) {
+    return {
+      mainMask: new Uint8Array(w * h),
+      mainComp: { id: -1, area: 0, bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, pixels: [] },
+      allComps: []
+    };
+  }
 
   const main = pickMainComponent(comps);
   const outMask = new Uint8Array(w * h);
-
   for (const idx of main.pixels) outMask[idx] = 1;
-
-  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-  const expandBounds = (b: BoundingBox, padPx: number) => ({
-    minX: clamp(b.minX - padPx, 0, w - 1),
-    minY: clamp(b.minY - padPx, 0, h - 1),
-    maxX: clamp(b.maxX + padPx, 0, w - 1),
-    maxY: clamp(b.maxY + padPx, 0, h - 1),
-  });
-
-  const boundsIntersect = (a: BoundingBox, b: BoundingBox) =>
-    !(b.maxX < a.minX || b.minX > a.maxX || b.maxY < a.minY || b.minY > a.maxY);
-
-  const xOverlapRatio = (a: BoundingBox, b: BoundingBox) => {
-    const left = Math.max(a.minX, b.minX);
-    const right = Math.min(a.maxX, b.maxX);
-    const overlap = Math.max(0, right - left);
-    const bw = Math.max(1, (b.maxX - b.minX));
-    return overlap / bw;
-  };
-
-  const mainBounds = main.bounds;
-  const mainW = (mainBounds.maxX - mainBounds.minX);
-  const mainH = (mainBounds.maxY - mainBounds.minY);
-
-  const relMin = Math.round(main.area * 0.0015);
-  const dynamicMinArea = Math.max(minComponentAreaPx, 40, relMin);
-
-  const significantComps = comps.filter(c => c.id !== main.id && c.area >= dynamicMinArea);
-  const compositeMode = significantComps.length >= 5;
-
-  const densityThreshold = compositeMode ? 0.005 : 0.015;
-  const baseExpandIn = compositeMode
-    ? Math.max(keepNearMainDistInches, 1.0)
-    : Math.max(keepNearMainDistInches, 0.5);
-  const extraExpandIn = compositeMode ? 0.30 : 0.15;
-  const maxExtraAreaRatio = compositeMode ? 1.0 : 0.65;
-
-  const keepNearMainDistPx = Math.max(8, Math.round(keepNearMainDistInches * effectiveDPI));
-
-  const expandPx = Math.max(8, Math.round((baseExpandIn + extraExpandIn) * effectiveDPI));
-  const expandedMain = expandBounds(mainBounds, expandPx);
-
-  const totalSignificantArea = compositeMode
-    ? significantComps.reduce((sum, c) => sum + c.area, 0) + main.area
-    : main.area;
-  const maxExtraArea = compositeMode
-    ? Math.round(totalSignificantArea * maxExtraAreaRatio)
-    : Math.round(main.area * maxExtraAreaRatio);
-  let extraAreaKept = 0;
-
-  const captionGapPx = Math.max(
-    Math.round(0.75 * effectiveDPI),
-    Math.round(0.90 * mainH)
-  );
-
-  const isCaptionLike = (b: BoundingBox) => {
-    const gap = b.minY - mainBounds.maxY;
-    if (gap < 0) return false;
-    if (compositeMode) {
-      if (gap > captionGapPx * 3) return false;
-    } else {
-      if (gap > captionGapPx) return false;
-    }
-
-    const overlap = xOverlapRatio(mainBounds, b);
-    if (overlap < 0.25) return false;
-
-    const bw = (b.maxX - b.minX);
-    const bh = (b.maxY - b.minY);
-
-    if (bw > mainW * (compositeMode ? 2.0 : 1.25)) return false;
-
-    if (bh > 0 && (bw / bh) > 12) return false;
-
-    if (!compositeMode && b.maxY > h - Math.max(2, Math.round(0.02 * h))) return false;
-
-    return true;
-  };
-
-  const passesDensity = (c: LabeledComponent) => {
-    const b = c.bounds;
-    const bw = (b.maxX - b.minX + 1);
-    const bh = (b.maxY - b.minY + 1);
-    const bboxArea = Math.max(1, bw * bh);
-    const density = (c.pixels.length / bboxArea);
-    return density >= densityThreshold;
-  };
-
-  let kept = 1;
-  let removed = 0;
-
-  const unionBoundsOf = (a: BoundingBox, b: BoundingBox): BoundingBox => ({
-    minX: Math.min(a.minX, b.minX),
-    minY: Math.min(a.minY, b.minY),
-    maxX: Math.max(a.maxX, b.maxX),
-    maxY: Math.max(a.maxY, b.maxY),
-  });
-
-  const isNearAny = (c: LabeledComponent, includedComps: LabeledComponent[], chainDistPx: number) => {
-    for (const inc of includedComps) {
-      if (distBounds(inc.bounds, c.bounds) <= chainDistPx) return true;
-    }
-    return false;
-  };
-
-  if (compositeMode) {
-    const areaThreshold = dynamicMinArea;
-    const candidates = comps
-      .filter(c => c.id !== main.id && c.area >= areaThreshold)
-      .sort((a, b) => b.area - a.area);
-
-    const maxKeep = 50;
-    const chainDistPx = expandPx;
-    const included: LabeledComponent[] = [main];
-    let unionIncluded: BoundingBox = { ...mainBounds };
-    const added = new Set<number>([main.id]);
-
-    let changed = true;
-    let passes = 0;
-    const maxPasses = 10;
-
-    while (changed && passes < maxPasses) {
-      changed = false;
-      passes++;
-
-      for (const c of candidates) {
-        if (added.has(c.id)) continue;
-        if (kept >= maxKeep) break;
-
-        const expandedUnion = expandBounds(unionIncluded, expandPx);
-        const ok =
-          boundsIntersect(expandedUnion, c.bounds) ||
-          isNearAny(c, included, chainDistPx) ||
-          isCaptionLike(c.bounds);
-
-        if (!ok) continue;
-        if (!passesDensity(c)) continue;
-        if (extraAreaKept + c.area > maxExtraArea) continue;
-
-        for (const idx of c.pixels) outMask[idx] = 1;
-        kept++;
-        extraAreaKept += c.area;
-        included.push(c);
-        added.add(c.id);
-        unionIncluded = unionBoundsOf(unionIncluded, c.bounds);
-        changed = true;
-      }
-    }
-
-    removed = comps.length - kept;
-    console.log('[Worker] Composite flood-fill: passes=', passes, 'chain dist=', chainDistPx, 'px');
-  } else if (faintArtMode) {
-    const faintAreaThreshold = Math.max(dynamicMinArea, 80);
-    const sortedComps = comps
-      .filter(c => c.id !== main.id && c.area >= faintAreaThreshold)
-      .sort((a, b) => b.area - a.area);
-
-    const maxKeep = 30;
-
-    for (let i = 0; i < sortedComps.length && i < maxKeep; i++) {
-      const c = sortedComps[i];
-
-      const ok =
-        boundsIntersect(expandedMain, c.bounds) ||
-        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
-        isCaptionLike(c.bounds);
-
-      if (!ok) continue;
-      if (!passesDensity(c)) { removed++; continue; }
-      if (extraAreaKept + c.area > maxExtraArea) continue;
-
-      for (const idx of c.pixels) outMask[idx] = 1;
-      kept++;
-      extraAreaKept += c.area;
-    }
-
-    removed = comps.length - kept;
-  } else {
-    for (const c of comps) {
-      if (c.id === main.id) continue;
-
-      if (c.area < dynamicMinArea) { removed++; continue; }
-
-      const ok =
-        boundsIntersect(expandedMain, c.bounds) ||
-        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
-        isCaptionLike(c.bounds);
-
-      if (!ok) { removed++; continue; }
-
-      if (!passesDensity(c)) { removed++; continue; }
-
-      if (extraAreaKept + c.area > maxExtraArea) { removed++; continue; }
-
-      for (const idx of c.pixels) outMask[idx] = 1;
-      kept++;
-      extraAreaKept += c.area;
-    }
-  }
-
-  console.log(
-    '[Worker] Component selection:',
-    'mode=', compositeMode ? 'composite' : (faintArtMode ? 'faint-art' : 'normal'),
-    'total=', comps.length,
-    'significant=', significantComps.length,
-    'main area=', main.area,
-    'dynamicMinArea=', dynamicMinArea,
-    'expandPx=', expandPx,
-    'captionGapPx=', captionGapPx,
-    'densityThreshold=', densityThreshold,
-    'kept=', kept,
-    'removed=', removed
-  );
 
   const bladeWidthPx = Math.max(0, bladeWidthInches * effectiveDPI);
   let closingRadiusPx = Math.round(bladeWidthPx / 2);
-
   if (effectiveDPI < 180) closingRadiusPx = Math.max(1, closingRadiusPx);
   else closingRadiusPx = Math.max(2, closingRadiusPx);
-
   closingRadiusPx = Math.min(closingRadiusPx, 4);
 
-  if (kept > 1) closingRadiusPx = Math.min(closingRadiusPx, 1);
+  const finalMask = closingRadiusPx > 0
+    ? morphologicalClose(outMask, w, h, closingRadiusPx)
+    : outMask;
 
-  if (closingRadiusPx > 0) {
-    console.log('[Worker] Blade-safe closing radius:', closingRadiusPx, 'px (DPI:', effectiveDPI, ')');
-    return morphologicalClose(outMask, w, h, closingRadiusPx);
+  console.log('[Worker] Main component selected: area=', main.area, 'total components=', comps.length);
+
+  return { mainMask: finalMask, mainComp: main, allComps: comps };
+}
+
+function clipperPathsIntersect(
+  pathA: Point[], pathB: Point[]
+): boolean {
+  if (pathA.length < 3 || pathB.length < 3) return false;
+
+  const toClipper = (pts: Point[]) => pts.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+
+  const clipper = new ClipperLib.Clipper();
+  clipper.AddPath(toClipper(pathA), ClipperLib.PolyType.ptSubject, true);
+  clipper.AddPath(toClipper(pathB), ClipperLib.PolyType.ptClip, true);
+
+  const result: Array<Array<{X: number; Y: number}>> = [];
+  clipper.Execute(
+    ClipperLib.ClipType.ctIntersection, result,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
+  );
+
+  if (result.length === 0) return false;
+  const totalArea = result.reduce((sum, p) => sum + Math.abs(ClipperLib.Clipper.Area(p)), 0);
+  return totalArea > 0;
+}
+
+function traceComponentBoundary(
+  comp: LabeledComponent, maskW: number, maskH: number
+): Point[] {
+  const compMask = new Uint8Array(maskW * maskH);
+  for (const idx of comp.pixels) compMask[idx] = 1;
+  return traceBoundary(compMask, maskW, maskH);
+}
+
+function geometricOrphanRetention(
+  mainPath: Point[],
+  mainComp: LabeledComponent,
+  allComps: LabeledComponent[],
+  maskW: number,
+  maskH: number,
+  originalDPI: number,
+  superSample: number,
+  keepNearMainDistInches: number,
+  minComponentAreaPx: number,
+  useSharpCorners: boolean,
+  psaSettings: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number } | undefined,
+  psaClassifyFn: ((comp: LabeledComponent, w: number, h: number) => { type: string; confidence: number }) | null
+): { retainedPaths: Point[][]; retainedComps: LabeledComponent[] } {
+  const orphanComps = allComps.filter(c => c.id !== mainComp.id);
+  if (orphanComps.length === 0 || mainPath.length < 3) {
+    return { retainedPaths: [], retainedComps: [] };
   }
 
-  return outMask;
+  const relMin = Math.round(mainComp.area * 0.0015);
+  const dynamicMinArea = Math.max(minComponentAreaPx, 40, relMin);
+
+  const keepZone = clipperVectorOffset(mainPath, keepNearMainDistInches * originalDPI, false);
+  if (keepZone.length < 3) {
+    console.log('[GeomOrphan] Failed to build keepZone');
+    return { retainedPaths: [], retainedComps: [] };
+  }
+
+  const epsilonPx = 0.01 * originalDPI;
+  const retainedPaths: Point[][] = [];
+  const retainedComps: LabeledComponent[] = [];
+  let tested = 0;
+  let kept = 0;
+
+  for (const comp of orphanComps) {
+    if (comp.area < dynamicMinArea) continue;
+    tested++;
+
+    let orphanPath = traceComponentBoundary(comp, maskW, maskH);
+    if (orphanPath.length < 3) continue;
+
+    if (psaClassifyFn && psaSettings?.enabled) {
+      const cls = psaClassifyFn(comp, maskW, maskH);
+      if (cls.type !== 'none' && cls.confidence >= (psaSettings.confidenceThreshold ?? 0.75)) {
+        const cx = (comp.bounds.minX + comp.bounds.maxX) / 2;
+        const cy = (comp.bounds.minY + comp.bounds.maxY) / 2;
+        const bw = comp.bounds.maxX - comp.bounds.minX;
+        const bh = comp.bounds.maxY - comp.bounds.minY;
+        if (cls.type === 'circle') {
+          const r = Math.max(bw, bh) / 2;
+          orphanPath = psaGenerateCircle(cx, cy, r);
+        } else if (cls.type === 'ellipse') {
+          orphanPath = psaGenerateEllipse(cx, cy, bw / 2, bh / 2, 0);
+        } else if (cls.type === 'rectangle' || cls.type === 'square') {
+          orphanPath = psaGenerateRectangle(cx, cy, bw, bh, 0);
+        }
+      }
+    }
+
+    const scaledOrphan = orphanPath.map(p => ({ x: p.x / superSample, y: p.y / superSample }));
+
+    const dilatedOrphan = epsilonPx > 0
+      ? clipperVectorOffset(scaledOrphan, epsilonPx, false)
+      : scaledOrphan;
+
+    if (clipperPathsIntersect(dilatedOrphan, keepZone)) {
+      retainedPaths.push(orphanPath);
+      retainedComps.push(comp);
+      kept++;
+    }
+  }
+
+  console.log('[GeomOrphan] Tested', tested, 'orphans, kept', kept, 'via geometric intersection (keepDist=', keepNearMainDistInches + '")');
+  return { retainedPaths, retainedComps };
+}
+
+function softUnionPaths(
+  mainPath: Point[],
+  orphanPaths: Point[][],
+  effectiveDPI: number,
+  mergeDistInches: number,
+  bridgeRadiusInches: number
+): Point[] {
+  if (orphanPaths.length === 0) return mainPath;
+
+  const toClipper = (pts: Point[]) => pts.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+  const fromClipper = (pts: Array<{X: number; Y: number}>) => pts.map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+  const getLargest = (paths: Array<Array<{X: number; Y: number}>>) => {
+    let best = paths[0];
+    let bestArea = Math.abs(ClipperLib.Clipper.Area(paths[0]));
+    for (let i = 1; i < paths.length; i++) {
+      const a = Math.abs(ClipperLib.Clipper.Area(paths[i]));
+      if (a > bestArea) { bestArea = a; best = paths[i]; }
+    }
+    return best;
+  };
+
+  const mergeDistPx = mergeDistInches * effectiveDPI;
+  const bridgeRadiusPx = bridgeRadiusInches * effectiveDPI;
+  const scaledBridge = bridgeRadiusPx * CLIPPER_SCALE;
+
+  const closePaths: Point[][] = [];
+  const farPaths: Point[][] = [];
+
+  for (const op of orphanPaths) {
+    let minDist = Infinity;
+    for (const pa of op) {
+      for (const pb of mainPath) {
+        const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist < mergeDistPx) break;
+    }
+    if (minDist < mergeDistPx) {
+      closePaths.push(op);
+    } else {
+      farPaths.push(op);
+    }
+  }
+
+  let result = mainPath;
+
+  if (closePaths.length > 0) {
+    const co1 = new ClipperLib.ClipperOffset();
+    co1.ArcTolerance = CLIPPER_SCALE * 0.25;
+    co1.AddPath(toClipper(result), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    for (const cp of closePaths) {
+      co1.AddPath(toClipper(cp), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    }
+    const expanded: Array<Array<{X: number; Y: number}>> = [];
+    co1.Execute(expanded, scaledBridge);
+
+    if (expanded.length > 0) {
+      const unionClip = new ClipperLib.Clipper();
+      for (const p of expanded) {
+        unionClip.AddPath(p, ClipperLib.PolyType.ptSubject, true);
+      }
+      const unionResult: Array<Array<{X: number; Y: number}>> = [];
+      unionClip.Execute(ClipperLib.ClipType.ctUnion, unionResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+
+      if (unionResult.length > 0) {
+        const co2 = new ClipperLib.ClipperOffset();
+        co2.ArcTolerance = CLIPPER_SCALE * 0.25;
+        co2.AddPath(getLargest(unionResult), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+        const shrunk: Array<Array<{X: number; Y: number}>> = [];
+        co2.Execute(shrunk, -scaledBridge);
+
+        if (shrunk.length > 0) {
+          result = fromClipper(getLargest(shrunk));
+          console.log('[SoftUnion] Bridge-merged', closePaths.length, 'close orphans with main path');
+        }
+      }
+    }
+  }
+
+  if (farPaths.length > 0) {
+    const finalUnion = new ClipperLib.Clipper();
+    finalUnion.AddPath(toClipper(result), ClipperLib.PolyType.ptSubject, true);
+    for (const fp of farPaths) {
+      finalUnion.AddPath(toClipper(fp), ClipperLib.PolyType.ptSubject, true);
+    }
+    const finalResult: Array<Array<{X: number; Y: number}>> = [];
+    finalUnion.Execute(ClipperLib.ClipType.ctUnion, finalResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    if (finalResult.length > 0) {
+      result = fromClipper(getLargest(finalResult));
+      console.log('[SoftUnion] Plain-unioned', farPaths.length, 'far orphans with main path');
+    }
+  }
+
+  return result;
 }
 
 function buildHysteresisMask(
