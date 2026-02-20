@@ -753,21 +753,31 @@ function analyzeShapeFromMask(
   const centroidCx = sumX / count;
   const centroidCy = sumY / count;
 
+  const boundary = traceBoundary(mask, maskWidth, maskHeight);
   let perimeter = 0;
-  for (let y = 0; y < maskHeight; y++) {
-    for (let x = 0; x < maskWidth; x++) {
-      if (!mask[y * maskWidth + x]) continue;
-      let isEdge = false;
-      for (let dy = -1; dy <= 1 && !isEdge; dy++) {
-        for (let dx = -1; dx <= 1 && !isEdge; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = x + dx, ny = y + dy;
-          if (nx < 0 || nx >= maskWidth || ny < 0 || ny >= maskHeight || !mask[ny * maskWidth + nx]) {
-            isEdge = true;
+  if (boundary.length >= 3) {
+    for (let i = 0; i < boundary.length; i++) {
+      const next = boundary[(i + 1) % boundary.length];
+      const dx = next.x - boundary[i].x;
+      const dy = next.y - boundary[i].y;
+      perimeter += Math.sqrt(dx * dx + dy * dy);
+    }
+  } else {
+    for (let y = 0; y < maskHeight; y++) {
+      for (let x = 0; x < maskWidth; x++) {
+        if (!mask[y * maskWidth + x]) continue;
+        let isEdge = false;
+        for (let dy2 = -1; dy2 <= 1 && !isEdge; dy2++) {
+          for (let dx2 = -1; dx2 <= 1 && !isEdge; dx2++) {
+            if (dx2 === 0 && dy2 === 0) continue;
+            const nx = x + dx2, ny = y + dy2;
+            if (nx < 0 || nx >= maskWidth || ny < 0 || ny >= maskHeight || !mask[ny * maskWidth + nx]) {
+              isEdge = true;
+            }
           }
         }
+        if (isEdge) perimeter++;
       }
-      if (isEdge) perimeter++;
     }
   }
 
@@ -788,9 +798,15 @@ function analyzeShapeFromMask(
   const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
   const isCircleLike = circularity > 0.70 && circleAreaRatio > 0.85 && circleAreaRatio < 1.15;
 
-  if (isCircleLike && isNearSquareAspect && solidity > 0.70 && solidity < 0.95) {
+  const isCircleBySolidity = isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
+    solidity > 0.70 && solidity < 0.88;
+
+  const isEllipseBySolidity = !isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
+    solidity > 0.70 && solidity < 0.88;
+
+  if ((isCircleLike && isNearSquareAspect && solidity > 0.70) || isCircleBySolidity) {
     shapeType = 'circle';
-  } else if (circularity > 0.70 && solidity > 0.70 && solidity < 0.95 && !isNearSquareAspect) {
+  } else if ((circularity > 0.70 && solidity > 0.70 && !isNearSquareAspect) || isEllipseBySolidity) {
     shapeType = 'ellipse';
   } else if (solidity > 0.92 && isNearSquareAspect) {
     shapeType = 'rectangle';
@@ -799,7 +815,9 @@ function analyzeShapeFromMask(
   } else if (solidity > 0.85) {
     shapeType = 'rectangle';
   } else {
-    console.log('[Shapes] No shape match - circularity too low or solidity too low');
+    console.log('[Shapes] No shape match - circularity:', circularity.toFixed(3),
+      'solidity:', solidity.toFixed(3), 'circleAreaRatio:', circleAreaRatio.toFixed(3),
+      'aspect:', aspectRatio.toFixed(3));
     return null;
   }
 
