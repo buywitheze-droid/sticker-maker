@@ -1643,9 +1643,10 @@ export function getContourPath(
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
     // Determine if sharp corners are requested - matches worker logic
-    // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
-    const effectiveAlgorithm = strokeSettings.algorithm || 'shapes';
-    const useSharpCorners = effectiveAlgorithm === 'shapes';
+    // Uses contourMode if set, otherwise falls back to legacy algorithm field
+    const effectiveMode = (strokeSettings as any).contourMode
+      ?? (strokeSettings.algorithm === 'complex' ? 'smooth' : 'sharp');
+    const useSharpCorners = effectiveMode === 'sharp';
     
     let boundaryPath: Point[];
     let dilatedWidth: number;

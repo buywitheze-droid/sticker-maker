@@ -33,6 +33,7 @@ interface WorkerMessage {
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
     psa?: PSASettings;
+    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -934,6 +935,7 @@ function processContour(
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
     psa?: PSASettings;
+    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -1082,23 +1084,36 @@ function processContour(
     scatteredAnalysis.isScattered ? 'scattered' : 
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
-  // Apply user algorithm override if set
-  if (strokeSettings.algorithm) {
-    console.log('[Worker] Algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
-    detectedAlgorithm = strokeSettings.algorithm;
+  // Resolve effective contour mode from the new unified contourMode or legacy algorithm field
+  const contourMode = strokeSettings.contourMode;
+  let effectiveMode: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
+  if (contourMode) {
+    effectiveMode = contourMode;
+    console.log('[Worker] Contour mode override:', contourMode, '(auto-detected was:', detectedAlgorithm + ')');
+  } else if (strokeSettings.algorithm) {
+    effectiveMode = strokeSettings.algorithm === 'shapes' ? 'sharp' : 'smooth';
+    console.log('[Worker] Legacy algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
+  } else {
+    effectiveMode = detectedAlgorithm === 'scattered' ? 'scattered'
+      : detectedAlgorithm === 'complex' ? 'smooth'
+      : 'sharp';
   }
   
-  console.log('[Worker] Effective algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
+  console.log('[Worker] Effective mode:', effectiveMode, prelimCompositeDetected ? '(composite detected)' : '');
 
-  // PSA: Perfect Shape Assist - analyze components and replace with perfect primitives
-  const psaSettings = strokeSettings.psa;
+  // PSA: Perfect Shape Assist - runs as primary algorithm in shape-assist mode,
+  // or as optional enhancement in other modes if psa settings are enabled
+  const isShapeAssistMode = effectiveMode === 'shape-assist';
+  const psaSettings: PSASettings = isShapeAssistMode
+    ? { enabled: true, confidenceThreshold: 0.60, mergeDistInches: 0.06, bridgeRadiusInches: 0.02, minShapeAreaIn2: 0.005 }
+    : (strokeSettings.psa ?? { enabled: false, confidenceThreshold: 0.75, mergeDistInches: 0.06, bridgeRadiusInches: 0.02, minShapeAreaIn2: 0.01 });
   let psaResult: ReturnType<typeof psaProcessMask> = null;
-  if (psaSettings && psaSettings.enabled) {
+  if (psaSettings.enabled) {
     psaResult = psaProcessMask(mainComponentMask, hiResWidth, hiResHeight, hiResDPI, psaSettings);
   }
   
-  // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
-  const useSharpCorners = detectedAlgorithm === 'shapes';
+  // Sharp corners when mode is 'sharp', rounded for 'smooth'/'scattered'/'shape-assist'
+  const useSharpCorners = effectiveMode === 'sharp';
   const pixelDilateOffset = useSharpCorners ? baseOffsetPixels : totalOffsetPixels;
   let dilateRadiusHiRes = pixelDilateOffset * SUPER_SAMPLE;
   
@@ -1165,9 +1180,11 @@ function processContour(
     if (mergedPSA.length >= 3) {
       const psaBoundaryArea = psaPolygonArea(mergedPSA);
       const standardArea = psaPolygonArea(smoothedPath);
-      console.log('[PSA] Area comparison: PSA=' + psaBoundaryArea.toFixed(0) + ' standard=' + standardArea.toFixed(0) + ' ratio=' + (psaBoundaryArea / standardArea).toFixed(3));
-      if (psaBoundaryArea > standardArea * 0.5) {
-        console.log('[PSA] Using PSA-processed path (' + mergedPSA.length + ' pts) instead of standard contour');
+      const areaRatio = standardArea > 0 ? psaBoundaryArea / standardArea : 1;
+      console.log('[PSA] Area comparison: PSA=' + psaBoundaryArea.toFixed(0) + ' standard=' + standardArea.toFixed(0) + ' ratio=' + areaRatio.toFixed(3));
+      const areaThreshold = isShapeAssistMode ? 0.2 : 0.5;
+      if (psaBoundaryArea > standardArea * areaThreshold || isShapeAssistMode) {
+        console.log('[PSA] Using PSA-processed path (' + mergedPSA.length + ' pts) instead of standard contour' + (isShapeAssistMode ? ' (shape-assist mode)' : ''));
         smoothedPath = mergedPSA;
         psaUsed = true;
         if (psaResult.classifications.length === 1) {
@@ -1254,7 +1271,7 @@ function processContour(
     console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
   }
 
-  if (detectedAlgorithm === 'scattered') {
+  if (effectiveMode === 'scattered') {
     const iterations = 3;
     for (let iter = 0; iter < iterations; iter++) {
       const result: Array<{x: number; y: number}> = [];

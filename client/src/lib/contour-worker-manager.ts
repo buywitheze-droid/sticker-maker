@@ -90,6 +90,7 @@ interface ProcessRequest {
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
     psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
+    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   };
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
@@ -192,6 +193,7 @@ class ContourWorkerManager {
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
       psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
+      contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
@@ -279,6 +281,7 @@ class ContourWorkerManager {
       cornerMode: 'rounded' | 'sharp';
       algorithm?: 'shapes' | 'complex';
       psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
+      contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
     },
     resizeSettings: ResizeSettings
   ): Promise<HTMLCanvasElement> {
@@ -342,6 +345,7 @@ export async function processContourInWorker(
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
     psa?: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number };
+    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback
