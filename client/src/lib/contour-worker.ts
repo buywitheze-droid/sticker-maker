@@ -1134,7 +1134,9 @@ function processContour(
   
   // If PSA detected perfect shapes, apply bridge merge to combine PSA boundaries
   // with the standard contour, then use the merged result
+  let psaShapeType: PSAShapeType = 'none';
   if (psaResult && psaResult.processedBoundaries.length > 0) {
+    console.log('[PSA] processedBoundaries:', psaResult.processedBoundaries.length, 'classifications:', psaResult.classifications.map(c => `${c.type}(${c.confidence.toFixed(2)})`).join(', '));
     const scaledPSABoundaries = psaResult.processedBoundaries.map(b =>
       b.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE }))
     );
@@ -1160,10 +1162,18 @@ function processContour(
     if (mergedPSA.length >= 3) {
       const psaBoundaryArea = psaPolygonArea(mergedPSA);
       const standardArea = psaPolygonArea(smoothedPath);
+      console.log('[PSA] Area comparison: PSA=' + psaBoundaryArea.toFixed(0) + ' standard=' + standardArea.toFixed(0) + ' ratio=' + (psaBoundaryArea / standardArea).toFixed(3));
       if (psaBoundaryArea > standardArea * 0.5) {
         console.log('[PSA] Using PSA-processed path (' + mergedPSA.length + ' pts) instead of standard contour');
         smoothedPath = mergedPSA;
         psaUsed = true;
+        if (psaResult.classifications.length === 1) {
+          psaShapeType = psaResult.classifications[0].type;
+        } else {
+          const dominant = psaResult.classifications.reduce((a, b) => a.confidence > b.confidence ? a : b);
+          psaShapeType = dominant.type;
+        }
+        console.log('[PSA] Dominant shape type:', psaShapeType);
       } else {
         console.log('[PSA] PSA path too small vs standard, falling back to standard contour');
       }
@@ -1227,16 +1237,19 @@ function processContour(
     }
   }
   
-  // Vector weld: expand then shrink by small amount to merge nearby path segments
-  const weldPx = previewMode ? 1.0 : 3.0;
-  smoothedPath = vectorWeld(smoothedPath, weldPx);
-  
-  // Simplify the path to reduce point count while preserving shape
-  const tightEpsilon = 0.0005;
-  smoothedPath = approxPolyDP(smoothedPath, tightEpsilon);
-  smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
-  
-  console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
+  // Vector weld and simplify — skip for PSA circle/ellipse to preserve smooth curves
+  const isPSACurve = psaShapeType === 'circle' || psaShapeType === 'ellipse';
+  if (isPSACurve) {
+    smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
+    console.log('[Worker] PSA curve shape detected (' + psaShapeType + '), skipping weld/simplify to preserve smoothness:', smoothedPath.length, 'points');
+  } else {
+    const weldPx = previewMode ? 1.0 : 3.0;
+    smoothedPath = vectorWeld(smoothedPath, weldPx);
+    const tightEpsilon = 0.0005;
+    smoothedPath = approxPolyDP(smoothedPath, tightEpsilon);
+    smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
+    console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
+  }
 
   if (detectedAlgorithm === 'scattered') {
     const iterations = 3;
