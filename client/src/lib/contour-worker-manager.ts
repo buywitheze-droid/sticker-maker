@@ -57,6 +57,7 @@ export interface ContourData {
   minPathY: number;
   bleedInches: number;
   shapeInfo?: ShapeInfoForPDF;
+  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
 }
 
 interface WorkerResponse {

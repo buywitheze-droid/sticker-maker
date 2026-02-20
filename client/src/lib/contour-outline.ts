@@ -49,7 +49,8 @@ function perpendicularDistance(
 function contourPointsToPDFPathOps(
   pathPointsInches: Array<{x: number; y: number}>,
   pageHeightInches: number,
-  shapeInfo?: ShapeInfoForPDF
+  shapeInfo?: ShapeInfoForPDF,
+  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>
 ): string {
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
@@ -70,10 +71,28 @@ function contourPointsToPDFPathOps(
     pathOps += `${(cx - kx).toFixed(4)} ${(cy + ry).toFixed(4)} ${(cx - rx).toFixed(4)} ${(cy + ky).toFixed(4)} ${(cx - rx).toFixed(4)} ${cy.toFixed(4)} c\n`;
     pathOps += `${(cx - rx).toFixed(4)} ${(cy - ky).toFixed(4)} ${(cx - kx).toFixed(4)} ${(cy - ry).toFixed(4)} ${cx.toFixed(4)} ${(cy - ry).toFixed(4)} c\n`;
     pathOps += `${(cx + kx).toFixed(4)} ${(cy - ry).toFixed(4)} ${(cx + rx).toFixed(4)} ${(cy - ky).toFixed(4)} ${(cx + rx).toFixed(4)} ${cy.toFixed(4)} c\n`;
+    pathOps += 'h S\n';
 
     console.log(`[PDF CutContour] Perfect ${shapeInfo.type}: cx=${(cx).toFixed(2)}pt cy=${(cy).toFixed(2)}pt rx=${(rx).toFixed(2)}pt ry=${(ry).toFixed(2)}pt`);
 
-    pathOps += 'h S\n';
+    if (nonShapeContourPaths && nonShapeContourPaths.length > 0) {
+      for (let p = 0; p < nonShapeContourPaths.length; p++) {
+        const contour = nonShapeContourPaths[p];
+        const simplified = simplifyPathForPDF(contour, 0.01);
+        console.log(`[PDF CutContour] Additional subpath ${p}: ${contour.length} → ${simplified.length} points`);
+        for (let i = 0; i < simplified.length; i++) {
+          const xPts = simplified[i].x * 72;
+          const yPts = simplified[i].y * 72;
+          if (i === 0) {
+            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
+          } else {
+            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
+          }
+        }
+        pathOps += 'h S\n';
+      }
+    }
+
     return pathOps;
   }
 
@@ -84,10 +103,28 @@ function contourPointsToPDFPathOps(
     const h = shapeInfo.ryInches * 2 * 72;
 
     pathOps += `${x.toFixed(4)} ${y.toFixed(4)} ${w.toFixed(4)} ${h.toFixed(4)} re\n`;
+    pathOps += 'S\n';
 
     console.log(`[PDF CutContour] Perfect rectangle: x=${x.toFixed(2)}pt y=${y.toFixed(2)}pt w=${w.toFixed(2)}pt h=${h.toFixed(2)}pt`);
 
-    pathOps += 'S\n';
+    if (nonShapeContourPaths && nonShapeContourPaths.length > 0) {
+      for (let p = 0; p < nonShapeContourPaths.length; p++) {
+        const contour = nonShapeContourPaths[p];
+        const simplified = simplifyPathForPDF(contour, 0.01);
+        console.log(`[PDF CutContour] Additional subpath ${p}: ${contour.length} → ${simplified.length} points`);
+        for (let i = 0; i < simplified.length; i++) {
+          const xPts = simplified[i].x * 72;
+          const yPts = simplified[i].y * 72;
+          if (i === 0) {
+            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
+          } else {
+            pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
+          }
+        }
+        pathOps += 'h S\n';
+      }
+    }
+
     return pathOps;
   }
 
@@ -1772,6 +1809,7 @@ export interface CachedContourData {
   minPathY: number;
   bleedInches: number;
   shapeInfo?: ShapeInfoForPDF;
+  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
 }
 
 export async function downloadContourPDF(
@@ -1802,6 +1840,7 @@ export async function downloadContourPDF(
     let minPathY: number;
     let bleedInches: number;
     let shapeInfo: ShapeInfoForPDF | undefined;
+    let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
     
     {
       const workerManager = getContourWorkerManager();
@@ -1820,6 +1859,7 @@ export async function downloadContourPDF(
         minPathY = contourData.minPathY;
         bleedInches = contourData.bleedInches;
         shapeInfo = contourData.shapeInfo;
+        nonShapeContourPaths = contourData.nonShapeContourPaths;
       } else {
         console.error('[downloadContourPDF] No contour data available - generate preview first');
         return;
@@ -1981,7 +2021,7 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, shapeInfo);
+    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, shapeInfo, nonShapeContourPaths);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2036,6 +2076,7 @@ export async function generateContourPDFBase64(
   let minPathY: number;
   let bleedInches: number;
   let shapeInfo: ShapeInfoForPDF | undefined;
+  let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
   
   if (cachedContourData && cachedContourData.pathPoints.length > 0) {
     console.log('[generateContourPDFBase64] Using cached contour data for fast export');
@@ -2051,6 +2092,7 @@ export async function generateContourPDFBase64(
     minPathY = cachedContourData.minPathY;
     bleedInches = cachedContourData.bleedInches;
     shapeInfo = cachedContourData.shapeInfo;
+    nonShapeContourPaths = cachedContourData.nonShapeContourPaths;
   } else {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
@@ -2067,6 +2109,7 @@ export async function generateContourPDFBase64(
       minPathY = contourData.minPathY;
       bleedInches = contourData.bleedInches;
       shapeInfo = contourData.shapeInfo;
+      nonShapeContourPaths = contourData.nonShapeContourPaths;
     } else {
       console.error('[generateContourPDFBase64] No contour data available - generate preview first');
       return null;

@@ -59,6 +59,7 @@ interface WorkerResponse {
     minPathY: number;
     bleedInches: number;
     shapeInfo?: ShapeInfoForPDF;
+    nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
   };
   detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
@@ -161,7 +162,8 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           minPathX: spMinX,
           minPathY: spMinY,
           bleedInches,
-          shapeInfo: result.contourData.shapeInfo
+          shapeInfo: result.contourData.shapeInfo,
+          nonShapeContourPaths: result.contourData.nonShapeContourPaths
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -1209,6 +1211,7 @@ function processShapesMode(
 
   let smoothedPath: Point[];
   let useShapeForPDF = false;
+  let nonShapeContours: Point[][] = [];
   if (allContours.length === 1) {
     smoothedPath = allContours[0];
     useShapeForPDF = true;
@@ -1220,7 +1223,9 @@ function processShapesMode(
       useShapeForPDF = true;
     } else if (unitedPolys.length === 1) {
       smoothedPath = unitedPolys[0];
-      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points (using united path for PDF)');
+      useShapeForPDF = true;
+      nonShapeContours = allContours.slice(1);
+      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points (Bezier shape + ', nonShapeContours.length, ' additional subpaths for PDF)');
     } else {
       smoothedPath = bridgeAndMergePolygons(unitedPolys, totalOffsetPixels);
       console.log('[Shapes] Bridged', unitedPolys.length, 'separate polygons into one with', smoothedPath.length, 'points (shape NOT preserved for PDF)');
@@ -1232,7 +1237,8 @@ function processShapesMode(
   smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
 
   const pdfShape = useShapeForPDF ? (scaledDominantShape || undefined) : undefined;
-  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, pdfShape);
+  const pdfNonShapeContours = useShapeForPDF && nonShapeContours.length > 0 ? nonShapeContours : undefined;
+  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, pdfShape, pdfNonShapeContours);
 }
 
 function buildShapesResult(
@@ -1254,7 +1260,8 @@ function buildShapesResult(
   isHolographic: boolean,
   previewMode: boolean | undefined,
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered',
-  dominantShapeForPDF?: ShapeAnalysis
+  dominantShapeForPDF?: ShapeAnalysis,
+  nonShapeContours?: Point[][]
 ): ContourResult {
   const previewPathXs = smoothedPath.map(p => p.x);
   const previewPathYs = smoothedPath.map(p => p.y);
@@ -1320,6 +1327,17 @@ function buildShapesResult(
     console.log('[Shapes] PDF shapeInfo:', shapeInfo.type, 'cx:', shapeInfo.cxInches.toFixed(3), 'cy:', shapeInfo.cyInches.toFixed(3), 'rx:', shapeInfo.rxInches.toFixed(3), 'ry:', shapeInfo.ryInches.toFixed(3));
   }
 
+  let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
+  if (nonShapeContours && nonShapeContours.length > 0 && shapeInfo) {
+    nonShapeContourPaths = nonShapeContours.map(contour =>
+      contour.map(p => ({
+        x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
+        y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
+      }))
+    );
+    console.log('[Shapes] PDF non-shape contour paths:', nonShapeContourPaths.length, 'paths');
+  }
+
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
     imageCanvasX: Math.round(imageCanvasX),
@@ -1340,7 +1358,8 @@ function buildShapesResult(
       minPathX,
       minPathY,
       bleedInches,
-      shapeInfo
+      shapeInfo,
+      nonShapeContourPaths
     },
     detectedAlgorithm
   };
