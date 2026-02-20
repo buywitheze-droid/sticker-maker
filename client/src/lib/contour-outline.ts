@@ -95,11 +95,13 @@ function contourPointsToPDFPathOps(
   }
 
   if (hasNonShapeElements) {
-    console.log(`[PDF CutContour] Hybrid design detected — using smooth Clipper.js union polygon instead of separate Bezier + subpaths`);
+    console.log(`[PDF CutContour] Hybrid design detected — using smooth Clipper.js union polygon (no simplification to preserve curve smoothness)`);
   }
 
-  const simplified = simplifyPathForPDF(pathPointsInches, 0.01);
-  console.log(`[PDF CutContour] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
+  const simplified = hasNonShapeElements
+    ? pathPointsInches
+    : simplifyPathForPDF(pathPointsInches, 0.01);
+  console.log(`[PDF CutContour] ${hasNonShapeElements ? 'Kept' : 'Simplified'} ${pathPointsInches.length} points${hasNonShapeElements ? '' : ` to ${simplified.length} points`}`);
   console.log(`[PDF CutContour] Page height: ${pageHeightInches.toFixed(3)}in`);
 
   for (let i = 0; i < simplified.length; i++) {
