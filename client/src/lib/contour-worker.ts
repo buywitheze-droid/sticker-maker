@@ -1146,11 +1146,18 @@ function processShapesMode(
 
   const allContours: Point[][] = [];
 
+  const minShapeDetectRatio = 0.05;
+
   for (let i = 0; i < includedComps.length; i++) {
     const comp = includedComps[i];
     const compRatio = comp.area / totalArea;
 
-    const compShape = (i === 0) ? dominantShape : analyzeComponentShape(comp, hiResWidth, hiResHeight);
+    const isLargeEnoughForShapeDetect = (i === 0) || (compRatio >= minShapeDetectRatio);
+
+    let compShape: ShapeAnalysis | null = null;
+    if (isLargeEnoughForShapeDetect) {
+      compShape = (i === 0) ? dominantShape : analyzeComponentShape(comp, hiResWidth, hiResHeight);
+    }
 
     if (compShape) {
       const scaledShape: ShapeAnalysis = {
@@ -1174,7 +1181,8 @@ function processShapesMode(
           y: p.y / SUPER_SAMPLE
         }));
         allContours.push(scaledTraced);
-        console.log('[Shapes] Component', i, ': non-shape (', (compRatio * 100).toFixed(1), '% area) → traced contour with', scaledTraced.length, 'points');
+        console.log('[Shapes] Component', i, ':', (compRatio * 100).toFixed(1), '% area → traced contour with', scaledTraced.length, 'points',
+          isLargeEnoughForShapeDetect ? '(shape detect failed)' : '(too small for shape detect)');
       } else {
         console.log('[Shapes] Component', i, ': too small to trace (', comp.area, 'px,', (compRatio * 100).toFixed(3), '% area), skipping');
       }
