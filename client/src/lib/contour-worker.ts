@@ -10,14 +10,6 @@ interface Point {
 // If you change CLIPPER_SCALE in clipper-constants.ts, update it here too!
 const CLIPPER_SCALE = 100000;
 
-interface PSASettings {
-  enabled: boolean;
-  confidenceThreshold: number;
-  mergeDistInches: number;
-  bridgeRadiusInches: number;
-  minShapeAreaIn2: number;
-}
-
 interface WorkerMessage {
   type: 'process';
   imageData: ImageData;
@@ -32,8 +24,6 @@ interface WorkerMessage {
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
-    psa?: PSASettings;
-    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   };
   effectiveDPI: number;
   previewMode?: boolean;
@@ -59,7 +49,6 @@ interface WorkerResponse {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
-    psaShapeType?: string;
   };
   detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
@@ -161,8 +150,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           effectiveDPI,
           minPathX: spMinX,
           minPathY: spMinY,
-          bleedInches,
-          psaShapeType: result.contourData.psaShapeType
+          bleedInches
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -280,646 +268,9 @@ interface ContourResult {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
-    psaShapeType?: string;
   };
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
-
-// ============================================================================
-// Perfect Shape Assist (PSA) System
-// ============================================================================
-
-type PSAShapeType = 'circle' | 'ellipse' | 'rectangle' | 'square' | 'triangle' | 'polygon' | 'none';
-
-interface PSAShapeMetrics {
-  area: number;
-  perimeter: number;
-  circularity: number;
-  solidity: number;
-  bboxAspect: number;
-  bboxWidth: number;
-  bboxHeight: number;
-  centerX: number;
-  centerY: number;
-}
-
-interface PSAClassification {
-  type: PSAShapeType;
-  confidence: number;
-  metrics: PSAShapeMetrics;
-}
-
-function psaComputeConvexHull(points: Point[]): Point[] {
-  if (points.length < 3) return points.slice();
-  const sorted = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
-  const cross = (o: Point, a: Point, b: Point) =>
-    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-  const lower: Point[] = [];
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  }
-  const upper: Point[] = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function psaPolygonArea(pts: Point[]): number {
-  let area = 0;
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    area += pts[i].x * pts[j].y;
-    area -= pts[j].x * pts[i].y;
-  }
-  return Math.abs(area) / 2;
-}
-
-function psaPolygonPerimeter(pts: Point[]): number {
-  let perimeter = 0;
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    perimeter += Math.hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y);
-  }
-  return perimeter;
-}
-
-function psaComputeMetrics(boundary: Point[]): PSAShapeMetrics {
-  if (boundary.length < 3) {
-    return { area: 0, perimeter: 0, circularity: 0, solidity: 0, bboxAspect: 1, bboxWidth: 0, bboxHeight: 0, centerX: 0, centerY: 0 };
-  }
-
-  const area = psaPolygonArea(boundary);
-  const perimeter = psaPolygonPerimeter(boundary);
-  const circularity = perimeter > 0 ? (4 * Math.PI * area) / (perimeter * perimeter) : 0;
-
-  const hull = psaComputeConvexHull(boundary);
-  const hullArea = psaPolygonArea(hull);
-  const solidity = hullArea > 0 ? area / hullArea : 0;
-
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  let cx = 0, cy = 0;
-  for (const p of boundary) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y > maxY) maxY = p.y;
-    cx += p.x;
-    cy += p.y;
-  }
-  cx /= boundary.length;
-  cy /= boundary.length;
-
-  const bboxW = maxX - minX;
-  const bboxH = maxY - minY;
-  const bboxAspect = bboxH > 0 ? bboxW / bboxH : 1;
-
-  return { area, perimeter, circularity, solidity, bboxAspect, bboxWidth: bboxW, bboxHeight: bboxH, centerX: cx, centerY: cy };
-}
-
-function psaFitCircle(boundary: Point[]): { cx: number; cy: number; r: number; error: number } {
-  const n = boundary.length;
-  if (n < 3) return { cx: 0, cy: 0, r: 0, error: Infinity };
-
-  let sx = 0, sy = 0;
-  for (const p of boundary) { sx += p.x; sy += p.y; }
-  const mx = sx / n;
-  const my = sy / n;
-
-  let suu = 0, suv = 0, svv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
-  for (const p of boundary) {
-    const u = p.x - mx;
-    const v = p.y - my;
-    suu += u * u;
-    svv += v * v;
-    suv += u * v;
-    suuu += u * u * u;
-    svvv += v * v * v;
-    suvv += u * v * v;
-    svuu += v * u * u;
-  }
-
-  const det = suu * svv - suv * suv;
-  if (Math.abs(det) < 1e-10) return { cx: mx, cy: my, r: 0, error: Infinity };
-
-  const uc = (svv * (suuu + suvv) - suv * (svvv + svuu)) / (2 * det);
-  const vc = (suu * (svvv + svuu) - suv * (suuu + suvv)) / (2 * det);
-  const cx = uc + mx;
-  const cy = vc + my;
-  const r = Math.sqrt(uc * uc + vc * vc + (suu + svv) / n);
-
-  let totalError = 0;
-  for (const p of boundary) {
-    const dist = Math.hypot(p.x - cx, p.y - cy);
-    totalError += (dist - r) * (dist - r);
-  }
-  const rmsError = Math.sqrt(totalError / n);
-
-  return { cx, cy, r, error: r > 0 ? rmsError / r : Infinity };
-}
-
-function psaFitEllipse(boundary: Point[]): { cx: number; cy: number; a: number; b: number; angle: number; error: number } {
-  const n = boundary.length;
-  if (n < 5) return { cx: 0, cy: 0, a: 0, b: 0, angle: 0, error: Infinity };
-
-  let sx = 0, sy = 0;
-  for (const p of boundary) { sx += p.x; sy += p.y; }
-  const cx = sx / n;
-  const cy = sy / n;
-
-  let cov00 = 0, cov01 = 0, cov11 = 0;
-  for (const p of boundary) {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    cov00 += dx * dx;
-    cov01 += dx * dy;
-    cov11 += dy * dy;
-  }
-  cov00 /= n;
-  cov01 /= n;
-  cov11 /= n;
-
-  const trace = cov00 + cov11;
-  const det = cov00 * cov11 - cov01 * cov01;
-  const disc = Math.sqrt(Math.max(0, trace * trace / 4 - det));
-  const lambda1 = trace / 2 + disc;
-  const lambda2 = trace / 2 - disc;
-
-  const a = Math.sqrt(Math.max(0, lambda1)) * 2;
-  const b = Math.sqrt(Math.max(0, lambda2)) * 2;
-  const angle = Math.atan2(2 * cov01, cov00 - cov11) / 2;
-
-  if (a <= 0 || b <= 0) return { cx, cy, a: 0, b: 0, angle: 0, error: Infinity };
-
-  let totalError = 0;
-  const cosA = Math.cos(-angle);
-  const sinA = Math.sin(-angle);
-  for (const p of boundary) {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    const rx = dx * cosA - dy * sinA;
-    const ry = dx * sinA + dy * cosA;
-    const val = (rx * rx) / (a * a) + (ry * ry) / (b * b);
-    totalError += (val - 1) * (val - 1);
-  }
-  const rmsError = Math.sqrt(totalError / n);
-
-  return { cx, cy, a, b, angle, error: rmsError };
-}
-
-function psaFitRectangle(boundary: Point[]): { cx: number; cy: number; w: number; h: number; angle: number; error: number } {
-  const hull = psaComputeConvexHull(boundary);
-  if (hull.length < 3) return { cx: 0, cy: 0, w: 0, h: 0, angle: 0, error: Infinity };
-
-  let bestArea = Infinity;
-  let bestRect = { cx: 0, cy: 0, w: 0, h: 0, angle: 0, error: Infinity };
-
-  for (let i = 0; i < hull.length; i++) {
-    const j = (i + 1) % hull.length;
-    const edgeAngle = Math.atan2(hull[j].y - hull[i].y, hull[j].x - hull[i].x);
-    const cosA = Math.cos(-edgeAngle);
-    const sinA = Math.sin(-edgeAngle);
-
-    let minRX = Infinity, maxRX = -Infinity, minRY = Infinity, maxRY = -Infinity;
-    for (const p of hull) {
-      const rx = p.x * cosA - p.y * sinA;
-      const ry = p.x * sinA + p.y * cosA;
-      if (rx < minRX) minRX = rx;
-      if (rx > maxRX) maxRX = rx;
-      if (ry < minRY) minRY = ry;
-      if (ry > maxRY) maxRY = ry;
-    }
-
-    const rw = maxRX - minRX;
-    const rh = maxRY - minRY;
-    const rectArea = rw * rh;
-
-    if (rectArea < bestArea) {
-      bestArea = rectArea;
-      const rcx = (minRX + maxRX) / 2;
-      const rcy = (minRY + maxRY) / 2;
-      const cosR = Math.cos(edgeAngle);
-      const sinR = Math.sin(edgeAngle);
-      bestRect = {
-        cx: rcx * cosR - rcy * sinR,
-        cy: rcx * sinR + rcy * cosR,
-        w: rw,
-        h: rh,
-        angle: edgeAngle,
-        error: 0,
-      };
-    }
-  }
-
-  const hullArea = psaPolygonArea(hull);
-  bestRect.error = hullArea > 0 ? 1 - (hullArea / bestArea) : Infinity;
-
-  const originalArea = psaPolygonArea(boundary);
-  const solidityVsRect = originalArea / bestArea;
-  if (solidityVsRect < 0.85) {
-    bestRect.error = Math.max(bestRect.error, 1 - solidityVsRect);
-  }
-
-  return bestRect;
-}
-
-function psaClassifyShape(boundary: Point[], confidenceThreshold: number): PSAClassification {
-  const metrics = psaComputeMetrics(boundary);
-  if (metrics.area < 10) {
-    return { type: 'none', confidence: 0, metrics };
-  }
-
-  const circleFit = psaFitCircle(boundary);
-  const circleConfidence = Math.max(0, 1 - circleFit.error * 5);
-  const isSquarish = Math.abs(metrics.bboxAspect - 1) < 0.15;
-
-  if (metrics.circularity > 0.85 && circleConfidence > confidenceThreshold && isSquarish) {
-    return { type: 'circle', confidence: circleConfidence, metrics };
-  }
-
-  const ellipseFit = psaFitEllipse(boundary);
-  const ellipseConfidence = Math.max(0, 1 - ellipseFit.error * 3);
-  if (metrics.circularity > 0.75 && ellipseConfidence > confidenceThreshold && !isSquarish) {
-    return { type: 'ellipse', confidence: ellipseConfidence, metrics };
-  }
-
-  const rectFit = psaFitRectangle(boundary);
-  const rectConfidence = Math.max(0, 1 - rectFit.error * 3);
-
-  const angleSnap = Math.abs(rectFit.angle % (Math.PI / 2));
-  const isAxisAligned = angleSnap < 0.1 || Math.abs(angleSnap - Math.PI / 2) < 0.1;
-  const rectBonus = isAxisAligned ? 0.05 : 0;
-
-  if (metrics.solidity > 0.90 && rectConfidence + rectBonus > confidenceThreshold) {
-    const aspect = rectFit.w > 0 && rectFit.h > 0 ? Math.min(rectFit.w, rectFit.h) / Math.max(rectFit.w, rectFit.h) : 0;
-    const shapeType: PSAShapeType = aspect > 0.85 ? 'square' : 'rectangle';
-    return { type: shapeType, confidence: rectConfidence + rectBonus, metrics };
-  }
-
-  const simplified = approxPolyDP(boundary, 0.04 * metrics.perimeter / boundary.length);
-  if (simplified.length === 3 && metrics.solidity > 0.85) {
-    return { type: 'triangle', confidence: metrics.solidity, metrics };
-  }
-  if (simplified.length >= 4 && simplified.length <= 8 && metrics.solidity > 0.90) {
-    return { type: 'polygon', confidence: metrics.solidity * 0.9, metrics };
-  }
-
-  return { type: 'none', confidence: 0, metrics };
-}
-
-function psaGenerateCircle(cx: number, cy: number, r: number, numPoints: number = 64): Point[] {
-  const pts: Point[] = [];
-  for (let i = 0; i < numPoints; i++) {
-    const angle = (2 * Math.PI * i) / numPoints;
-    pts.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
-  }
-  return pts;
-}
-
-function psaGenerateEllipse(cx: number, cy: number, a: number, b: number, angle: number, numPoints: number = 64): Point[] {
-  const pts: Point[] = [];
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
-  for (let i = 0; i < numPoints; i++) {
-    const t = (2 * Math.PI * i) / numPoints;
-    const rx = a * Math.cos(t);
-    const ry = b * Math.sin(t);
-    pts.push({
-      x: cx + rx * cosA - ry * sinA,
-      y: cy + rx * sinA + ry * cosA
-    });
-  }
-  return pts;
-}
-
-function psaGenerateRectangle(cx: number, cy: number, w: number, h: number, angle: number): Point[] {
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
-  const hw = w / 2;
-  const hh = h / 2;
-  const corners = [
-    { x: -hw, y: -hh },
-    { x: hw, y: -hh },
-    { x: hw, y: hh },
-    { x: -hw, y: hh },
-  ];
-  return corners.map(c => ({
-    x: cx + c.x * cosA - c.y * sinA,
-    y: cy + c.x * sinA + c.y * cosA
-  }));
-}
-
-function psaTraceBoundaryOfComponent(mask: Uint8Array, w: number, h: number, comp: LabeledComponent): Point[] {
-  let startX = -1, startY = -1;
-  outer:
-  for (let y = comp.bounds.minY; y <= comp.bounds.maxY; y++) {
-    for (let x = comp.bounds.minX; x <= comp.bounds.maxX; x++) {
-      if (mask[y * w + x] === 1) {
-        let isBorder = false;
-        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) isBorder = true;
-        else {
-          for (let dy = -1; dy <= 1 && !isBorder; dy++) {
-            for (let dx = -1; dx <= 1 && !isBorder; dx++) {
-              if (dx === 0 && dy === 0) continue;
-              if (mask[(y + dy) * w + (x + dx)] === 0) isBorder = true;
-            }
-          }
-        }
-        if (isBorder) {
-          startX = x;
-          startY = y;
-          break outer;
-        }
-      }
-    }
-  }
-  if (startX < 0) return [];
-  return traceBoundaryForComponent(mask, w, h, startX, startY);
-}
-
-interface PSAComponentResult {
-  compId: number;
-  classification: PSAClassification;
-  boundary: Point[];
-  isShapeLike: boolean;
-}
-
-function psaAnalyzeComponents(
-  mask: Uint8Array,
-  w: number,
-  h: number,
-  comps: LabeledComponent[],
-  effectiveDPI: number,
-  settings: PSASettings
-): PSAComponentResult[] {
-  const results: PSAComponentResult[] = [];
-  const pxPerInch2 = effectiveDPI * effectiveDPI;
-  const minAreaPx = settings.minShapeAreaIn2 * pxPerInch2;
-
-  for (const comp of comps) {
-    if (comp.area < minAreaPx) {
-      results.push({
-        compId: comp.id,
-        classification: { type: 'none', confidence: 0, metrics: psaComputeMetrics([]) },
-        boundary: [],
-        isShapeLike: false
-      });
-      continue;
-    }
-
-    const compMask = new Uint8Array(w * h);
-    for (const idx of comp.pixels) compMask[idx] = 1;
-    const boundary = psaTraceBoundaryOfComponent(compMask, w, h, comp);
-
-    if (boundary.length < 10) {
-      results.push({
-        compId: comp.id,
-        classification: { type: 'none', confidence: 0, metrics: psaComputeMetrics(boundary) },
-        boundary,
-        isShapeLike: false
-      });
-      continue;
-    }
-
-    const classification = psaClassifyShape(boundary, settings.confidenceThreshold);
-    let perfectBoundary = boundary;
-    let isShapeLike = false;
-
-    if (classification.type !== 'none' && classification.confidence >= settings.confidenceThreshold) {
-      isShapeLike = true;
-      switch (classification.type) {
-        case 'circle': {
-          const fit = psaFitCircle(boundary);
-          perfectBoundary = psaGenerateCircle(fit.cx, fit.cy, fit.r);
-          break;
-        }
-        case 'ellipse': {
-          const fit = psaFitEllipse(boundary);
-          perfectBoundary = psaGenerateEllipse(fit.cx, fit.cy, fit.a, fit.b, fit.angle);
-          break;
-        }
-        case 'square':
-        case 'rectangle': {
-          const fit = psaFitRectangle(boundary);
-          perfectBoundary = psaGenerateRectangle(fit.cx, fit.cy, fit.w, fit.h, fit.angle);
-          break;
-        }
-        case 'triangle':
-        case 'polygon': {
-          const simplified = approxPolyDP(boundary, 0.02 * classification.metrics.perimeter / boundary.length);
-          perfectBoundary = simplified;
-          break;
-        }
-      }
-      console.log(`[PSA] Component ${comp.id}: ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), ${boundary.length} pts -> ${perfectBoundary.length} pts`);
-    }
-
-    results.push({ compId: comp.id, classification, boundary: perfectBoundary, isShapeLike });
-  }
-
-  return results;
-}
-
-function psaBridgeMerge(
-  paths: Point[][],
-  areas: number[],
-  effectiveDPI: number,
-  mergeDistInches: number,
-  bridgeRadiusInches: number
-): Point[] {
-  if (paths.length === 0) return [];
-  if (paths.length === 1) return paths[0];
-
-  const mergeDistPx = mergeDistInches * effectiveDPI;
-  const bridgeRadiusPx = bridgeRadiusInches * effectiveDPI;
-  const maxAreaForMerge = 0.12;
-
-  let mainIdx = 0;
-  let maxArea = areas[0];
-  for (let i = 1; i < areas.length; i++) {
-    if (areas[i] > maxArea) { maxArea = areas[i]; mainIdx = i; }
-  }
-
-  const toClipper = (pts: Point[]) => pts.map(p => ({
-    X: Math.round(p.x * CLIPPER_SCALE),
-    Y: Math.round(p.y * CLIPPER_SCALE)
-  }));
-
-  const fromClipper = (pts: Array<{X: number; Y: number}>) => pts.map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-
-  const nearMainIndices: number[] = [];
-  for (let i = 0; i < paths.length; i++) {
-    if (i === mainIdx) continue;
-    if (areas[i] > maxArea * maxAreaForMerge) continue;
-
-    let minDist = Infinity;
-    for (const pa of paths[i]) {
-      for (const pb of paths[mainIdx]) {
-        const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-        if (d < minDist) minDist = d;
-      }
-      if (minDist < mergeDistPx) break;
-    }
-
-    if (minDist < mergeDistPx) {
-      nearMainIndices.push(i);
-      console.log(`[PSA Bridge] Component ${i} (area ratio: ${(areas[i] / maxArea).toFixed(3)}) within ${(minDist / effectiveDPI).toFixed(3)}" of main - will bridge`);
-    }
-  }
-
-  if (nearMainIndices.length === 0) {
-    const allUnion = new ClipperLib.Clipper();
-    for (const path of paths) {
-      allUnion.AddPath(toClipper(path), ClipperLib.PolyType.ptSubject, true);
-    }
-    const unionResult: Array<Array<{X: number; Y: number}>> = [];
-    allUnion.Execute(ClipperLib.ClipType.ctUnion, unionResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    if (unionResult.length > 0) {
-      let largest = unionResult[0];
-      let largestArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
-      for (let i = 1; i < unionResult.length; i++) {
-        const a = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-        if (a > largestArea) { largestArea = a; largest = unionResult[i]; }
-      }
-      return fromClipper(largest);
-    }
-    return paths[mainIdx];
-  }
-
-  const mergePaths = [paths[mainIdx], ...nearMainIndices.map(i => paths[i])];
-  const scaledBridge = bridgeRadiusPx * CLIPPER_SCALE;
-
-  const co1 = new ClipperLib.ClipperOffset();
-  co1.ArcTolerance = CLIPPER_SCALE * 0.25;
-  for (const path of mergePaths) {
-    co1.AddPath(toClipper(path), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  }
-  const expanded: Array<Array<{X: number; Y: number}>> = [];
-  co1.Execute(expanded, scaledBridge);
-
-  if (expanded.length === 0) return paths[mainIdx];
-
-  const unionClip = new ClipperLib.Clipper();
-  for (const path of expanded) {
-    unionClip.AddPath(path, ClipperLib.PolyType.ptSubject, true);
-  }
-  const unionResult: Array<Array<{X: number; Y: number}>> = [];
-  unionClip.Execute(ClipperLib.ClipType.ctUnion, unionResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-
-  if (unionResult.length === 0) return paths[mainIdx];
-
-  let largestUnion = unionResult[0];
-  let largestUnionArea = Math.abs(ClipperLib.Clipper.Area(unionResult[0]));
-  for (let i = 1; i < unionResult.length; i++) {
-    const a = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-    if (a > largestUnionArea) { largestUnionArea = a; largestUnion = unionResult[i]; }
-  }
-
-  const co2 = new ClipperLib.ClipperOffset();
-  co2.ArcTolerance = CLIPPER_SCALE * 0.25;
-  co2.AddPath(largestUnion, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  const shrunk: Array<Array<{X: number; Y: number}>> = [];
-  co2.Execute(shrunk, -scaledBridge);
-
-  if (shrunk.length === 0) return fromClipper(largestUnion);
-
-  let largestShrunk = shrunk[0];
-  let largestShrunkArea = Math.abs(ClipperLib.Clipper.Area(shrunk[0]));
-  for (let i = 1; i < shrunk.length; i++) {
-    const a = Math.abs(ClipperLib.Clipper.Area(shrunk[i]));
-    if (a > largestShrunkArea) { largestShrunkArea = a; largestShrunk = shrunk[i]; }
-  }
-
-  const bridgedResult = fromClipper(largestShrunk);
-
-  const remainingPaths: Point[][] = [];
-  for (let i = 0; i < paths.length; i++) {
-    if (i !== mainIdx && !nearMainIndices.includes(i)) {
-      remainingPaths.push(paths[i]);
-    }
-  }
-
-  if (remainingPaths.length > 0) {
-    const finalUnion = new ClipperLib.Clipper();
-    finalUnion.AddPath(toClipper(bridgedResult), ClipperLib.PolyType.ptSubject, true);
-    for (const path of remainingPaths) {
-      finalUnion.AddPath(toClipper(path), ClipperLib.PolyType.ptSubject, true);
-    }
-    const finalResult: Array<Array<{X: number; Y: number}>> = [];
-    finalUnion.Execute(ClipperLib.ClipType.ctUnion, finalResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    if (finalResult.length > 0) {
-      let largest = finalResult[0];
-      let la = Math.abs(ClipperLib.Clipper.Area(finalResult[0]));
-      for (let i = 1; i < finalResult.length; i++) {
-        const a = Math.abs(ClipperLib.Clipper.Area(finalResult[i]));
-        if (a > la) { la = a; largest = finalResult[i]; }
-      }
-      return fromClipper(largest);
-    }
-  }
-
-  console.log(`[PSA Bridge] Bridged ${nearMainIndices.length} small shapes with main, result: ${bridgedResult.length} pts`);
-  return bridgedResult;
-}
-
-function psaProcessMask(
-  mask: Uint8Array,
-  w: number,
-  h: number,
-  effectiveDPI: number,
-  settings: PSASettings
-): { processedBoundaries: Point[][]; classifications: PSAClassification[] } | null {
-  if (!settings.enabled) return null;
-
-  const comps = labelComponents(mask, w, h);
-  if (comps.length === 0) return null;
-
-  const significantComps = comps.filter(c => c.area >= 20);
-  if (significantComps.length === 0) return null;
-
-  const results = psaAnalyzeComponents(mask, w, h, significantComps, effectiveDPI, settings);
-  const hasAnyShape = results.some(r => r.isShapeLike);
-
-  if (!hasAnyShape) {
-    console.log('[PSA] No shape-like components detected, skipping PSA');
-    return null;
-  }
-
-  const boundaries: Point[][] = [];
-  const classifications: PSAClassification[] = [];
-  const areas: number[] = [];
-
-  for (const r of results) {
-    if (r.boundary.length >= 3) {
-      boundaries.push(r.boundary);
-      classifications.push(r.classification);
-      areas.push(r.classification.metrics.area);
-    }
-  }
-
-  if (boundaries.length === 0) return null;
-
-  const shapeCount = results.filter(r => r.isShapeLike).length;
-  const nonShapeCount = results.filter(r => !r.isShapeLike && r.boundary.length >= 3).length;
-  console.log(`[PSA] Processed ${significantComps.length} components: ${shapeCount} shapes, ${nonShapeCount} non-shapes`);
-
-  return { processedBoundaries: boundaries, classifications };
-}
-
-// ============================================================================
-// End of PSA System
-// ============================================================================
 
 function processContour(
   imageData: ImageData,
@@ -934,8 +285,6 @@ function processContour(
     autoBridgingThreshold: number;
     cornerMode: 'rounded' | 'sharp';
     algorithm?: 'shapes' | 'complex';
-    psa?: PSASettings;
-    contourMode?: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -1056,8 +405,9 @@ function processContour(
     console.log('[Worker] Composite re-mask merged', mergedCount, 'new pixels into mask, faintArtMode=', faintArtMode);
   }
 
-  const { mainMask: mainComponentMask, mainComp: mainCompInfo, allComps: allHiResComps } = selectMainComponentOnly(
-    hiResMask, hiResWidth, hiResHeight, hiResDPI, bladeWidthInches
+  const mainComponentMask = selectMainComponentWithOrphans(
+    hiResMask, hiResWidth, hiResHeight, hiResDPI,
+    minComponentAreaPx, keepNearMainDistInches, bladeWidthInches, faintArtMode
   );
   
   const filledMainMask = fillSilhouette(mainComponentMask, hiResWidth, hiResHeight);
@@ -1084,36 +434,16 @@ function processContour(
     scatteredAnalysis.isScattered ? 'scattered' : 
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
   
-  // Resolve effective contour mode from the new unified contourMode or legacy algorithm field
-  const contourMode = strokeSettings.contourMode;
-  let effectiveMode: 'sharp' | 'smooth' | 'shape-assist' | 'scattered';
-  if (contourMode) {
-    effectiveMode = contourMode;
-    console.log('[Worker] Contour mode override:', contourMode, '(auto-detected was:', detectedAlgorithm + ')');
-  } else if (strokeSettings.algorithm) {
-    effectiveMode = strokeSettings.algorithm === 'shapes' ? 'sharp' : 'smooth';
-    console.log('[Worker] Legacy algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
-  } else {
-    effectiveMode = detectedAlgorithm === 'scattered' ? 'scattered'
-      : detectedAlgorithm === 'complex' ? 'smooth'
-      : 'sharp';
+  // Apply user algorithm override if set
+  if (strokeSettings.algorithm) {
+    console.log('[Worker] Algorithm override:', strokeSettings.algorithm, '(auto-detected was:', detectedAlgorithm + ')');
+    detectedAlgorithm = strokeSettings.algorithm;
   }
   
-  console.log('[Worker] Effective mode:', effectiveMode, prelimCompositeDetected ? '(composite detected)' : '');
-
-  // PSA: Perfect Shape Assist - runs as primary algorithm in shape-assist mode,
-  // or as optional enhancement in other modes if psa settings are enabled
-  const isShapeAssistMode = effectiveMode === 'shape-assist';
-  const psaSettings: PSASettings = isShapeAssistMode
-    ? { enabled: true, confidenceThreshold: 0.60, mergeDistInches: 0.06, bridgeRadiusInches: 0.02, minShapeAreaIn2: 0.005 }
-    : (strokeSettings.psa ?? { enabled: false, confidenceThreshold: 0.75, mergeDistInches: 0.06, bridgeRadiusInches: 0.02, minShapeAreaIn2: 0.01 });
-  let psaResult: ReturnType<typeof psaProcessMask> = null;
-  if (psaSettings.enabled) {
-    psaResult = psaProcessMask(mainComponentMask, hiResWidth, hiResHeight, hiResDPI, psaSettings);
-  }
+  console.log('[Worker] Effective algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
   
-  // Sharp corners when mode is 'sharp', rounded for 'smooth'/'scattered'/'shape-assist'
-  const useSharpCorners = effectiveMode === 'sharp';
+  // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
+  const useSharpCorners = detectedAlgorithm === 'shapes';
   const pixelDilateOffset = useSharpCorners ? baseOffsetPixels : totalOffsetPixels;
   let dilateRadiusHiRes = pixelDilateOffset * SUPER_SAMPLE;
   
@@ -1150,128 +480,25 @@ function processContour(
     y: (p.y - dilateRadiusHiRes) / SUPER_SAMPLE
   }));
   
-  // If PSA detected perfect shapes, apply bridge merge to combine PSA boundaries
-  // with the standard contour, then use the merged result
-  let psaShapeType: PSAShapeType = 'none';
-  if (psaResult && psaResult.processedBoundaries.length > 0) {
-    console.log('[PSA] processedBoundaries:', psaResult.processedBoundaries.length, 'classifications:', psaResult.classifications.map(c => `${c.type}(${c.confidence.toFixed(2)})`).join(', '));
-    const scaledPSABoundaries = psaResult.processedBoundaries.map(b =>
-      b.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE }))
-    );
-
-    const offsetBoundaries = scaledPSABoundaries.map((b, idx) => {
-      const cls = psaResult!.classifications[idx];
-      if (cls.type !== 'none' && cls.confidence >= (psaSettings?.confidenceThreshold ?? 0.75)) {
-        return clipperVectorOffset(b, totalOffsetPixels, cls.type === 'square' || cls.type === 'rectangle');
-      }
-      return clipperVectorOffset(b, totalOffsetPixels, useSharpCorners);
-    });
-
-    const psaAreas = offsetBoundaries.map(b => psaPolygonArea(b));
-    const mergedPSA = psaBridgeMerge(
-      offsetBoundaries,
-      psaAreas,
-      effectiveDPI,
-      psaSettings?.mergeDistInches ?? 0.06,
-      psaSettings?.bridgeRadiusInches ?? 0.02
-    );
-
-    let psaUsed = false;
-    if (mergedPSA.length >= 3) {
-      const psaBoundaryArea = psaPolygonArea(mergedPSA);
-      const standardArea = psaPolygonArea(smoothedPath);
-      const areaRatio = standardArea > 0 ? psaBoundaryArea / standardArea : 1;
-      console.log('[PSA] Area comparison: PSA=' + psaBoundaryArea.toFixed(0) + ' standard=' + standardArea.toFixed(0) + ' ratio=' + areaRatio.toFixed(3));
-      const areaThreshold = isShapeAssistMode ? 0.2 : 0.5;
-      if (psaBoundaryArea > standardArea * areaThreshold || isShapeAssistMode) {
-        console.log('[PSA] Using PSA-processed path (' + mergedPSA.length + ' pts) instead of standard contour' + (isShapeAssistMode ? ' (shape-assist mode)' : ''));
-        smoothedPath = mergedPSA;
-        psaUsed = true;
-        if (psaResult.classifications.length === 1) {
-          psaShapeType = psaResult.classifications[0].type;
-        } else {
-          const dominant = psaResult.classifications.reduce((a, b) => a.confidence > b.confidence ? a : b);
-          psaShapeType = dominant.type;
-        }
-        console.log('[PSA] Dominant shape type:', psaShapeType);
-      } else {
-        console.log('[PSA] PSA path too small vs standard, falling back to standard contour');
-      }
-    }
-    if (!psaUsed) {
-      psaResult = null;
-    }
-  }
-  
-  // For sharp mode: apply user offset via Clipper with miter joins (only if PSA didn't already handle it)
-  if (!psaResult && useSharpCorners && userOffsetPixels > 0) {
+  // For sharp mode: apply user offset via Clipper with miter joins
+  if (useSharpCorners && userOffsetPixels > 0) {
     console.log('[Worker] Applying vector offset with MITER joins:', userOffsetPixels, 'px');
     smoothedPath = clipperVectorOffset(smoothedPath, userOffsetPixels, true);
     console.log('[Worker] Sharp vector offset result:', smoothedPath.length, 'points');
-  } else if (!psaResult && !useSharpCorners) {
-    // Standard path already includes totalOffsetPixels via dilation
   }
   
-  // Geometric orphan retention: build keepZone from main path, test each orphan
-  if (allHiResComps.length > 1) {
-    const psaClassifyForOrphans = (psaSettings?.enabled)
-      ? (comp: LabeledComponent, w: number, h: number) => {
-          const boundary = traceComponentBoundary(comp, w, h);
-          if (boundary.length < 10) return { type: 'none' as string, confidence: 0 };
-          return psaClassifyShape(boundary, psaSettings!.confidenceThreshold ?? 0.75);
-        }
-      : null;
-
-    const orphanResult = geometricOrphanRetention(
-      smoothedPath,
-      mainCompInfo,
-      allHiResComps,
-      hiResWidth,
-      hiResHeight,
-      effectiveDPI,
-      SUPER_SAMPLE,
-      keepNearMainDistInches,
-      minComponentAreaPx,
-      useSharpCorners,
-      psaSettings,
-      psaClassifyForOrphans
-    );
-
-    if (orphanResult.retainedPaths.length > 0) {
-      const scaledOrphanPaths = orphanResult.retainedPaths.map(p =>
-        p.map(pt => ({ x: pt.x / SUPER_SAMPLE, y: pt.y / SUPER_SAMPLE }))
-      );
-
-      const offsetOrphanPaths = scaledOrphanPaths.map(p =>
-        clipperVectorOffset(p, totalOffsetPixels, useSharpCorners)
-      );
-
-      smoothedPath = softUnionPaths(
-        smoothedPath,
-        offsetOrphanPaths,
-        effectiveDPI,
-        psaSettings?.mergeDistInches ?? 0.06,
-        psaSettings?.bridgeRadiusInches ?? 0.02
-      );
-      console.log('[Worker] Geometric orphan retention: merged', orphanResult.retainedPaths.length, 'orphans into main path');
-    }
-  }
+  // Vector weld: expand then shrink by small amount to merge nearby path segments
+  const weldPx = previewMode ? 1.0 : 3.0;
+  smoothedPath = vectorWeld(smoothedPath, weldPx);
   
-  // Vector weld and simplify — skip for PSA circle/ellipse to preserve smooth curves
-  const isPSACurve = psaShapeType === 'circle' || psaShapeType === 'ellipse';
-  if (isPSACurve) {
-    smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
-    console.log('[Worker] PSA curve shape detected (' + psaShapeType + '), skipping weld/simplify to preserve smoothness:', smoothedPath.length, 'points');
-  } else {
-    const weldPx = previewMode ? 1.0 : 3.0;
-    smoothedPath = vectorWeld(smoothedPath, weldPx);
-    const tightEpsilon = 0.0005;
-    smoothedPath = approxPolyDP(smoothedPath, tightEpsilon);
-    smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
-    console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
-  }
+  // Simplify the path to reduce point count while preserving shape
+  const tightEpsilon = 0.0005;
+  smoothedPath = approxPolyDP(smoothedPath, tightEpsilon);
+  smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
+  
+  console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
 
-  if (effectiveMode === 'scattered') {
+  if (detectedAlgorithm === 'scattered') {
     const iterations = 3;
     for (let iter = 0; iter < iterations; iter++) {
       const result: Array<{x: number; y: number}> = [];
@@ -1414,8 +641,7 @@ function processContour(
       effectiveDPI,
       minPathX,
       minPathY,
-      bleedInches,
-      psaShapeType: psaShapeType !== 'none' ? psaShapeType : undefined
+      bleedInches
     },
     detectedAlgorithm
   };
@@ -1679,253 +905,249 @@ function pickMainComponent(comps: LabeledComponent[]): LabeledComponent {
   return best;
 }
 
-interface MainComponentResult {
-  mainMask: Uint8Array;
-  mainComp: LabeledComponent;
-  allComps: LabeledComponent[];
-}
-
-function selectMainComponentOnly(
+function selectMainComponentWithOrphans(
   mask: Uint8Array, w: number, h: number, effectiveDPI: number,
-  bladeWidthInches: number
-): MainComponentResult {
+  minComponentAreaPx: number, keepNearMainDistInches: number, bladeWidthInches: number,
+  faintArtMode: boolean = false
+): Uint8Array {
   const comps = labelComponents(mask, w, h);
-  if (comps.length === 0) {
-    return {
-      mainMask: new Uint8Array(w * h),
-      mainComp: { id: -1, area: 0, bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, pixels: [] },
-      allComps: []
-    };
-  }
+  if (comps.length === 0) return new Uint8Array(w * h);
 
   const main = pickMainComponent(comps);
   const outMask = new Uint8Array(w * h);
+
   for (const idx of main.pixels) outMask[idx] = 1;
+
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+  const expandBounds = (b: BoundingBox, padPx: number) => ({
+    minX: clamp(b.minX - padPx, 0, w - 1),
+    minY: clamp(b.minY - padPx, 0, h - 1),
+    maxX: clamp(b.maxX + padPx, 0, w - 1),
+    maxY: clamp(b.maxY + padPx, 0, h - 1),
+  });
+
+  const boundsIntersect = (a: BoundingBox, b: BoundingBox) =>
+    !(b.maxX < a.minX || b.minX > a.maxX || b.maxY < a.minY || b.minY > a.maxY);
+
+  const xOverlapRatio = (a: BoundingBox, b: BoundingBox) => {
+    const left = Math.max(a.minX, b.minX);
+    const right = Math.min(a.maxX, b.maxX);
+    const overlap = Math.max(0, right - left);
+    const bw = Math.max(1, (b.maxX - b.minX));
+    return overlap / bw;
+  };
+
+  const mainBounds = main.bounds;
+  const mainW = (mainBounds.maxX - mainBounds.minX);
+  const mainH = (mainBounds.maxY - mainBounds.minY);
+
+  const relMin = Math.round(main.area * 0.0015);
+  const dynamicMinArea = Math.max(minComponentAreaPx, 40, relMin);
+
+  const significantComps = comps.filter(c => c.id !== main.id && c.area >= dynamicMinArea);
+  const compositeMode = significantComps.length >= 5;
+
+  const densityThreshold = compositeMode ? 0.005 : 0.015;
+  const baseExpandIn = compositeMode
+    ? Math.max(keepNearMainDistInches, 1.0)
+    : Math.max(keepNearMainDistInches, 0.5);
+  const extraExpandIn = compositeMode ? 0.30 : 0.15;
+  const maxExtraAreaRatio = compositeMode ? 1.0 : 0.65;
+
+  const keepNearMainDistPx = Math.max(8, Math.round(keepNearMainDistInches * effectiveDPI));
+
+  const expandPx = Math.max(8, Math.round((baseExpandIn + extraExpandIn) * effectiveDPI));
+  const expandedMain = expandBounds(mainBounds, expandPx);
+
+  const totalSignificantArea = compositeMode
+    ? significantComps.reduce((sum, c) => sum + c.area, 0) + main.area
+    : main.area;
+  const maxExtraArea = compositeMode
+    ? Math.round(totalSignificantArea * maxExtraAreaRatio)
+    : Math.round(main.area * maxExtraAreaRatio);
+  let extraAreaKept = 0;
+
+  const captionGapPx = Math.max(
+    Math.round(0.75 * effectiveDPI),
+    Math.round(0.90 * mainH)
+  );
+
+  const isCaptionLike = (b: BoundingBox) => {
+    const gap = b.minY - mainBounds.maxY;
+    if (gap < 0) return false;
+    if (compositeMode) {
+      if (gap > captionGapPx * 3) return false;
+    } else {
+      if (gap > captionGapPx) return false;
+    }
+
+    const overlap = xOverlapRatio(mainBounds, b);
+    if (overlap < 0.25) return false;
+
+    const bw = (b.maxX - b.minX);
+    const bh = (b.maxY - b.minY);
+
+    if (bw > mainW * (compositeMode ? 2.0 : 1.25)) return false;
+
+    if (bh > 0 && (bw / bh) > 12) return false;
+
+    if (!compositeMode && b.maxY > h - Math.max(2, Math.round(0.02 * h))) return false;
+
+    return true;
+  };
+
+  const passesDensity = (c: LabeledComponent) => {
+    const b = c.bounds;
+    const bw = (b.maxX - b.minX + 1);
+    const bh = (b.maxY - b.minY + 1);
+    const bboxArea = Math.max(1, bw * bh);
+    const density = (c.pixels.length / bboxArea);
+    return density >= densityThreshold;
+  };
+
+  let kept = 1;
+  let removed = 0;
+
+  const unionBoundsOf = (a: BoundingBox, b: BoundingBox): BoundingBox => ({
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  });
+
+  const isNearAny = (c: LabeledComponent, includedComps: LabeledComponent[], chainDistPx: number) => {
+    for (const inc of includedComps) {
+      if (distBounds(inc.bounds, c.bounds) <= chainDistPx) return true;
+    }
+    return false;
+  };
+
+  if (compositeMode) {
+    const areaThreshold = dynamicMinArea;
+    const candidates = comps
+      .filter(c => c.id !== main.id && c.area >= areaThreshold)
+      .sort((a, b) => b.area - a.area);
+
+    const maxKeep = 50;
+    const chainDistPx = expandPx;
+    const included: LabeledComponent[] = [main];
+    let unionIncluded: BoundingBox = { ...mainBounds };
+    const added = new Set<number>([main.id]);
+
+    let changed = true;
+    let passes = 0;
+    const maxPasses = 10;
+
+    while (changed && passes < maxPasses) {
+      changed = false;
+      passes++;
+
+      for (const c of candidates) {
+        if (added.has(c.id)) continue;
+        if (kept >= maxKeep) break;
+
+        const expandedUnion = expandBounds(unionIncluded, expandPx);
+        const ok =
+          boundsIntersect(expandedUnion, c.bounds) ||
+          isNearAny(c, included, chainDistPx) ||
+          isCaptionLike(c.bounds);
+
+        if (!ok) continue;
+        if (!passesDensity(c)) continue;
+        if (extraAreaKept + c.area > maxExtraArea) continue;
+
+        for (const idx of c.pixels) outMask[idx] = 1;
+        kept++;
+        extraAreaKept += c.area;
+        included.push(c);
+        added.add(c.id);
+        unionIncluded = unionBoundsOf(unionIncluded, c.bounds);
+        changed = true;
+      }
+    }
+
+    removed = comps.length - kept;
+    console.log('[Worker] Composite flood-fill: passes=', passes, 'chain dist=', chainDistPx, 'px');
+  } else if (faintArtMode) {
+    const faintAreaThreshold = Math.max(dynamicMinArea, 80);
+    const sortedComps = comps
+      .filter(c => c.id !== main.id && c.area >= faintAreaThreshold)
+      .sort((a, b) => b.area - a.area);
+
+    const maxKeep = 30;
+
+    for (let i = 0; i < sortedComps.length && i < maxKeep; i++) {
+      const c = sortedComps[i];
+
+      const ok =
+        boundsIntersect(expandedMain, c.bounds) ||
+        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
+        isCaptionLike(c.bounds);
+
+      if (!ok) continue;
+      if (!passesDensity(c)) { removed++; continue; }
+      if (extraAreaKept + c.area > maxExtraArea) continue;
+
+      for (const idx of c.pixels) outMask[idx] = 1;
+      kept++;
+      extraAreaKept += c.area;
+    }
+
+    removed = comps.length - kept;
+  } else {
+    for (const c of comps) {
+      if (c.id === main.id) continue;
+
+      if (c.area < dynamicMinArea) { removed++; continue; }
+
+      const ok =
+        boundsIntersect(expandedMain, c.bounds) ||
+        (distBounds(mainBounds, c.bounds) <= keepNearMainDistPx) ||
+        isCaptionLike(c.bounds);
+
+      if (!ok) { removed++; continue; }
+
+      if (!passesDensity(c)) { removed++; continue; }
+
+      if (extraAreaKept + c.area > maxExtraArea) { removed++; continue; }
+
+      for (const idx of c.pixels) outMask[idx] = 1;
+      kept++;
+      extraAreaKept += c.area;
+    }
+  }
+
+  console.log(
+    '[Worker] Component selection:',
+    'mode=', compositeMode ? 'composite' : (faintArtMode ? 'faint-art' : 'normal'),
+    'total=', comps.length,
+    'significant=', significantComps.length,
+    'main area=', main.area,
+    'dynamicMinArea=', dynamicMinArea,
+    'expandPx=', expandPx,
+    'captionGapPx=', captionGapPx,
+    'densityThreshold=', densityThreshold,
+    'kept=', kept,
+    'removed=', removed
+  );
 
   const bladeWidthPx = Math.max(0, bladeWidthInches * effectiveDPI);
   let closingRadiusPx = Math.round(bladeWidthPx / 2);
+
   if (effectiveDPI < 180) closingRadiusPx = Math.max(1, closingRadiusPx);
   else closingRadiusPx = Math.max(2, closingRadiusPx);
+
   closingRadiusPx = Math.min(closingRadiusPx, 4);
 
-  const finalMask = closingRadiusPx > 0
-    ? morphologicalClose(outMask, w, h, closingRadiusPx)
-    : outMask;
+  if (kept > 1) closingRadiusPx = Math.min(closingRadiusPx, 1);
 
-  console.log('[Worker] Main component selected: area=', main.area, 'total components=', comps.length);
-
-  return { mainMask: finalMask, mainComp: main, allComps: comps };
-}
-
-function clipperPathsIntersect(
-  pathA: Point[], pathB: Point[]
-): boolean {
-  if (pathA.length < 3 || pathB.length < 3) return false;
-
-  const toClipper = (pts: Point[]) => pts.map(p => ({
-    X: Math.round(p.x * CLIPPER_SCALE),
-    Y: Math.round(p.y * CLIPPER_SCALE)
-  }));
-
-  const clipper = new ClipperLib.Clipper();
-  clipper.AddPath(toClipper(pathA), ClipperLib.PolyType.ptSubject, true);
-  clipper.AddPath(toClipper(pathB), ClipperLib.PolyType.ptClip, true);
-
-  const result: Array<Array<{X: number; Y: number}>> = [];
-  clipper.Execute(
-    ClipperLib.ClipType.ctIntersection, result,
-    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
-  );
-
-  if (result.length === 0) return false;
-  const totalArea = result.reduce((sum, p) => sum + Math.abs(ClipperLib.Clipper.Area(p)), 0);
-  return totalArea > 0;
-}
-
-function traceComponentBoundary(
-  comp: LabeledComponent, maskW: number, maskH: number
-): Point[] {
-  const compMask = new Uint8Array(maskW * maskH);
-  for (const idx of comp.pixels) compMask[idx] = 1;
-  return traceBoundary(compMask, maskW, maskH);
-}
-
-function geometricOrphanRetention(
-  mainPath: Point[],
-  mainComp: LabeledComponent,
-  allComps: LabeledComponent[],
-  maskW: number,
-  maskH: number,
-  originalDPI: number,
-  superSample: number,
-  keepNearMainDistInches: number,
-  minComponentAreaPx: number,
-  useSharpCorners: boolean,
-  psaSettings: { enabled: boolean; confidenceThreshold: number; mergeDistInches: number; bridgeRadiusInches: number; minShapeAreaIn2: number } | undefined,
-  psaClassifyFn: ((comp: LabeledComponent, w: number, h: number) => { type: string; confidence: number }) | null
-): { retainedPaths: Point[][]; retainedComps: LabeledComponent[] } {
-  const orphanComps = allComps.filter(c => c.id !== mainComp.id);
-  if (orphanComps.length === 0 || mainPath.length < 3) {
-    return { retainedPaths: [], retainedComps: [] };
+  if (closingRadiusPx > 0) {
+    console.log('[Worker] Blade-safe closing radius:', closingRadiusPx, 'px (DPI:', effectiveDPI, ')');
+    return morphologicalClose(outMask, w, h, closingRadiusPx);
   }
 
-  const relMin = Math.round(mainComp.area * 0.0015);
-  const dynamicMinArea = Math.max(minComponentAreaPx, 40, relMin);
-
-  const keepZone = clipperVectorOffset(mainPath, keepNearMainDistInches * originalDPI, false);
-  if (keepZone.length < 3) {
-    console.log('[GeomOrphan] Failed to build keepZone');
-    return { retainedPaths: [], retainedComps: [] };
-  }
-
-  const epsilonPx = 0.01 * originalDPI;
-  const retainedPaths: Point[][] = [];
-  const retainedComps: LabeledComponent[] = [];
-  let tested = 0;
-  let kept = 0;
-
-  for (const comp of orphanComps) {
-    if (comp.area < dynamicMinArea) continue;
-    tested++;
-
-    let orphanPath = traceComponentBoundary(comp, maskW, maskH);
-    if (orphanPath.length < 3) continue;
-
-    if (psaClassifyFn && psaSettings?.enabled) {
-      const cls = psaClassifyFn(comp, maskW, maskH);
-      if (cls.type !== 'none' && cls.confidence >= (psaSettings.confidenceThreshold ?? 0.75)) {
-        const cx = (comp.bounds.minX + comp.bounds.maxX) / 2;
-        const cy = (comp.bounds.minY + comp.bounds.maxY) / 2;
-        const bw = comp.bounds.maxX - comp.bounds.minX;
-        const bh = comp.bounds.maxY - comp.bounds.minY;
-        if (cls.type === 'circle') {
-          const r = Math.max(bw, bh) / 2;
-          orphanPath = psaGenerateCircle(cx, cy, r);
-        } else if (cls.type === 'ellipse') {
-          orphanPath = psaGenerateEllipse(cx, cy, bw / 2, bh / 2, 0);
-        } else if (cls.type === 'rectangle' || cls.type === 'square') {
-          orphanPath = psaGenerateRectangle(cx, cy, bw, bh, 0);
-        }
-      }
-    }
-
-    const scaledOrphan = orphanPath.map(p => ({ x: p.x / superSample, y: p.y / superSample }));
-
-    const dilatedOrphan = epsilonPx > 0
-      ? clipperVectorOffset(scaledOrphan, epsilonPx, false)
-      : scaledOrphan;
-
-    if (clipperPathsIntersect(dilatedOrphan, keepZone)) {
-      retainedPaths.push(orphanPath);
-      retainedComps.push(comp);
-      kept++;
-    }
-  }
-
-  console.log('[GeomOrphan] Tested', tested, 'orphans, kept', kept, 'via geometric intersection (keepDist=', keepNearMainDistInches + '")');
-  return { retainedPaths, retainedComps };
-}
-
-function softUnionPaths(
-  mainPath: Point[],
-  orphanPaths: Point[][],
-  effectiveDPI: number,
-  mergeDistInches: number,
-  bridgeRadiusInches: number
-): Point[] {
-  if (orphanPaths.length === 0) return mainPath;
-
-  const toClipper = (pts: Point[]) => pts.map(p => ({
-    X: Math.round(p.x * CLIPPER_SCALE),
-    Y: Math.round(p.y * CLIPPER_SCALE)
-  }));
-  const fromClipper = (pts: Array<{X: number; Y: number}>) => pts.map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-  const getLargest = (paths: Array<Array<{X: number; Y: number}>>) => {
-    let best = paths[0];
-    let bestArea = Math.abs(ClipperLib.Clipper.Area(paths[0]));
-    for (let i = 1; i < paths.length; i++) {
-      const a = Math.abs(ClipperLib.Clipper.Area(paths[i]));
-      if (a > bestArea) { bestArea = a; best = paths[i]; }
-    }
-    return best;
-  };
-
-  const mergeDistPx = mergeDistInches * effectiveDPI;
-  const bridgeRadiusPx = bridgeRadiusInches * effectiveDPI;
-  const scaledBridge = bridgeRadiusPx * CLIPPER_SCALE;
-
-  const closePaths: Point[][] = [];
-  const farPaths: Point[][] = [];
-
-  for (const op of orphanPaths) {
-    let minDist = Infinity;
-    for (const pa of op) {
-      for (const pb of mainPath) {
-        const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-        if (d < minDist) minDist = d;
-      }
-      if (minDist < mergeDistPx) break;
-    }
-    if (minDist < mergeDistPx) {
-      closePaths.push(op);
-    } else {
-      farPaths.push(op);
-    }
-  }
-
-  let result = mainPath;
-
-  if (closePaths.length > 0) {
-    const co1 = new ClipperLib.ClipperOffset();
-    co1.ArcTolerance = CLIPPER_SCALE * 0.25;
-    co1.AddPath(toClipper(result), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    for (const cp of closePaths) {
-      co1.AddPath(toClipper(cp), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    }
-    const expanded: Array<Array<{X: number; Y: number}>> = [];
-    co1.Execute(expanded, scaledBridge);
-
-    if (expanded.length > 0) {
-      const unionClip = new ClipperLib.Clipper();
-      for (const p of expanded) {
-        unionClip.AddPath(p, ClipperLib.PolyType.ptSubject, true);
-      }
-      const unionResult: Array<Array<{X: number; Y: number}>> = [];
-      unionClip.Execute(ClipperLib.ClipType.ctUnion, unionResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-
-      if (unionResult.length > 0) {
-        const co2 = new ClipperLib.ClipperOffset();
-        co2.ArcTolerance = CLIPPER_SCALE * 0.25;
-        co2.AddPath(getLargest(unionResult), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-        const shrunk: Array<Array<{X: number; Y: number}>> = [];
-        co2.Execute(shrunk, -scaledBridge);
-
-        if (shrunk.length > 0) {
-          result = fromClipper(getLargest(shrunk));
-          console.log('[SoftUnion] Bridge-merged', closePaths.length, 'close orphans with main path');
-        }
-      }
-    }
-  }
-
-  if (farPaths.length > 0) {
-    const finalUnion = new ClipperLib.Clipper();
-    finalUnion.AddPath(toClipper(result), ClipperLib.PolyType.ptSubject, true);
-    for (const fp of farPaths) {
-      finalUnion.AddPath(toClipper(fp), ClipperLib.PolyType.ptSubject, true);
-    }
-    const finalResult: Array<Array<{X: number; Y: number}>> = [];
-    finalUnion.Execute(ClipperLib.ClipType.ctUnion, finalResult, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    if (finalResult.length > 0) {
-      result = fromClipper(getLargest(finalResult));
-      console.log('[SoftUnion] Plain-unioned', farPaths.length, 'far orphans with main path');
-    }
-  }
-
-  return result;
+  return outMask;
 }
 
 function buildHysteresisMask(

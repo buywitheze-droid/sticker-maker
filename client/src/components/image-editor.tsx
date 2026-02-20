@@ -27,17 +27,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
   const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 0.14,
+    width: 0.14, // Default large offset
     color: "#ffffff",
     enabled: false,
-    alphaThreshold: 128,
-    backgroundColor: "#ffffff",
-    useCustomBackground: true,
-    cornerMode: 'sharp',
-    autoBridging: true,
-    autoBridgingThreshold: 0.02,
+    alphaThreshold: 128, // Auto-detected from alpha channel
+    backgroundColor: "#ffffff", // Default white background for contour
+    useCustomBackground: true, // Default to solid background color
+    cornerMode: 'sharp', // Default to sharp corners with high miter limit
+    autoBridging: true, // Auto-bridge narrow gaps in contour
+    autoBridgingThreshold: 0.02, // Gap threshold in inches
     algorithm: undefined,
-    contourMode: undefined,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -232,7 +231,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       autoBridging: true,
       autoBridgingThreshold: 0.02,
       algorithm: undefined,
-      contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);
     
@@ -347,7 +345,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         autoBridging: true,
         autoBridgingThreshold: 0.02,
         algorithm: undefined,
-        contourMode: undefined,
       });
       setDetectedAlgorithm(undefined);
       
@@ -431,7 +428,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       autoBridging: true,
       autoBridgingThreshold: 0.02,
       algorithm: undefined,
-      contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);
     setShapeSettings({

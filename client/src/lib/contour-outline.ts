@@ -49,51 +49,23 @@ function perpendicularDistance(
 function contourPointsToPDFPathOps(
   previewPathPoints: Array<{x: number; y: number}>,
   effectiveDPI: number,
-  pageHeightInches: number,
-  psaShapeType?: string
+  pageHeightInches: number
 ): string {
-  const isPSACurve = psaShapeType === 'circle' || psaShapeType === 'ellipse';
+  const simplified = simplifyPathForPDF(previewPathPoints, 1.5);
+  console.log(`[PDF CutContour] Simplified ${previewPathPoints.length} points to ${simplified.length} points`);
 
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  if (isPSACurve) {
-    const segments = polygonToSplinePath(previewPathPoints, 0.5);
-    console.log(`[PDF CutContour] PSA ${psaShapeType}: using ${segments.length - 1} Bézier curves from ${previewPathPoints.length} points`);
+  for (let i = 0; i < simplified.length; i++) {
+    const xPts = (simplified[i].x / effectiveDPI) * 72;
+    const yPts = (pageHeightInches - simplified[i].y / effectiveDPI) * 72;
 
-    for (const seg of segments) {
-      if (seg.type === 'move' && seg.point) {
-        const xPts = (seg.point.x / effectiveDPI) * 72;
-        const yPts = (pageHeightInches - seg.point.y / effectiveDPI) * 72;
-        pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} m\n`;
-      } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-        const cp1x = (seg.cp1.x / effectiveDPI) * 72;
-        const cp1y = (pageHeightInches - seg.cp1.y / effectiveDPI) * 72;
-        const cp2x = (seg.cp2.x / effectiveDPI) * 72;
-        const cp2y = (pageHeightInches - seg.cp2.y / effectiveDPI) * 72;
-        const ex = (seg.end.x / effectiveDPI) * 72;
-        const ey = (pageHeightInches - seg.end.y / effectiveDPI) * 72;
-        pathOps += `${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${ex.toFixed(2)} ${ey.toFixed(2)} c\n`;
-      } else if (seg.type === 'line' && seg.point) {
-        const xPts = (seg.point.x / effectiveDPI) * 72;
-        const yPts = (pageHeightInches - seg.point.y / effectiveDPI) * 72;
-        pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} l\n`;
-      }
-    }
-  } else {
-    const simplified = simplifyPathForPDF(previewPathPoints, 1.5);
-    console.log(`[PDF CutContour] Simplified ${previewPathPoints.length} points to ${simplified.length} points`);
-
-    for (let i = 0; i < simplified.length; i++) {
-      const xPts = (simplified[i].x / effectiveDPI) * 72;
-      const yPts = (pageHeightInches - simplified[i].y / effectiveDPI) * 72;
-
-      if (i === 0) {
-        pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} m\n`;
-      } else {
-        pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} l\n`;
-      }
+    if (i === 0) {
+      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} m\n`;
+    } else {
+      pathOps += `${xPts.toFixed(2)} ${yPts.toFixed(2)} l\n`;
     }
   }
 
@@ -1643,10 +1615,9 @@ export function getContourPath(
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
     // Determine if sharp corners are requested - matches worker logic
-    // Uses contourMode if set, otherwise falls back to legacy algorithm field
-    const effectiveMode = (strokeSettings as any).contourMode
-      ?? (strokeSettings.algorithm === 'complex' ? 'smooth' : 'sharp');
-    const useSharpCorners = effectiveMode === 'sharp';
+    // Sharp corners when algorithm is 'shapes' (Sharp mode), rounded for 'complex' (Smooth mode)
+    const effectiveAlgorithm = strokeSettings.algorithm || 'shapes';
+    const useSharpCorners = effectiveAlgorithm === 'shapes';
     
     let boundaryPath: Point[];
     let dilatedWidth: number;
@@ -1754,7 +1725,6 @@ export interface CachedContourData {
   minPathX: number;
   minPathY: number;
   bleedInches: number;
-  psaShapeType?: string;
 }
 
 export async function downloadContourPDF(
@@ -1784,7 +1754,6 @@ export async function downloadContourPDF(
     let minPathX: number;
     let minPathY: number;
     let bleedInches: number;
-    let psaShapeType: string | undefined;
     
     {
       const workerManager = getContourWorkerManager();
@@ -1802,7 +1771,6 @@ export async function downloadContourPDF(
         minPathX = contourData.minPathX;
         minPathY = contourData.minPathY;
         bleedInches = contourData.bleedInches;
-        psaShapeType = contourData.psaShapeType;
       } else {
         console.error('[downloadContourPDF] No contour data available - generate preview first');
         return;
@@ -1962,7 +1930,7 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches, psaShapeType);
+    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2016,7 +1984,6 @@ export async function generateContourPDFBase64(
   let minPathX: number;
   let minPathY: number;
   let bleedInches: number;
-  let psaShapeType: string | undefined;
   
   // Use cached contour data if available (from preview worker) for 10x faster export
   if (cachedContourData && cachedContourData.pathPoints.length > 0) {
@@ -2032,7 +1999,6 @@ export async function generateContourPDFBase64(
     minPathX = cachedContourData.minPathX;
     minPathY = cachedContourData.minPathY;
     bleedInches = cachedContourData.bleedInches;
-    psaShapeType = cachedContourData.psaShapeType;
   } else {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
@@ -2048,7 +2014,6 @@ export async function generateContourPDFBase64(
       minPathX = contourData.minPathX;
       minPathY = contourData.minPathY;
       bleedInches = contourData.bleedInches;
-      psaShapeType = contourData.psaShapeType;
     } else {
       console.error('[generateContourPDFBase64] No contour data available - generate preview first');
       return null;
@@ -2206,7 +2171,7 @@ export async function generateContourPDFBase64(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches, psaShapeType);
+    const pathOps = contourPointsToPDFPathOps(previewPathPoints, effectiveDPI, heightInches);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
