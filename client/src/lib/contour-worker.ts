@@ -1220,8 +1220,7 @@ function processShapesMode(
       useShapeForPDF = true;
     } else if (unitedPolys.length === 1) {
       smoothedPath = unitedPolys[0];
-      useShapeForPDF = true;
-      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points (shape preserved for PDF)');
+      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points (using united path for PDF)');
     } else {
       smoothedPath = bridgeAndMergePolygons(unitedPolys, totalOffsetPixels);
       console.log('[Shapes] Bridged', unitedPolys.length, 'separate polygons into one with', smoothedPath.length, 'points (shape NOT preserved for PDF)');
