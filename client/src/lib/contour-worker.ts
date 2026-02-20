@@ -437,13 +437,29 @@ function processContour(
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
 
   // Run shape analysis during auto-detection to determine if shapes mode should be used
+  // Check both the whole filled mask AND per-component analysis for dominant shapes
   let autoShapeDetected = false;
   if (detectedAlgorithm !== 'scattered') {
     const shapeProbe = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
     if (shapeProbe) {
       detectedAlgorithm = 'shapes';
       autoShapeDetected = true;
-      console.log('[Worker] Shape auto-detected:', shapeProbe.type, '- will use shapes mode');
+      console.log('[Worker] Shape auto-detected (whole mask):', shapeProbe.type, '- will use shapes mode');
+    } else {
+      const shapeComps = labelComponents(filledMainMask, hiResWidth, hiResHeight);
+      if (shapeComps.length > 0) {
+        const shapeTotalArea = shapeComps.reduce((s, c) => s + c.area, 0);
+        const shapeSorted = [...shapeComps].sort((a, b) => b.area - a.area);
+        const shapeDominant = shapeSorted[0];
+        if (shapeDominant.area / shapeTotalArea > 0.50) {
+          const domShape = analyzeComponentShape(shapeDominant, hiResWidth, hiResHeight);
+          if (domShape) {
+            detectedAlgorithm = 'shapes';
+            autoShapeDetected = true;
+            console.log('[Worker] Shape auto-detected (dominant component:', domShape.type, ',', (shapeDominant.area / shapeTotalArea * 100).toFixed(1) + '% of area) - will use shapes mode');
+          }
+        }
+      }
     }
   }
 
@@ -847,6 +863,179 @@ function generateShapeContour(
   return points;
 }
 
+function analyzeComponentShape(
+  comp: { pixels: number[]; bounds: { minX: number; minY: number; maxX: number; maxY: number } },
+  maskWidth: number,
+  maskHeight: number
+): ShapeAnalysis | null {
+  const compMask = new Uint8Array(maskWidth * maskHeight);
+  for (const idx of comp.pixels) {
+    compMask[idx] = 1;
+  }
+  return analyzeShapeFromMask(compMask, maskWidth, maskHeight);
+}
+
+function generateTracedContourForComponent(
+  comp: { pixels: number[]; bounds: { minX: number; minY: number; maxX: number; maxY: number } },
+  maskWidth: number,
+  maskHeight: number,
+  offsetPixels: number
+): Point[] | null {
+  const compMask = new Uint8Array(maskWidth * maskHeight);
+  for (const idx of comp.pixels) {
+    compMask[idx] = 1;
+  }
+
+  const boundary = traceBoundary(compMask, maskWidth, maskHeight);
+  if (boundary.length < 3) return null;
+
+  const clipperPath = boundary.map(p => ({
+    X: Math.round(p.x * CLIPPER_SCALE),
+    Y: Math.round(p.y * CLIPPER_SCALE)
+  }));
+
+  const co = new ClipperLib.ClipperOffset();
+  co.MiterLimit = 3;
+  co.ArcTolerance = CLIPPER_SCALE * 0.05;
+  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+
+  const offsetResult: Array<Array<{ X: number; Y: number }>> = [];
+  co.Execute(offsetResult, offsetPixels * CLIPPER_SCALE);
+
+  if (offsetResult.length === 0) return null;
+
+  let largestIdx = 0;
+  let largestArea = 0;
+  for (let i = 0; i < offsetResult.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(offsetResult[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestIdx = i;
+    }
+  }
+
+  return offsetResult[largestIdx].map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+}
+
+function unionAllContours(contours: Point[][]): Point[][] | null {
+  if (contours.length === 0) return null;
+  if (contours.length === 1) return contours;
+
+  const clipper = new ClipperLib.Clipper();
+
+  for (const contour of contours) {
+    const clipperPath = contour.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
+  }
+
+  const unionResult: Array<Array<{ X: number; Y: number }>> = [];
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion, unionResult,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
+  );
+
+  if (unionResult.length === 0) return null;
+
+  const results: Point[][] = [];
+  for (let i = 0; i < unionResult.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+    if (area < CLIPPER_SCALE * CLIPPER_SCALE * 0.1) continue;
+    ClipperLib.Clipper.CleanPolygon(unionResult[i], CLIPPER_SCALE * 0.05);
+    if (unionResult[i].length >= 3) {
+      results.push(unionResult[i].map(p => ({
+        x: p.X / CLIPPER_SCALE,
+        y: p.Y / CLIPPER_SCALE
+      })));
+    }
+  }
+
+  console.log('[Shapes] Union produced', results.length, 'polygon(s) from', contours.length, 'inputs');
+  return results.length > 0 ? results : null;
+}
+
+function bridgeAndMergePolygons(polygons: Point[][], gapBridge: number): Point[] {
+  if (polygons.length === 0) return [];
+  if (polygons.length === 1) return polygons[0];
+
+  const expandAmount = Math.max(gapBridge * 0.5, 3);
+
+  const coExpand = new ClipperLib.ClipperOffset();
+  coExpand.ArcTolerance = CLIPPER_SCALE * 0.05;
+  for (const poly of polygons) {
+    const clipperPath = poly.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  }
+
+  const expandedPaths: Array<Array<{ X: number; Y: number }>> = [];
+  coExpand.Execute(expandedPaths, expandAmount * CLIPPER_SCALE);
+
+  if (expandedPaths.length === 0) return polygons[0];
+
+  const clipper = new ClipperLib.Clipper();
+  for (const path of expandedPaths) {
+    clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+  }
+
+  const unionResult: Array<Array<{ X: number; Y: number }>> = [];
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion, unionResult,
+    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
+  );
+
+  if (unionResult.length === 0) return polygons[0];
+
+  let largestIdx = 0;
+  let largestArea = 0;
+  for (let i = 0; i < unionResult.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
+    if (area > largestArea) {
+      largestArea = area;
+      largestIdx = i;
+    }
+  }
+
+  const coShrink = new ClipperLib.ClipperOffset();
+  coShrink.ArcTolerance = CLIPPER_SCALE * 0.05;
+  coShrink.AddPath(unionResult[largestIdx], ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+
+  const shrunkPaths: Array<Array<{ X: number; Y: number }>> = [];
+  coShrink.Execute(shrunkPaths, -expandAmount * CLIPPER_SCALE);
+
+  if (shrunkPaths.length === 0) {
+    ClipperLib.Clipper.CleanPolygon(unionResult[largestIdx], CLIPPER_SCALE * 0.05);
+    return unionResult[largestIdx].map(p => ({
+      x: p.X / CLIPPER_SCALE,
+      y: p.Y / CLIPPER_SCALE
+    }));
+  }
+
+  let shrunkLargest = 0;
+  let shrunkLargestArea = 0;
+  for (let i = 0; i < shrunkPaths.length; i++) {
+    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
+    if (area > shrunkLargestArea) {
+      shrunkLargestArea = area;
+      shrunkLargest = i;
+    }
+  }
+
+  ClipperLib.Clipper.CleanPolygon(shrunkPaths[shrunkLargest], CLIPPER_SCALE * 0.05);
+
+  return shrunkPaths[shrunkLargest].map(p => ({
+    x: p.X / CLIPPER_SCALE,
+    y: p.Y / CLIPPER_SCALE
+  }));
+}
+
 function processShapesMode(
   imageData: ImageData,
   filledMainMask: Uint8Array,
@@ -875,27 +1064,130 @@ function processShapesMode(
   previewMode: boolean | undefined,
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered'
 ): ContourResult | null {
-  const hiResShape = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
-  if (!hiResShape) {
-    console.log('[Shapes] No geometric shape detected, falling back');
+  const comps = labelComponents(filledMainMask, hiResWidth, hiResHeight);
+  if (comps.length === 0) {
+    console.log('[Shapes] No components found, falling back');
     return null;
   }
 
-  const shape: ShapeAnalysis = {
-    ...hiResShape,
-    cx: hiResShape.cx / SUPER_SAMPLE,
-    cy: hiResShape.cy / SUPER_SAMPLE,
-    rx: hiResShape.rx / SUPER_SAMPLE,
-    ry: hiResShape.ry / SUPER_SAMPLE,
-  };
+  const totalArea = comps.reduce((sum, c) => sum + c.area, 0);
+  const sortedComps = [...comps].sort((a, b) => b.area - a.area);
+  const dominantComp = sortedComps[0];
+  const dominantRatio = dominantComp.area / totalArea;
 
-  let smoothedPath = generateShapeContour(shape, totalOffsetPixels);
-  console.log('[Shapes] Generated', shape.type, 'contour with', smoothedPath.length, 'points, offset:', totalOffsetPixels, 'px');
+  console.log('[Shapes] Found', comps.length, 'components. Dominant ratio:', (dominantRatio * 100).toFixed(1) + '%');
+
+  const dominantShape = analyzeComponentShape(dominantComp, hiResWidth, hiResHeight);
+
+  if (!dominantShape) {
+    const wholeShape = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
+    if (!wholeShape) {
+      console.log('[Shapes] No shape detected on dominant component or whole mask, falling back');
+      return null;
+    }
+    const shape: ShapeAnalysis = {
+      ...wholeShape,
+      cx: wholeShape.cx / SUPER_SAMPLE,
+      cy: wholeShape.cy / SUPER_SAMPLE,
+      rx: wholeShape.rx / SUPER_SAMPLE,
+      ry: wholeShape.ry / SUPER_SAMPLE,
+    };
+    const contour = generateShapeContour(shape, totalOffsetPixels);
+    console.log('[Shapes] Whole-mask fallback:', shape.type, 'with', contour.length, 'points');
+    return buildShapesResult(contour, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm);
+  }
+
+  console.log('[Shapes] Dominant component:', dominantShape.type, '(', (dominantRatio * 100).toFixed(1), '% of design)');
+
+  const minComponentArea = totalArea * 0.005;
+  const significantComps = sortedComps.filter(c => c.area >= minComponentArea);
+
+  console.log('[Shapes] Analyzing', significantComps.length, 'significant components (min area:', Math.round(minComponentArea), 'px)');
+
+  const allContours: Point[][] = [];
+
+  for (let i = 0; i < significantComps.length; i++) {
+    const comp = significantComps[i];
+    const compRatio = comp.area / totalArea;
+
+    const compShape = (i === 0) ? dominantShape : analyzeComponentShape(comp, hiResWidth, hiResHeight);
+
+    if (compShape) {
+      const scaledShape: ShapeAnalysis = {
+        ...compShape,
+        cx: compShape.cx / SUPER_SAMPLE,
+        cy: compShape.cy / SUPER_SAMPLE,
+        rx: compShape.rx / SUPER_SAMPLE,
+        ry: compShape.ry / SUPER_SAMPLE,
+      };
+      const contour = generateShapeContour(scaledShape, totalOffsetPixels);
+      allContours.push(contour);
+      console.log('[Shapes] Component', i, ':', compShape.type, '(', (compRatio * 100).toFixed(1), '% area) → perfect', compShape.type, 'with', contour.length, 'points');
+    } else {
+      const hiResTraced = generateTracedContourForComponent(
+        comp, hiResWidth, hiResHeight, totalOffsetPixels * SUPER_SAMPLE
+      );
+
+      if (hiResTraced && hiResTraced.length >= 3) {
+        const scaledTraced = hiResTraced.map(p => ({
+          x: p.x / SUPER_SAMPLE,
+          y: p.y / SUPER_SAMPLE
+        }));
+        allContours.push(scaledTraced);
+        console.log('[Shapes] Component', i, ': non-shape (', (compRatio * 100).toFixed(1), '% area) → traced contour with', scaledTraced.length, 'points');
+      }
+    }
+  }
+
+  if (allContours.length === 0) {
+    console.log('[Shapes] No contours generated, falling back');
+    return null;
+  }
+
+  let smoothedPath: Point[];
+  if (allContours.length === 1) {
+    smoothedPath = allContours[0];
+  } else {
+    const unitedPolys = unionAllContours(allContours);
+    if (!unitedPolys || unitedPolys.length === 0) {
+      console.log('[Shapes] Union failed, using dominant contour only');
+      smoothedPath = allContours[0];
+    } else if (unitedPolys.length === 1) {
+      smoothedPath = unitedPolys[0];
+      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points');
+    } else {
+      smoothedPath = bridgeAndMergePolygons(unitedPolys, totalOffsetPixels);
+      console.log('[Shapes] Bridged', unitedPolys.length, 'separate polygons into one with', smoothedPath.length, 'points');
+    }
+  }
 
   const weldPx = previewMode ? 1.0 : 3.0;
   smoothedPath = vectorWeld(smoothedPath, weldPx);
   smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
 
+  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm);
+}
+
+function buildShapesResult(
+  smoothedPath: Point[],
+  imageData: ImageData,
+  effectiveDPI: number,
+  totalOffsetPixels: number,
+  bleedPixels: number,
+  bleedInches: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  padding: number,
+  strokeSettings: {
+    color: string;
+    useCustomBackground: boolean;
+    backgroundColor: string;
+  },
+  effectiveBackgroundColor: string,
+  isHolographic: boolean,
+  previewMode: boolean | undefined,
+  detectedAlgorithm: 'shapes' | 'complex' | 'scattered'
+): ContourResult {
   const previewPathXs = smoothedPath.map(p => p.x);
   const previewPathYs = smoothedPath.map(p => p.y);
   const previewMinX = Math.min(...previewPathXs);
