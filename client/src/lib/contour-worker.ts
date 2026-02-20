@@ -436,6 +436,17 @@ function processContour(
     scatteredAnalysis.isScattered ? 'scattered' : 
     complexity.needsComplexProcessing ? 'complex' : 'shapes';
 
+  // Run shape analysis during auto-detection to determine if shapes mode should be used
+  let autoShapeDetected = false;
+  if (detectedAlgorithm !== 'scattered') {
+    const shapeProbe = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
+    if (shapeProbe) {
+      detectedAlgorithm = 'shapes';
+      autoShapeDetected = true;
+      console.log('[Worker] Shape auto-detected:', shapeProbe.type, '- will use shapes mode');
+    }
+  }
+
   // Resolve effective contour mode
   // Priority: contourMode (explicit user override) > algorithm (legacy) > auto-detection
   type EffectiveMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
@@ -449,6 +460,7 @@ function processContour(
   } else {
     const autoMode: EffectiveMode =
       detectedAlgorithm === 'scattered' ? 'scattered' :
+      detectedAlgorithm === 'shapes' ? 'shapes' :
       detectedAlgorithm === 'complex' ? 'smooth' : 'sharp';
     effectiveMode = autoMode;
   }
@@ -714,13 +726,16 @@ function analyzeShapeFromMask(
 
   if (count < 10) return null;
 
-  const cx = sumX / count;
-  const cy = sumY / count;
   const bboxW = maxX - minX + 1;
   const bboxH = maxY - minY + 1;
   const bboxArea = bboxW * bboxH;
   const solidity = count / bboxArea;
   const aspectRatio = bboxW / bboxH;
+
+  const bboxCx = minX + bboxW / 2;
+  const bboxCy = minY + bboxH / 2;
+  const centroidCx = sumX / count;
+  const centroidCy = sumY / count;
 
   let perimeter = 0;
   for (let y = 0; y < maskHeight; y++) {
@@ -742,28 +757,39 @@ function analyzeShapeFromMask(
 
   const circularity = perimeter > 0 ? (4 * Math.PI * count) / (perimeter * perimeter) : 0;
 
+  const expectedCircleArea = Math.PI * (bboxW / 2) * (bboxH / 2);
+  const circleAreaRatio = count / expectedCircleArea;
+
   const rx = bboxW / 2;
   const ry = bboxH / 2;
 
+  console.log('[Shapes] Analysis: circularity:', circularity.toFixed(3),
+    'solidity:', solidity.toFixed(3), 'aspect:', aspectRatio.toFixed(3),
+    'circleAreaRatio:', circleAreaRatio.toFixed(3),
+    'centroid vs bbox center offset:', Math.abs(centroidCx - bboxCx).toFixed(1), Math.abs(centroidCy - bboxCy).toFixed(1));
+
   let shapeType: ShapeAnalysis['type'];
-  if (circularity > 0.80 && Math.abs(aspectRatio - 1) < 0.15) {
+  const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
+  const isCircleLike = circularity > 0.70 && circleAreaRatio > 0.85 && circleAreaRatio < 1.15;
+
+  if (isCircleLike && isNearSquareAspect && solidity > 0.70 && solidity < 0.95) {
     shapeType = 'circle';
-  } else if (circularity > 0.75) {
+  } else if (circularity > 0.70 && solidity > 0.70 && solidity < 0.95 && !isNearSquareAspect) {
     shapeType = 'ellipse';
-  } else if (solidity > 0.90 && circularity > 0.60) {
+  } else if (solidity > 0.92 && isNearSquareAspect) {
+    shapeType = 'rectangle';
+  } else if (solidity > 0.88 && circularity > 0.55) {
     shapeType = 'rounded-rect';
   } else if (solidity > 0.85) {
     shapeType = 'rectangle';
   } else {
+    console.log('[Shapes] No shape match - circularity too low or solidity too low');
     return null;
   }
 
-  console.log('[Shapes] Detected:', shapeType,
-    'circularity:', circularity.toFixed(3),
-    'solidity:', solidity.toFixed(3),
-    'aspect:', aspectRatio.toFixed(3));
+  console.log('[Shapes] Detected:', shapeType);
 
-  return { type: shapeType, cx, cy, rx, ry, angle: 0, circularity, solidity, aspectRatio };
+  return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio };
 }
 
 function generateShapeContour(
