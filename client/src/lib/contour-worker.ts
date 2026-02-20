@@ -30,6 +30,14 @@ interface WorkerMessage {
   previewMode?: boolean;
 }
 
+interface ShapeInfoForPDF {
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  cxInches: number;
+  cyInches: number;
+  rxInches: number;
+  ryInches: number;
+}
+
 interface WorkerResponse {
   type: 'result' | 'error' | 'progress';
   imageData?: ImageData;
@@ -50,6 +58,7 @@ interface WorkerResponse {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
+    shapeInfo?: ShapeInfoForPDF;
   };
   detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
 }
@@ -151,7 +160,8 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           effectiveDPI,
           minPathX: spMinX,
           minPathY: spMinY,
-          bleedInches
+          bleedInches,
+          shapeInfo: result.contourData.shapeInfo
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -269,6 +279,7 @@ interface ContourResult {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
+    shapeInfo?: ShapeInfoForPDF;
   };
   detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
 }
@@ -1134,7 +1145,7 @@ function processShapesMode(
     };
     const contour = generateShapeContour(shape, totalOffsetPixels);
     console.log('[Shapes] Whole-mask fallback:', shape.type, 'with', contour.length, 'points');
-    return buildShapesResult(contour, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm);
+    return buildShapesResult(contour, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, shape);
   }
 
   console.log('[Shapes] Dominant component:', dominantShape.type, '(', (dominantRatio * 100).toFixed(1), '% of design)');
@@ -1145,6 +1156,7 @@ function processShapesMode(
   console.log('[Shapes] Including', includedComps.length, 'of', comps.length, 'components (min:', Math.round(minComponentPixels), 'px, threshold: 0.05%)');
 
   const allContours: Point[][] = [];
+  let scaledDominantShape: ShapeAnalysis | null = null;
 
   const minShapeDetectRatio = 0.05;
 
@@ -1167,6 +1179,7 @@ function processShapesMode(
         rx: compShape.rx / SUPER_SAMPLE,
         ry: compShape.ry / SUPER_SAMPLE,
       };
+      if (i === 0) scaledDominantShape = scaledShape;
       const contour = generateShapeContour(scaledShape, totalOffsetPixels);
       allContours.push(contour);
       console.log('[Shapes] Component', i, ':', compShape.type, '(', (compRatio * 100).toFixed(1), '% area) → perfect', compShape.type, 'with', contour.length, 'points');
@@ -1195,13 +1208,16 @@ function processShapesMode(
   }
 
   let smoothedPath: Point[];
+  let useShapeForPDF = false;
   if (allContours.length === 1) {
     smoothedPath = allContours[0];
+    useShapeForPDF = true;
   } else {
     const unitedPolys = unionAllContours(allContours);
     if (!unitedPolys || unitedPolys.length === 0) {
       console.log('[Shapes] Union failed, using dominant contour only');
       smoothedPath = allContours[0];
+      useShapeForPDF = true;
     } else if (unitedPolys.length === 1) {
       smoothedPath = unitedPolys[0];
       console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points');
@@ -1215,7 +1231,8 @@ function processShapesMode(
   smoothedPath = vectorWeld(smoothedPath, weldPx);
   smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
 
-  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm);
+  const pdfShape = useShapeForPDF ? (scaledDominantShape || undefined) : undefined;
+  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, pdfShape);
 }
 
 function buildShapesResult(
@@ -1236,7 +1253,8 @@ function buildShapesResult(
   effectiveBackgroundColor: string,
   isHolographic: boolean,
   previewMode: boolean | undefined,
-  detectedAlgorithm: 'shapes' | 'complex' | 'scattered'
+  detectedAlgorithm: 'shapes' | 'complex' | 'scattered',
+  dominantShapeForPDF?: ShapeAnalysis
 ): ContourResult {
   const previewPathXs = smoothedPath.map(p => p.x);
   const previewPathYs = smoothedPath.map(p => p.y);
@@ -1288,6 +1306,20 @@ function buildShapesResult(
 
   console.log('[Shapes] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
 
+  let shapeInfo: ShapeInfoForPDF | undefined;
+  if (dominantShapeForPDF) {
+    const offsetRx = dominantShapeForPDF.rx + totalOffsetPixels;
+    const offsetRy = dominantShapeForPDF.ry + totalOffsetPixels;
+    shapeInfo = {
+      type: dominantShapeForPDF.type,
+      cxInches: ((dominantShapeForPDF.cx - minPathX) / effectiveDPI) + bleedInches,
+      cyInches: pageHeightInches - (((dominantShapeForPDF.cy - minPathY) / effectiveDPI) + bleedInches),
+      rxInches: offsetRx / effectiveDPI,
+      ryInches: offsetRy / effectiveDPI,
+    };
+    console.log('[Shapes] PDF shapeInfo:', shapeInfo.type, 'cx:', shapeInfo.cxInches.toFixed(3), 'cy:', shapeInfo.cyInches.toFixed(3), 'rx:', shapeInfo.rxInches.toFixed(3), 'ry:', shapeInfo.ryInches.toFixed(3));
+  }
+
   return {
     imageData: new ImageData(output, canvasWidth, canvasHeight),
     imageCanvasX: Math.round(imageCanvasX),
@@ -1307,7 +1339,8 @@ function buildShapesResult(
       effectiveDPI,
       minPathX,
       minPathY,
-      bleedInches
+      bleedInches,
+      shapeInfo
     },
     detectedAlgorithm
   };

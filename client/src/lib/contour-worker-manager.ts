@@ -35,6 +35,14 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
 export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
 export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
 
+export interface ShapeInfoForPDF {
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  cxInches: number;
+  cyInches: number;
+  rxInches: number;
+  ryInches: number;
+}
+
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
   previewPathPoints: Array<{x: number; y: number}>;
@@ -48,6 +56,7 @@ export interface ContourData {
   minPathX: number;
   minPathY: number;
   bleedInches: number;
+  shapeInfo?: ShapeInfoForPDF;
 }
 
 interface WorkerResponse {
