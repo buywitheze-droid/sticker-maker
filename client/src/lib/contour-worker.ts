@@ -886,11 +886,33 @@ function analyzeComponentShape(
   maskWidth: number,
   maskHeight: number
 ): ShapeAnalysis | null {
-  const compMask = new Uint8Array(maskWidth * maskHeight);
+  const b = comp.bounds;
+  const pad = 2;
+  const cropMinX = Math.max(0, b.minX - pad);
+  const cropMinY = Math.max(0, b.minY - pad);
+  const cropMaxX = Math.min(maskWidth - 1, b.maxX + pad);
+  const cropMaxY = Math.min(maskHeight - 1, b.maxY + pad);
+  const cropW = cropMaxX - cropMinX + 1;
+  const cropH = cropMaxY - cropMinY + 1;
+
+  const cropMask = new Uint8Array(cropW * cropH);
   for (const idx of comp.pixels) {
-    compMask[idx] = 1;
+    const x = idx % maskWidth;
+    const y = (idx / maskWidth) | 0;
+    const cx = x - cropMinX;
+    const cy = y - cropMinY;
+    if (cx >= 0 && cx < cropW && cy >= 0 && cy < cropH) {
+      cropMask[cy * cropW + cx] = 1;
+    }
   }
-  return analyzeShapeFromMask(compMask, maskWidth, maskHeight);
+
+  const filledCrop = fillSilhouette(cropMask, cropW, cropH);
+  const result = analyzeShapeFromMask(filledCrop, cropW, cropH);
+  if (result) {
+    result.cx += cropMinX;
+    result.cy += cropMinY;
+  }
+  return result;
 }
 
 function generateTracedContourForComponent(
@@ -1117,15 +1139,15 @@ function processShapesMode(
 
   console.log('[Shapes] Dominant component:', dominantShape.type, '(', (dominantRatio * 100).toFixed(1), '% of design)');
 
-  const minComponentArea = totalArea * 0.005;
-  const significantComps = sortedComps.filter(c => c.area >= minComponentArea);
+  const minComponentPixels = Math.max(25, totalArea * 0.0005);
+  const includedComps = sortedComps.filter(c => c.area >= minComponentPixels);
 
-  console.log('[Shapes] Analyzing', significantComps.length, 'significant components (min area:', Math.round(minComponentArea), 'px)');
+  console.log('[Shapes] Including', includedComps.length, 'of', comps.length, 'components (min:', Math.round(minComponentPixels), 'px, threshold: 0.05%)');
 
   const allContours: Point[][] = [];
 
-  for (let i = 0; i < significantComps.length; i++) {
-    const comp = significantComps[i];
+  for (let i = 0; i < includedComps.length; i++) {
+    const comp = includedComps[i];
     const compRatio = comp.area / totalArea;
 
     const compShape = (i === 0) ? dominantShape : analyzeComponentShape(comp, hiResWidth, hiResHeight);
@@ -1153,6 +1175,8 @@ function processShapesMode(
         }));
         allContours.push(scaledTraced);
         console.log('[Shapes] Component', i, ': non-shape (', (compRatio * 100).toFixed(1), '% area) → traced contour with', scaledTraced.length, 'points');
+      } else {
+        console.log('[Shapes] Component', i, ': too small to trace (', comp.area, 'px,', (compRatio * 100).toFixed(3), '% area), skipping');
       }
     }
   }
