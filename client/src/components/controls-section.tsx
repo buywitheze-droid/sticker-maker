@@ -378,7 +378,7 @@ export default function ControlsSection({
                 <p className="text-xs text-gray-600">
                   <span className="font-medium">Smart Detection:</span>{' '}
                   {detectedAlgorithm === 'complex' ? 'Standard' :
-                   detectedAlgorithm === 'scattered' ? 'Scattered/Multi-part' :
+                   detectedAlgorithm === 'scattered' ? 'Multi-part/Smooth' :
                    'Detecting...'}
                 </p>
                 {detectedAlgorithm && strokeSettings.enabled && (() => {
@@ -387,8 +387,8 @@ export default function ControlsSection({
                   const effectiveMode = strokeSettings.contourMode ?? autoMode;
                   const isOverridden = strokeSettings.contourMode !== undefined;
                   const modes = [
-                    { key: 'smooth' as const, label: 'Smooth' },
-                    { key: 'scattered' as const, label: 'Scattered' },
+                    { key: 'smooth' as const, label: 'Sharp' },
+                    { key: 'scattered' as const, label: 'Smooth' },
                   ];
                   return (
                     <div className="flex items-center gap-1.5">
