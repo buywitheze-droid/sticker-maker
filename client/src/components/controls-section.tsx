@@ -37,6 +37,9 @@ interface ControlsSectionProps {
   isRemovingBackground?: boolean;
   onSpotPreviewChange?: (data: SpotPreviewData) => void;
   detectedAlgorithm?: DetectedAlgorithm;
+  artboardWidth?: number;
+  artboardHeight?: number;
+  onArtboardHeightChange?: (height: number) => void;
 }
 
 export default function ControlsSection({
@@ -56,7 +59,10 @@ export default function ControlsSection({
   onRemoveBackground,
   isRemovingBackground,
   onSpotPreviewChange,
-  detectedAlgorithm
+  detectedAlgorithm,
+  artboardWidth = 24,
+  artboardHeight = 12,
+  onArtboardHeightChange
 }: ControlsSectionProps) {
   const { toast } = useToast();
   const [showContourOptions, setShowContourOptions] = useState(true);
@@ -219,6 +225,31 @@ export default function ControlsSection({
 
   return (
     <div className="space-y-4">
+      {/* Gangsheet Size */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center">
+              <Layers className="w-4 h-4 text-cyan-600" />
+            </div>
+            <span className="text-sm font-medium text-gray-700">Gangsheet Size</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">{artboardWidth}"</span>
+            <span className="text-gray-300">×</span>
+            <select
+              value={artboardHeight}
+              onChange={(e) => onArtboardHeightChange?.(parseInt(e.target.value))}
+              className="text-sm font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded px-2 py-1 cursor-pointer focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+            >
+              {Array.from({ length: 13 }, (_, i) => 12 + i).map((h) => (
+                <option key={h} value={h}>{h}"</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* All Design Options Card */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         {/* Sticker Size Section - HIDDEN */}
@@ -340,8 +371,8 @@ export default function ControlsSection({
 
         {/* Outline Type Section - HIDDEN */}
 
-        {/* Contour Options - Collapsible, Hidden when PDF has CutContour */}
-        {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+        {/* Contour Options - HIDDEN */}
+        {false && strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
           <div className="border-b border-gray-100">
             <button 
               onClick={handleContourOptionsToggle}
@@ -513,8 +544,8 @@ export default function ControlsSection({
           </div>
         )}
 
-        {/* Spot Colors Button & Panel - Visible in contour mode, shape mode, OR when PDF has CutContour */}
-        {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && imageInfo && (
+        {/* Fluorescent Color Selection - visible when image is loaded */}
+        {imageInfo && (
           <div className="border-b border-gray-100">
             <button
               onClick={handleSpotColorsToggle}
@@ -522,7 +553,7 @@ export default function ControlsSection({
             >
               <div className="flex items-center gap-2">
                 <Palette className="w-4 h-4 text-purple-500" />
-                <span className="text-sm font-medium text-gray-700">Spot Colors</span>
+                <span className="text-sm font-medium text-gray-700">Fluorescent Color Selection</span>
               </div>
               <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
             </button>

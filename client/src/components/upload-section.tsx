@@ -67,7 +67,6 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
 
   return (
     <div className="w-full">
-      {/* Drag and Drop Zone */}
       <div 
         onDrop={handleDrop}
         onDragOver={handleDragOver}
@@ -75,26 +74,35 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
         className={`
           rounded-xl text-center transition-all duration-200 cursor-pointer
           ${isEmptyState 
-            ? 'border-2 border-dashed border-gray-300 hover:border-cyan-400 bg-gradient-to-br from-white to-gray-50 p-12 hover:shadow-lg hover:shadow-cyan-500/10' 
+            ? 'p-10 hover:shadow-2xl hover:scale-[1.02] transform transition-transform duration-300' 
             : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 px-4 py-2 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/40'
           }
         `}
+        style={isEmptyState ? {
+          background: 'linear-gradient(135deg, #FF00FF 0%, #DFFF00 25%, #39FF14 50%, #FF6600 75%, #FF00FF 100%)',
+          boxShadow: '0 0 40px rgba(255, 0, 255, 0.3), 0 0 80px rgba(57, 255, 20, 0.2), 0 8px 32px rgba(0,0,0,0.15)',
+        } : undefined}
       >
         <div className={`flex items-center ${isEmptyState ? 'flex-col' : 'gap-2'}`}>
           {isEmptyState && (
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-cyan-50 to-blue-50 shadow-inner flex items-center justify-center mb-4">
-              <Upload className="w-10 h-10 text-cyan-500" />
-            </div>
+            <>
+              <div className="w-20 h-20 rounded-2xl bg-white/20 backdrop-blur-sm shadow-inner flex items-center justify-center mb-5 border border-white/30">
+                <Upload className="w-10 h-10 text-white drop-shadow-lg" />
+              </div>
+              <p className="font-bold text-white text-2xl mb-1 drop-shadow-lg tracking-wide">
+                Make a Gangsheet
+              </p>
+              <p className="text-sm text-white/80 mb-4">
+                PNG, JPEG, or PDF
+              </p>
+            </>
           )}
           {!isEmptyState && (
             <Upload className="w-4 h-4 text-white" />
           )}
-          <p className={`font-medium ${isEmptyState ? 'text-gray-700 text-lg mb-2' : 'text-white text-sm'}`}>
-            {isEmptyState ? 'Drop your image here' : 'Change Image'}
-          </p>
-          {isEmptyState && (
-            <p className="text-sm text-gray-400">
-              PNG, JPEG, or PDF with CutContour
+          {!isEmptyState && (
+            <p className="font-medium text-white text-sm">
+              Change Image
             </p>
           )}
         </div>
@@ -107,6 +115,11 @@ export default function UploadSection({ onImageUpload, onPDFUpload, showCutLineI
         />
       </div>
 
+      {isEmptyState && (
+        <p className="text-center mt-4 text-sm font-medium text-gray-500">
+          Fluorescent ink will glow under Black UV light!
+        </p>
+      )}
     </div>
   );
 }

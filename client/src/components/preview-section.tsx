@@ -142,7 +142,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const scaleX = containerWidth / previewDims.width;
       const scaleY = containerHeight / previewDims.height;
       const fitZoom = Math.min(scaleX, scaleY, 1); // max at 100%
-      setZoom(Math.max(0.2, Math.round(fitZoom * 20) / 20)); // round to 5% steps
+      setZoom(Math.max(1, Math.round(fitZoom * 20) / 20)); // round to 5% steps
       setPanX(0);
       setPanY(0);
     }, [previewDims.height, previewDims.width]);
@@ -158,7 +158,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const handleWheel = useCallback((e: React.WheelEvent) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoom(prev => Math.max(0.2, Math.min(3, prev + delta)));
+      setZoom(prev => Math.max(1, Math.min(3, prev + delta)));
     }, []);
     
     // Auto-set zoom to 75% for images with no empty space around them
@@ -179,12 +179,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       holographicCacheRef.current = null;
       
       // Check if image has minimal empty space around the edges
-      const hasMinimalEmptySpace = checkImageHasMinimalEmptySpace(imageInfo.image);
-      if (hasMinimalEmptySpace) {
-        setZoom(0.75);
-      } else {
-        setZoom(1);
-      }
+      setZoom(1);
     }, [imageInfo]);
 
     useEffect(() => {
@@ -604,36 +599,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         // Regular image rendering (non-PDF or no CutContour)
         
-        // Draw artboard: light gray canvas bg, white artboard, image on artboard
-        ctx.fillStyle = '#e5e7eb';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Draw white artboard filling the canvas (aspect ratio matches artboard)
-        const artboardPadding = Math.round(Math.min(canvas.width, canvas.height) * 0.02);
-        const abX = artboardPadding;
-        const abY = artboardPadding;
-        const abW = canvas.width - artboardPadding * 2;
-        const abH = canvas.height - artboardPadding * 2;
-
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(abX, abY, abW, abH);
-
-        // Draw subtle artboard border
-        ctx.strokeStyle = '#d1d5db';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(abX, abY, abW, abH);
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(abX, abY, abW, abH);
-        ctx.clip();
-        ctx.translate(abX, abY);
-        if (shapeSettings.enabled) {
-          drawShapePreview(ctx, abW, abH);
-        } else {
-          drawImageWithResizePreview(ctx, abW, abH);
+        // Transparent artboard - checkerboard background fills the entire canvas
+        const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
+        if (checkerPattern) {
+          ctx.fillStyle = checkerPattern;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
-        ctx.restore();
+
+        if (shapeSettings.enabled) {
+          drawShapePreview(ctx, canvas.width, canvas.height);
+        } else {
+          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
+        }
 
       }
       
@@ -1298,7 +1275,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setZoom(prev => Math.max(prev - 0.1, 0.2))}
+                  onClick={() => setZoom(prev => Math.max(prev - 0.1, 1))}
                   className="h-7 w-7 p-0 hover:bg-gray-100 rounded-md"
                   title="Zoom Out"
                 >
