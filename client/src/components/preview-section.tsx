@@ -789,8 +789,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
       const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
+      const fluorYColors = spotPreviewData.colors.filter(c => c.spotFluorY);
+      const fluorMColors = spotPreviewData.colors.filter(c => c.spotFluorM);
+      const fluorGColors = spotPreviewData.colors.filter(c => c.spotFluorG);
+      const fluorOrangeColors = spotPreviewData.colors.filter(c => c.spotFluorOrange);
       
-      if (whiteColors.length === 0 && glossColors.length === 0) {
+      if (whiteColors.length === 0 && glossColors.length === 0 && fluorYColors.length === 0 && fluorMColors.length === 0 && fluorGColors.length === 0 && fluorOrangeColors.length === 0) {
         spotPulseRef.current = 1;
         if (spotAnimFrameRef.current !== null) {
           cancelAnimationFrame(spotAnimFrameRef.current);
@@ -835,12 +839,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
       const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
+      const fluorYColors = spotPreviewData.colors.filter(c => c.spotFluorY);
+      const fluorMColors = spotPreviewData.colors.filter(c => c.spotFluorM);
+      const fluorGColors = spotPreviewData.colors.filter(c => c.spotFluorG);
+      const fluorOrangeColors = spotPreviewData.colors.filter(c => c.spotFluorOrange);
       
-      if (whiteColors.length === 0 && glossColors.length === 0) return null;
+      const hasAny = whiteColors.length > 0 || glossColors.length > 0 || fluorYColors.length > 0 || fluorMColors.length > 0 || fluorGColors.length > 0 || fluorOrangeColors.length > 0;
+      if (!hasAny) return null;
       
       const img = source || imageInfo.image;
       const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
-      const cacheKey = `${imgIdentity}-${img.width}x${img.height}-${whiteColors.map(c => c.hex).join(',')}-${glossColors.map(c => c.hex).join(',')}`;
+      const cacheKey = `${imgIdentity}-${img.width}x${img.height}-w:${whiteColors.map(c => c.hex).join(',')}-g:${glossColors.map(c => c.hex).join(',')}-fy:${fluorYColors.map(c => c.hex).join(',')}-fm:${fluorMColors.map(c => c.hex).join(',')}-fg:${fluorGColors.map(c => c.hex).join(',')}-fo:${fluorOrangeColors.map(c => c.hex).join(',')}`;
       
       if (spotOverlayCacheRef.current?.key === cacheKey) {
         return spotOverlayCacheRef.current.canvas;
@@ -863,18 +872,29 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       const overlayData = overlayCtx.createImageData(srcCanvas.width, srcCanvas.height);
       
-      const parsedWhite = whiteColors.map(c => ({
+      const parseColors = (colors: typeof whiteColors) => colors.map(c => ({
         r: parseInt(c.hex.slice(1, 3), 16),
         g: parseInt(c.hex.slice(3, 5), 16),
         b: parseInt(c.hex.slice(5, 7), 16),
       }));
-      const parsedGloss = glossColors.map(c => ({
-        r: parseInt(c.hex.slice(1, 3), 16),
-        g: parseInt(c.hex.slice(3, 5), 16),
-        b: parseInt(c.hex.slice(5, 7), 16),
-      }));
-      const tolerance = 30;
       
+      const parsedWhite = parseColors(whiteColors);
+      const parsedGloss = parseColors(glossColors);
+      const parsedFluorY = parseColors(fluorYColors);
+      const parsedFluorM = parseColors(fluorMColors);
+      const parsedFluorG = parseColors(fluorGColors);
+      const parsedFluorOrange = parseColors(fluorOrangeColors);
+      
+      const colorGroups: { parsed: typeof parsedWhite; overlayR: number; overlayG: number; overlayB: number }[] = [
+        ...parsedWhite.length > 0 ? [{ parsed: parsedWhite, overlayR: 255, overlayG: 255, overlayB: 255 }] : [],
+        ...parsedGloss.length > 0 ? [{ parsed: parsedGloss, overlayR: 180, overlayG: 180, overlayB: 190 }] : [],
+        ...parsedFluorY.length > 0 ? [{ parsed: parsedFluorY, overlayR: 223, overlayG: 255, overlayB: 0 }] : [],
+        ...parsedFluorM.length > 0 ? [{ parsed: parsedFluorM, overlayR: 255, overlayG: 0, overlayB: 255 }] : [],
+        ...parsedFluorG.length > 0 ? [{ parsed: parsedFluorG, overlayR: 57, overlayG: 255, overlayB: 20 }] : [],
+        ...parsedFluorOrange.length > 0 ? [{ parsed: parsedFluorOrange, overlayR: 255, overlayG: 102, overlayB: 0 }] : [],
+      ];
+      
+      const tolerance = 30;
       const pixels = srcData.data;
       const out = overlayData.data;
       const len = pixels.length;
@@ -887,24 +907,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const g = pixels[idx + 1];
         const b = pixels[idx + 2];
         
-        let matched = false;
-        for (let j = 0; j < parsedWhite.length; j++) {
-          const t = parsedWhite[j];
-          if (Math.abs(r - t.r) <= tolerance && Math.abs(g - t.g) <= tolerance && Math.abs(b - t.b) <= tolerance) {
-            out[idx] = 255; out[idx + 1] = 255; out[idx + 2] = 255; out[idx + 3] = 255;
-            matched = true;
-            break;
-          }
-        }
-        
-        if (!matched) {
-          for (let j = 0; j < parsedGloss.length; j++) {
-            const t = parsedGloss[j];
+        for (const group of colorGroups) {
+          let matched = false;
+          for (const t of group.parsed) {
             if (Math.abs(r - t.r) <= tolerance && Math.abs(g - t.g) <= tolerance && Math.abs(b - t.b) <= tolerance) {
-              out[idx] = 180; out[idx + 1] = 180; out[idx + 2] = 190; out[idx + 3] = 255;
+              out[idx] = group.overlayR; out[idx + 1] = group.overlayG; out[idx + 2] = group.overlayB; out[idx + 3] = 255;
+              matched = true;
               break;
             }
           }
+          if (matched) break;
         }
       }
       

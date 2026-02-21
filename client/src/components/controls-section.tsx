@@ -117,9 +117,18 @@ export default function ControlsSection({
   };
 
   const updateSpotColor = (index: number, field: 'spotWhite' | 'spotGloss' | 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange', value: boolean) => {
-    setExtractedColors(prev => prev.map((color, i) => 
-      i === index ? { ...color, [field]: value } : color
-    ));
+    const fluorFields = ['spotFluorY', 'spotFluorM', 'spotFluorG', 'spotFluorOrange'];
+    const isFluorField = fluorFields.includes(field);
+
+    setExtractedColors(prev => prev.map((color, i) => {
+      if (i === index) {
+        return { ...color, [field]: value };
+      }
+      if (isFluorField && value) {
+        return { ...color, [field]: false };
+      }
+      return color;
+    }));
   };
 
   // Notify parent of spot preview changes
