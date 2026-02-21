@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings } from "./image-editor";
+import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour } from "./image-editor";
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
@@ -25,10 +25,11 @@ interface PreviewSectionProps {
   detectedShapeInfo?: DetectedShapeInfo | null;
   detectedAlgorithm?: DetectedAlgorithm;
   onStrokeChange?: (settings: Partial<StrokeSettings>) => void;
+  lockedContour?: LockedContour | null;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -292,7 +293,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return colorMap[color] || color;
     };
 
-    useImperativeHandle(ref, () => canvasRef.current!, []);
+    useImperativeHandle(ref, () => {
+      const canvas = canvasRef.current!;
+      (canvas as any).getContourCanvasInfo = () => {
+        if (contourCacheRef.current?.canvas) {
+          return {
+            width: contourCacheRef.current.canvas.width,
+            height: contourCacheRef.current.canvas.height,
+          };
+        }
+        return null;
+      };
+      return canvas;
+    }, []);
 
     const getCheckerboardPattern = (ctx: CanvasRenderingContext2D, w: number, h: number): CanvasPattern | null => {
       if (checkerboardPatternRef.current?.width === w && checkerboardPatternRef.current?.height === h) {
@@ -659,10 +672,44 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
+      
+      if (lockedContour && lockedContour.previewPathPoints.length > 2 && canvas) {
+        const viewPadding = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
+        const availW = canvas.width - (viewPadding * 2);
+        const availH = canvas.height - (viewPadding * 2);
+        
+        const lcAspect = lockedContour.contourCanvasWidth / lockedContour.contourCanvasHeight;
+        let lcW, lcH;
+        if (lcAspect > (availW / availH)) {
+          lcW = availW;
+          lcH = availW / lcAspect;
+        } else {
+          lcH = availH;
+          lcW = availH * lcAspect;
+        }
+        const lcX = (canvas.width - lcW) / 2;
+        const lcY = (canvas.height - lcH) / 2;
+        const scaleXL = lcW / lockedContour.contourCanvasWidth;
+        const scaleYL = lcH / lockedContour.contourCanvasHeight;
+        
+        ctx.save();
+        ctx.strokeStyle = '#3B82F6';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        const pts = lockedContour.previewPathPoints;
+        ctx.moveTo(lcX + pts[0].x * scaleXL, lcY + pts[0].y * scaleYL);
+        for (let i = 1; i < pts.length; i++) {
+          ctx.lineTo(lcX + pts[i].x * scaleXL, lcY + pts[i].y * scaleYL);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {

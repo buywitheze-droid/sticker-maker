@@ -76,3 +76,20 @@ export interface SpotColorData {
   spotWhite: boolean;
   spotGloss: boolean;
 }
+
+export interface LockedContour {
+  label: string;
+  pathPoints: Array<{x: number; y: number}>;
+  previewPathPoints: Array<{x: number; y: number}>;
+  widthInches: number;
+  heightInches: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  backgroundColor: string;
+  effectiveDPI: number;
+  minPathX: number;
+  minPathY: number;
+  bleedInches: number;
+  contourCanvasWidth: number;
+  contourCanvasHeight: number;
+}

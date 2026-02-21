@@ -1715,7 +1715,8 @@ export async function downloadContourPDF(
   cachedContourData?: CachedContourData,
   _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
   _singleArtboard?: boolean,
-  cutContourLabel: string = 'CutContour'
+  cutContourLabel: string = 'CutContour',
+  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number } | null
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -1882,8 +1883,9 @@ export async function downloadContourPDF(
     height: imageHeightPts,
   });
   
+  const context = pdfDoc.context;
+  
   if (pathPoints.length > 2) {
-    const context = pdfDoc.context;
     
     const tintFunction = context.obj({
       FunctionType: 2,
@@ -1928,9 +1930,60 @@ export async function downloadContourPDF(
     }
   }
   
+  if (lockedContour && lockedContour.pathPoints.length > 2) {
+    if (lockedContour.label !== cutContourLabel) {
+      const lockedTintFunction = context.obj({
+        FunctionType: 2,
+        Domain: [0, 1],
+        C0: [0, 0, 0, 0],
+        C1: [0, 1, 0, 0],
+        N: 1,
+      });
+      const lockedTintRef = context.register(lockedTintFunction);
+      
+      const lockedSepCS = context.obj([
+        PDFName.of('Separation'),
+        PDFName.of(lockedContour.label),
+        PDFName.of('DeviceCMYK'),
+        lockedTintRef,
+      ]);
+      const lockedSepRef = context.register(lockedSepCS);
+      
+      const resources = page.node.Resources();
+      if (resources) {
+        let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
+        if (!colorSpaceDict) {
+          colorSpaceDict = context.obj({});
+          resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
+        }
+        (colorSpaceDict as PDFDict).set(PDFName.of(lockedContour.label), lockedSepRef);
+      }
+    }
+    
+    const lockedPathOps = contourPointsToPDFPathOps(lockedContour.pathPoints, heightInches, lockedContour.label);
+    
+    const existingContents = page.node.Contents();
+    if (existingContents) {
+      const contentStream = context.stream(lockedPathOps);
+      const contentStreamRef = context.register(contentStream);
+      
+      if (existingContents instanceof PDFArray) {
+        existingContents.push(contentStreamRef);
+      } else {
+        const newContents = context.obj([existingContents, contentStreamRef]);
+        page.node.set(PDFName.of('Contents'), newContents);
+      }
+    }
+  }
+  
+  const allLabels = [cutContourLabel];
+  if (lockedContour?.label && lockedContour.label !== cutContourLabel) {
+    allLabels.push(lockedContour.label);
+  }
+  
   pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
-  pdfDoc.setKeywords([cutContourLabel, 'spot color', 'cutting', 'vector']);
+  pdfDoc.setSubject(`Contains ${allLabels.join(', ')} spot color for cutting machines`);
+  pdfDoc.setKeywords([...allLabels, 'spot color', 'cutting', 'vector']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });

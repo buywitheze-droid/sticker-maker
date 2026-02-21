@@ -19,8 +19,8 @@ import type { ParsedPDFData } from "@/lib/pdf-parser";
 import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 import { useToast } from "@/hooks/use-toast";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize } from "@/lib/types";
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour } from "@/lib/types";
 
 export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: () => void } = {}) {
   const { toast } = useToast();
@@ -67,9 +67,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
   const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
   const [detectedShapeInfo, setDetectedShapeInfo] = useState<DetectedShapeInfo | null>(null);
-  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'perfCutContour' | 'KissCut'>('CutContour');
+  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'PerfCutContour' | 'KissCut'>('CutContour');
   const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
   const cutLabelRef = useRef<HTMLDivElement>(null);
+  const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
+  const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
+  const applyAddRef = useRef<HTMLDivElement>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -114,12 +117,46 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       if (cutLabelRef.current && !cutLabelRef.current.contains(e.target as Node)) {
         setShowCutLabelDropdown(false);
       }
+      if (applyAddRef.current && !applyAddRef.current.contains(e.target as Node)) {
+        setShowApplyAddDropdown(false);
+      }
     };
-    if (showCutLabelDropdown) {
+    if (showCutLabelDropdown || showApplyAddDropdown) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showCutLabelDropdown]);
+  }, [showCutLabelDropdown, showApplyAddDropdown]);
+
+  const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
+    const workerManager = getContourWorkerManager();
+    const contourData = workerManager.getCachedContourData();
+    if (!contourData) return;
+
+    const previewCanvas = canvasRef.current as any;
+    const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
+    const cw = contourCanvasInfo?.width ?? 1;
+    const ch = contourCanvasInfo?.height ?? 1;
+
+    setLockedContour({
+      label: cutContourLabel,
+      pathPoints: [...contourData.pathPoints],
+      previewPathPoints: [...contourData.previewPathPoints],
+      widthInches: contourData.widthInches,
+      heightInches: contourData.heightInches,
+      imageOffsetX: contourData.imageOffsetX,
+      imageOffsetY: contourData.imageOffsetY,
+      backgroundColor: contourData.backgroundColor,
+      effectiveDPI: contourData.effectiveDPI,
+      minPathX: contourData.minPathX,
+      minPathY: contourData.minPathY,
+      bleedInches: contourData.bleedInches,
+      contourCanvasWidth: cw,
+      contourCanvasHeight: ch,
+    });
+
+    setCutContourLabel(newLabel);
+    setShowApplyAddDropdown(false);
+  }, [cutContourLabel]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
@@ -867,7 +904,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             cachedData,
             spotColors,
             singleArtboard,
-            cutContourLabel
+            cutContourLabel,
+            lockedContour ? { label: lockedContour.label, pathPoints: lockedContour.pathPoints, widthInches: lockedContour.widthInches, heightInches: lockedContour.heightInches } : null
           );
         } else if (shapeSettings.enabled) {
           // Shape background mode: Download PDF with shape + CutContour spot color
@@ -1015,30 +1053,68 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             </div>
             
             {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
-              <div className="relative" ref={cutLabelRef}>
-                <button
-                  onClick={() => setShowCutLabelDropdown(prev => !prev)}
-                  className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100 hover:bg-fuchsia-100 transition-colors cursor-pointer"
-                >
-                  <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
-                  <span className="text-[10px] text-fuchsia-600 font-medium">{cutContourLabel}</span>
-                  <svg className="w-2.5 h-2.5 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                </button>
-                {showCutLabelDropdown && (
-                  <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
-                    {(['CutContour', 'perfCutContour', 'KissCut'] as const).map((label) => (
-                      <button
-                        key={label}
-                        onClick={() => { setCutContourLabel(label); setShowCutLabelDropdown(false); }}
-                        className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-fuchsia-50 transition-colors ${
-                          cutContourLabel === label ? 'text-fuchsia-600 font-medium bg-fuchsia-50' : 'text-gray-600'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
+              <div className="flex items-center gap-1.5">
+                {lockedContour && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded border border-blue-200">
+                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                    <span className="text-[10px] text-blue-600 font-medium">{lockedContour.label}</span>
+                    <svg className="w-2.5 h-2.5 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    <button
+                      onClick={() => setLockedContour(null)}
+                      className="ml-0.5 text-blue-400 hover:text-blue-600 transition-colors"
+                      title="Remove locked contour"
+                    >
+                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
                   </div>
                 )}
+                <div className="relative" ref={cutLabelRef}>
+                  <button
+                    onClick={() => setShowCutLabelDropdown(prev => !prev)}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100 hover:bg-fuchsia-100 transition-colors cursor-pointer"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
+                    <span className="text-[10px] text-fuchsia-600 font-medium">{cutContourLabel}</span>
+                    <svg className="w-2.5 h-2.5 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  {showCutLabelDropdown && (
+                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
+                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
+                        <button
+                          key={label}
+                          onClick={() => { setCutContourLabel(label); setShowCutLabelDropdown(false); }}
+                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-fuchsia-50 transition-colors ${
+                            cutContourLabel === label ? 'text-fuchsia-600 font-medium bg-fuchsia-50' : 'text-gray-600'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="relative" ref={applyAddRef}>
+                  <button
+                    onClick={() => setShowApplyAddDropdown(prev => !prev)}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100 transition-colors cursor-pointer"
+                  >
+                    <span className="text-[10px] text-gray-600 font-medium">Apply and Add..</span>
+                    <svg className="w-2.5 h-2.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  {showApplyAddDropdown && (
+                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
+                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
+                        <button
+                          key={label}
+                          onClick={() => handleApplyAndAdd(label)}
+                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-gray-50 transition-colors text-gray-600`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1058,6 +1134,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             detectedShapeInfo={detectedShapeInfo}
             detectedAlgorithm={detectedAlgorithm}
             onStrokeChange={handleStrokeChange}
+            lockedContour={lockedContour}
           />
         </div>
       </div>
