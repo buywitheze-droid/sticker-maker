@@ -512,8 +512,8 @@ function processContour(
       detectedAlgorithm
     );
     if (shapesResult) return shapesResult;
-    console.log('[Worker] Shapes mode fallback: using sharp mode instead');
-    effectiveMode = 'sharp';
+    console.log('[Worker] Shapes mode fallback: using smooth mode instead');
+    effectiveMode = 'smooth';
   }
   
   // Sharp corners for 'sharp' mode, rounded for 'smooth' and 'scattered'
