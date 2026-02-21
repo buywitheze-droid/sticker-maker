@@ -105,7 +105,7 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
           )}
           {!isEmptyState && (
             <p className="font-medium text-white text-sm">
-              Change Image
+              Add Design
             </p>
           )}
         </div>

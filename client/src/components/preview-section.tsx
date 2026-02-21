@@ -4,8 +4,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour, type ImageTransform } from "./image-editor";
+import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour, type ImageTransform, type DesignItem } from "./image-editor";
 import { computeLayerRect } from "@/lib/types";
+
+const DPI_SCALE = 2;
+const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4'/%3E%3Cpath d='m19 4 0 4-4 0'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4'/%3E%3Cpath d='m5 20 0-4 4 0'/%3E%3C/svg%3E") 10 10, pointer`;
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
@@ -31,10 +34,13 @@ interface PreviewSectionProps {
   artboardHeight?: number;
   designTransform?: ImageTransform;
   onTransformChange?: (transform: ImageTransform) => void;
+  designs?: DesignItem[];
+  selectedDesignId?: string | null;
+  onSelectDesign?: (id: string | null) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12, designTransform, onTransformChange }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, onSelectDesign }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -62,6 +68,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const contourTransformRef = useRef<{x: number; y: number; width: number; height: number; canvasW: number; canvasH: number} | null>(null);
     const lastCanvasDimsRef = useRef<{width: number; height: number}>({width: 0, height: 0});
     
+    const [editingRotation, setEditingRotation] = useState(false);
+    const [rotationInput, setRotationInput] = useState('0');
+
     const isDraggingRef = useRef(false);
     const isResizingRef = useRef(false);
     const isRotatingRef = useRef(false);
@@ -138,22 +147,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!rect) return null;
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
-      const rad = (transformRef.current.rotation * Math.PI) / 180;
-      const cos = Math.cos(rad);
-      const sin = Math.sin(rad);
+      const hitR = 14 * DPI_SCALE;
+      const rotOff = 24 * DPI_SCALE;
 
       for (const h of handles) {
         const dx = h.x - cx;
         const dy = h.y - cy;
         const len = Math.sqrt(dx * dx + dy * dy);
         if (len > 0) {
-          const rotX = cx + (dx / len) * (len + 24);
-          const rotY = cy + (dy / len) * (len + 24);
-          if (Math.abs(px - rotX) < 14 && Math.abs(py - rotY) < 14) {
+          const rotX = cx + (dx / len) * (len + rotOff);
+          const rotY = cy + (dy / len) * (len + rotOff);
+          if (Math.abs(px - rotX) < hitR && Math.abs(py - rotY) < hitR) {
             return { type: 'rotate', id: `rot-${h.id}` };
           }
         }
-        if (Math.abs(px - h.x) < 14 && Math.abs(py - h.y) < 14) {
+        if (Math.abs(px - h.x) < hitR && Math.abs(py - h.y) < hitR) {
           return { type: 'resize', id: h.id };
         }
       }
@@ -169,42 +177,82 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return { x, y };
     }, []);
 
+    const findDesignAtPoint = useCallback((px: number, py: number): string | null => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      for (let i = designs.length - 1; i >= 0; i--) {
+        const d = designs[i];
+        const rect = computeLayerRect(
+          d.imageInfo.image.width, d.imageInfo.image.height,
+          d.transform, canvas.width, canvas.height,
+          artboardWidth, artboardHeight,
+          d.widthInches, d.heightInches,
+        );
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        const rad = -(d.transform.rotation * Math.PI) / 180;
+        const dx = px - cx;
+        const dy = py - cy;
+        const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+        const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+        if (Math.abs(lx) <= rect.width / 2 && Math.abs(ly) <= rect.height / 2) {
+          return d.id;
+        }
+      }
+      return null;
+    }, [designs, artboardWidth, artboardHeight]);
+
     const handleInteractionStart = useCallback((clientX: number, clientY: number) => {
-      if (!imageInfo || !onTransformChange) return;
       const local = canvasToLocal(clientX, clientY);
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      const handleHit = hitTestHandles(local.x, local.y);
-      if (handleHit) {
-        if (handleHit.type === 'resize') {
-          isResizingRef.current = true;
-          const rect = getDesignRect();
-          if (rect) {
-            const cx = rect.x + rect.width / 2;
-            const cy = rect.y + rect.height / 2;
-            resizeStartDistRef.current = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
-            resizeStartSRef.current = transformRef.current.s;
+      if (selectedDesignId && imageInfo && onTransformChange) {
+        const handleHit = hitTestHandles(local.x, local.y);
+        if (handleHit) {
+          if (handleHit.type === 'resize') {
+            isResizingRef.current = true;
+            if (containerRef.current) containerRef.current.style.cursor = 'nwse-resize';
+            const rect = getDesignRect();
+            if (rect) {
+              const cx = rect.x + rect.width / 2;
+              const cy = rect.y + rect.height / 2;
+              resizeStartDistRef.current = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
+              resizeStartSRef.current = transformRef.current.s;
+            }
+          } else {
+            isRotatingRef.current = true;
+            if (containerRef.current) containerRef.current.style.cursor = 'grabbing';
+            const rect = getDesignRect();
+            if (rect) {
+              const cx = rect.x + rect.width / 2;
+              const cy = rect.y + rect.height / 2;
+              rotateStartAngleRef.current = Math.atan2(local.y - cy, local.x - cx);
+              rotateStartRotationRef.current = transformRef.current.rotation;
+            }
           }
-        } else {
-          isRotatingRef.current = true;
-          const rect = getDesignRect();
-          if (rect) {
-            const cx = rect.x + rect.width / 2;
-            const cy = rect.y + rect.height / 2;
-            rotateStartAngleRef.current = Math.atan2(local.y - cy, local.x - cx);
-            rotateStartRotationRef.current = transformRef.current.rotation;
-          }
+          return;
         }
+
+        if (hitTestDesign(local.x, local.y)) {
+          isDraggingRef.current = true;
+          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          dragStartMouseRef.current = { x: clientX, y: clientY };
+          dragStartTransformRef.current = { ...transformRef.current };
+          return;
+        }
+      }
+
+      const hitId = findDesignAtPoint(local.x, local.y);
+      if (hitId && hitId !== selectedDesignId) {
+        onSelectDesign?.(hitId);
         return;
       }
 
-      if (hitTestDesign(local.x, local.y)) {
-        isDraggingRef.current = true;
-        dragStartMouseRef.current = { x: clientX, y: clientY };
-        dragStartTransformRef.current = { ...transformRef.current };
+      if (!hitId) {
+        onSelectDesign?.(null);
       }
-    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, getDesignRect]);
+    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, getDesignRect, selectedDesignId, findDesignAtPoint, onSelectDesign]);
 
     const handleInteractionMove = useCallback((clientX: number, clientY: number) => {
       if (!onTransformChange) return;
@@ -258,6 +306,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       isDraggingRef.current = false;
       isResizingRef.current = false;
       isRotatingRef.current = false;
+      if (containerRef.current) containerRef.current.style.cursor = 'default';
     }, []);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -266,8 +315,26 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [handleInteractionStart]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-      handleInteractionMove(e.clientX, e.clientY);
-    }, [handleInteractionMove]);
+      if (isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
+        handleInteractionMove(e.clientX, e.clientY);
+        return;
+      }
+      if (!containerRef.current) return;
+      const local = canvasToLocal(e.clientX, e.clientY);
+      if (imageInfo && selectedDesignId) {
+        const handleHit = hitTestHandles(local.x, local.y);
+        if (handleHit) {
+          containerRef.current.style.cursor = handleHit.type === 'resize' ? 'nwse-resize' : ROTATE_CURSOR;
+          return;
+        }
+        if (hitTestDesign(local.x, local.y)) {
+          containerRef.current.style.cursor = 'move';
+          return;
+        }
+      }
+      const hitId = findDesignAtPoint(local.x, local.y);
+      containerRef.current.style.cursor = hitId ? 'pointer' : 'default';
+    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, hitTestHandles, hitTestDesign, findDesignAtPoint]);
 
     const handleMouseUp = useCallback(() => {
       handleInteractionEnd();
@@ -574,8 +641,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
     }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey, detectedShapeType, detectedShapeInfo]);
 
+    const drawSingleDesign = useCallback((ctx: CanvasRenderingContext2D, design: DesignItem, cw: number, ch: number) => {
+      const rect = computeLayerRect(
+        design.imageInfo.image.width, design.imageInfo.image.height,
+        design.transform, cw, ch,
+        artboardWidth, artboardHeight,
+        design.widthInches, design.heightInches,
+      );
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((design.transform.rotation * Math.PI) / 180);
+      ctx.drawImage(design.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+      ctx.restore();
+    }, [artboardWidth, artboardHeight]);
+
     useEffect(() => {
-      if (!canvasRef.current || !imageInfo) return;
+      if (!canvasRef.current || (!imageInfo && designs.length === 0)) return;
 
       const doRender = () => {
       const canvas = canvasRef.current;
@@ -583,8 +666,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const canvasWidth = previewDims.width;
-      const canvasHeight = previewDims.height;
+      const canvasWidth = Math.round(previewDims.width * DPI_SCALE);
+      const canvasHeight = Math.round(previewDims.height * DPI_SCALE);
       if (lastCanvasDimsRef.current.width !== canvasWidth || lastCanvasDimsRef.current.height !== canvasHeight) {
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
@@ -593,9 +676,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
       }
 
-      // Determine which background color to use:
-      // - For PDFs with CutContour, use strokeSettings.backgroundColor
-      // - For regular images, use local backgroundColor state
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      for (const design of designs) {
+        if (design.id === selectedDesignId) continue;
+        drawSingleDesign(ctx, design, canvasWidth, canvasHeight);
+      }
+
+      if (!imageInfo) return;
+
       const hasPdfCutContour = imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour;
       const effectiveBackgroundColor = hasPdfCutContour 
         ? strokeSettings.backgroundColor 
@@ -778,7 +868,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, drawSingleDesign]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {
@@ -1171,8 +1261,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       ctx.save();
       ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5 * DPI_SCALE;
+      ctx.setLineDash([6 * DPI_SCALE, 4 * DPI_SCALE]);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -1180,27 +1270,28 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.stroke();
       ctx.setLineDash([]);
 
-      const handleSize = 10;
+      const handleSize = 10 * DPI_SCALE;
       ctx.fillStyle = '#ffffff';
       ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * DPI_SCALE;
       for (const p of pts) {
         ctx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
         ctx.strokeRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
       }
 
+      const rotOff = 24 * DPI_SCALE;
       ctx.fillStyle = '#00ffff';
       for (const p of pts) {
         const dx = p.x - cx;
         const dy = p.y - cy;
         const len = Math.sqrt(dx * dx + dy * dy);
         if (len > 0) {
-          const rx = cx + (dx / len) * (len + 24);
-          const ry = cy + (dy / len) * (len + 24);
+          const rx = cx + (dx / len) * (len + rotOff);
+          const ry = cy + (dy / len) * (len + rotOff);
 
           ctx.save();
           ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-          ctx.lineWidth = 1;
+          ctx.lineWidth = 1 * DPI_SCALE;
           ctx.beginPath();
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(rx, ry);
@@ -1208,7 +1299,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.restore();
 
           ctx.beginPath();
-          ctx.arc(rx, ry, 5, 0, Math.PI * 2);
+          ctx.arc(rx, ry, 5 * DPI_SCALE, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -1267,6 +1358,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   ref={canvasRef}
                   className="relative z-10 block"
                   style={{ 
+                    width: previewDims.width,
+                    height: previewDims.height,
                     maxWidth: '100%',
                     maxHeight: '100%',
                     transform: `scale(${zoom})`,
@@ -1296,7 +1389,46 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
 
             <div className="mt-4">
-              <div className="flex items-center justify-center gap-1.5 bg-gray-800 rounded-lg p-1.5 border border-gray-700">
+              <div className="flex items-center justify-center gap-1.5 bg-gray-800 rounded-lg p-1.5 border border-gray-700 flex-wrap">
+                {selectedDesignId && designTransform && (
+                  <>
+                    <span className="text-xs text-gray-400 font-medium">
+                      {(resizeSettings.widthInches * (designTransform.s || 1)).toFixed(2)}" × {(resizeSettings.heightInches * (designTransform.s || 1)).toFixed(2)}"
+                    </span>
+                    <div className="w-px h-4 bg-gray-600 mx-0.5" />
+                    {editingRotation ? (
+                      <input
+                        type="number"
+                        className="w-14 h-6 bg-gray-700 text-xs text-gray-200 text-center rounded border border-gray-600 outline-none"
+                        value={rotationInput}
+                        autoFocus
+                        onChange={(e) => setRotationInput(e.target.value)}
+                        onBlur={() => {
+                          setEditingRotation(false);
+                          const val = parseFloat(rotationInput);
+                          if (!isNaN(val) && onTransformChange) {
+                            onTransformChange({ ...designTransform, rotation: ((val % 360) + 360) % 360 });
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="text-xs text-gray-400 font-medium cursor-pointer hover:text-gray-200"
+                        title="Click to edit rotation"
+                        onClick={() => {
+                          setRotationInput(String(Math.round(designTransform.rotation || 0)));
+                          setEditingRotation(true);
+                        }}
+                      >
+                        {Math.round(designTransform.rotation || 0)}°
+                      </span>
+                    )}
+                    <div className="w-px h-4 bg-gray-600 mx-0.5" />
+                  </>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"

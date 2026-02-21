@@ -17,9 +17,10 @@ import { removeBackgroundFromImage } from "@/lib/background-removal";
 import type { ParsedPDFData } from "@/lib/pdf-parser";
 import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 import { useToast } from "@/hooks/use-toast";
+import { Trash2, Copy, ChevronDown, ChevronUp, Info } from "lucide-react";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform } from "@/lib/types";
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform, DesignItem } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform, DesignItem } from "@/lib/types";
 
 export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: () => void } = {}) {
   const { toast } = useToast();
@@ -72,6 +73,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
   const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
   const applyAddRef = useRef<HTMLDivElement>(null);
+  const [designs, setDesigns] = useState<DesignItem[]>([]);
+  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
+  const [showDesignInfo, setShowDesignInfo] = useState(false);
+  const designInfoRef = useRef<HTMLDivElement>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -119,12 +124,68 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       if (applyAddRef.current && !applyAddRef.current.contains(e.target as Node)) {
         setShowApplyAddDropdown(false);
       }
+      if (designInfoRef.current && !designInfoRef.current.contains(e.target as Node)) {
+        setShowDesignInfo(false);
+      }
     };
-    if (showCutLabelDropdown || showApplyAddDropdown) {
+    if (showCutLabelDropdown || showApplyAddDropdown || showDesignInfo) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showCutLabelDropdown, showApplyAddDropdown]);
+  }, [showCutLabelDropdown, showApplyAddDropdown, showDesignInfo]);
+
+  const handleSelectDesign = useCallback((id: string | null) => {
+    setSelectedDesignId(id);
+    if (id) {
+      const design = designs.find(d => d.id === id);
+      if (design) {
+        setImageInfo(design.imageInfo);
+        setDesignTransform(design.transform);
+        setResizeSettings(prev => ({ ...prev, widthInches: design.widthInches, heightInches: design.heightInches }));
+      }
+    }
+  }, [designs]);
+
+  const handleDesignTransformChange = useCallback((transform: ImageTransform) => {
+    setDesignTransform(transform);
+    if (selectedDesignId) {
+      setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, transform } : d));
+    }
+  }, [selectedDesignId]);
+
+  const handleDuplicateDesign = useCallback(() => {
+    if (!selectedDesignId) return;
+    const design = designs.find(d => d.id === selectedDesignId);
+    if (!design) return;
+    const newId = crypto.randomUUID();
+    const newDesign: DesignItem = {
+      ...design,
+      id: newId,
+      name: design.name.replace(/( copy \d+)?$/, '') + ` copy ${designs.length}`,
+      transform: { ...design.transform, nx: Math.min(design.transform.nx + 0.05, 0.95), ny: Math.min(design.transform.ny + 0.05, 0.95) },
+    };
+    setDesigns(prev => [...prev, newDesign]);
+    setSelectedDesignId(newId);
+    setDesignTransform(newDesign.transform);
+  }, [selectedDesignId, designs]);
+
+  const handleDeleteDesign = useCallback((id: string) => {
+    setDesigns(prev => prev.filter(d => d.id !== id));
+    if (selectedDesignId === id) {
+      const remaining = designs.filter(d => d.id !== id);
+      if (remaining.length > 0) {
+        const next = remaining[remaining.length - 1];
+        setSelectedDesignId(next.id);
+        setImageInfo(next.imageInfo);
+        setDesignTransform(next.transform);
+        setResizeSettings(prev => ({ ...prev, widthInches: next.widthInches, heightInches: next.heightInches }));
+      } else {
+        setSelectedDesignId(null);
+        setImageInfo(null);
+        setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
+      }
+    }
+  }, [selectedDesignId, designs]);
 
   const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
     const workerManager = getContourWorkerManager();
@@ -247,7 +308,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     }
     setCadCutBounds(null);
     setLockedContour(null);
-    setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
+    const newTransform = { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
+    setDesignTransform(newTransform);
     
     setResizeSettings(prev => ({
       ...prev,
@@ -267,6 +329,19 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       newShapeSettings.offset
     );
     updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
+
+    const newDesignId = crypto.randomUUID();
+    const newDesignItem: DesignItem = {
+      id: newDesignId,
+      imageInfo: newImageInfo,
+      transform: newTransform,
+      widthInches,
+      heightInches,
+      name: newImageInfo.file.name,
+      originalDPI: newImageInfo.dpi,
+    };
+    setDesigns(prev => [...prev, newDesignItem]);
+    setSelectedDesignId(newDesignId);
   }, [updateCadCutBounds]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
@@ -1015,9 +1090,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       {/* Right area - Upload, Info, and Preview */}
       <div className="lg:col-span-8 xl:col-span-9" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
         <div className="sticky top-4 space-y-3">
-          {/* Top row: Change Image and Image Info - compact bar */}
+          {/* Top row: Add Design and Image Info - compact bar */}
           <div className="flex items-center gap-2 bg-gray-900 rounded-lg border border-gray-700 shadow-sm px-3 py-2" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
-            {/* Change Image - glowing button */}
             <UploadSection 
               onImageUpload={handleImageUpload}
               showCutLineInfo={false}
@@ -1026,25 +1100,81 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
               stickerSize={stickerSize}
             />
             
-            <div className="w-px h-6 bg-gray-700"></div>
-            
-            {/* Image Info - inline */}
-            <div className="flex items-center gap-3 flex-1">
-              {imageInfo?.file?.name && (
-                <p className="text-xs text-gray-400 truncate max-w-[140px]" title={imageInfo.file.name}>
-                  {imageInfo.file.name}
-                </p>
-              )}
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-semibold text-gray-300">{resizeSettings.widthInches.toFixed(1)}"</span>
-                <span className="text-gray-500">×</span>
-                <span className="text-sm font-semibold text-gray-300">{resizeSettings.heightInches.toFixed(1)}"</span>
-              </div>
-              <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
-            </div>
-            
-            {/* HIDDEN: CutContour label, locked contour, and Add Contour buttons */}
+            {imageInfo && (
+              <>
+                <div className="w-px h-6 bg-gray-700"></div>
+                
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  {imageInfo?.file?.name && (
+                    <p className="text-xs text-gray-400 truncate max-w-[120px]" title={imageInfo.file.name}>
+                      {imageInfo.file.name}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-semibold text-gray-300">{(resizeSettings.widthInches * designTransform.s).toFixed(1)}"</span>
+                    <span className="text-gray-500">×</span>
+                    <span className="text-sm font-semibold text-gray-300">{(resizeSettings.heightInches * designTransform.s).toFixed(1)}"</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleDuplicateDesign}
+                    className="p-1.5 rounded-md hover:bg-gray-700 text-gray-400 hover:text-cyan-400 transition-colors"
+                    title="Duplicate Design"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => selectedDesignId && handleDeleteDesign(selectedDesignId)}
+                    className="p-1.5 rounded-md hover:bg-gray-700 text-gray-400 hover:text-red-400 transition-colors"
+                    title="Delete Design"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
+
+          {/* Design Info Dropdown */}
+          {designs.length > 0 && (
+            <div ref={designInfoRef} className="relative">
+              <button
+                onClick={() => setShowDesignInfo(!showDesignInfo)}
+                className="flex items-center gap-2 w-full bg-gray-900 rounded-lg border border-gray-700 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+              >
+                <Info className="w-4 h-4" />
+                <span>Design Info ({designs.length})</span>
+                {showDesignInfo ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
+              </button>
+              {showDesignInfo && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-50 max-h-[240px] overflow-y-auto">
+                  {designs.map(d => (
+                    <div
+                      key={d.id}
+                      className={`flex items-center justify-between px-3 py-2.5 cursor-pointer transition-colors ${d.id === selectedDesignId ? 'bg-gray-700 border-l-2 border-cyan-500' : 'hover:bg-gray-700/50 border-l-2 border-transparent'}`}
+                      onClick={() => { handleSelectDesign(d.id); setShowDesignInfo(false); }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-white truncate">{d.name}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          {(d.widthInches * d.transform.s).toFixed(1)}" × {(d.heightInches * d.transform.s).toFixed(1)}" | {d.originalDPI} DPI
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteDesign(d.id); }}
+                        className="ml-2 p-1 rounded hover:bg-gray-600 text-gray-500 hover:text-red-400 transition-colors flex-shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Preview */}
           <PreviewSection
@@ -1063,7 +1193,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             artboardWidth={artboardWidth}
             artboardHeight={artboardHeight}
             designTransform={designTransform}
-            onTransformChange={setDesignTransform}
+            onTransformChange={handleDesignTransformChange}
+            designs={designs}
+            selectedDesignId={selectedDesignId}
+            onSelectDesign={handleSelectDesign}
           />
         </div>
       </div>

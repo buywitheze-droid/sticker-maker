@@ -77,6 +77,16 @@ export interface ImageTransform {
   rotation: number;
 }
 
+export interface DesignItem {
+  id: string;
+  imageInfo: ImageInfo;
+  transform: ImageTransform;
+  widthInches: number;
+  heightInches: number;
+  name: string;
+  originalDPI: number;
+}
+
 export function computeLayerRect(
   imageWidthPx: number,
   imageHeightPx: number,
