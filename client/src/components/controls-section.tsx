@@ -1158,8 +1158,14 @@ export default function ControlsSection({
           <Button
             onClick={() => onDownload('standard', 'pdf', extractedColors.map(c => ({
               ...c,
+              spotWhite: spotColorMode === 'whitegloss' ? c.spotWhite : false,
+              spotGloss: spotColorMode === 'whitegloss' ? c.spotGloss : false,
               spotWhiteName,
               spotGlossName,
+              spotFluorY: spotColorMode === 'fluorescent' ? c.spotFluorY : false,
+              spotFluorM: spotColorMode === 'fluorescent' ? c.spotFluorM : false,
+              spotFluorG: spotColorMode === 'fluorescent' ? c.spotFluorG : false,
+              spotFluorOrange: spotColorMode === 'fluorescent' ? c.spotFluorOrange : false,
               spotFluorYName,
               spotFluorMName,
               spotFluorGName,
@@ -1186,8 +1192,14 @@ export default function ControlsSection({
               variant="outline"
               onClick={() => onDownload('standard', 'pdf', extractedColors.map(c => ({
                 ...c,
+                spotWhite: spotColorMode === 'whitegloss' ? c.spotWhite : false,
+                spotGloss: spotColorMode === 'whitegloss' ? c.spotGloss : false,
                 spotWhiteName,
                 spotGlossName,
+                spotFluorY: spotColorMode === 'fluorescent' ? c.spotFluorY : false,
+                spotFluorM: spotColorMode === 'fluorescent' ? c.spotFluorM : false,
+                spotFluorG: spotColorMode === 'fluorescent' ? c.spotFluorG : false,
+                spotFluorOrange: spotColorMode === 'fluorescent' ? c.spotFluorOrange : false,
                 spotFluorYName,
                 spotFluorMName,
                 spotFluorGName,
