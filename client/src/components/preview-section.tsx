@@ -40,7 +40,7 @@ interface PreviewSectionProps {
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, onSelectDesign }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, onSelectDesign }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -51,6 +51,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
     const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number} | null>(null);
+    const contourCacheMapRef = useRef<Map<string, {canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number}>>(new Map());
     const processingIdRef = useRef(0);
     const [showHighlight, setShowHighlight] = useState(false);
     const lastSettingsRef = useRef<string>('');
@@ -501,6 +502,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, []);
     
     // Auto-set zoom to 75% for images with no empty space around them
+    const knownImageKeysRef = useRef<Set<string>>(new Set());
     useEffect(() => {
       if (!imageInfo) {
         lastImageRef.current = null;
@@ -516,9 +518,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       spotOverlayCacheRef.current = null;
       croppedImageCacheRef.current = null;
       holographicCacheRef.current = null;
-      
-      // Check if image has minimal empty space around the edges
-      setZoom(1);
+
+      if (!knownImageKeysRef.current.has(imageKey)) {
+        knownImageKeysRef.current.add(imageKey);
+        setZoom(1);
+      }
     }, [imageInfo]);
 
     useEffect(() => {
@@ -705,7 +709,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const cacheKey = generateContourCacheKey();
       if (contourCacheRef.current?.key === cacheKey) return;
 
-      // Debounce processing to avoid rapid re-renders during slider drags
+      const cachedResult = contourCacheMapRef.current.get(cacheKey);
+      if (cachedResult) {
+        contourCacheRef.current = { key: cacheKey, ...cachedResult };
+        return;
+      }
+
       contourDebounceRef.current = setTimeout(() => {
         const currentId = ++processingIdRef.current;
         setIsProcessing(true);
@@ -732,7 +741,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           detectedShapeInfo
         ).then((result) => {
           if (processingIdRef.current === currentId) {
-            contourCacheRef.current = { key: cacheKey, canvas: result.canvas, downsampleScale: result.downsampleScale, imageCanvasX: result.imageCanvasX, imageCanvasY: result.imageCanvasY };
+            const entry = { canvas: result.canvas, downsampleScale: result.downsampleScale, imageCanvasX: result.imageCanvasX, imageCanvasY: result.imageCanvasY };
+            contourCacheRef.current = { key: cacheKey, ...entry };
+            contourCacheMapRef.current.set(cacheKey, entry);
+            if (contourCacheMapRef.current.size > 20) {
+              const firstKey = contourCacheMapRef.current.keys().next().value;
+              if (firstKey) contourCacheMapRef.current.delete(firstKey);
+            }
             setIsProcessing(false);
             if (result.detectedAlgorithm && onDetectedAlgorithm) {
               onDetectedAlgorithm(result.detectedAlgorithm);
@@ -744,7 +759,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             setIsProcessing(false);
           }
         });
-      }, 100); // 100ms debounce for smoother slider interaction
+      }, 100);
       
       return () => {
         if (contourDebounceRef.current) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -60,7 +60,7 @@ export default function ControlsSection({
   isRemovingBackground,
   onSpotPreviewChange,
   detectedAlgorithm,
-  artboardWidth = 24,
+  artboardWidth = 24.5,
   artboardHeight = 12,
   onArtboardHeightChange
 }: ControlsSectionProps) {
@@ -93,12 +93,22 @@ export default function ControlsSection({
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
-  // Extract colors from original image (not preview canvas) to avoid contour/shape interference
-  // Reset extracted colors when image changes to prevent stale colors from showing
+  const colorCacheRef = useRef<Map<string, any[]>>(new Map());
   useEffect(() => {
     if (imageInfo?.image) {
-      const colors = extractColorsFromImage(imageInfo.image, 999);
-      setExtractedColors(colors);
+      const cacheKey = `${imageInfo.image.src}-${imageInfo.image.width}-${imageInfo.image.height}`;
+      const cached = colorCacheRef.current.get(cacheKey);
+      if (cached) {
+        setExtractedColors(cached);
+      } else {
+        const colors = extractColorsFromImage(imageInfo.image, 999);
+        colorCacheRef.current.set(cacheKey, colors);
+        if (colorCacheRef.current.size > 20) {
+          const firstKey = colorCacheRef.current.keys().next().value;
+          if (firstKey) colorCacheRef.current.delete(firstKey);
+        }
+        setExtractedColors(colors);
+      }
     } else {
       setExtractedColors([]);
     }

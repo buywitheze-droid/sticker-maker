@@ -68,7 +68,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
   const cutLabelRef = useRef<HTMLDivElement>(null);
   const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
-  const [artboardWidth, setArtboardWidth] = useState(24);
+  const [artboardWidth, setArtboardWidth] = useState(24.5);
   const [artboardHeight, setArtboardHeight] = useState(12);
   const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
   const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
