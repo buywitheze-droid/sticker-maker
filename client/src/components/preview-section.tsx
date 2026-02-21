@@ -301,6 +301,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           return {
             width: contourCacheRef.current.canvas.width,
             height: contourCacheRef.current.canvas.height,
+            imageCanvasX: contourCacheRef.current.imageCanvasX,
+            imageCanvasY: contourCacheRef.current.imageCanvasY,
+            downsampleScale: contourCacheRef.current.downsampleScale,
           };
         }
         return null;
@@ -676,20 +679,65 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       
       if (lockedContour && lockedContour.previewPathPoints.length > 2 && canvas) {
-        let lcX: number, lcY: number, scaleXL: number, scaleYL: number;
+        const pts = lockedContour.previewPathPoints;
+        const screenPts: Array<{x: number; y: number}> = [];
         
-        if (contourTransformRef.current) {
+        if (shapeSettings.enabled && imageInfo) {
+          const shapeDims = calculateShapeDimensions(
+            resizeSettings.widthInches,
+            resizeSettings.heightInches,
+            shapeSettings.type,
+            shapeSettings.offset
+          );
+          const viewPad = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
+          const availW = canvas.width - (viewPad * 2);
+          const availH = canvas.height - (viewPad * 2);
+          const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
+          let shapeW: number, shapeH: number;
+          if (shapeAspect > (availW / availH)) {
+            shapeW = availW;
+            shapeH = availW / shapeAspect;
+          } else {
+            shapeH = availH;
+            shapeW = availH * shapeAspect;
+          }
+          const shapeX = (canvas.width - shapeW) / 2;
+          const shapeY = (canvas.height - shapeH) / 2;
+          const ppi = Math.min(shapeW / shapeDims.widthInches, shapeH / shapeDims.heightInches);
+          const imgW = resizeSettings.widthInches * ppi;
+          const imgH = resizeSettings.heightInches * ppi;
+          const imgX = shapeX + (shapeW - imgW) / 2;
+          const imgY = shapeY + (shapeH - imgH) / 2;
+          
+          const icx = lockedContour.imageCanvasX;
+          const icy = lockedContour.imageCanvasY;
+          const icw = lockedContour.imageCanvasWidth;
+          const ich = lockedContour.imageCanvasHeight;
+          const sxScale = imgW / icw;
+          const syScale = imgH / ich;
+          
+          for (const p of pts) {
+            screenPts.push({
+              x: imgX + (p.x - icx) * sxScale,
+              y: imgY + (p.y - icy) * syScale,
+            });
+          }
+        } else if (contourTransformRef.current) {
           const ct = contourTransformRef.current;
-          scaleXL = ct.width / lockedContour.contourCanvasWidth;
-          scaleYL = ct.height / lockedContour.contourCanvasHeight;
-          lcX = ct.x;
-          lcY = ct.y;
+          const sxScale = ct.width / lockedContour.contourCanvasWidth;
+          const syScale = ct.height / lockedContour.contourCanvasHeight;
+          for (const p of pts) {
+            screenPts.push({
+              x: ct.x + p.x * sxScale,
+              y: ct.y + p.y * syScale,
+            });
+          }
         } else {
           const viewPadding = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
           const availW = canvas.width - (viewPadding * 2);
           const availH = canvas.height - (viewPadding * 2);
           const lcAspect = lockedContour.contourCanvasWidth / lockedContour.contourCanvasHeight;
-          let lcW, lcH;
+          let lcW: number, lcH: number;
           if (lcAspect > (availW / availH)) {
             lcW = availW;
             lcH = availW / lcAspect;
@@ -697,25 +745,32 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             lcH = availH;
             lcW = availH * lcAspect;
           }
-          lcX = (canvas.width - lcW) / 2;
-          lcY = (canvas.height - lcH) / 2;
-          scaleXL = lcW / lockedContour.contourCanvasWidth;
-          scaleYL = lcH / lockedContour.contourCanvasHeight;
+          const lcX = (canvas.width - lcW) / 2;
+          const lcY = (canvas.height - lcH) / 2;
+          const sxScale = lcW / lockedContour.contourCanvasWidth;
+          const syScale = lcH / lockedContour.contourCanvasHeight;
+          for (const p of pts) {
+            screenPts.push({
+              x: lcX + p.x * sxScale,
+              y: lcY + p.y * syScale,
+            });
+          }
         }
         
-        ctx.save();
-        ctx.strokeStyle = '#3B82F6';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        const pts = lockedContour.previewPathPoints;
-        ctx.moveTo(lcX + pts[0].x * scaleXL, lcY + pts[0].y * scaleYL);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo(lcX + pts[i].x * scaleXL, lcY + pts[i].y * scaleYL);
+        if (screenPts.length > 2) {
+          ctx.save();
+          ctx.strokeStyle = '#3B82F6';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(screenPts[0].x, screenPts[0].y);
+          for (let i = 1; i < screenPts.length; i++) {
+            ctx.lineTo(screenPts[i].x, screenPts[i].y);
+          }
+          ctx.closePath();
+          ctx.stroke();
+          ctx.restore();
         }
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
       }
       };
       doRender();

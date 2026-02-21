@@ -92,4 +92,8 @@ export interface LockedContour {
   bleedInches: number;
   contourCanvasWidth: number;
   contourCanvasHeight: number;
+  imageCanvasX: number;
+  imageCanvasY: number;
+  imageCanvasWidth: number;
+  imageCanvasHeight: number;
 }

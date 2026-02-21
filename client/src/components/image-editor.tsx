@@ -145,6 +145,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
     const cw = contourCanvasInfo?.width ?? 1;
     const ch = contourCanvasInfo?.height ?? 1;
+    const icx = contourCanvasInfo?.imageCanvasX ?? 0;
+    const icy = contourCanvasInfo?.imageCanvasY ?? 0;
+    const ds = contourCanvasInfo?.downsampleScale ?? 1;
+    const icw = imageInfo ? Math.round(imageInfo.image.width * ds) : cw;
+    const ich = imageInfo ? Math.round(imageInfo.image.height * ds) : ch;
 
     setLockedContour({
       label: cutContourLabel,
@@ -161,11 +166,15 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       bleedInches: contourData.bleedInches,
       contourCanvasWidth: cw,
       contourCanvasHeight: ch,
+      imageCanvasX: icx,
+      imageCanvasY: icy,
+      imageCanvasWidth: icw,
+      imageCanvasHeight: ich,
     });
 
     setCutContourLabel(newLabel);
     setShowApplyAddDropdown(false);
-  }, [cutContourLabel, toast]);
+  }, [cutContourLabel, toast, imageInfo]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
