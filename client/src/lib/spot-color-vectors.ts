@@ -279,8 +279,7 @@ function spotColorPathsToPDFOps(
     if (simplified.length < 3) continue;
 
     let pathOps = 'q\n';
-    pathOps += `/${spotColorName} CS 1 SCN\n`;
-    pathOps += '0.5 w\n';
+    pathOps += `/${spotColorName} cs 1 scn\n`;
 
     const pts = simplified.map(p => ({ x: p.x * 72, y: p.y * 72 }));
     pathOps += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
@@ -288,7 +287,7 @@ function spotColorPathsToPDFOps(
       pathOps += `${pts[i].x.toFixed(4)} ${pts[i].y.toFixed(4)} l\n`;
     }
     pathOps += 'h\n';
-    pathOps += 'S\n';
+    pathOps += 'f\n';
     pathOps += 'Q\n';
     allOps += pathOps;
   }
