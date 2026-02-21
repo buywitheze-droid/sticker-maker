@@ -474,6 +474,10 @@ function processContour(
           }
         }
       }
+      if (!autoShapeDetected && detectedAlgorithm === 'shapes') {
+        detectedAlgorithm = 'complex';
+        console.log('[Worker] No shape confirmed by probes, resetting to:', detectedAlgorithm);
+      }
     }
   }
 
@@ -857,6 +861,18 @@ function analyzeShapeFromMask(
   console.log('[Shapes] Centroid offset: dY:', centroidOffsetY.toFixed(3), 'dX:', centroidOffsetX.toFixed(3), 'offCenter:', centroidIsOffCenter);
 
   const checkShieldTaper = (): { isShield: boolean; taperRatio: number } => {
+    const topY = Math.min(maskHeight - 1, minY + Math.round(bboxH * 0.1));
+    let topRowWidth = 0;
+    {
+      let tLeft = maskWidth, tRight = 0;
+      for (let x = 0; x < maskWidth; x++) {
+        if (mask[topY * maskWidth + x]) {
+          if (x < tLeft) tLeft = x;
+          if (x > tRight) tRight = x;
+        }
+      }
+      topRowWidth = tRight - tLeft + 1;
+    }
     const midY = Math.round(bboxCy);
     let midRowWidth = 0;
     if (midY >= 0 && midY < maskHeight) {
@@ -882,8 +898,10 @@ function analyzeShapeFromMask(
       bottomRowWidth = bRight - bLeft + 1;
     }
     const taperRatio = midRowWidth > 0 ? bottomRowWidth / midRowWidth : 1;
-    console.log('[Shapes] Shield check: midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3));
-    return { isShield: taperRatio < 0.85, taperRatio };
+    const topMidRatio = midRowWidth > 0 ? topRowWidth / midRowWidth : 0;
+    const hasWideTop = topMidRatio > 0.6;
+    console.log('[Shapes] Shield check: topRowWidth:', topRowWidth, 'midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3), 'topMidRatio:', topMidRatio.toFixed(3), 'wideTop:', hasWideTop);
+    return { isShield: taperRatio < 0.85 && hasWideTop, taperRatio };
   };
 
   if (solidity > 0.85) {
@@ -904,14 +922,13 @@ function analyzeShapeFromMask(
         return null;
       }
     }
-  } else if (solidity > 0.65 && !rectGatePasses && centroidIsOffCenter) {
-    const { isShield } = checkShieldTaper();
-    if (isShield) {
+  } else if (solidity > 0.55) {
+    const { isShield, taperRatio } = checkShieldTaper();
+    if (isShield && (centroidIsOffCenter || !rectGatePasses)) {
       shapeType = 'shield';
-      console.log('[Shapes] Detected: shield (moderate solidity, centroid off-center, bottom tapers)');
+      console.log('[Shapes] Detected: shield (moderate solidity:', solidity.toFixed(3), ', taper:', taperRatio.toFixed(3), ', centroidOff:', centroidIsOffCenter, ')');
       return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
     }
-    console.log('[Shapes] Moderate solidity, centroid off-center, but no taper — not a shield');
   }
 
   if (centroidIsOffCenter) {
