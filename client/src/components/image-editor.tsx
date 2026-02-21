@@ -1000,10 +1000,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           imageInfo={imageInfo}
           canvasRef={canvasRef}
           onStepChange={() => {}}
-          onRemoveBackground={handleRemoveBackground}
-          isRemovingBackground={isRemovingBackground}
           onSpotPreviewChange={setSpotPreviewData}
-          detectedAlgorithm={detectedAlgorithm}
         />
       </div>
       
@@ -1117,10 +1114,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             cadCutBounds={cadCutBounds}
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
-            onDetectedAlgorithm={setDetectedAlgorithm}
             detectedShapeType={detectedShapeType}
             detectedShapeInfo={detectedShapeInfo}
-            detectedAlgorithm={detectedAlgorithm}
             onStrokeChange={handleStrokeChange}
             lockedContour={lockedContour}
           />

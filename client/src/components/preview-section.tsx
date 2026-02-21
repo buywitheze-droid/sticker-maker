@@ -1366,46 +1366,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 )}
                 
-                {detectedAlgorithm && strokeSettings.enabled && onStrokeChange && (() => {
-                  const autoMode = detectedAlgorithm === 'scattered' ? 'scattered' as const : 'smooth' as const;
-                  const effectiveMode = strokeSettings.contourMode ?? autoMode;
-                  const isOverridden = strokeSettings.contourMode !== undefined;
-                  const modes = [
-                    { key: 'smooth' as const, label: 'Sharp' },
-                    { key: 'scattered' as const, label: 'Smooth' },
-                  ];
-                  return (
-                    <div className="absolute bottom-2 right-2 z-20 bg-white/90 backdrop-blur-sm rounded-md px-2 py-1 border border-gray-200 shadow-sm flex items-center gap-1.5">
-                      <span className="text-[9px] text-gray-400">
-                        {detectedAlgorithm === 'complex' ? 'Std' : detectedAlgorithm === 'scattered' ? 'Multi' : '...'}
-                      </span>
-                      {modes.map((mode, i) => (
-                        <button
-                          key={mode.key}
-                          className={`text-[9px] px-1.5 py-0.5 border transition-colors ${
-                            i === 0 ? 'rounded-l' : 'rounded-r'
-                          } ${i > 0 ? 'border-l-0' : ''} ${
-                            effectiveMode === mode.key
-                              ? 'bg-blue-500 text-white border-blue-500'
-                              : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-100'
-                          }`}
-                          onClick={() => onStrokeChange({ contourMode: mode.key })}
-                        >
-                          {mode.label}
-                        </button>
-                      ))}
-                      {isOverridden && (
-                        <button
-                          className="text-[9px] px-1 py-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-                          onClick={() => onStrokeChange({ contourMode: undefined })}
-                          title="Reset to auto-detected"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
+                {/* Contour mode buttons (Sharp/Smooth) - HIDDEN */}
 
                 {isProcessing && imageInfo && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">

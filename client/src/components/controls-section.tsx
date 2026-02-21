@@ -77,7 +77,7 @@ export default function ControlsSection({
   const [editingGlossName, setEditingGlossName] = useState(false);
   const [tempWhiteName, setTempWhiteName] = useState("");
   const [tempGlossName, setTempGlossName] = useState("");
-  const [spotColorMode, setSpotColorMode] = useState<'whitegloss' | 'fluorescent'>('whitegloss');
+  const [spotColorMode, setSpotColorMode] = useState<'whitegloss' | 'fluorescent'>('fluorescent');
   const [spotFluorYName, setSpotFluorYName] = useState("Fluorescent_Y");
   const [spotFluorMName, setSpotFluorMName] = useState("Fluorescent_M");
   const [spotFluorGName, setSpotFluorGName] = useState("Fluorescent_G");
@@ -334,54 +334,9 @@ export default function ControlsSection({
           )}
         </div>
 
-        {/* Remove White Background */}
-        {onRemoveBackground && (
-          <div className="px-4 py-3 border-b border-gray-100">
-            <button
-              onClick={() => onRemoveBackground(85)}
-              disabled={isRemovingBackground}
-              className="w-full py-2.5 text-sm font-medium bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg shadow-md shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isRemovingBackground ? 'Removing...' : 'Remove White Background'}
-            </button>
-          </div>
-        )}
+        {/* Remove White Background - HIDDEN */}
 
-        {/* Outline Type Section */}
-        <div className="px-4 py-3 border-b border-gray-100">
-          <Label className="text-sm font-medium text-gray-700 mb-2 block">Outline Type</Label>
-          
-          {imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour ? (
-            <div className="p-2.5 bg-green-50 border border-green-100 rounded-lg">
-              <p className="text-sm font-medium text-green-700">Cutline already in file</p>
-              <p className="text-xs text-green-600 mt-0.5">CutContour detected</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => onStrokeChange({ enabled: true })}
-                className={`py-2.5 px-3 rounded-lg text-center transition-all font-medium text-sm ${
-                  strokeSettings.enabled 
-                    ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20' 
-                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                Contour
-              </button>
-              
-              <button
-                onClick={() => onShapeChange({ enabled: true })}
-                className={`py-2.5 px-3 rounded-lg text-center transition-all font-medium text-sm ${
-                  shapeSettings.enabled 
-                    ? 'bg-green-500 text-white shadow-md shadow-green-500/20' 
-                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                Shape
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Outline Type Section - HIDDEN */}
 
         {/* Contour Options - Collapsible, Hidden when PDF has CutContour */}
         {strokeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
@@ -406,101 +361,19 @@ export default function ControlsSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {detectedAlgorithm === 'scattered' ? (
-                      <>
-                        <SelectItem value="0.07">Small</SelectItem>
-                        <SelectItem value="0.14">Medium</SelectItem>
-                        <SelectItem value="0.25">Large</SelectItem>
-                      </>
-                    ) : (
-                      <>
-                        <SelectItem value="0">Zero Hero</SelectItem>
-                        <SelectItem value="0.02">Small</SelectItem>
-                        <SelectItem value="0.04">Medium</SelectItem>
-                        <SelectItem value="0.07">Large</SelectItem>
-                        <SelectItem value="0.14">Extra Large</SelectItem>
-                        <SelectItem value="0.25">Huge</SelectItem>
-                      </>
-                    )}
+                    <SelectItem value="0">Zero Hero</SelectItem>
+                    <SelectItem value="0.02">Small</SelectItem>
+                    <SelectItem value="0.04">Medium</SelectItem>
+                    <SelectItem value="0.07">Large</SelectItem>
+                    <SelectItem value="0.14">Extra Large</SelectItem>
+                    <SelectItem value="0.25">Huge</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               
-              <div>
-                <Label className="text-xs text-gray-500 font-medium">Fill Color</Label>
-                <div className="flex items-center gap-3 mt-2">
-                  <input
-                    type="color"
-                    value={strokeSettings.backgroundColor === 'transparent' || strokeSettings.backgroundColor === 'holographic' ? '#FFFFFF' : strokeSettings.backgroundColor}
-                    onChange={(e) => onStrokeChange({ backgroundColor: e.target.value })}
-                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200"
-                    disabled={strokeSettings.backgroundColor === 'holographic'}
-                  />
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => onStrokeChange({ backgroundColor: 'transparent' })}
-                      className={`w-6 h-6 rounded-lg border relative overflow-hidden transition-all ${strokeSettings.backgroundColor === 'transparent' ? 'ring-2 ring-cyan-500 ring-offset-1' : 'border-gray-200 hover:border-gray-300'}`}
-                      style={{ backgroundColor: '#fff' }}
-                      title="Transparent"
-                    >
-                      <div 
-                        className="absolute inset-0" 
-                        style={{
-                          background: 'linear-gradient(to top right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
-                        }}
-                      />
-                    </button>
-                    {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
-                      <button
-                        key={color}
-                        onClick={() => onStrokeChange({ backgroundColor: color })}
-                        className={`w-6 h-6 rounded-lg border transition-all ${strokeSettings.backgroundColor === color && strokeSettings.backgroundColor !== 'holographic' ? 'ring-2 ring-cyan-500 ring-offset-1' : 'border-gray-200 hover:border-gray-300'}`}
-                        style={{ backgroundColor: color }}
-                        title={color}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
+              {/* Fill Color - HIDDEN */}
               
-              {/* Holographic Preview Toggle - Separate from fill */}
-              <div className="pt-2 border-t border-gray-200">
-                <button
-                  onClick={() => onStrokeChange({ 
-                    backgroundColor: strokeSettings.backgroundColor === 'holographic' ? 'transparent' : 'holographic' 
-                  })}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
-                    strokeSettings.backgroundColor === 'holographic' 
-                      ? 'border-purple-400 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white shadow-purple-200' 
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div 
-                      className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
-                      style={{
-                        background: 'linear-gradient(135deg, #C8C8D0 0%, #E8B8B8 17%, #B8D8E8 34%, #E8D0F0 51%, #B0C8E0 68%, #C0B0D8 85%, #C8C8D0 100%)'
-                      }}
-                    />
-                    <span className="text-sm font-semibold">Holographic Preview</span>
-                  </div>
-                  {/* Toggle switch style */}
-                  <div className={`relative w-11 h-6 rounded-full transition-all ${
-                    strokeSettings.backgroundColor === 'holographic' 
-                      ? 'bg-white/30' 
-                      : 'bg-gray-200'
-                  }`}>
-                    <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
-                      strokeSettings.backgroundColor === 'holographic' 
-                        ? 'right-0.5 bg-white' 
-                        : 'left-0.5 bg-gray-400'
-                    }`} />
-                  </div>
-                </button>
-                {strokeSettings.backgroundColor === 'holographic' && (
-                  <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
-                )}
-              </div>
+              {/* Holographic Preview - HIDDEN */}
               
               </div>
             )}
@@ -629,113 +502,11 @@ export default function ControlsSection({
             </Select>
           </div>
 
-          <div>
-            <Label className="text-xs text-gray-600">Fill Color</Label>
-            <div className="flex items-center gap-2 mt-1">
-              <input
-                type="color"
-                value={shapeSettings.fillColor === 'transparent' || shapeSettings.fillColor === 'holographic' ? '#FFFFFF' : shapeSettings.fillColor}
-                onChange={(e) => onShapeChange({ fillColor: e.target.value })}
-                className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-                disabled={shapeSettings.fillColor === 'holographic'}
-              />
-              <div className="flex gap-1 flex-wrap">
-                {/* Transparent option with red diagonal line (none symbol) */}
-                <button
-                  onClick={() => onShapeChange({ fillColor: 'transparent' })}
-                  className={`w-5 h-5 rounded border relative overflow-hidden ${shapeSettings.fillColor === 'transparent' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
-                  style={{ backgroundColor: '#fff' }}
-                  title="Transparent / None"
-                >
-                  <div 
-                    className="absolute inset-0" 
-                    style={{
-                      background: 'linear-gradient(to top right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
-                    }}
-                  />
-                </button>
-                {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => onShapeChange({ fillColor: color })}
-                    className={`w-5 h-5 rounded border ${shapeSettings.fillColor === color && shapeSettings.fillColor !== 'holographic' ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
-                    style={{ backgroundColor: color }}
-                    title={color}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
+          {/* Fill Color - HIDDEN */}
           
-          {/* Holographic Preview Toggle - Separate from fill */}
-          <button
-            onClick={() => onShapeChange({ 
-              fillColor: shapeSettings.fillColor === 'holographic' ? 'transparent' : 'holographic' 
-            })}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 transition-all shadow-sm hover:shadow ${
-              shapeSettings.fillColor === 'holographic' 
-                ? 'border-purple-400 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 text-white shadow-purple-200' 
-                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <div 
-                className="w-6 h-6 rounded-md border-2 border-white/40 shadow-sm"
-                style={{
-                  background: 'linear-gradient(135deg, #C8C8D0 0%, #E8B8B8 17%, #B8D8E8 34%, #E8D0F0 51%, #B0C8E0 68%, #C0B0D8 85%, #C8C8D0 100%)'
-                }}
-              />
-              <span className="text-sm font-semibold">Holographic Preview</span>
-            </div>
-            {/* Toggle switch style */}
-            <div className={`relative w-11 h-6 rounded-full transition-all ${
-              shapeSettings.fillColor === 'holographic' 
-                ? 'bg-white/30' 
-                : 'bg-gray-200'
-            }`}>
-              <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-all shadow-md ${
-                shapeSettings.fillColor === 'holographic' 
-                  ? 'right-0.5 bg-white' 
-                  : 'left-0.5 bg-gray-400'
-              }`} />
-            </div>
-          </button>
-          {shapeSettings.fillColor === 'holographic' && (
-            <p className="mt-1.5 text-xs text-gray-500 italic">Shows rainbow effect in preview. Downloads as transparent.</p>
-          )}
+          {/* Holographic Preview - HIDDEN */}
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <Label className="text-xs text-gray-600">Bleed</Label>
-              <input
-                type="checkbox"
-                checked={shapeSettings.bleedEnabled || false}
-                onChange={(e) => onShapeChange({ bleedEnabled: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
-              />
-            </div>
-            {shapeSettings.bleedEnabled && (
-              <div className="flex items-center gap-2 mt-1">
-                <input
-                  type="color"
-                  value={shapeSettings.bleedColor || '#FFFFFF'}
-                  onChange={(e) => onShapeChange({ bleedColor: e.target.value })}
-                  className="w-8 h-8 rounded cursor-pointer border border-gray-300"
-                />
-                <div className="flex gap-1">
-                  {['#FFFFFF', '#000000', '#FF0000', '#0000FF', '#FFFF00', '#00FF00'].map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => onShapeChange({ bleedColor: color })}
-                      className={`w-5 h-5 rounded border ${(shapeSettings.bleedColor || '#FFFFFF') === color ? 'ring-2 ring-cyan-500' : 'border-gray-300'}`}
-                      style={{ backgroundColor: color }}
-                      title={color}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Bleed - HIDDEN */}
 
           </div>
         )}
@@ -756,28 +527,7 @@ export default function ControlsSection({
 
             {showSpotColors && (
               <div className="px-4 pb-3 space-y-3">
-              <div className="flex items-center gap-1 mb-2">
-                <button
-                  onClick={() => setSpotColorMode('whitegloss')}
-                  className={`flex-1 px-2 py-1.5 rounded-l text-xs font-medium transition-colors border ${
-                    spotColorMode === 'whitegloss'
-                      ? 'bg-purple-100 text-purple-700 border-purple-300'
-                      : 'bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100'
-                  }`}
-                >
-                  White / Gloss
-                </button>
-                <button
-                  onClick={() => setSpotColorMode('fluorescent')}
-                  className={`flex-1 px-2 py-1.5 rounded-r text-xs font-medium transition-colors border border-l-0 ${
-                    spotColorMode === 'fluorescent'
-                      ? 'bg-orange-100 text-orange-700 border-orange-300'
-                      : 'bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100'
-                  }`}
-                >
-                  Fluorescent
-                </button>
-              </div>
+              {/* White/Gloss mode toggle - HIDDEN, fluorescent only */}
               <div className="flex items-center justify-between mb-2">
                 <button
                   onClick={() => setGroupColorsEnabled(!groupColorsEnabled)}
@@ -961,124 +711,7 @@ export default function ControlsSection({
                 </div>
               )}
 
-              {spotColorMode === 'whitegloss' ? (
-              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
-                <div className="flex items-center gap-1">
-                  <span>White →</span>
-                  {editingWhiteName ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={tempWhiteName}
-                        onChange={(e) => setTempWhiteName(e.target.value)}
-                        className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
-                        autoFocus
-                        onBlur={() => {
-                          setSpotWhiteName(tempWhiteName || "RDG_WHITE");
-                          setEditingWhiteName(false);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            setSpotWhiteName(tempWhiteName || "RDG_WHITE");
-                            setEditingWhiteName(false);
-                          } else if (e.key === 'Escape') {
-                            setEditingWhiteName(false);
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => {
-                          setSpotWhiteName(tempWhiteName || "RDG_WHITE");
-                          setEditingWhiteName(false);
-                        }}
-                        className="p-0.5 hover:bg-green-100 rounded"
-                        title="Save"
-                      >
-                        <Check className="w-3 h-3 text-green-600" />
-                      </button>
-                      <button
-                        onClick={() => setEditingWhiteName(false)}
-                        className="p-0.5 hover:bg-red-100 rounded"
-                        title="Cancel"
-                      >
-                        <X className="w-3 h-3 text-red-500" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium text-gray-600">{spotWhiteName}</span>
-                      <button
-                        onClick={() => {
-                          setTempWhiteName(spotWhiteName);
-                          setEditingWhiteName(true);
-                        }}
-                        className="p-0.5 hover:bg-gray-200 rounded"
-                        title="Edit name"
-                      >
-                        <Pencil className="w-3 h-3 text-gray-500" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>Gloss →</span>
-                  {editingGlossName ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={tempGlossName}
-                        onChange={(e) => setTempGlossName(e.target.value)}
-                        className="w-24 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
-                        autoFocus
-                        onBlur={() => {
-                          setSpotGlossName(tempGlossName || "RDG_GLOSS");
-                          setEditingGlossName(false);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            setSpotGlossName(tempGlossName || "RDG_GLOSS");
-                            setEditingGlossName(false);
-                          } else if (e.key === 'Escape') {
-                            setEditingGlossName(false);
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => {
-                          setSpotGlossName(tempGlossName || "RDG_GLOSS");
-                          setEditingGlossName(false);
-                        }}
-                        className="p-0.5 hover:bg-green-100 rounded"
-                        title="Save"
-                      >
-                        <Check className="w-3 h-3 text-green-600" />
-                      </button>
-                      <button
-                        onClick={() => setEditingGlossName(false)}
-                        className="p-0.5 hover:bg-red-100 rounded"
-                        title="Cancel"
-                      >
-                        <X className="w-3 h-3 text-red-500" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium text-gray-600">{spotGlossName}</span>
-                      <button
-                        onClick={() => {
-                          setTempGlossName(spotGlossName);
-                          setEditingGlossName(true);
-                        }}
-                        className="p-0.5 hover:bg-gray-200 rounded"
-                        title="Edit name"
-                      >
-                        <Pencil className="w-3 h-3 text-gray-500" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                </div>
-              ) : (
+              {/* White/Gloss name editors - HIDDEN */}
               <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
                 {([
                   { key: 'Y', name: spotFluorYName, setName: setSpotFluorYName, defaultName: 'Fluorescent_Y', neonColor: '#DFFF00' },
@@ -1147,7 +780,6 @@ export default function ControlsSection({
                   </div>
                 ))}
               </div>
-              )}
               </div>
             )}
           </div>
