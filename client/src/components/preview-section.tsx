@@ -70,6 +70,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     
     const [editingRotation, setEditingRotation] = useState(false);
     const [rotationInput, setRotationInput] = useState('0');
+    const [overlappingDesigns, setOverlappingDesigns] = useState<Set<string>>(new Set());
+    const [previewBgColor, setPreviewBgColor] = useState('#ffffff');
+    const [showBgPicker, setShowBgPicker] = useState(false);
 
     const isDraggingRef = useRef(false);
     const isResizingRef = useRef(false);
@@ -177,6 +180,95 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return { x, y };
     }, []);
 
+    const clampTransformToArtboard = useCallback((t: ImageTransform, imgW?: number, imgH?: number, wInches?: number, hInches?: number): ImageTransform => {
+      const canvas = canvasRef.current;
+      const iw = imgW ?? imageInfo?.image.width;
+      const ih = imgH ?? imageInfo?.image.height;
+      const wi = wInches ?? resizeSettings.widthInches;
+      const hi = hInches ?? resizeSettings.heightInches;
+      if (!canvas || !iw || !ih) return t;
+      const rect = computeLayerRect(iw, ih, t, canvas.width, canvas.height, artboardWidth, artboardHeight, wi, hi);
+      const rad = (t.rotation * Math.PI) / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      const rotW = rect.width * cos + rect.height * sin;
+      const rotH = rect.width * sin + rect.height * cos;
+
+      const cx = t.nx * canvas.width;
+      const cy = t.ny * canvas.height;
+      const halfW = rotW / 2;
+      const halfH = rotH / 2;
+
+      let newCx = cx;
+      let newCy = cy;
+      if (cx - halfW < 0) newCx = halfW;
+      if (cx + halfW > canvas.width) newCx = canvas.width - halfW;
+      if (cy - halfH < 0) newCy = halfH;
+      if (cy + halfH > canvas.height) newCy = canvas.height - halfH;
+
+      return { ...t, nx: newCx / canvas.width, ny: newCy / canvas.height };
+    }, [imageInfo, artboardWidth, artboardHeight, resizeSettings.widthInches, resizeSettings.heightInches]);
+
+    const checkPixelOverlap = useCallback(() => {
+      if (designs.length < 2) {
+        if (overlappingDesigns.size > 0) setOverlappingDesigns(new Set());
+        return;
+      }
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const scale = 0.25;
+      const sw = Math.max(60, Math.round(canvas.width * scale));
+      const sh = Math.max(30, Math.round(canvas.height * scale));
+      const overlapping = new Set<string>();
+
+      const alphaBuffers: { id: string; data: Uint8ClampedArray }[] = [];
+      for (const d of designs) {
+        const offscreen = document.createElement('canvas');
+        offscreen.width = sw;
+        offscreen.height = sh;
+        const octx = offscreen.getContext('2d');
+        if (!octx) continue;
+        const rect = computeLayerRect(
+          d.imageInfo.image.width, d.imageInfo.image.height,
+          d.transform, sw, sh,
+          artboardWidth, artboardHeight,
+          d.widthInches, d.heightInches,
+        );
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        octx.save();
+        octx.translate(cx, cy);
+        octx.rotate((d.transform.rotation * Math.PI) / 180);
+        octx.drawImage(d.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+        octx.restore();
+        const imgData = octx.getImageData(0, 0, sw, sh);
+        alphaBuffers.push({ id: d.id, data: imgData.data });
+      }
+
+      for (let i = 0; i < alphaBuffers.length; i++) {
+        for (let j = i + 1; j < alphaBuffers.length; j++) {
+          const a = alphaBuffers[i].data;
+          const b = alphaBuffers[j].data;
+          let found = false;
+          for (let p = 3; p < a.length; p += 4) {
+            if (a[p] > 20 && b[p] > 20) {
+              found = true;
+              break;
+            }
+          }
+          if (found) {
+            overlapping.add(alphaBuffers[i].id);
+            overlapping.add(alphaBuffers[j].id);
+          }
+        }
+      }
+
+      const prev = overlappingDesigns;
+      if (overlapping.size !== prev.size || [...overlapping].some(id => !prev.has(id))) {
+        setOverlappingDesigns(overlapping);
+      }
+    }, [designs, artboardWidth, artboardHeight, overlappingDesigns]);
+
     const findDesignAtPoint = useCallback((px: number, py: number): string | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
@@ -265,13 +357,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const dy = clientY - dragStartMouseRef.current.y;
         const dnx = dx / canvasRect.width;
         const dny = dy / canvasRect.height;
-        const newTransform = {
+        const unclamped = {
           ...dragStartTransformRef.current,
           nx: dragStartTransformRef.current.nx + dnx,
           ny: dragStartTransformRef.current.ny + dny,
         };
+        const newTransform = clampTransformToArtboard(unclamped);
         transformRef.current = newTransform;
         onTransformChangeRef.current?.(newTransform);
+        checkPixelOverlap();
       } else if (isResizingRef.current) {
         const local = canvasToLocal(clientX, clientY);
         const rect = getDesignRect();
@@ -281,9 +375,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
           const ratio = dist / Math.max(resizeStartDistRef.current, 1);
           const newS = Math.max(0.1, Math.min(10, resizeStartSRef.current * ratio));
-          const newTransform = { ...transformRef.current, s: newS };
+          const unclamped = { ...transformRef.current, s: newS };
+          const newTransform = clampTransformToArtboard(unclamped);
           transformRef.current = newTransform;
           onTransformChangeRef.current?.(newTransform);
+          checkPixelOverlap();
         }
       } else if (isRotatingRef.current) {
         const local = canvasToLocal(clientX, clientY);
@@ -298,16 +394,32 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const newTransform = { ...transformRef.current, rotation: Math.round(newRot) };
           transformRef.current = newTransform;
           onTransformChangeRef.current?.(newTransform);
+          checkPixelOverlap();
         }
       }
-    }, [onTransformChange, canvasToLocal, getDesignRect]);
+    }, [onTransformChange, canvasToLocal, getDesignRect, clampTransformToArtboard, checkPixelOverlap]);
+
+    useEffect(() => {
+      checkPixelOverlap();
+    }, [designs]);
+
+    useEffect(() => {
+      if (!showBgPicker) return;
+      const close = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (!target.closest('[data-bg-picker]')) setShowBgPicker(false);
+      };
+      document.addEventListener('mousedown', close);
+      return () => document.removeEventListener('mousedown', close);
+    }, [showBgPicker]);
 
     const handleInteractionEnd = useCallback(() => {
       isDraggingRef.current = false;
       isResizingRef.current = false;
       isRotatingRef.current = false;
       if (containerRef.current) containerRef.current.style.cursor = 'default';
-    }, []);
+      checkPixelOverlap();
+    }, [checkPixelOverlap]);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
@@ -676,12 +788,54 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
       }
 
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      if (previewBgColor === 'transparent') {
+        const checkerSize = 10 * DPI_SCALE;
+        for (let y = 0; y < canvasHeight; y += checkerSize) {
+          for (let x = 0; x < canvasWidth; x += checkerSize) {
+            ctx.fillStyle = ((x / checkerSize + y / checkerSize) % 2 === 0) ? '#e0e0e0' : '#ffffff';
+            ctx.fillRect(x, y, checkerSize, checkerSize);
+          }
+        }
+      } else {
+        ctx.fillStyle = previewBgColor;
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      }
 
       for (const design of designs) {
         if (design.id === selectedDesignId) continue;
         drawSingleDesign(ctx, design, canvasWidth, canvasHeight);
+        if (overlappingDesigns.has(design.id)) {
+          const rect = computeLayerRect(
+            design.imageInfo.image.width, design.imageInfo.image.height,
+            design.transform, canvasWidth, canvasHeight,
+            artboardWidth, artboardHeight,
+            design.widthInches, design.heightInches,
+          );
+          const dcx = rect.x + rect.width / 2;
+          const dcy = rect.y + rect.height / 2;
+          const drad = (design.transform.rotation * Math.PI) / 180;
+          const dcos = Math.cos(drad);
+          const dsin = Math.sin(drad);
+          const hw = rect.width / 2;
+          const hh = rect.height / 2;
+          const corners = [
+            { x: dcx + (-hw) * dcos - (-hh) * dsin, y: dcy + (-hw) * dsin + (-hh) * dcos },
+            { x: dcx + hw * dcos - (-hh) * dsin, y: dcy + hw * dsin + (-hh) * dcos },
+            { x: dcx + hw * dcos - hh * dsin, y: dcy + hw * dsin + hh * dcos },
+            { x: dcx + (-hw) * dcos - hh * dsin, y: dcy + (-hw) * dsin + hh * dcos },
+          ];
+          ctx.save();
+          ctx.strokeStyle = '#ff0000';
+          ctx.lineWidth = 2 * DPI_SCALE;
+          ctx.setLineDash([6 * DPI_SCALE, 3 * DPI_SCALE]);
+          ctx.beginPath();
+          ctx.moveTo(corners[0].x, corners[0].y);
+          for (let ci = 1; ci < corners.length; ci++) ctx.lineTo(corners[ci].x, corners[ci].y);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
       }
 
       if (!imageInfo) return;
@@ -868,7 +1022,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, drawSingleDesign]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, drawSingleDesign, overlappingDesigns, previewBgColor]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {
@@ -1240,6 +1394,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     const drawSelectionHandles = (ctx: CanvasRenderingContext2D, rect: {x: number; y: number; width: number; height: number}, t: ImageTransform) => {
+      const isOverlap = selectedDesignId ? overlappingDesigns.has(selectedDesignId) : false;
+      const accentColor = isOverlap ? '#ff0000' : '#00ffff';
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
       const hw = rect.width / 2;
@@ -1260,7 +1416,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }));
 
       ctx.save();
-      ctx.strokeStyle = '#00ffff';
+      ctx.strokeStyle = accentColor;
       ctx.lineWidth = 1.5 * DPI_SCALE;
       ctx.setLineDash([6 * DPI_SCALE, 4 * DPI_SCALE]);
       ctx.beginPath();
@@ -1270,9 +1426,26 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.stroke();
       ctx.setLineDash([]);
 
+      if (isOverlap) {
+        const fontSize = Math.round(12 * DPI_SCALE);
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.fillStyle = '#ff0000';
+        ctx.textAlign = 'center';
+        const topMidX = (pts[0].x + pts[1].x) / 2;
+        const topMidY = (pts[0].y + pts[1].y) / 2;
+        const offsetUp = 8 * DPI_SCALE;
+        const textX = topMidX;
+        const textY = topMidY - offsetUp;
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.7)';
+        ctx.shadowBlur = 4;
+        ctx.fillText('Design OVERLAPPING', textX, textY);
+        ctx.restore();
+      }
+
       const handleSize = 10 * DPI_SCALE;
       ctx.fillStyle = '#ffffff';
-      ctx.strokeStyle = '#00ffff';
+      ctx.strokeStyle = accentColor;
       ctx.lineWidth = 2 * DPI_SCALE;
       for (const p of pts) {
         ctx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
@@ -1280,7 +1453,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const rotOff = 24 * DPI_SCALE;
-      ctx.fillStyle = '#00ffff';
+      ctx.fillStyle = accentColor;
       for (const p of pts) {
         const dx = p.x - cx;
         const dy = p.y - cy;
@@ -1348,7 +1521,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     height: '100%',
                     aspectRatio: `${artboardWidth} / ${artboardHeight}`,
                     maxHeight: '70vh',
-                    backgroundColor: '#ffffff',
+                    backgroundColor: previewBgColor === 'transparent' ? '#e0e0e0' : previewBgColor,
                     overflow: 'hidden',
                     userSelect: 'none',
                     touchAction: 'none'
@@ -1476,6 +1649,59 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <RotateCcw className="h-3 w-3 mr-1" />
                   Reset
                 </Button>
+
+                <div className="w-px h-4 bg-gray-600 mx-0.5" />
+
+                <div className="relative" data-bg-picker>
+                  <button
+                    onClick={() => setShowBgPicker(prev => !prev)}
+                    className="h-7 w-7 rounded-md border border-gray-600 hover:border-gray-400 flex items-center justify-center"
+                    title="Preview Background"
+                    style={{
+                      background: previewBgColor === 'transparent'
+                        ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 10px 10px'
+                        : previewBgColor
+                    }}
+                  />
+                  {showBgPicker && (
+                    <div className="absolute bottom-full mb-2 right-0 bg-gray-800 border border-gray-600 rounded-lg p-2 shadow-xl z-30 min-w-[140px]">
+                      <p className="text-[10px] text-gray-400 mb-1.5 font-medium">Preview Background</p>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {[
+                          { color: 'transparent', label: 'None' },
+                          { color: '#ffffff', label: 'White' },
+                          { color: '#d1d5db', label: 'Light Gray' },
+                          { color: '#6b7280', label: 'Gray' },
+                          { color: '#1f2937', label: 'Dark' },
+                          { color: '#000000', label: 'Black' },
+                          { color: '#ff00ff', label: 'Magenta' },
+                          { color: '#00ffff', label: 'Cyan' },
+                        ].map(({ color, label }) => (
+                          <button
+                            key={color}
+                            onClick={() => { setPreviewBgColor(color); setShowBgPicker(false); }}
+                            className={`w-6 h-6 rounded border ${previewBgColor === color ? 'border-cyan-400 ring-1 ring-cyan-400' : 'border-gray-500 hover:border-gray-300'}`}
+                            title={label}
+                            style={{
+                              background: color === 'transparent'
+                                ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 8px 8px'
+                                : color
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[10px] text-gray-400">Custom:</label>
+                        <input
+                          type="color"
+                          value={previewBgColor === 'transparent' ? '#ffffff' : previewBgColor}
+                          onChange={(e) => setPreviewBgColor(e.target.value)}
+                          className="w-6 h-6 rounded border border-gray-500 cursor-pointer bg-transparent p-0"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
