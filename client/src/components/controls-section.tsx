@@ -835,28 +835,32 @@ export default function ControlsSection({
                                         checked={color.spotFluorY}
                                         onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorY', checked as boolean)}
                                       />
-                                      <span className="text-[10px] text-gray-600">Y</span>
+                                      <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#DFFF00' }} />
+                                      <span className="text-[10px] font-semibold" style={{ color: '#DFFF00', textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>Y</span>
                                     </label>
                                     <label className="flex items-center gap-1 cursor-pointer">
                                       <Checkbox
                                         checked={color.spotFluorM}
                                         onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorM', checked as boolean)}
                                       />
-                                      <span className="text-[10px] text-gray-600">M</span>
+                                      <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#FF00FF' }} />
+                                      <span className="text-[10px] font-semibold" style={{ color: '#FF00FF' }}>M</span>
                                     </label>
                                     <label className="flex items-center gap-1 cursor-pointer">
                                       <Checkbox
                                         checked={color.spotFluorG}
                                         onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorG', checked as boolean)}
                                       />
-                                      <span className="text-[10px] text-gray-600">G</span>
+                                      <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#39FF14' }} />
+                                      <span className="text-[10px] font-semibold" style={{ color: '#39FF14', textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>G</span>
                                     </label>
                                     <label className="flex items-center gap-1 cursor-pointer">
                                       <Checkbox
                                         checked={color.spotFluorOrange}
                                         onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorOrange', checked as boolean)}
                                       />
-                                      <span className="text-[10px] text-gray-600">Or</span>
+                                      <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#FF6600' }} />
+                                      <span className="text-[10px] font-semibold" style={{ color: '#FF6600' }}>Or</span>
                                     </label>
                                   </>
                                 )}
@@ -906,28 +910,32 @@ export default function ControlsSection({
                                 checked={color.spotFluorY}
                                 onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorY', checked as boolean)}
                               />
-                              <span className="text-[10px] text-gray-600">Y</span>
+                              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#DFFF00' }} />
+                              <span className="text-[10px] font-semibold" style={{ color: '#DFFF00', textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>Y</span>
                             </label>
                             <label className="flex items-center gap-1 cursor-pointer">
                               <Checkbox
                                 checked={color.spotFluorM}
                                 onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorM', checked as boolean)}
                               />
-                              <span className="text-[10px] text-gray-600">M</span>
+                              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#FF00FF' }} />
+                              <span className="text-[10px] font-semibold" style={{ color: '#FF00FF' }}>M</span>
                             </label>
                             <label className="flex items-center gap-1 cursor-pointer">
                               <Checkbox
                                 checked={color.spotFluorG}
                                 onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorG', checked as boolean)}
                               />
-                              <span className="text-[10px] text-gray-600">G</span>
+                              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#39FF14' }} />
+                              <span className="text-[10px] font-semibold" style={{ color: '#39FF14', textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>G</span>
                             </label>
                             <label className="flex items-center gap-1 cursor-pointer">
                               <Checkbox
                                 checked={color.spotFluorOrange}
                                 onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorOrange', checked as boolean)}
                               />
-                              <span className="text-[10px] text-gray-600">Or</span>
+                              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: '#FF6600' }} />
+                              <span className="text-[10px] font-semibold" style={{ color: '#FF6600' }}>Or</span>
                             </label>
                           </>
                         )}
@@ -1057,13 +1065,15 @@ export default function ControlsSection({
               ) : (
               <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
                 {([
-                  { key: 'Y', name: spotFluorYName, setName: setSpotFluorYName, defaultName: 'Fluorescent_Y' },
-                  { key: 'M', name: spotFluorMName, setName: setSpotFluorMName, defaultName: 'Fluorescent_M' },
-                  { key: 'G', name: spotFluorGName, setName: setSpotFluorGName, defaultName: 'Fluorescent_G' },
-                  { key: 'Orange', name: spotFluorOrangeName, setName: setSpotFluorOrangeName, defaultName: 'Fluorescent_Orange' },
-                ] as const).map(({ key, name, setName, defaultName }) => (
+                  { key: 'Y', name: spotFluorYName, setName: setSpotFluorYName, defaultName: 'Fluorescent_Y', neonColor: '#DFFF00' },
+                  { key: 'M', name: spotFluorMName, setName: setSpotFluorMName, defaultName: 'Fluorescent_M', neonColor: '#FF00FF' },
+                  { key: 'G', name: spotFluorGName, setName: setSpotFluorGName, defaultName: 'Fluorescent_G', neonColor: '#39FF14' },
+                  { key: 'Orange', name: spotFluorOrangeName, setName: setSpotFluorOrangeName, defaultName: 'Fluorescent_Orange', neonColor: '#FF6600' },
+                ] as const).map(({ key, name, setName, defaultName, neonColor }) => (
                   <div key={key} className="flex items-center gap-1">
-                    <span>{key} →</span>
+                    <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: neonColor }} />
+                    <span className="font-semibold" style={{ color: neonColor, textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>{key}</span>
+                    <span>→</span>
                     {editingFluorName === key ? (
                       <div className="flex items-center gap-1">
                         <input
