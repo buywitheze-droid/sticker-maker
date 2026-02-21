@@ -215,6 +215,7 @@ class ContourWorkerManager {
       autoBridging: boolean;
       autoBridgingThreshold: number;
       contourMode?: ContourMode;
+      cornerMode?: string;
     },
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback,
@@ -345,7 +346,8 @@ class ContourWorkerManager {
     }
     
     const { createSilhouetteContour } = await import('./contour-outline');
-    return createSilhouetteContour(processImage, strokeSettings, resizeSettings);
+    const fullStrokeSettings = { ...strokeSettings, cornerMode: 'rounded' as const };
+    return createSilhouetteContour(processImage, fullStrokeSettings, resizeSettings);
   }
 
   terminate() {
@@ -377,6 +379,7 @@ export async function processContourInWorker(
     autoBridging: boolean;
     autoBridgingThreshold: number;
     contourMode?: ContourMode;
+    cornerMode?: string;
   },
   resizeSettings: ResizeSettings,
   onProgress?: ProgressCallback,

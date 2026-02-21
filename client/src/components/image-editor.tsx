@@ -130,7 +130,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
-    if (!contourData) return;
+    if (!contourData || !contourData.pathPoints || contourData.pathPoints.length < 3) {
+      console.warn('[AddContour] No cached contour data available. pathPoints:', contourData?.pathPoints?.length);
+      toast({
+        title: "No contour available",
+        description: "Please wait for the contour to finish generating before adding another.",
+        variant: "destructive",
+      });
+      setShowApplyAddDropdown(false);
+      return;
+    }
 
     const previewCanvas = canvasRef.current as any;
     const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
@@ -156,7 +165,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
     setCutContourLabel(newLabel);
     setShowApplyAddDropdown(false);
-  }, [cutContourLabel]);
+  }, [cutContourLabel, toast]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
