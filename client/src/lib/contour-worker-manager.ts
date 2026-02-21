@@ -32,16 +32,8 @@ function downsampleImage(image: HTMLImageElement): { canvas: HTMLCanvasElement; 
   return { canvas, scale };
 }
 
-export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
-export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
-
-export interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
-  cxInches: number;
-  cyInches: number;
-  rxInches: number;
-  ryInches: number;
-}
+export type DetectedAlgorithm = 'complex' | 'scattered';
+export type ContourMode = 'smooth' | 'scattered';
 
 export interface ContourData {
   pathPoints: Array<{x: number; y: number}>;
@@ -56,8 +48,6 @@ export interface ContourData {
   minPathX: number;
   minPathY: number;
   bleedInches: number;
-  shapeInfo?: ShapeInfoForPDF;
-  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
 }
 
 interface WorkerResponse {
@@ -97,8 +87,6 @@ interface ProcessRequest {
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
-    cornerMode: 'rounded' | 'sharp';
-    algorithm?: 'shapes' | 'complex';
     contourMode?: ContourMode;
   };
   effectiveDPI: number;
@@ -217,8 +205,6 @@ class ContourWorkerManager {
       useCustomBackground: boolean;
       autoBridging: boolean;
       autoBridgingThreshold: number;
-      cornerMode: 'rounded' | 'sharp';
-      algorithm?: 'shapes' | 'complex';
       contourMode?: ContourMode;
     },
     resizeSettings: ResizeSettings,
@@ -304,8 +290,6 @@ class ContourWorkerManager {
       useCustomBackground: boolean;
       autoBridging: boolean;
       autoBridgingThreshold: number;
-      cornerMode: 'rounded' | 'sharp';
-      algorithm?: 'shapes' | 'complex';
       contourMode?: ContourMode;
     },
     resizeSettings: ResizeSettings
@@ -367,8 +351,6 @@ export async function processContourInWorker(
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
-    cornerMode: 'rounded' | 'sharp';
-    algorithm?: 'shapes' | 'complex';
     contourMode?: ContourMode;
   },
   resizeSettings: ResizeSettings,

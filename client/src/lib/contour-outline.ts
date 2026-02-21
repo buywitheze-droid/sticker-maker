@@ -1,7 +1,6 @@
 import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, subsamplePolygon } from "@/lib/clipper-path";
-import { offsetPolygon } from "@/lib/minkowski-offset";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
 
 function simplifyPathForPDF(points: Array<{x: number; y: number}>, epsilon: number = 1.0): Array<{x: number; y: number}> {
@@ -48,60 +47,14 @@ function perpendicularDistance(
 
 function contourPointsToPDFPathOps(
   pathPointsInches: Array<{x: number; y: number}>,
-  pageHeightInches: number,
-  shapeInfo?: ShapeInfoForPDF,
-  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>
+  pageHeightInches: number
 ): string {
   let pathOps = '';
   pathOps += '/CutContour CS 1 SCN\n';
   pathOps += '0.5 w\n';
 
-  const hasNonShapeElements = nonShapeContourPaths && nonShapeContourPaths.length > 0;
-
-  if (shapeInfo && !hasNonShapeElements && (shapeInfo.type === 'circle' || shapeInfo.type === 'ellipse')) {
-    const cx = shapeInfo.cxInches * 72;
-    const cy = shapeInfo.cyInches * 72;
-    const rx = shapeInfo.rxInches * 72;
-    const ry = shapeInfo.ryInches * 72;
-
-    const K = 0.5522847498;
-    const kx = rx * K;
-    const ky = ry * K;
-
-    pathOps += `${(cx + rx).toFixed(4)} ${cy.toFixed(4)} m\n`;
-    pathOps += `${(cx + rx).toFixed(4)} ${(cy + ky).toFixed(4)} ${(cx + kx).toFixed(4)} ${(cy + ry).toFixed(4)} ${cx.toFixed(4)} ${(cy + ry).toFixed(4)} c\n`;
-    pathOps += `${(cx - kx).toFixed(4)} ${(cy + ry).toFixed(4)} ${(cx - rx).toFixed(4)} ${(cy + ky).toFixed(4)} ${(cx - rx).toFixed(4)} ${cy.toFixed(4)} c\n`;
-    pathOps += `${(cx - rx).toFixed(4)} ${(cy - ky).toFixed(4)} ${(cx - kx).toFixed(4)} ${(cy - ry).toFixed(4)} ${cx.toFixed(4)} ${(cy - ry).toFixed(4)} c\n`;
-    pathOps += `${(cx + kx).toFixed(4)} ${(cy - ry).toFixed(4)} ${(cx + rx).toFixed(4)} ${(cy - ky).toFixed(4)} ${(cx + rx).toFixed(4)} ${cy.toFixed(4)} c\n`;
-    pathOps += 'h S\n';
-
-    console.log(`[PDF CutContour] Perfect ${shapeInfo.type}: cx=${(cx).toFixed(2)}pt cy=${(cy).toFixed(2)}pt rx=${(rx).toFixed(2)}pt ry=${(ry).toFixed(2)}pt`);
-
-    return pathOps;
-  }
-
-  if (shapeInfo && !hasNonShapeElements && shapeInfo.type === 'rectangle') {
-    const x = (shapeInfo.cxInches - shapeInfo.rxInches) * 72;
-    const y = (shapeInfo.cyInches - shapeInfo.ryInches) * 72;
-    const w = shapeInfo.rxInches * 2 * 72;
-    const h = shapeInfo.ryInches * 2 * 72;
-
-    pathOps += `${x.toFixed(4)} ${y.toFixed(4)} ${w.toFixed(4)} ${h.toFixed(4)} re\n`;
-    pathOps += 'S\n';
-
-    console.log(`[PDF CutContour] Perfect rectangle: x=${x.toFixed(2)}pt y=${y.toFixed(2)}pt w=${w.toFixed(2)}pt h=${h.toFixed(2)}pt`);
-
-    return pathOps;
-  }
-
-  if (hasNonShapeElements) {
-    console.log(`[PDF CutContour] Hybrid design detected — using smooth Clipper.js union polygon (no simplification to preserve curve smoothness)`);
-  }
-
-  const simplified = hasNonShapeElements
-    ? pathPointsInches
-    : simplifyPathForPDF(pathPointsInches, 0.01);
-  console.log(`[PDF CutContour] ${hasNonShapeElements ? 'Kept' : 'Simplified'} ${pathPointsInches.length} points${hasNonShapeElements ? '' : ` to ${simplified.length} points`}`);
+  const simplified = simplifyPathForPDF(pathPointsInches, 0.01);
+  console.log(`[PDF CutContour] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
   console.log(`[PDF CutContour] Page height: ${pageHeightInches.toFixed(3)}in`);
 
   for (let i = 0; i < simplified.length; i++) {
@@ -1660,31 +1613,10 @@ export function getContourPath(
     // Fill silhouette (matches worker)
     const filledMask = fillSilhouette(baseDilatedMask, baseWidth, baseHeight);
     
-    // Determine if sharp corners are requested - matches worker logic
-    // Resolve effective mode: contourMode takes precedence over legacy algorithm field
-    const effectiveMode = (strokeSettings as any).contourMode
-      ?? (strokeSettings.algorithm === 'complex' ? 'smooth' : 'sharp');
-    const useSharpCorners = effectiveMode === 'sharp' || effectiveMode === 'shapes';
-    
-    let boundaryPath: Point[];
-    let dilatedWidth: number;
-    let dilatedHeight: number;
-    
-    if (useSharpCorners && userOffsetPixels > 0) {
-      // Sharp mode: trace boundary from base-only dilation, then apply vector offset with miter joins
-      const baseBoundary = traceBoundary(filledMask, baseWidth, baseHeight);
-      if (baseBoundary.length < 3) return null;
-      boundaryPath = offsetPolygon(baseBoundary, userOffsetPixels, 'sharp');
-      // Bounds are approximate after vector offset
-      dilatedWidth = baseWidth + userOffsetPixels * 2;
-      dilatedHeight = baseHeight + userOffsetPixels * 2;
-    } else {
-      // Rounded mode: pixel dilation (matches worker)
-      const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
-      dilatedWidth = baseWidth + userOffsetPixels * 2;
-      dilatedHeight = baseHeight + userOffsetPixels * 2;
-      boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
-    }
+    const finalDilatedMask = dilateSilhouette(filledMask, baseWidth, baseHeight, userOffsetPixels);
+    const dilatedWidth = baseWidth + userOffsetPixels * 2;
+    const dilatedHeight = baseHeight + userOffsetPixels * 2;
+    const boundaryPath = traceBoundary(finalDilatedMask, dilatedWidth, dilatedHeight);
     
     if (boundaryPath.length < 3) return null;
     
@@ -1760,14 +1692,6 @@ export function getContourPath(
   }
 }
 
-export interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
-  cxInches: number;
-  cyInches: number;
-  rxInches: number;
-  ryInches: number;
-}
-
 export interface CachedContourData {
   pathPoints: Array<{x: number; y: number}>;
   previewPathPoints: Array<{x: number; y: number}>;
@@ -1780,8 +1704,6 @@ export interface CachedContourData {
   minPathX: number;
   minPathY: number;
   bleedInches: number;
-  shapeInfo?: ShapeInfoForPDF;
-  nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
 }
 
 export async function downloadContourPDF(
@@ -1811,9 +1733,6 @@ export async function downloadContourPDF(
     let minPathX: number;
     let minPathY: number;
     let bleedInches: number;
-    let shapeInfo: ShapeInfoForPDF | undefined;
-    let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
-    
     {
       const workerManager = getContourWorkerManager();
       const contourData = workerManager.getCachedContourData();
@@ -1830,8 +1749,6 @@ export async function downloadContourPDF(
         minPathX = contourData.minPathX;
         minPathY = contourData.minPathY;
         bleedInches = contourData.bleedInches;
-        shapeInfo = contourData.shapeInfo;
-        nonShapeContourPaths = contourData.nonShapeContourPaths;
       } else {
         console.error('[downloadContourPDF] No contour data available - generate preview first');
         return;
@@ -1993,7 +1910,7 @@ export async function downloadContourPDF(
       (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, shapeInfo, nonShapeContourPaths);
+    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2047,9 +1964,6 @@ export async function generateContourPDFBase64(
   let minPathX: number;
   let minPathY: number;
   let bleedInches: number;
-  let shapeInfo: ShapeInfoForPDF | undefined;
-  let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
-  
   if (cachedContourData && cachedContourData.pathPoints.length > 0) {
     console.log('[generateContourPDFBase64] Using cached contour data for fast export');
     pathPoints = cachedContourData.pathPoints;
@@ -2063,8 +1977,6 @@ export async function generateContourPDFBase64(
     minPathX = cachedContourData.minPathX;
     minPathY = cachedContourData.minPathY;
     bleedInches = cachedContourData.bleedInches;
-    shapeInfo = cachedContourData.shapeInfo;
-    nonShapeContourPaths = cachedContourData.nonShapeContourPaths;
   } else {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
@@ -2080,8 +1992,6 @@ export async function generateContourPDFBase64(
       minPathX = contourData.minPathX;
       minPathY = contourData.minPathY;
       bleedInches = contourData.bleedInches;
-      shapeInfo = contourData.shapeInfo;
-      nonShapeContourPaths = contourData.nonShapeContourPaths;
     } else {
       console.error('[generateContourPDFBase64] No contour data available - generate preview first');
       return null;

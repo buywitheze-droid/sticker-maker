@@ -33,10 +33,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     alphaThreshold: 128, // Auto-detected from alpha channel
     backgroundColor: "#ffffff", // Default white background for contour
     useCustomBackground: true, // Default to solid background color
-    cornerMode: 'sharp', // Default to sharp corners with high miter limit
+    cornerMode: 'rounded',
     autoBridging: true, // Auto-bridge narrow gaps in contour
     autoBridgingThreshold: 0.02, // Gap threshold in inches
-    algorithm: undefined,
     contourMode: undefined,
   });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
@@ -228,10 +227,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       alphaThreshold: 128,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
-      cornerMode: 'sharp',
+      cornerMode: 'rounded',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
-      algorithm: undefined,
       contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);
@@ -343,10 +341,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         alphaThreshold: 128,
         backgroundColor: "#ffffff",
         useCustomBackground: true,
-        cornerMode: 'sharp',
+        cornerMode: 'rounded',
         autoBridging: true,
         autoBridgingThreshold: 0.02,
-        algorithm: undefined,
         contourMode: undefined,
       });
       setDetectedAlgorithm(undefined);
@@ -427,10 +424,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       alphaThreshold: 128,
       backgroundColor: "#ffffff",
       useCustomBackground: true,
-      cornerMode: 'sharp',
+      cornerMode: 'rounded',
       autoBridging: true,
       autoBridgingThreshold: 0.02,
-      algorithm: undefined,
       contourMode: undefined,
     });
     setDetectedAlgorithm(undefined);

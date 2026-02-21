@@ -328,8 +328,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const CONTOUR_CACHE_VERSION = 18;
     const generateContourCacheKey = useCallback(() => {
       if (!imageInfo) return '';
-      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${strokeSettings.algorithm}-${strokeSettings.cornerMode}-${strokeSettings.contourMode}-${strokeSettings.autoBridging}-${strokeSettings.autoBridgingThreshold}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
-    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, strokeSettings.algorithm, strokeSettings.cornerMode, strokeSettings.contourMode, strokeSettings.autoBridging, strokeSettings.autoBridgingThreshold, resizeSettings.widthInches, resizeSettings.heightInches]);
+      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${strokeSettings.contourMode}-${strokeSettings.autoBridging}-${strokeSettings.autoBridgingThreshold}-${resizeSettings.widthInches}-${resizeSettings.heightInches}`;
+    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, strokeSettings.contourMode, strokeSettings.autoBridging, strokeSettings.autoBridgingThreshold, resizeSettings.widthInches, resizeSettings.heightInches]);
 
     useEffect(() => {
       // Clear any pending debounce

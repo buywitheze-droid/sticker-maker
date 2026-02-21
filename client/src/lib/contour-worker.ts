@@ -22,20 +22,10 @@ interface WorkerMessage {
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
-    cornerMode: 'rounded' | 'sharp';
-    algorithm?: 'shapes' | 'complex';
-    contourMode?: 'sharp' | 'smooth' | 'shapes' | 'scattered';
+    contourMode?: 'smooth' | 'scattered';
   };
   effectiveDPI: number;
   previewMode?: boolean;
-}
-
-interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
-  cxInches: number;
-  cyInches: number;
-  rxInches: number;
-  ryInches: number;
 }
 
 interface WorkerResponse {
@@ -58,10 +48,8 @@ interface WorkerResponse {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
-    shapeInfo?: ShapeInfoForPDF;
-    nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
   };
-  detectedAlgorithm?: 'shapes' | 'complex' | 'scattered';
+  detectedAlgorithm?: 'complex' | 'scattered';
 }
 
 // Maximum dimension for any processing to prevent browser crashes
@@ -98,7 +86,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
       
       let imageCanvasX = 0;
       let imageCanvasY = 0;
-      let detectedAlg: 'shapes' | 'complex' | 'scattered' = 'shapes';
+      let detectedAlg: 'complex' | 'scattered' = 'complex';
       
       if (shouldDownscale) {
         scale = targetMaxDim / maxDim;
@@ -162,8 +150,6 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
           minPathX: spMinX,
           minPathY: spMinY,
           bleedInches,
-          shapeInfo: result.contourData.shapeInfo,
-          nonShapeContourPaths: result.contourData.nonShapeContourPaths
         };
         imageCanvasX = Math.round(result.imageCanvasX / scale);
         imageCanvasY = Math.round(result.imageCanvasY / scale);
@@ -281,10 +267,8 @@ interface ContourResult {
     minPathX: number;
     minPathY: number;
     bleedInches: number;
-    shapeInfo?: ShapeInfoForPDF;
-    nonShapeContourPaths?: Array<Array<{x: number; y: number}>>;
   };
-  detectedAlgorithm: 'shapes' | 'complex' | 'scattered';
+  detectedAlgorithm: 'complex' | 'scattered';
 }
 
 function processContour(
@@ -298,9 +282,7 @@ function processContour(
     useCustomBackground: boolean;
     autoBridging: boolean;
     autoBridgingThreshold: number;
-    cornerMode: 'rounded' | 'sharp';
-    algorithm?: 'shapes' | 'complex';
-    contourMode?: 'sharp' | 'smooth' | 'shapes' | 'scattered';
+    contourMode?: 'smooth' | 'scattered';
   },
   effectiveDPI: number
 , previewMode?: boolean): ContourResult {
@@ -445,81 +427,24 @@ function processContour(
     ? detectScatteredDesign(scaledContoursForAnalysis, effectiveDPI)
     : { isScattered: false, maxGapPixels: 0 };
   
-  let detectedAlgorithm: 'shapes' | 'complex' | 'scattered' = 
+  let detectedAlgorithm: 'complex' | 'scattered' = 
     prelimCompositeDetected ? 'scattered' :
     scatteredAnalysis.isScattered ? 'scattered' : 
-    complexity.needsComplexProcessing ? 'complex' : 'shapes';
-
-  // Run shape analysis during auto-detection to determine if shapes mode should be used
-  // Check both the whole filled mask AND per-component analysis for dominant shapes
-  let autoShapeDetected = false;
-  if (detectedAlgorithm !== 'scattered') {
-    const shapeProbe = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
-    if (shapeProbe) {
-      detectedAlgorithm = 'shapes';
-      autoShapeDetected = true;
-      console.log('[Worker] Shape auto-detected (whole mask):', shapeProbe.type, '- will use shapes mode');
-    } else {
-      const shapeComps = labelComponents(filledMainMask, hiResWidth, hiResHeight);
-      if (shapeComps.length > 0) {
-        const shapeTotalArea = shapeComps.reduce((s, c) => s + c.area, 0);
-        const shapeSorted = [...shapeComps].sort((a, b) => b.area - a.area);
-        const shapeDominant = shapeSorted[0];
-        if (shapeDominant.area / shapeTotalArea > 0.50) {
-          const domShape = analyzeComponentShape(shapeDominant, hiResWidth, hiResHeight);
-          if (domShape) {
-            detectedAlgorithm = 'shapes';
-            autoShapeDetected = true;
-            console.log('[Worker] Shape auto-detected (dominant component:', domShape.type, ',', (shapeDominant.area / shapeTotalArea * 100).toFixed(1) + '% of area) - will use shapes mode');
-          }
-        }
-      }
-      if (!autoShapeDetected && detectedAlgorithm === 'shapes') {
-        detectedAlgorithm = 'complex';
-        console.log('[Worker] No shape confirmed by probes, resetting to:', detectedAlgorithm);
-      }
-    }
-  }
+    complexity.needsComplexProcessing ? 'complex' : 'complex';
 
   // Resolve effective contour mode
-  // Priority: contourMode (explicit user override) > algorithm (legacy) > auto-detection
-  type EffectiveMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
+  type EffectiveMode = 'smooth' | 'scattered';
   let effectiveMode: EffectiveMode;
   if (strokeSettings.contourMode) {
     effectiveMode = strokeSettings.contourMode;
     console.log('[Worker] ContourMode override:', effectiveMode, '(auto-detected was:', detectedAlgorithm + ')');
-  } else if (strokeSettings.algorithm) {
-    effectiveMode = strokeSettings.algorithm === 'complex' ? 'smooth' : 'sharp';
-    console.log('[Worker] Legacy algorithm override:', strokeSettings.algorithm, '→', effectiveMode);
   } else {
-    const autoMode: EffectiveMode =
-      detectedAlgorithm === 'scattered' ? 'scattered' :
-      detectedAlgorithm === 'shapes' ? 'shapes' :
-      detectedAlgorithm === 'complex' ? 'smooth' : 'sharp';
-    effectiveMode = autoMode;
+    effectiveMode = detectedAlgorithm === 'scattered' ? 'scattered' : 'smooth';
   }
 
   console.log('[Worker] Effective mode:', effectiveMode, '| Detected algorithm:', detectedAlgorithm, prelimCompositeDetected ? '(forced by composite detection)' : '');
 
-  // Shapes mode: generate perfect geometric primitives as a separate code path
-  if (effectiveMode === 'shapes') {
-    console.log('[Worker] SHAPES MODE: generating perfect geometric contour');
-    const shapesResult = processShapesMode(
-      imageData, filledMainMask, hiResMask, hiResWidth, hiResHeight,
-      SUPER_SAMPLE, width, height, effectiveDPI, totalOffsetPixels, baseOffsetPixels,
-      userOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding,
-      strokeSettings, effectiveBackgroundColor, isHolographic, previewMode,
-      detectedAlgorithm
-    );
-    if (shapesResult) return shapesResult;
-    console.log('[Worker] Shapes mode fallback: using smooth mode instead');
-    effectiveMode = 'smooth';
-  }
-  
-  // Sharp corners for 'sharp' mode, rounded for 'smooth' and 'scattered'
-  const useSharpCorners = effectiveMode === 'sharp';
-  const pixelDilateOffset = useSharpCorners ? baseOffsetPixels : totalOffsetPixels;
-  let dilateRadiusHiRes = pixelDilateOffset * SUPER_SAMPLE;
+  let dilateRadiusHiRes = totalOffsetPixels * SUPER_SAMPLE;
   
   // Size guard: limit dilated mask to ~16M pixels to avoid memory blowups
   const maxDilatedPixels = 16_000_000;
@@ -533,7 +458,7 @@ function processContour(
     dilateRadiusHiRes = actualDilateRadius;
   }
   
-  console.log('[Worker] Dilating main component by', pixelDilateOffset, 'px (', dilateRadiusHiRes, 'px at', SUPER_SAMPLE, 'x)', useSharpCorners ? '(sharp mode - vector offset pending)' : '(rounded mode)');
+  console.log('[Worker] Dilating main component by', totalOffsetPixels, 'px (', dilateRadiusHiRes, 'px at', SUPER_SAMPLE, 'x)');
   const dilatedMask = dilateSilhouette(filledMainMask, hiResWidth, hiResHeight, dilateRadiusHiRes);
   const dilatedWidth = hiResWidth + dilateRadiusHiRes * 2;
   const dilatedHeight = hiResHeight + dilateRadiusHiRes * 2;
@@ -553,13 +478,6 @@ function processContour(
     x: (p.x - dilateRadiusHiRes) / SUPER_SAMPLE,
     y: (p.y - dilateRadiusHiRes) / SUPER_SAMPLE
   }));
-  
-  // For sharp mode: apply user offset via Clipper with miter joins
-  if (useSharpCorners && userOffsetPixels > 0) {
-    console.log('[Worker] Applying vector offset with MITER joins:', userOffsetPixels, 'px');
-    smoothedPath = clipperVectorOffset(smoothedPath, userOffsetPixels, true);
-    console.log('[Worker] Sharp vector offset result:', smoothedPath.length, 'points');
-  }
   
   // Vector weld: expand then shrink by small amount to merge nearby path segments
   const weldPx = previewMode ? 1.0 : 3.0;
@@ -716,868 +634,6 @@ function processContour(
       minPathX,
       minPathY,
       bleedInches
-    },
-    detectedAlgorithm
-  };
-}
-
-// ===== SHAPES MODE: Dedicated processing branch =====
-// Generates perfect geometric contours (circle, ellipse, rectangle, rounded-rect)
-// by analyzing the design silhouette and fitting the best primitive shape.
-// This is a completely separate code path from sharp/smooth/scattered.
-
-interface ShapeAnalysis {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
-  cx: number;
-  cy: number;
-  rx: number;
-  ry: number;
-  angle: number;
-  circularity: number;
-  solidity: number;
-  aspectRatio: number;
-  boundary?: Point[];
-}
-
-function analyzeShapeFromMask(
-  mask: Uint8Array, maskWidth: number, maskHeight: number
-): ShapeAnalysis | null {
-  let minX = maskWidth, minY = maskHeight, maxX = 0, maxY = 0;
-  let sumX = 0, sumY = 0, count = 0;
-
-  for (let y = 0; y < maskHeight; y++) {
-    for (let x = 0; x < maskWidth; x++) {
-      if (mask[y * maskWidth + x]) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        sumX += x;
-        sumY += y;
-        count++;
-      }
-    }
-  }
-
-  if (count < 10) return null;
-
-  const bboxW = maxX - minX + 1;
-  const bboxH = maxY - minY + 1;
-  const bboxArea = bboxW * bboxH;
-  const solidity = count / bboxArea;
-  const aspectRatio = bboxW / bboxH;
-
-  const bboxCx = minX + bboxW / 2;
-  const bboxCy = minY + bboxH / 2;
-  const centroidCx = sumX / count;
-  const centroidCy = sumY / count;
-
-  const boundary = traceBoundary(mask, maskWidth, maskHeight);
-  let perimeter = 0;
-  if (boundary.length >= 3) {
-    for (let i = 0; i < boundary.length; i++) {
-      const next = boundary[(i + 1) % boundary.length];
-      const dx = next.x - boundary[i].x;
-      const dy = next.y - boundary[i].y;
-      perimeter += Math.sqrt(dx * dx + dy * dy);
-    }
-  } else {
-    for (let y = 0; y < maskHeight; y++) {
-      for (let x = 0; x < maskWidth; x++) {
-        if (!mask[y * maskWidth + x]) continue;
-        let isEdge = false;
-        for (let dy2 = -1; dy2 <= 1 && !isEdge; dy2++) {
-          for (let dx2 = -1; dx2 <= 1 && !isEdge; dx2++) {
-            if (dx2 === 0 && dy2 === 0) continue;
-            const nx = x + dx2, ny = y + dy2;
-            if (nx < 0 || nx >= maskWidth || ny < 0 || ny >= maskHeight || !mask[ny * maskWidth + nx]) {
-              isEdge = true;
-            }
-          }
-        }
-        if (isEdge) perimeter++;
-      }
-    }
-  }
-
-  const circularity = perimeter > 0 ? (4 * Math.PI * count) / (perimeter * perimeter) : 0;
-
-  const expectedCircleArea = Math.PI * (bboxW / 2) * (bboxH / 2);
-  const circleAreaRatio = count / expectedCircleArea;
-
-  const rx = bboxW / 2;
-  const ry = bboxH / 2;
-
-  let circleFit = 0;
-  if (boundary.length >= 10) {
-    const cxF = bboxCx;
-    const cyF = bboxCy;
-    const step = Math.max(1, Math.floor(boundary.length / 100));
-    let sumDev = 0;
-    let fitCount = 0;
-    for (let i = 0; i < boundary.length; i += step) {
-      const dx = (boundary[i].x - cxF) / rx;
-      const dy = (boundary[i].y - cyF) / ry;
-      const normalizedDist = Math.sqrt(dx * dx + dy * dy);
-      sumDev += Math.abs(normalizedDist - 1.0);
-      fitCount++;
-    }
-    const meanDev = sumDev / fitCount;
-    circleFit = Math.max(0, 1.0 - meanDev);
-  }
-
-  const d = Math.max(2, Math.min(bboxW, bboxH) * 0.05);
-  let topSupport = 0, bottomSupport = 0, leftSupport = 0, rightSupport = 0;
-  let totalBoundary = boundary.length;
-  if (totalBoundary > 0) {
-    for (const pt of boundary) {
-      if (Math.abs(pt.y - minY) <= d) topSupport++;
-      if (Math.abs(pt.y - maxY) <= d) bottomSupport++;
-      if (Math.abs(pt.x - minX) <= d) leftSupport++;
-      if (Math.abs(pt.x - maxX) <= d) rightSupport++;
-    }
-  }
-  const topPct = totalBoundary > 0 ? topSupport / totalBoundary : 0;
-  const bottomPct = totalBoundary > 0 ? bottomSupport / totalBoundary : 0;
-  const leftPct = totalBoundary > 0 ? leftSupport / totalBoundary : 0;
-  const rightPct = totalBoundary > 0 ? rightSupport / totalBoundary : 0;
-  const rectGateThreshold = 0.15;
-  const rectGatePasses = topPct > rectGateThreshold && bottomPct > rectGateThreshold &&
-    leftPct > rectGateThreshold && rightPct > rectGateThreshold;
-
-  console.log('[Shapes] Analysis: circularity:', circularity.toFixed(3),
-    'solidity:', solidity.toFixed(3), 'aspect:', aspectRatio.toFixed(3),
-    'circleAreaRatio:', circleAreaRatio.toFixed(3), 'circleFit:', circleFit.toFixed(3),
-    'centroid vs bbox center offset:', Math.abs(centroidCx - bboxCx).toFixed(1), Math.abs(centroidCy - bboxCy).toFixed(1));
-  console.log('[Shapes] Rect gate: top:', topPct.toFixed(3), 'bottom:', bottomPct.toFixed(3),
-    'left:', leftPct.toFixed(3), 'right:', rightPct.toFixed(3), 'passes:', rectGatePasses);
-
-  let shapeType: ShapeAnalysis['type'];
-  const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
-
-  const centroidOffsetY = (centroidCy - bboxCy) / bboxH;
-  const centroidOffsetX = (centroidCx - bboxCx) / bboxW;
-  const centroidIsOffCenter = Math.abs(centroidOffsetY) > 0.06 || Math.abs(centroidOffsetX) > 0.06;
-  console.log('[Shapes] Centroid offset: dY:', centroidOffsetY.toFixed(3), 'dX:', centroidOffsetX.toFixed(3), 'offCenter:', centroidIsOffCenter);
-
-  const checkShieldTaper = (): { isShield: boolean; taperRatio: number } => {
-    const topY = Math.min(maskHeight - 1, minY + Math.round(bboxH * 0.1));
-    let topRowWidth = 0;
-    {
-      let tLeft = maskWidth, tRight = 0;
-      for (let x = 0; x < maskWidth; x++) {
-        if (mask[topY * maskWidth + x]) {
-          if (x < tLeft) tLeft = x;
-          if (x > tRight) tRight = x;
-        }
-      }
-      topRowWidth = tRight - tLeft + 1;
-    }
-    const midY = Math.round(bboxCy);
-    let midRowWidth = 0;
-    if (midY >= 0 && midY < maskHeight) {
-      let mLeft = maskWidth, mRight = 0;
-      for (let x = 0; x < maskWidth; x++) {
-        if (mask[midY * maskWidth + x]) {
-          if (x < mLeft) mLeft = x;
-          if (x > mRight) mRight = x;
-        }
-      }
-      midRowWidth = mRight - mLeft + 1;
-    }
-    const bottomY = Math.min(maskHeight - 1, maxY);
-    let bottomRowWidth = 0;
-    {
-      let bLeft = maskWidth, bRight = 0;
-      for (let x = 0; x < maskWidth; x++) {
-        if (mask[bottomY * maskWidth + x]) {
-          if (x < bLeft) bLeft = x;
-          if (x > bRight) bRight = x;
-        }
-      }
-      bottomRowWidth = bRight - bLeft + 1;
-    }
-    const taperRatio = midRowWidth > 0 ? bottomRowWidth / midRowWidth : 1;
-    const topMidRatio = midRowWidth > 0 ? topRowWidth / midRowWidth : 0;
-    const hasWideTop = topMidRatio > 0.6;
-    console.log('[Shapes] Shield check: topRowWidth:', topRowWidth, 'midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3), 'topMidRatio:', topMidRatio.toFixed(3), 'wideTop:', hasWideTop);
-    return { isShield: taperRatio < 0.85 && hasWideTop, taperRatio };
-  };
-
-  if (solidity > 0.85) {
-    if (rectGatePasses) {
-      if (circularity > 0.75) {
-        shapeType = 'rounded-rect';
-      } else {
-        shapeType = 'rectangle';
-      }
-    } else {
-      const { isShield } = checkShieldTaper();
-      if (isShield) {
-        shapeType = 'shield';
-        console.log('[Shapes] Detected: shield (solidity high but rect gate failed, bottom tapers)');
-        return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
-      } else {
-        console.log('[Shapes] Rect gate failed but no taper detected — falling back to traced contour');
-        return null;
-      }
-    }
-  } else if (solidity > 0.55) {
-    const { isShield, taperRatio } = checkShieldTaper();
-    if (isShield && (centroidIsOffCenter || !rectGatePasses)) {
-      shapeType = 'shield';
-      console.log('[Shapes] Detected: shield (moderate solidity:', solidity.toFixed(3), ', taper:', taperRatio.toFixed(3), ', centroidOff:', centroidIsOffCenter, ')');
-      return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
-    }
-  }
-
-  if (centroidIsOffCenter) {
-    console.log('[Shapes] Centroid significantly off-center — rejecting circle/ellipse classification');
-    return null;
-  }
-
-  if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70 && circularity > 0.70 && circleFit > 0.85) {
-    shapeType = 'circle';
-  } else if (!isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
-    solidity > 0.70 && circularity > 0.70 && circleFit > 0.80) {
-    shapeType = 'ellipse';
-  } else {
-    console.log('[Shapes] No shape match - circularity:', circularity.toFixed(3),
-      'solidity:', solidity.toFixed(3), 'circleAreaRatio:', circleAreaRatio.toFixed(3),
-      'aspect:', aspectRatio.toFixed(3), 'circleFit:', circleFit.toFixed(3));
-    return null;
-  }
-
-  console.log('[Shapes] Detected:', shapeType);
-
-  return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio };
-}
-
-function curvatureAwareSmooth(points: Point[], sharpBelowY: number): Point[] {
-  if (points.length < 5) return points;
-
-  const result: Point[] = [];
-  const n = points.length;
-
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const curr = points[i];
-    const next = points[(i + 1) % n];
-
-    if (curr.y > sharpBelowY) {
-      result.push(curr);
-      continue;
-    }
-
-    const v1x = curr.x - prev.x, v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x, v2y = next.y - curr.y;
-    const cross = v1x * v2y - v1y * v2x;
-    const dot = v1x * v2x + v1y * v2y;
-    const angle = Math.abs(Math.atan2(cross, dot));
-
-    if (angle > Math.PI * 0.6) {
-      result.push(curr);
-    } else {
-      result.push({
-        x: curr.x * 0.5 + prev.x * 0.25 + next.x * 0.25,
-        y: curr.y * 0.5 + prev.y * 0.25 + next.y * 0.25
-      });
-    }
-  }
-
-  const pass2: Point[] = [];
-  const m = result.length;
-  for (let i = 0; i < m; i++) {
-    const curr = result[i];
-    if (curr.y > sharpBelowY) {
-      pass2.push(curr);
-      continue;
-    }
-    const prev = result[(i - 1 + m) % m];
-    const next = result[(i + 1) % m];
-    pass2.push({
-      x: curr.x * 0.6 + prev.x * 0.2 + next.x * 0.2,
-      y: curr.y * 0.6 + prev.y * 0.2 + next.y * 0.2
-    });
-  }
-
-  return pass2;
-}
-
-function generateShapeContour(
-  shape: ShapeAnalysis,
-  offsetPixels: number,
-  numPoints: number = 64
-): Point[] {
-  const { type, cx, cy, rx, ry } = shape;
-  const points: Point[] = [];
-
-  if (type === 'shield' && shape.boundary && shape.boundary.length >= 10) {
-    const simplified = rdpSimplifyPolygon(shape.boundary, 1.5);
-
-    const smoothed = curvatureAwareSmooth(simplified, cy + ry * 0.5);
-
-    const clipperPath = smoothed.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-
-    const co = new ClipperLib.ClipperOffset();
-    co.MiterLimit = 3;
-    co.ArcTolerance = CLIPPER_SCALE * 0.05;
-    co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-
-    const offsetResult: Array<Array<{ X: number; Y: number }>> = [];
-    co.Execute(offsetResult, offsetPixels * CLIPPER_SCALE);
-
-    if (offsetResult.length > 0) {
-      let largestIdx = 0;
-      let largestArea = 0;
-      for (let i = 0; i < offsetResult.length; i++) {
-        const area = Math.abs(ClipperLib.Clipper.Area(offsetResult[i]));
-        if (area > largestArea) {
-          largestArea = area;
-          largestIdx = i;
-        }
-      }
-      return offsetResult[largestIdx].map(p => ({
-        x: p.X / CLIPPER_SCALE,
-        y: p.Y / CLIPPER_SCALE
-      }));
-    }
-
-    return smoothed;
-  }
-
-  if (type === 'circle' || type === 'ellipse') {
-    const oRx = rx + offsetPixels;
-    const oRy = ry + offsetPixels;
-    for (let i = 0; i < numPoints; i++) {
-      const angle = (2 * Math.PI * i) / numPoints;
-      points.push({
-        x: cx + oRx * Math.cos(angle),
-        y: cy + oRy * Math.sin(angle)
-      });
-    }
-  } else {
-    const left = cx - rx - offsetPixels;
-    const right = cx + rx + offsetPixels;
-    const top = cy - ry - offsetPixels;
-    const bottom = cy + ry + offsetPixels;
-
-    if (type === 'rounded-rect') {
-      const cornerR = Math.min(offsetPixels * 0.5, Math.min(rx, ry) * 0.3);
-      const arcPoints = Math.max(4, Math.floor(numPoints / 8));
-
-      for (let i = 0; i <= arcPoints; i++) {
-        const a = Math.PI + (Math.PI / 2) * (i / arcPoints);
-        points.push({ x: left + cornerR + cornerR * Math.cos(a), y: top + cornerR + cornerR * Math.sin(a) });
-      }
-      for (let i = 0; i <= arcPoints; i++) {
-        const a = (3 * Math.PI / 2) + (Math.PI / 2) * (i / arcPoints);
-        points.push({ x: right - cornerR + cornerR * Math.cos(a), y: top + cornerR + cornerR * Math.sin(a) });
-      }
-      for (let i = 0; i <= arcPoints; i++) {
-        const a = 0 + (Math.PI / 2) * (i / arcPoints);
-        points.push({ x: right - cornerR + cornerR * Math.cos(a), y: bottom - cornerR + cornerR * Math.sin(a) });
-      }
-      for (let i = 0; i <= arcPoints; i++) {
-        const a = (Math.PI / 2) + (Math.PI / 2) * (i / arcPoints);
-        points.push({ x: left + cornerR + cornerR * Math.cos(a), y: bottom - cornerR + cornerR * Math.sin(a) });
-      }
-    } else {
-      points.push({ x: left, y: top });
-      points.push({ x: right, y: top });
-      points.push({ x: right, y: bottom });
-      points.push({ x: left, y: bottom });
-    }
-  }
-
-  return points;
-}
-
-function analyzeComponentShape(
-  comp: { pixels: number[]; bounds: { minX: number; minY: number; maxX: number; maxY: number } },
-  maskWidth: number,
-  maskHeight: number
-): ShapeAnalysis | null {
-  const b = comp.bounds;
-  const pad = 2;
-  const cropMinX = Math.max(0, b.minX - pad);
-  const cropMinY = Math.max(0, b.minY - pad);
-  const cropMaxX = Math.min(maskWidth - 1, b.maxX + pad);
-  const cropMaxY = Math.min(maskHeight - 1, b.maxY + pad);
-  const cropW = cropMaxX - cropMinX + 1;
-  const cropH = cropMaxY - cropMinY + 1;
-
-  const cropMask = new Uint8Array(cropW * cropH);
-  for (const idx of comp.pixels) {
-    const x = idx % maskWidth;
-    const y = (idx / maskWidth) | 0;
-    const cx = x - cropMinX;
-    const cy = y - cropMinY;
-    if (cx >= 0 && cx < cropW && cy >= 0 && cy < cropH) {
-      cropMask[cy * cropW + cx] = 1;
-    }
-  }
-
-  console.log('[Shapes] analyzeComponentShape: crop', cropW, 'x', cropH, 'pixels:', comp.pixels.length);
-  const closedCrop = morphologicalClose(cropMask, cropW, cropH, 2);
-  const result = analyzeShapeFromMask(closedCrop, cropW, cropH);
-  if (result) {
-    console.log('[Shapes] analyzeComponentShape result:', result.type, 'solidity:', result.solidity.toFixed(3), 'boundary pts:', result.boundary?.length || 0);
-    result.cx += cropMinX;
-    result.cy += cropMinY;
-    if (result.boundary) {
-      result.boundary = result.boundary.map(p => ({ x: p.x + cropMinX, y: p.y + cropMinY }));
-    }
-  } else {
-    console.log('[Shapes] analyzeComponentShape: no shape detected for this component');
-  }
-  return result;
-}
-
-function generateTracedContourForComponent(
-  comp: { pixels: number[]; bounds: { minX: number; minY: number; maxX: number; maxY: number } },
-  maskWidth: number,
-  maskHeight: number,
-  offsetPixels: number
-): Point[] | null {
-  const compMask = new Uint8Array(maskWidth * maskHeight);
-  for (const idx of comp.pixels) {
-    compMask[idx] = 1;
-  }
-
-  const boundary = traceBoundary(compMask, maskWidth, maskHeight);
-  if (boundary.length < 3) return null;
-
-  const clipperPath = boundary.map(p => ({
-    X: Math.round(p.x * CLIPPER_SCALE),
-    Y: Math.round(p.y * CLIPPER_SCALE)
-  }));
-
-  const co = new ClipperLib.ClipperOffset();
-  co.MiterLimit = 3;
-  co.ArcTolerance = CLIPPER_SCALE * 0.05;
-  co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-
-  const offsetResult: Array<Array<{ X: number; Y: number }>> = [];
-  co.Execute(offsetResult, offsetPixels * CLIPPER_SCALE);
-
-  if (offsetResult.length === 0) return null;
-
-  let largestIdx = 0;
-  let largestArea = 0;
-  for (let i = 0; i < offsetResult.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(offsetResult[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      largestIdx = i;
-    }
-  }
-
-  return offsetResult[largestIdx].map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-}
-
-function unionAllContours(contours: Point[][]): Point[][] | null {
-  if (contours.length === 0) return null;
-  if (contours.length === 1) return contours;
-
-  const clipper = new ClipperLib.Clipper();
-
-  for (const contour of contours) {
-    const clipperPath = contour.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-    clipper.AddPath(clipperPath, ClipperLib.PolyType.ptSubject, true);
-  }
-
-  const unionResult: Array<Array<{ X: number; Y: number }>> = [];
-  clipper.Execute(
-    ClipperLib.ClipType.ctUnion, unionResult,
-    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
-  );
-
-  if (unionResult.length === 0) return null;
-
-  const results: Point[][] = [];
-  for (let i = 0; i < unionResult.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-    if (area < CLIPPER_SCALE * CLIPPER_SCALE * 0.1) continue;
-    ClipperLib.Clipper.CleanPolygon(unionResult[i], CLIPPER_SCALE * 0.05);
-    if (unionResult[i].length >= 3) {
-      results.push(unionResult[i].map(p => ({
-        x: p.X / CLIPPER_SCALE,
-        y: p.Y / CLIPPER_SCALE
-      })));
-    }
-  }
-
-  console.log('[Shapes] Union produced', results.length, 'polygon(s) from', contours.length, 'inputs');
-  return results.length > 0 ? results : null;
-}
-
-function bridgeAndMergePolygons(polygons: Point[][], gapBridge: number): Point[] {
-  if (polygons.length === 0) return [];
-  if (polygons.length === 1) return polygons[0];
-
-  const expandAmount = Math.max(gapBridge * 0.5, 3);
-
-  const coExpand = new ClipperLib.ClipperOffset();
-  coExpand.ArcTolerance = CLIPPER_SCALE * 0.05;
-  for (const poly of polygons) {
-    const clipperPath = poly.map(p => ({
-      X: Math.round(p.x * CLIPPER_SCALE),
-      Y: Math.round(p.y * CLIPPER_SCALE)
-    }));
-    coExpand.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  }
-
-  const expandedPaths: Array<Array<{ X: number; Y: number }>> = [];
-  coExpand.Execute(expandedPaths, expandAmount * CLIPPER_SCALE);
-
-  if (expandedPaths.length === 0) return polygons[0];
-
-  const clipper = new ClipperLib.Clipper();
-  for (const path of expandedPaths) {
-    clipper.AddPath(path, ClipperLib.PolyType.ptSubject, true);
-  }
-
-  const unionResult: Array<Array<{ X: number; Y: number }>> = [];
-  clipper.Execute(
-    ClipperLib.ClipType.ctUnion, unionResult,
-    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero
-  );
-
-  if (unionResult.length === 0) return polygons[0];
-
-  let largestIdx = 0;
-  let largestArea = 0;
-  for (let i = 0; i < unionResult.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(unionResult[i]));
-    if (area > largestArea) {
-      largestArea = area;
-      largestIdx = i;
-    }
-  }
-
-  const coShrink = new ClipperLib.ClipperOffset();
-  coShrink.ArcTolerance = CLIPPER_SCALE * 0.05;
-  coShrink.AddPath(unionResult[largestIdx], ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-
-  const shrunkPaths: Array<Array<{ X: number; Y: number }>> = [];
-  coShrink.Execute(shrunkPaths, -expandAmount * CLIPPER_SCALE);
-
-  if (shrunkPaths.length === 0) {
-    ClipperLib.Clipper.CleanPolygon(unionResult[largestIdx], CLIPPER_SCALE * 0.05);
-    return unionResult[largestIdx].map(p => ({
-      x: p.X / CLIPPER_SCALE,
-      y: p.Y / CLIPPER_SCALE
-    }));
-  }
-
-  let shrunkLargest = 0;
-  let shrunkLargestArea = 0;
-  for (let i = 0; i < shrunkPaths.length; i++) {
-    const area = Math.abs(ClipperLib.Clipper.Area(shrunkPaths[i]));
-    if (area > shrunkLargestArea) {
-      shrunkLargestArea = area;
-      shrunkLargest = i;
-    }
-  }
-
-  ClipperLib.Clipper.CleanPolygon(shrunkPaths[shrunkLargest], CLIPPER_SCALE * 0.05);
-
-  return shrunkPaths[shrunkLargest].map(p => ({
-    x: p.X / CLIPPER_SCALE,
-    y: p.Y / CLIPPER_SCALE
-  }));
-}
-
-function processShapesMode(
-  imageData: ImageData,
-  filledMainMask: Uint8Array,
-  hiResMask: Uint8Array,
-  hiResWidth: number,
-  hiResHeight: number,
-  SUPER_SAMPLE: number,
-  width: number,
-  height: number,
-  effectiveDPI: number,
-  totalOffsetPixels: number,
-  baseOffsetPixels: number,
-  userOffsetPixels: number,
-  bleedPixels: number,
-  bleedInches: number,
-  canvasWidth: number,
-  canvasHeight: number,
-  padding: number,
-  strokeSettings: {
-    color: string;
-    useCustomBackground: boolean;
-    backgroundColor: string;
-  },
-  effectiveBackgroundColor: string,
-  isHolographic: boolean,
-  previewMode: boolean | undefined,
-  detectedAlgorithm: 'shapes' | 'complex' | 'scattered'
-): ContourResult | null {
-  const comps = labelComponents(filledMainMask, hiResWidth, hiResHeight);
-  if (comps.length === 0) {
-    console.log('[Shapes] No components found, falling back');
-    return null;
-  }
-
-  const totalArea = comps.reduce((sum, c) => sum + c.area, 0);
-  const sortedComps = [...comps].sort((a, b) => b.area - a.area);
-  const dominantComp = sortedComps[0];
-  const dominantRatio = dominantComp.area / totalArea;
-
-  console.log('[Shapes] Found', comps.length, 'components. Dominant ratio:', (dominantRatio * 100).toFixed(1) + '%');
-
-  console.log('[Shapes] Analyzing dominant component (area:', dominantComp.area, 'px, bounds:', JSON.stringify(dominantComp.bounds), ')');
-  const dominantShape = analyzeComponentShape(dominantComp, hiResWidth, hiResHeight);
-
-  if (!dominantShape) {
-    console.log('[Shapes] Dominant component shape analysis returned null, trying whole-mask fallback...');
-    const wholeShape = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
-    if (!wholeShape) {
-      console.log('[Shapes] No shape detected on dominant component or whole mask, falling back to traced contour');
-      return null;
-    }
-    if ((wholeShape.type === 'circle' || wholeShape.type === 'ellipse') && comps.length > 1) {
-      console.log('[Shapes] Whole-mask fallback detected', wholeShape.type, 'but design has', comps.length, 'components — filled mask may be misleading. Rejecting, using traced contour instead.');
-      return null;
-    }
-    const shape: ShapeAnalysis = {
-      ...wholeShape,
-      cx: wholeShape.cx / SUPER_SAMPLE,
-      cy: wholeShape.cy / SUPER_SAMPLE,
-      rx: wholeShape.rx / SUPER_SAMPLE,
-      ry: wholeShape.ry / SUPER_SAMPLE,
-      boundary: wholeShape.boundary ? wholeShape.boundary.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE })) : undefined,
-    };
-    const contour = generateShapeContour(shape, totalOffsetPixels);
-    console.log('[Shapes] Whole-mask fallback:', shape.type, 'with', contour.length, 'points');
-    return buildShapesResult(contour, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, shape);
-  }
-
-  console.log('[Shapes] Dominant component:', dominantShape.type, '(', (dominantRatio * 100).toFixed(1), '% of design)');
-
-  const minComponentPixels = Math.max(25, totalArea * 0.0005);
-  const includedComps = sortedComps.filter(c => c.area >= minComponentPixels);
-
-  console.log('[Shapes] Including', includedComps.length, 'of', comps.length, 'components (min:', Math.round(minComponentPixels), 'px, threshold: 0.05%)');
-
-  const allContours: Point[][] = [];
-  let scaledDominantShape: ShapeAnalysis | null = null;
-
-  const minShapeDetectRatio = 0.05;
-
-  for (let i = 0; i < includedComps.length; i++) {
-    const comp = includedComps[i];
-    const compRatio = comp.area / totalArea;
-
-    const isLargeEnoughForShapeDetect = (i === 0) || (compRatio >= minShapeDetectRatio);
-
-    let compShape: ShapeAnalysis | null = null;
-    if (isLargeEnoughForShapeDetect) {
-      compShape = (i === 0) ? dominantShape : analyzeComponentShape(comp, hiResWidth, hiResHeight);
-    }
-
-    if (compShape) {
-      const scaledShape: ShapeAnalysis = {
-        ...compShape,
-        cx: compShape.cx / SUPER_SAMPLE,
-        cy: compShape.cy / SUPER_SAMPLE,
-        rx: compShape.rx / SUPER_SAMPLE,
-        ry: compShape.ry / SUPER_SAMPLE,
-        boundary: compShape.boundary ? compShape.boundary.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE })) : undefined,
-      };
-      if (i === 0) scaledDominantShape = scaledShape;
-      const contour = generateShapeContour(scaledShape, totalOffsetPixels);
-      allContours.push(contour);
-      console.log('[Shapes] Component', i, ':', compShape.type, '(', (compRatio * 100).toFixed(1), '% area) →', compShape.type, 'contour with', contour.length, 'points');
-    } else {
-      const hiResTraced = generateTracedContourForComponent(
-        comp, hiResWidth, hiResHeight, totalOffsetPixels * SUPER_SAMPLE
-      );
-
-      if (hiResTraced && hiResTraced.length >= 3) {
-        const scaledTraced = hiResTraced.map(p => ({
-          x: p.x / SUPER_SAMPLE,
-          y: p.y / SUPER_SAMPLE
-        }));
-        allContours.push(scaledTraced);
-        console.log('[Shapes] Component', i, ':', (compRatio * 100).toFixed(1), '% area → traced contour with', scaledTraced.length, 'points',
-          isLargeEnoughForShapeDetect ? '(shape detect failed)' : '(too small for shape detect)');
-      } else {
-        console.log('[Shapes] Component', i, ': too small to trace (', comp.area, 'px,', (compRatio * 100).toFixed(3), '% area), skipping');
-      }
-    }
-  }
-
-  if (allContours.length === 0) {
-    console.log('[Shapes] No contours generated, falling back');
-    return null;
-  }
-
-  let smoothedPath: Point[];
-  let useShapeForPDF = false;
-  let nonShapeContours: Point[][] = [];
-  if (allContours.length === 1) {
-    smoothedPath = allContours[0];
-    useShapeForPDF = true;
-  } else {
-    const unitedPolys = unionAllContours(allContours);
-    if (!unitedPolys || unitedPolys.length === 0) {
-      console.log('[Shapes] Union failed, using dominant contour only');
-      smoothedPath = allContours[0];
-      useShapeForPDF = true;
-    } else if (unitedPolys.length === 1) {
-      smoothedPath = unitedPolys[0];
-      useShapeForPDF = true;
-      nonShapeContours = allContours.slice(1);
-      console.log('[Shapes] United', allContours.length, 'contours into one polygon with', smoothedPath.length, 'points (Bezier shape + ', nonShapeContours.length, ' additional subpaths for PDF)');
-    } else {
-      smoothedPath = bridgeAndMergePolygons(unitedPolys, totalOffsetPixels);
-      console.log('[Shapes] Bridged', unitedPolys.length, 'separate polygons into one with', smoothedPath.length, 'points (shape NOT preserved for PDF)');
-    }
-  }
-
-  const weldPx = previewMode ? 1.0 : 3.0;
-  smoothedPath = vectorWeld(smoothedPath, weldPx);
-  smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
-
-  const pdfShape = useShapeForPDF ? (scaledDominantShape || undefined) : undefined;
-  const pdfNonShapeContours = useShapeForPDF && nonShapeContours.length > 0 ? nonShapeContours : undefined;
-  return buildShapesResult(smoothedPath, imageData, effectiveDPI, totalOffsetPixels, bleedPixels, bleedInches, canvasWidth, canvasHeight, padding, strokeSettings, effectiveBackgroundColor, isHolographic, previewMode, detectedAlgorithm, pdfShape, pdfNonShapeContours);
-}
-
-function buildShapesResult(
-  smoothedPath: Point[],
-  imageData: ImageData,
-  effectiveDPI: number,
-  totalOffsetPixels: number,
-  bleedPixels: number,
-  bleedInches: number,
-  canvasWidth: number,
-  canvasHeight: number,
-  padding: number,
-  strokeSettings: {
-    color: string;
-    useCustomBackground: boolean;
-    backgroundColor: string;
-  },
-  effectiveBackgroundColor: string,
-  isHolographic: boolean,
-  previewMode: boolean | undefined,
-  detectedAlgorithm: 'shapes' | 'complex' | 'scattered',
-  dominantShapeForPDF?: ShapeAnalysis,
-  nonShapeContours?: Point[][]
-): ContourResult {
-  const previewPathXs = smoothedPath.map(p => p.x);
-  const previewPathYs = smoothedPath.map(p => p.y);
-  const previewMinX = Math.min(...previewPathXs);
-  const previewMinY = Math.min(...previewPathYs);
-
-  const offsetX = bleedPixels - previewMinX;
-  const offsetY = bleedPixels - previewMinY;
-
-  const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
-
-  const useEdgeBleed = !strokeSettings.useCustomBackground;
-
-  if (useEdgeBleed) {
-    const extendRadius = totalOffsetPixels + bleedPixels;
-    const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
-    const extendedImageOffsetX = padding - extendRadius;
-    const extendedImageOffsetY = padding - extendRadius;
-    drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
-  } else {
-    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
-  }
-
-  const imageCanvasX = 0 + offsetX;
-  const imageCanvasY = 0 + offsetY;
-  drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
-
-  const pathXs = smoothedPath.map(p => p.x);
-  const pathYs = smoothedPath.map(p => p.y);
-  const minPathX = Math.min(...pathXs);
-  const minPathY = Math.min(...pathYs);
-  const maxPathX = Math.max(...pathXs);
-  const maxPathY = Math.max(...pathYs);
-
-  const pathWidthPixels = maxPathX - minPathX;
-  const pathHeightPixels = maxPathY - minPathY;
-  const pathWidthInches = pathWidthPixels / effectiveDPI;
-  const pathHeightInches = pathHeightPixels / effectiveDPI;
-  const pageWidthInches = pathWidthInches + (bleedInches * 2);
-  const pageHeightInches = pathHeightInches + (bleedInches * 2);
-
-  const pathInInches = smoothedPath.map(p => ({
-    x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
-    y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
-  }));
-
-  const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
-  const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
-
-  console.log('[Shapes] Page size (inches):', pageWidthInches.toFixed(4), 'x', pageHeightInches.toFixed(4));
-
-  let shapeInfo: ShapeInfoForPDF | undefined;
-  if (dominantShapeForPDF) {
-    const offsetRx = dominantShapeForPDF.rx + totalOffsetPixels;
-    const offsetRy = dominantShapeForPDF.ry + totalOffsetPixels;
-    shapeInfo = {
-      type: dominantShapeForPDF.type,
-      cxInches: ((dominantShapeForPDF.cx - minPathX) / effectiveDPI) + bleedInches,
-      cyInches: pageHeightInches - (((dominantShapeForPDF.cy - minPathY) / effectiveDPI) + bleedInches),
-      rxInches: offsetRx / effectiveDPI,
-      ryInches: offsetRy / effectiveDPI,
-    };
-    console.log('[Shapes] PDF shapeInfo:', shapeInfo.type, 'cx:', shapeInfo.cxInches.toFixed(3), 'cy:', shapeInfo.cyInches.toFixed(3), 'rx:', shapeInfo.rxInches.toFixed(3), 'ry:', shapeInfo.ryInches.toFixed(3));
-  }
-
-  let nonShapeContourPaths: Array<Array<{x: number; y: number}>> | undefined;
-  if (nonShapeContours && nonShapeContours.length > 0 && shapeInfo) {
-    nonShapeContourPaths = nonShapeContours.map(contour =>
-      contour.map(p => ({
-        x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
-        y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
-      }))
-    );
-    console.log('[Shapes] PDF non-shape contour paths:', nonShapeContourPaths.length, 'paths');
-  }
-
-  return {
-    imageData: new ImageData(output, canvasWidth, canvasHeight),
-    imageCanvasX: Math.round(imageCanvasX),
-    imageCanvasY: Math.round(imageCanvasY),
-    contourData: {
-      pathPoints: pathInInches,
-      previewPathPoints: smoothedPath.map(p => ({
-        x: p.x + offsetX,
-        y: p.y + offsetY
-      })),
-      widthInches: pageWidthInches,
-      heightInches: pageHeightInches,
-      imageOffsetX: imageOffsetXCalc,
-      imageOffsetY: imageOffsetYCalc,
-      backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
-      useEdgeBleed,
-      effectiveDPI,
-      minPathX,
-      minPathY,
-      bleedInches,
-      shapeInfo,
-      nonShapeContourPaths
     },
     detectedAlgorithm
   };
@@ -5917,7 +4973,7 @@ function createOutputWithImage(
       minPathY: 0,
       bleedInches: 0
     },
-    detectedAlgorithm: 'shapes'
+    detectedAlgorithm: 'complex'
   };
 }
 

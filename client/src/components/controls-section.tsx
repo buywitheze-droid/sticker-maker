@@ -377,21 +377,17 @@ export default function ControlsSection({
               <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 space-y-2">
                 <p className="text-xs text-gray-600">
                   <span className="font-medium">Smart Detection:</span>{' '}
-                  {detectedAlgorithm === 'complex' ? 'Script/Curved design' :
-                   detectedAlgorithm === 'scattered' ? 'Scattered elements' :
-                   detectedAlgorithm === 'shapes' ? 'Block/Simple shapes' :
+                  {detectedAlgorithm === 'complex' ? 'Standard' :
+                   detectedAlgorithm === 'scattered' ? 'Scattered/Multi-part' :
                    'Detecting...'}
                 </p>
                 {detectedAlgorithm && strokeSettings.enabled && (() => {
-                  const autoMode = detectedAlgorithm === 'complex' ? 'smooth' as const
-                    : detectedAlgorithm === 'scattered' ? 'scattered' as const
-                    : 'sharp' as const;
+                  const autoMode = detectedAlgorithm === 'scattered' ? 'scattered' as const
+                    : 'smooth' as const;
                   const effectiveMode = strokeSettings.contourMode ?? autoMode;
                   const isOverridden = strokeSettings.contourMode !== undefined;
                   const modes = [
-                    { key: 'sharp' as const, label: 'Sharp' },
                     { key: 'smooth' as const, label: 'Smooth' },
-                    { key: 'shapes' as const, label: 'Shapes' },
                     { key: 'scattered' as const, label: 'Scattered' },
                   ];
                   return (

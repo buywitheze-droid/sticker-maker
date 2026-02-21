@@ -17,11 +17,7 @@ export interface ImageInfo {
   originalPdfData?: ArrayBuffer;
 }
 
-export type ContourCornerMode = 'rounded' | 'sharp';
-
-export type ContourAlgorithm = 'shapes' | 'complex';
-
-export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
+export type ContourMode = 'smooth' | 'scattered';
 
 export interface StrokeSettings {
   width: number;
@@ -30,10 +26,9 @@ export interface StrokeSettings {
   alphaThreshold: number;
   backgroundColor: string;
   useCustomBackground: boolean;
-  cornerMode: ContourCornerMode;
+  cornerMode: 'rounded';
   autoBridging: boolean;
   autoBridgingThreshold: number;
-  algorithm?: ContourAlgorithm;
   contourMode?: ContourMode;
 }
 
