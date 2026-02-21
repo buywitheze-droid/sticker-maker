@@ -26,6 +26,8 @@ interface WorkerMessage {
   };
   effectiveDPI: number;
   previewMode?: boolean;
+  detectedShapeType?: 'circle' | 'oval' | 'square' | 'rectangle' | null;
+  detectedShapeBBox?: { x: number; y: number; width: number; height: number } | null;
 }
 
 interface WorkerResponse {
@@ -57,7 +59,7 @@ interface WorkerResponse {
 const MAX_SAFE_DIMENSION = 4000;
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
-  const { type, imageData, strokeSettings, effectiveDPI, previewMode } = e.data;
+  const { type, imageData, strokeSettings, effectiveDPI, previewMode, detectedShapeType, detectedShapeBBox } = e.data;
   
   if (type === 'process') {
     try {
@@ -96,7 +98,13 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         const scaledDPI = effectiveDPI * scale;
         
         postProgress(15);
-        const result = processContour(scaledData, strokeSettings, scaledDPI, previewMode);
+        const scaledBBox = detectedShapeBBox ? {
+          x: Math.round(detectedShapeBBox.x * scale),
+          y: Math.round(detectedShapeBBox.y * scale),
+          width: Math.round(detectedShapeBBox.width * scale),
+          height: Math.round(detectedShapeBBox.height * scale)
+        } : null;
+        const result = processContour(scaledData, strokeSettings, scaledDPI, previewMode, detectedShapeType, scaledBBox);
         postProgress(90);
         
         processedData = upscaleImageData(result.imageData, 
@@ -155,7 +163,7 @@ self.onmessage = function(e: MessageEvent<WorkerMessage>) {
         imageCanvasY = Math.round(result.imageCanvasY / scale);
         detectedAlg = result.detectedAlgorithm;
       } else {
-        const result = processContour(imageData, strokeSettings, effectiveDPI, previewMode);
+        const result = processContour(imageData, strokeSettings, effectiveDPI, previewMode, detectedShapeType, detectedShapeBBox);
         processedData = result.imageData;
         contourData = result.contourData;
         imageCanvasX = result.imageCanvasX;
@@ -271,6 +279,173 @@ interface ContourResult {
   detectedAlgorithm: 'complex' | 'scattered';
 }
 
+function generateGeometricPath(
+  shapeType: 'circle' | 'oval' | 'square' | 'rectangle',
+  imageWidth: number,
+  imageHeight: number,
+  totalOffsetPixels: number,
+  bbox?: { x: number; y: number; width: number; height: number } | null
+): Array<{x: number; y: number}> {
+  const bx = bbox?.x ?? 0;
+  const by = bbox?.y ?? 0;
+  const bw = bbox?.width ?? imageWidth;
+  const bh = bbox?.height ?? imageHeight;
+  const cx = bx + bw / 2;
+  const cy = by + bh / 2;
+  const points: Array<{x: number; y: number}> = [];
+
+  const NUM_CURVE_POINTS = 256;
+
+  if (shapeType === 'circle') {
+    const radius = Math.max(bw, bh) / 2 + totalOffsetPixels;
+    for (let i = 0; i < NUM_CURVE_POINTS; i++) {
+      const angle = (i / NUM_CURVE_POINTS) * Math.PI * 2;
+      points.push({
+        x: cx + radius * Math.cos(angle),
+        y: cy + radius * Math.sin(angle)
+      });
+    }
+  } else if (shapeType === 'oval') {
+    const rx = bw / 2 + totalOffsetPixels;
+    const ry = bh / 2 + totalOffsetPixels;
+    for (let i = 0; i < NUM_CURVE_POINTS; i++) {
+      const angle = (i / NUM_CURVE_POINTS) * Math.PI * 2;
+      points.push({
+        x: cx + rx * Math.cos(angle),
+        y: cy + ry * Math.sin(angle)
+      });
+    }
+  } else if (shapeType === 'square') {
+    const halfSize = Math.max(bw, bh) / 2 + totalOffsetPixels;
+    points.push({ x: cx - halfSize, y: cy - halfSize });
+    points.push({ x: cx + halfSize, y: cy - halfSize });
+    points.push({ x: cx + halfSize, y: cy + halfSize });
+    points.push({ x: cx - halfSize, y: cy + halfSize });
+  } else {
+    const halfW = bw / 2 + totalOffsetPixels;
+    const halfH = bh / 2 + totalOffsetPixels;
+    points.push({ x: cx - halfW, y: cy - halfH });
+    points.push({ x: cx + halfW, y: cy - halfH });
+    points.push({ x: cx + halfW, y: cy + halfH });
+    points.push({ x: cx - halfW, y: cy + halfH });
+  }
+
+  return points;
+}
+
+function processGeometricContour(
+  imageData: ImageData,
+  strokeSettings: {
+    width: number;
+    color: string;
+    enabled: boolean;
+    alphaThreshold: number;
+    backgroundColor: string;
+    useCustomBackground: boolean;
+    autoBridging: boolean;
+    autoBridgingThreshold: number;
+    contourMode?: 'smooth' | 'scattered';
+  },
+  effectiveDPI: number,
+  shapeType: 'circle' | 'oval' | 'square' | 'rectangle',
+  width: number,
+  height: number,
+  totalOffsetPixels: number,
+  bleedInches: number,
+  bleedPixels: number,
+  padding: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  effectiveBackgroundColor: string,
+  isHolographic: boolean,
+  shapeBBox?: { x: number; y: number; width: number; height: number } | null
+): ContourResult {
+  console.log('[Worker] Using geometric contour for detected shape:', shapeType, 'bbox:', shapeBBox ? `${shapeBBox.x},${shapeBBox.y} ${shapeBBox.width}x${shapeBBox.height}` : 'full image');
+  postProgress(20);
+
+  const smoothedPath = generateGeometricPath(shapeType, width, height, totalOffsetPixels, shapeBBox);
+
+  postProgress(60);
+
+  const previewPathXs = smoothedPath.map(p => p.x);
+  const previewPathYs = smoothedPath.map(p => p.y);
+  const previewMinX = Math.min(...previewPathXs);
+  const previewMinY = Math.min(...previewPathYs);
+
+  const offsetX = bleedPixels - previewMinX;
+  const offsetY = bleedPixels - previewMinY;
+
+  const output = new Uint8ClampedArray(canvasWidth * canvasHeight * 4);
+
+  const useEdgeBleed = !strokeSettings.useCustomBackground;
+
+  if (useEdgeBleed) {
+    const extendRadius = totalOffsetPixels + bleedPixels;
+    const extendedImage = createEdgeExtendedImage(imageData, extendRadius);
+    const extendedImageOffsetX = padding - extendRadius;
+    const extendedImageOffsetY = padding - extendRadius;
+    drawContourToDataWithExtendedEdge(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, offsetX, offsetY, effectiveDPI, extendedImage, extendedImageOffsetX, extendedImageOffsetY);
+  } else {
+    drawContourToData(output, canvasWidth, canvasHeight, smoothedPath, strokeSettings.color, effectiveBackgroundColor, offsetX, offsetY, effectiveDPI);
+  }
+
+  const imageCanvasX = 0 + offsetX;
+  const imageCanvasY = 0 + offsetY;
+  drawImageToData(output, canvasWidth, canvasHeight, imageData, Math.round(imageCanvasX), Math.round(imageCanvasY));
+
+  postProgress(90);
+
+  const pathXs = smoothedPath.map(p => p.x);
+  const pathYs = smoothedPath.map(p => p.y);
+  const minPathX = Math.min(...pathXs);
+  const minPathY = Math.min(...pathYs);
+  const maxPathX = Math.max(...pathXs);
+  const maxPathY = Math.max(...pathYs);
+
+  const pathWidthPixels = maxPathX - minPathX;
+  const pathHeightPixels = maxPathY - minPathY;
+  const pathWidthInches = pathWidthPixels / effectiveDPI;
+  const pathHeightInches = pathHeightPixels / effectiveDPI;
+  const pageWidthInches = pathWidthInches + (bleedInches * 2);
+  const pageHeightInches = pathHeightInches + (bleedInches * 2);
+
+  const pathInInches = smoothedPath.map(p => ({
+    x: ((p.x - minPathX) / effectiveDPI) + bleedInches,
+    y: pageHeightInches - (((p.y - minPathY) / effectiveDPI) + bleedInches)
+  }));
+
+  const imageOffsetXCalc = ((0 - minPathX) / effectiveDPI) + bleedInches;
+  const imageOffsetYCalc = ((0 - minPathY) / effectiveDPI) + bleedInches;
+
+  console.log('[Worker] Geometric contour:', smoothedPath.length, 'points, page:', pageWidthInches.toFixed(3), 'x', pageHeightInches.toFixed(3), 'in');
+
+  postProgress(100);
+
+  return {
+    imageData: new ImageData(output, canvasWidth, canvasHeight),
+    imageCanvasX: Math.round(imageCanvasX),
+    imageCanvasY: Math.round(imageCanvasY),
+    contourData: {
+      pathPoints: pathInInches,
+      previewPathPoints: smoothedPath.map(p => ({
+        x: p.x + offsetX,
+        y: p.y + offsetY
+      })),
+      widthInches: pageWidthInches,
+      heightInches: pageHeightInches,
+      imageOffsetX: imageOffsetXCalc,
+      imageOffsetY: imageOffsetYCalc,
+      backgroundColor: isHolographic ? 'holographic' : effectiveBackgroundColor,
+      useEdgeBleed: useEdgeBleed,
+      effectiveDPI,
+      minPathX,
+      minPathY,
+      bleedInches
+    },
+    detectedAlgorithm: 'complex'
+  };
+}
+
 function processContour(
   imageData: ImageData,
   strokeSettings: {
@@ -284,8 +459,11 @@ function processContour(
     autoBridgingThreshold: number;
     contourMode?: 'smooth' | 'scattered';
   },
-  effectiveDPI: number
-, previewMode?: boolean): ContourResult {
+  effectiveDPI: number,
+  previewMode?: boolean,
+  detectedShapeType?: 'circle' | 'oval' | 'square' | 'rectangle' | null,
+  detectedShapeBBox?: { x: number; y: number; width: number; height: number } | null
+): ContourResult {
   const width = imageData.width;
   const height = imageData.height;
   const data = imageData.data;
@@ -317,6 +495,15 @@ function processContour(
   const padding = totalOffsetPixels + bleedPixels + 10;
   const canvasWidth = width + (padding * 2);
   const canvasHeight = height + (padding * 2);
+  
+  if (detectedShapeType) {
+    return processGeometricContour(
+      imageData, strokeSettings, effectiveDPI, detectedShapeType,
+      width, height, totalOffsetPixels, bleedInches, bleedPixels,
+      padding, canvasWidth, canvasHeight, effectiveBackgroundColor, isHolographic,
+      detectedShapeBBox
+    );
+  }
   
   postProgress(20);
   

@@ -76,6 +76,13 @@ interface ResizeSettings {
   outputDPI: number;
 }
 
+export type DetectedShapeType = 'circle' | 'oval' | 'square' | 'rectangle' | null;
+
+export interface DetectedShapeInfo {
+  type: 'circle' | 'oval' | 'square' | 'rectangle';
+  boundingBox: { x: number; y: number; width: number; height: number };
+}
+
 interface ProcessRequest {
   imageData: ImageData;
   strokeSettings: {
@@ -92,6 +99,8 @@ interface ProcessRequest {
   effectiveDPI: number;
   resizeSettings: ResizeSettings;
   previewMode?: boolean;
+  detectedShapeType?: DetectedShapeType;
+  detectedShapeInfo?: DetectedShapeInfo | null;
 }
 
 type ProgressCallback = (progress: number) => void;
@@ -208,7 +217,9 @@ class ContourWorkerManager {
       contourMode?: ContourMode;
     },
     resizeSettings: ResizeSettings,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    detectedShapeType?: DetectedShapeType,
+    detectedShapeInfo?: DetectedShapeInfo | null
   ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
@@ -231,12 +242,24 @@ class ContourWorkerManager {
     const dpiFromHeight = canvas.height / resizeSettings.heightInches;
     const effectiveDPI = Math.min(dpiFromWidth, dpiFromHeight);
     
+    const scaledShapeInfo = detectedShapeInfo && scale !== 1 ? {
+      type: detectedShapeInfo.type,
+      boundingBox: {
+        x: Math.round(detectedShapeInfo.boundingBox.x * scale),
+        y: Math.round(detectedShapeInfo.boundingBox.y * scale),
+        width: Math.round(detectedShapeInfo.boundingBox.width * scale),
+        height: Math.round(detectedShapeInfo.boundingBox.height * scale),
+      }
+    } : detectedShapeInfo;
+    
     const request: ProcessRequest = {
       imageData: clonedData,
       strokeSettings,
       effectiveDPI: effectiveDPI,
       resizeSettings: { ...resizeSettings, outputDPI: effectiveDPI },
-      previewMode: true
+      previewMode: true,
+      detectedShapeType,
+      detectedShapeInfo: scaledShapeInfo
     };
 
     const result = await this.processInWorker(request, onProgress);
@@ -274,7 +297,9 @@ class ContourWorkerManager {
         imageData: request.imageData,
         strokeSettings: request.strokeSettings,
         effectiveDPI: request.effectiveDPI,
-        previewMode: request.previewMode ?? true
+        previewMode: request.previewMode ?? true,
+        detectedShapeType: request.detectedShapeType || null,
+        detectedShapeBBox: request.detectedShapeInfo?.boundingBox || null
       }, [request.imageData.data.buffer]);
     });
   }
@@ -354,10 +379,12 @@ export async function processContourInWorker(
     contourMode?: ContourMode;
   },
   resizeSettings: ResizeSettings,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  detectedShapeType?: DetectedShapeType,
+  detectedShapeInfo?: DetectedShapeInfo | null
 ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
   const manager = getContourWorkerManager();
-  return manager.process(image, strokeSettings, resizeSettings, onProgress);
+  return manager.process(image, strokeSettings, resizeSettings, onProgress, detectedShapeType, detectedShapeInfo);
 }
 
 if (import.meta.hot) {

@@ -11,7 +11,7 @@ import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
 import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outline";
-import { getContourWorkerManager, type DetectedAlgorithm } from "@/lib/contour-worker-manager";
+import { getContourWorkerManager, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
@@ -65,6 +65,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
   const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
+  const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
+  const [detectedShapeInfo, setDetectedShapeInfo] = useState<DetectedShapeInfo | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -248,7 +250,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     };
     setShapeSettings(newShapeSettings);
     
-    // Auto-apply shape mode if detected, otherwise default to contour for irregular shapes
+    setDetectedShapeType(detectedShapeType);
+    setDetectedShapeInfo(detectedShapeType ? {
+      type: detectedShapeType,
+      boundingBox: detectionResult.boundingBox
+    } : null);
+    
     if (shouldAutoApplyShape) {
       setStrokeMode('shape');
     } else {
@@ -256,15 +263,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     }
     setCadCutBounds(null);
     
-    // Apply the user-selected resize dimensions
     setResizeSettings(prev => ({
       ...prev,
       widthInches,
       heightInches,
     }));
     
-    // Update sticker size to fit the selected dimensions
-    // Find the smallest valid sticker size that fits the design
     const maxDim = Math.max(widthInches, heightInches);
     const validSizes: StickerSize[] = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5];
     const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
@@ -347,6 +351,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         contourMode: undefined,
       });
       setDetectedAlgorithm(undefined);
+      setDetectedShapeType(detectedShapeType);
+      setDetectedShapeInfo(detectedShapeType ? {
+        type: detectedShapeType,
+        boundingBox: detectionResult.boundingBox
+      } : null);
       
       const autoType2 = detectedShapeType || 'square';
       const isCircularType2 = autoType2 === 'circle' || autoType2 === 'oval';
@@ -1006,6 +1015,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             spotPreviewData={spotPreviewData}
             showCutLineInfo={false}
             onDetectedAlgorithm={setDetectedAlgorithm}
+            detectedShapeType={detectedShapeType}
+            detectedShapeInfo={detectedShapeInfo}
           />
         </div>
       </div>
