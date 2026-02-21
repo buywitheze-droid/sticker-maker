@@ -1764,6 +1764,14 @@ export interface SpotColorInput {
   spotGloss: boolean;
   spotWhiteName?: string;
   spotGlossName?: string;
+  spotFluorY: boolean;
+  spotFluorM: boolean;
+  spotFluorG: boolean;
+  spotFluorOrange: boolean;
+  spotFluorYName?: string;
+  spotFluorMName?: string;
+  spotFluorGName?: string;
+  spotFluorOrangeName?: string;
 }
 
 export async function downloadContourPDF(

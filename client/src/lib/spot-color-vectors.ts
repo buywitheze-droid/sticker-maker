@@ -265,6 +265,36 @@ function traceColorRegions(
     }
   }
 
+  const fluorTypes = [
+    { field: 'spotFluorY' as const, nameField: 'spotFluorYName' as const, defaultName: 'Fluorescent_Y' },
+    { field: 'spotFluorM' as const, nameField: 'spotFluorMName' as const, defaultName: 'Fluorescent_M' },
+    { field: 'spotFluorG' as const, nameField: 'spotFluorGName' as const, defaultName: 'Fluorescent_G' },
+    { field: 'spotFluorOrange' as const, nameField: 'spotFluorOrangeName' as const, defaultName: 'Fluorescent_Orange' },
+  ];
+
+  for (const ft of fluorTypes) {
+    const matchingColors = spotColors.filter(c => c[ft.field]);
+    if (matchingColors.length > 0) {
+      const fluorName = matchingColors[0][ft.nameField] || ft.defaultName;
+      console.log(`[SpotColor] Tracing ${matchingColors.length} colors for ${fluorName}`);
+      const mask = createClosestColorMask(imageData, matchingColors, spotColors, 60, 240);
+      const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
+      console.log(`[SpotColor] Found ${rawPaths.length} regions for ${fluorName}`);
+
+      const paths = rawPaths.map(rawPath => {
+        const smoothed = smoothPath(rawPath, 3);
+        return smoothed.map(p => ({
+          x: p.x / pixelsPerInch,
+          y: p.y / pixelsPerInch
+        }));
+      });
+
+      if (paths.length > 0) {
+        regions.push({ name: fluorName, paths, tintCMYK: [0, 1, 0, 0] });
+      }
+    }
+  }
+
   return regions;
 }
 
@@ -382,7 +412,8 @@ export function addSpotColorVectorsToPDF(
 
   const hasWhite = spotColors.some(c => c.spotWhite);
   const hasGloss = spotColors.some(c => c.spotGloss);
-  if (!hasWhite && !hasGloss) return [];
+  const hasFluor = spotColors.some(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange);
+  if (!hasWhite && !hasGloss && !hasFluor) return [];
 
   const regions = traceColorRegions(image, spotColors, widthInches, heightInches);
   if (regions.length === 0) return [];

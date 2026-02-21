@@ -28,7 +28,7 @@ interface ControlsSectionProps {
   onResizeChange: (settings: Partial<ResizeSettings>) => void;
   onShapeChange: (settings: Partial<ShapeSettings>) => void;
   onStickerSizeChange: (size: StickerSize) => void;
-  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>, singleArtboard?: boolean) => void;
+  onDownload: (downloadType?: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package', format?: 'png' | 'pdf' | 'eps' | 'svg', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string; spotFluorY: boolean; spotFluorM: boolean; spotFluorG: boolean; spotFluorOrange: boolean; spotFluorYName?: string; spotFluorMName?: string; spotFluorGName?: string; spotFluorOrangeName?: string}>, singleArtboard?: boolean) => void;
   isProcessing: boolean;
   imageInfo: ImageInfo | null;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
@@ -77,6 +77,13 @@ export default function ControlsSection({
   const [editingGlossName, setEditingGlossName] = useState(false);
   const [tempWhiteName, setTempWhiteName] = useState("");
   const [tempGlossName, setTempGlossName] = useState("");
+  const [spotColorMode, setSpotColorMode] = useState<'whitegloss' | 'fluorescent'>('whitegloss');
+  const [spotFluorYName, setSpotFluorYName] = useState("Fluorescent_Y");
+  const [spotFluorMName, setSpotFluorMName] = useState("Fluorescent_M");
+  const [spotFluorGName, setSpotFluorGName] = useState("Fluorescent_G");
+  const [spotFluorOrangeName, setSpotFluorOrangeName] = useState("Fluorescent_Orange");
+  const [editingFluorName, setEditingFluorName] = useState<string | null>(null);
+  const [tempFluorName, setTempFluorName] = useState("");
 
   const canDownload = strokeSettings.enabled || shapeSettings.enabled;
 
@@ -109,7 +116,7 @@ export default function ControlsSection({
     }
   };
 
-  const updateSpotColor = (index: number, field: 'spotWhite' | 'spotGloss', value: boolean) => {
+  const updateSpotColor = (index: number, field: 'spotWhite' | 'spotGloss' | 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange', value: boolean) => {
     setExtractedColors(prev => prev.map((color, i) => 
       i === index ? { ...color, [field]: value } : color
     ));
@@ -733,6 +740,28 @@ export default function ControlsSection({
 
             {showSpotColors && (
               <div className="px-4 pb-3 space-y-3">
+              <div className="flex items-center gap-1 mb-2">
+                <button
+                  onClick={() => setSpotColorMode('whitegloss')}
+                  className={`flex-1 px-2 py-1.5 rounded-l text-xs font-medium transition-colors border ${
+                    spotColorMode === 'whitegloss'
+                      ? 'bg-purple-100 text-purple-700 border-purple-300'
+                      : 'bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100'
+                  }`}
+                >
+                  White / Gloss
+                </button>
+                <button
+                  onClick={() => setSpotColorMode('fluorescent')}
+                  className={`flex-1 px-2 py-1.5 rounded-r text-xs font-medium transition-colors border border-l-0 ${
+                    spotColorMode === 'fluorescent'
+                      ? 'bg-orange-100 text-orange-700 border-orange-300'
+                      : 'bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100'
+                  }`}
+                >
+                  Fluorescent
+                </button>
+              </div>
               <div className="flex items-center justify-between mb-2">
                 <button
                   onClick={() => setGroupColorsEnabled(!groupColorsEnabled)}
@@ -782,20 +811,55 @@ export default function ControlsSection({
                                 <div className="text-[10px] text-gray-400">{color.hex} - {color.percentage.toFixed(1)}%</div>
                               </div>
                               <div className="flex gap-3">
-                                <label className="flex items-center gap-1 cursor-pointer">
-                                  <Checkbox
-                                    checked={color.spotWhite}
-                                    onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotWhite', checked as boolean)}
-                                  />
-                                  <span className="text-xs text-gray-600">White</span>
-                                </label>
-                                <label className="flex items-center gap-1 cursor-pointer">
-                                  <Checkbox
-                                    checked={color.spotGloss}
-                                    onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotGloss', checked as boolean)}
-                                  />
-                                  <span className="text-xs text-gray-600">Gloss</span>
-                                </label>
+                                {spotColorMode === 'whitegloss' ? (
+                                  <>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotWhite}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotWhite', checked as boolean)}
+                                      />
+                                      <span className="text-xs text-gray-600">White</span>
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotGloss}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotGloss', checked as boolean)}
+                                      />
+                                      <span className="text-xs text-gray-600">Gloss</span>
+                                    </label>
+                                  </>
+                                ) : (
+                                  <>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotFluorY}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorY', checked as boolean)}
+                                      />
+                                      <span className="text-[10px] text-gray-600">Y</span>
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotFluorM}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorM', checked as boolean)}
+                                      />
+                                      <span className="text-[10px] text-gray-600">M</span>
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotFluorG}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorG', checked as boolean)}
+                                      />
+                                      <span className="text-[10px] text-gray-600">G</span>
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                      <Checkbox
+                                        checked={color.spotFluorOrange}
+                                        onCheckedChange={(checked) => updateSpotColor(colorIndex, 'spotFluorOrange', checked as boolean)}
+                                      />
+                                      <span className="text-[10px] text-gray-600">Or</span>
+                                    </label>
+                                  </>
+                                )}
                               </div>
                             </div>
                           );
@@ -818,26 +882,62 @@ export default function ControlsSection({
                         <div className="text-[10px] text-gray-400">{color.hex} - {color.percentage.toFixed(1)}%</div>
                       </div>
                       <div className="flex gap-3">
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <Checkbox
-                            checked={color.spotWhite}
-                            onCheckedChange={(checked) => updateSpotColor(index, 'spotWhite', checked as boolean)}
-                          />
-                          <span className="text-xs text-gray-600">White</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <Checkbox
-                            checked={color.spotGloss}
-                            onCheckedChange={(checked) => updateSpotColor(index, 'spotGloss', checked as boolean)}
-                          />
-                          <span className="text-xs text-gray-600">Gloss</span>
-                        </label>
+                        {spotColorMode === 'whitegloss' ? (
+                          <>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotWhite}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotWhite', checked as boolean)}
+                              />
+                              <span className="text-xs text-gray-600">White</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotGloss}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotGloss', checked as boolean)}
+                              />
+                              <span className="text-xs text-gray-600">Gloss</span>
+                            </label>
+                          </>
+                        ) : (
+                          <>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotFluorY}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorY', checked as boolean)}
+                              />
+                              <span className="text-[10px] text-gray-600">Y</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotFluorM}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorM', checked as boolean)}
+                              />
+                              <span className="text-[10px] text-gray-600">M</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotFluorG}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorG', checked as boolean)}
+                              />
+                              <span className="text-[10px] text-gray-600">G</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <Checkbox
+                                checked={color.spotFluorOrange}
+                                onCheckedChange={(checked) => updateSpotColor(index, 'spotFluorOrange', checked as boolean)}
+                              />
+                              <span className="text-[10px] text-gray-600">Or</span>
+                            </label>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               )}
 
+              {spotColorMode === 'whitegloss' ? (
               <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
                 <div className="flex items-center gap-1">
                   <span>White →</span>
@@ -954,6 +1054,74 @@ export default function ControlsSection({
                   )}
                 </div>
                 </div>
+              ) : (
+              <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 space-y-1">
+                {([
+                  { key: 'Y', name: spotFluorYName, setName: setSpotFluorYName, defaultName: 'Fluorescent_Y' },
+                  { key: 'M', name: spotFluorMName, setName: setSpotFluorMName, defaultName: 'Fluorescent_M' },
+                  { key: 'G', name: spotFluorGName, setName: setSpotFluorGName, defaultName: 'Fluorescent_G' },
+                  { key: 'Orange', name: spotFluorOrangeName, setName: setSpotFluorOrangeName, defaultName: 'Fluorescent_Orange' },
+                ] as const).map(({ key, name, setName, defaultName }) => (
+                  <div key={key} className="flex items-center gap-1">
+                    <span>{key} →</span>
+                    {editingFluorName === key ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={tempFluorName}
+                          onChange={(e) => setTempFluorName(e.target.value)}
+                          className="w-28 px-1 py-0.5 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
+                          autoFocus
+                          onBlur={() => {
+                            setName(tempFluorName || defaultName);
+                            setEditingFluorName(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setName(tempFluorName || defaultName);
+                              setEditingFluorName(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingFluorName(null);
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            setName(tempFluorName || defaultName);
+                            setEditingFluorName(null);
+                          }}
+                          className="p-0.5 hover:bg-green-100 rounded"
+                          title="Save"
+                        >
+                          <Check className="w-3 h-3 text-green-600" />
+                        </button>
+                        <button
+                          onClick={() => setEditingFluorName(null)}
+                          className="p-0.5 hover:bg-red-100 rounded"
+                          title="Cancel"
+                        >
+                          <X className="w-3 h-3 text-red-500" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-gray-600">{name}</span>
+                        <button
+                          onClick={() => {
+                            setTempFluorName(name);
+                            setEditingFluorName(key);
+                          }}
+                          className="p-0.5 hover:bg-gray-200 rounded"
+                          title="Edit name"
+                        >
+                          <Pencil className="w-3 h-3 text-gray-500" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              )}
               </div>
             )}
           </div>
@@ -962,10 +1130,14 @@ export default function ControlsSection({
         {/* Download Buttons */}
         <div className="px-4 py-3 space-y-2">
           <Button
-            onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+            onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss || c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).map(c => ({
               ...c,
               spotWhiteName,
-              spotGlossName
+              spotGlossName,
+              spotFluorYName,
+              spotFluorMName,
+              spotFluorGName,
+              spotFluorOrangeName
             })))}
             disabled={isProcessing || !canDownload || !imageInfo}
             className="w-full h-11 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-lg shadow-lg shadow-cyan-500/25 font-medium"
@@ -986,10 +1158,14 @@ export default function ControlsSection({
           {canDownload && imageInfo && (
             <Button
               variant="outline"
-              onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss).map(c => ({
+              onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss || c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).map(c => ({
                 ...c,
                 spotWhiteName,
-                spotGlossName
+                spotGlossName,
+                spotFluorYName,
+                spotFluorMName,
+                spotFluorGName,
+                spotFluorOrangeName
               })), true)}
               disabled={isProcessing}
               className="w-full h-9 border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg text-sm"

@@ -5,6 +5,10 @@ export interface ExtractedColor {
   percentage: number;
   spotWhite: boolean;
   spotGloss: boolean;
+  spotFluorY: boolean;
+  spotFluorM: boolean;
+  spotFluorG: boolean;
+  spotFluorOrange: boolean;
   name?: string;
 }
 
@@ -361,6 +365,10 @@ export function extractDominantColors(
         percentage: (entry.count / totalOpaquePixels) * 100,
         spotWhite: false,
         spotGloss: false,
+        spotFluorY: false,
+        spotFluorM: false,
+        spotFluorG: false,
+        spotFluorOrange: false,
         name: entry.color.name,
         isNeutral: entry.color.isNeutral
       };
@@ -399,6 +407,10 @@ export function extractDominantColors(
         percentage: pct,
         spotWhite: false,
         spotGloss: false,
+        spotFluorY: false,
+        spotFluorM: false,
+        spotFluorG: false,
+        spotFluorOrange: false,
         name: nameFromHsl(h, s, l),
         isNeutral
       });
