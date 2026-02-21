@@ -122,10 +122,17 @@ export default function ControlsSection({
 
     setExtractedColors(prev => prev.map((color, i) => {
       if (i === index) {
+        if (isFluorField && value) {
+          return {
+            ...color,
+            spotFluorY: false,
+            spotFluorM: false,
+            spotFluorG: false,
+            spotFluorOrange: false,
+            [field]: true,
+          };
+        }
         return { ...color, [field]: value };
-      }
-      if (isFluorField && value) {
-        return { ...color, [field]: false };
       }
       return color;
     }));
