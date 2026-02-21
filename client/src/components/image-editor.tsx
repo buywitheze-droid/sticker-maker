@@ -1004,7 +1004,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
       {/* Left sidebar - Settings */}
-      <div className="lg:col-span-4 xl:col-span-3 space-y-3">
+      <div className="lg:col-span-4 xl:col-span-3 space-y-3" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
         <ControlsSection
           strokeSettings={strokeSettings}
           resizeSettings={resizeSettings}
@@ -1027,10 +1027,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       </div>
       
       {/* Right area - Upload, Info, and Preview */}
-      <div className="lg:col-span-8 xl:col-span-9">
+      <div className="lg:col-span-8 xl:col-span-9" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
         <div className="sticky top-4 space-y-3">
           {/* Top row: Change Image and Image Info - compact bar */}
-          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 shadow-sm px-3 py-2">
+          <div className="flex items-center gap-2 bg-gray-900 rounded-lg border border-gray-700 shadow-sm px-3 py-2" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
             {/* Change Image - glowing button */}
             <UploadSection 
               onImageUpload={handleImageUpload}
@@ -1040,21 +1040,21 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
               stickerSize={stickerSize}
             />
             
-            <div className="w-px h-6 bg-gray-200"></div>
+            <div className="w-px h-6 bg-gray-700"></div>
             
             {/* Image Info - inline */}
             <div className="flex items-center gap-3 flex-1">
               {imageInfo?.file?.name && (
-                <p className="text-xs text-gray-500 truncate max-w-[140px]" title={imageInfo.file.name}>
+                <p className="text-xs text-gray-400 truncate max-w-[140px]" title={imageInfo.file.name}>
                   {imageInfo.file.name}
                 </p>
               )}
               <div className="flex items-center gap-1.5">
-                <span className="text-sm font-semibold text-gray-700">{resizeSettings.widthInches.toFixed(1)}"</span>
-                <span className="text-gray-300">×</span>
-                <span className="text-sm font-semibold text-gray-700">{resizeSettings.heightInches.toFixed(1)}"</span>
+                <span className="text-sm font-semibold text-gray-300">{resizeSettings.widthInches.toFixed(1)}"</span>
+                <span className="text-gray-500">×</span>
+                <span className="text-sm font-semibold text-gray-300">{resizeSettings.heightInches.toFixed(1)}"</span>
               </div>
-              <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
+              <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
             </div>
             
             {/* HIDDEN: CutContour label, locked contour, and Add Contour buttons */}

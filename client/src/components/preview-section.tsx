@@ -1106,50 +1106,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     return (
       <div className="w-full">
-        <Card className="bg-white border-gray-100 shadow-sm rounded-2xl overflow-hidden">
+        <Card className="bg-gray-900 border-gray-800 shadow-sm rounded-2xl overflow-hidden" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
           <CardContent className="p-3 sm:p-4">
-            {/* Hide preview color selector for PDFs with CutContour - they use PDF Options instead */}
-            {!(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
-              <div className="mb-3 flex items-center gap-3 bg-gray-50/70 p-2 rounded-lg">
-                <Palette className="w-4 h-4 text-gray-500" />
-                <span className="text-sm text-gray-600">Preview</span>
-                <Select value={backgroundColor} onValueChange={setBackgroundColor}>
-                  <SelectTrigger className="w-28 h-8 text-sm bg-white border-gray-200 rounded-md">
-                    <SelectValue>{getColorName(backgroundColor)}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="transparent">Transparent</SelectItem>
-                    <SelectItem value="#ffffff">White</SelectItem>
-                    <SelectItem value="#000000">Black</SelectItem>
-                    <SelectItem value="#f3f4f6">Light Gray</SelectItem>
-                    <SelectItem value="#1f2937">Dark Gray</SelectItem>
-                    <SelectItem value="#3b82f6">Blue</SelectItem>
-                    <SelectItem value="#ef4444">Red</SelectItem>
-                    <SelectItem value="#10b981">Green</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
             <div className="flex flex-col items-start">
               <div className="flex w-full">
                 <div 
                   ref={containerRef}
                   onWheel={handleWheel}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseLeave}
-                  onTouchStart={handleTouchStart}
-                  onTouchMove={handleTouchMove}
-                  onTouchEnd={handleTouchEnd}
-                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-200 flex items-center justify-center ${getBackgroundStyle()} ${zoom !== 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'} transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-600 flex items-center justify-center cursor-zoom-in transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                   style={{ 
                     width: '100%',
                     height: '100%',
-                    aspectRatio: imageInfo ? `${imageInfo.image.width} / ${imageInfo.image.height}` : '1 / 1',
+                    aspectRatio: `${artboardWidth} / ${artboardHeight}`,
                     maxHeight: '70vh',
-                    backgroundColor: getBackgroundColor(),
+                    backgroundColor: '#ffffff',
                     overflow: 'hidden',
                     userSelect: 'none',
                     touchAction: 'none'
@@ -1161,19 +1131,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   style={{ 
                     maxWidth: '100%',
                     maxHeight: '100%',
-                    transform: `translate(${panX}%, ${panY}%) scale(${zoom})`,
+                    transform: `scale(${zoom})`,
                     transformOrigin: 'center',
-                    transition: isDragging ? 'none' : 'transform 0.15s ease-out',
-                    cursor: isDragging ? 'grabbing' : 'grab'
+                    transition: 'transform 0.15s ease-out'
                   }}
                 />
                 
                 {!imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                      <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                      <p className="text-gray-500">Upload an image to see preview</p>
-                    </div>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <p className="text-gray-300 text-sm opacity-50">Upload a design</p>
                   </div>
                 )}
                 
@@ -1188,101 +1154,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 )}
                 </div>
-                
-                {zoom !== 1 && (
-                  <div className="hidden md:flex w-2 flex-col ml-1" style={{ height: `${previewDims.height}px` }}>
-                    <div 
-                      className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
-                      onClick={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const y = (e.clientY - rect.top) / rect.height;
-                        const limit = maxPanXY().y;
-                        setPanY(limit - (y * limit * 2));
-                      }}
-                    >
-                      <div 
-                        className="absolute left-0 right-0 h-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
-                        style={{ top: `${maxPanXY().y > 0 ? ((maxPanXY().y - panY) / (maxPanXY().y * 2)) * 100 : 50}%`, transform: 'translateY(-50%)' }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          const startY = e.clientY;
-                          const startPan = panY;
-                          const parent = e.currentTarget.parentElement!;
-                          const height = parent.getBoundingClientRect().height;
-                          const limit = maxPanXY().y;
-                          
-                          const onMove = (ev: MouseEvent) => {
-                            const delta = (ev.clientY - startY) / height * limit * 2;
-                            setPanY(Math.max(-limit, Math.min(limit, startPan - delta)));
-                          };
-                          const onUp = () => {
-                            document.removeEventListener('mousemove', onMove);
-                            document.removeEventListener('mouseup', onUp);
-                          };
-                          document.addEventListener('mousemove', onMove);
-                          document.addEventListener('mouseup', onUp);
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex">
-                {zoom !== 1 && (
-                  <div className="hidden md:flex h-2 mt-1" style={{ width: `${previewDims.width}px` }}>
-                    <div 
-                      className="flex-1 bg-gray-300/60 rounded relative cursor-pointer"
-                      onClick={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const x = (e.clientX - rect.left) / rect.width;
-                        const limit = maxPanXY().x;
-                        setPanX((x * limit * 2) - limit);
-                      }}
-                    >
-                      <div 
-                        className="absolute top-0 bottom-0 w-12 bg-gray-500 hover:bg-cyan-500 rounded transition-colors"
-                        style={{ left: `${maxPanXY().x > 0 ? ((panX + maxPanXY().x) / (maxPanXY().x * 2)) * 100 : 50}%`, transform: 'translateX(-50%)' }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          const startX = e.clientX;
-                          const startPan = panX;
-                          const parent = e.currentTarget.parentElement!;
-                          const width = parent.getBoundingClientRect().width;
-                          const limit = maxPanXY().x;
-                          
-                          const onMove = (ev: MouseEvent) => {
-                            const delta = (ev.clientX - startX) / width * limit * 2;
-                            setPanX(Math.max(-limit, Math.min(limit, startPan + delta)));
-                          };
-                          const onUp = () => {
-                            document.removeEventListener('mousemove', onMove);
-                            document.removeEventListener('mouseup', onUp);
-                          };
-                          document.addEventListener('mousemove', onMove);
-                          document.addEventListener('mouseup', onUp);
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                {zoom !== 1 && <div className="hidden md:block w-2 h-2 mt-1 ml-1" />}
               </div>
             </div>
 
             <div className="mt-4">
-              <div className="flex items-center justify-center gap-1.5 bg-gray-50/50 rounded-lg p-1.5 border border-gray-100">
+              <div className="flex items-center justify-center gap-1.5 bg-gray-800 rounded-lg p-1.5 border border-gray-700">
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.max(prev - 0.1, 1))}
-                  className="h-7 w-7 p-0 hover:bg-gray-100 rounded-md"
+                  className="h-7 w-7 p-0 hover:bg-gray-700 rounded-md"
                   title="Zoom Out"
                 >
-                  <ZoomOut className="h-3.5 w-3.5 text-gray-500" />
+                  <ZoomOut className="h-3.5 w-3.5 text-gray-400" />
                 </Button>
                 
-                <span className="text-xs text-gray-500 min-w-[42px] text-center font-medium">
+                <span className="text-xs text-gray-400 min-w-[42px] text-center font-medium">
                   {Math.round(zoom * 100)}%
                 </span>
                 
@@ -1290,19 +1177,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="h-7 w-7 p-0 hover:bg-gray-100 rounded-md"
+                  className="h-7 w-7 p-0 hover:bg-gray-700 rounded-md"
                   title="Zoom In"
                 >
-                  <ZoomIn className="h-3.5 w-3.5 text-gray-500" />
+                  <ZoomIn className="h-3.5 w-3.5 text-gray-400" />
                 </Button>
                 
-                <div className="w-px h-4 bg-gray-200 mx-0.5" />
+                <div className="w-px h-4 bg-gray-600 mx-0.5" />
                 
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={fitToView}
-                  className="h-7 px-2 hover:bg-gray-100 rounded-md text-gray-500 text-xs"
+                  className="h-7 px-2 hover:bg-gray-700 rounded-md text-gray-400 text-xs"
                   title="Fit to View"
                 >
                   <Maximize2 className="h-3 w-3 mr-1" />
@@ -1313,7 +1200,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-7 px-2 hover:bg-gray-100 rounded-md text-gray-500 text-xs"
+                  className="h-7 px-2 hover:bg-gray-700 rounded-md text-gray-400 text-xs"
                   title="Reset"
                 >
                   <RotateCcw className="h-3 w-3 mr-1" />
