@@ -1,54 +1,32 @@
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage } from 'pdf-lib';
-import { simplifyPathForPDF } from './contour-outline';
+import { simplifyPathForPDF, type SpotColorInput } from './contour-outline';
 
 interface Point {
   x: number;
   y: number;
 }
 
-interface SpotColorInfo {
-  hex: string;
-  rgb: { r: number; g: number; b: number };
-  spotWhite: boolean;
-  spotGloss: boolean;
-  spotWhiteName?: string;
-  spotGlossName?: string;
-}
-
 interface SpotColorRegion {
   name: string;
   paths: Point[][];
+  tintCMYK: [number, number, number, number];
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 0, g: 0, b: 0 };
-}
-
-function colorMatch(
-  pixelR: number, pixelG: number, pixelB: number,
-  targetR: number, targetG: number, targetB: number,
-  tolerance: number
-): boolean {
-  const dist = Math.sqrt(
-    (pixelR - targetR) ** 2 +
-    (pixelG - targetG) ** 2 +
-    (pixelB - targetB) ** 2
-  );
-  return dist <= tolerance;
-}
-
-function createColorMask(
+function createClosestColorMask(
   imageData: ImageData,
-  targetColors: Array<{ r: number; g: number; b: number }>,
-  tolerance: number = 50
+  markedColors: SpotColorInput[],
+  allSpotColors: SpotColorInput[],
+  colorTolerance: number = 60,
+  alphaThreshold: number = 240
 ): Uint8Array {
   const { data, width, height } = imageData;
   const mask = new Uint8Array(width * height);
+
+  const markedHexSet = new Set(markedColors.map(mc => mc.hex));
+  const allColorsIndexed = allSpotColors.map(c => ({
+    rgb: c.rgb,
+    hex: c.hex
+  }));
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -58,40 +36,30 @@ function createColorMask(
       const b = data[idx + 2];
       const a = data[idx + 3];
 
-      if (a < 128) continue;
+      if (a < alphaThreshold) continue;
 
-      for (const target of targetColors) {
-        if (colorMatch(r, g, b, target.r, target.g, target.b, tolerance)) {
-          mask[y * width + x] = 1;
-          break;
+      let closestHex = '';
+      let closestDistance = Infinity;
+
+      for (const sc of allColorsIndexed) {
+        const dr = r - sc.rgb.r;
+        const dg = g - sc.rgb.g;
+        const db = b - sc.rgb.b;
+        const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestHex = sc.hex;
         }
+      }
+
+      if (closestDistance < colorTolerance && markedHexSet.has(closestHex)) {
+        mask[y * width + x] = 1;
       }
     }
   }
 
   return mask;
-}
-
-function dilateMask(mask: Uint8Array, width: number, height: number, radius: number = 1): Uint8Array {
-  const result = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let found = false;
-      for (let dy = -radius; dy <= radius && !found; dy++) {
-        for (let dx = -radius; dx <= radius && !found; dx++) {
-          const ny = y + dy;
-          const nx = x + dx;
-          if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-            if (mask[ny * width + nx] === 1) {
-              found = true;
-            }
-          }
-        }
-      }
-      result[y * width + x] = found ? 1 : 0;
-    }
-  }
-  return result;
 }
 
 function findEdgePixels(mask: Uint8Array, width: number, height: number): Uint8Array {
@@ -237,9 +205,9 @@ function smoothPath(points: Point[], windowSize: number): Point[] {
   return result;
 }
 
-export function traceColorRegions(
+function traceColorRegions(
   image: HTMLImageElement,
-  spotColors: SpotColorInfo[],
+  spotColors: SpotColorInput[],
   widthInches: number,
   heightInches: number
 ): SpotColorRegion[] {
@@ -251,31 +219,18 @@ export function traceColorRegions(
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  const whiteColors: Array<{ r: number; g: number; b: number }> = [];
-  const glossColors: Array<{ r: number; g: number; b: number }> = [];
-  let whiteName = 'RDG_WHITE';
-  let glossName = 'RDG_GLOSS';
-
-  for (const sc of spotColors) {
-    const rgb = typeof sc.rgb === 'object' ? sc.rgb : hexToRgb(sc.hex);
-    if (sc.spotWhite) {
-      whiteColors.push(rgb);
-      if (sc.spotWhiteName) whiteName = sc.spotWhiteName;
-    }
-    if (sc.spotGloss) {
-      glossColors.push(rgb);
-      if (sc.spotGlossName) glossName = sc.spotGlossName;
-    }
-  }
+  const whiteColors = spotColors.filter(c => c.spotWhite);
+  const glossColors = spotColors.filter(c => c.spotGloss);
+  let whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+  let glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
 
   const regions: SpotColorRegion[] = [];
   const pixelsPerInch = dpi;
 
   if (whiteColors.length > 0) {
     console.log(`[SpotColor] Tracing ${whiteColors.length} colors for ${whiteName}`);
-    const mask = createColorMask(imageData, whiteColors, 50);
-    const dilated = dilateMask(mask, canvas.width, canvas.height, 1);
-    const rawPaths = traceAllRegions(dilated, canvas.width, canvas.height);
+    const mask = createClosestColorMask(imageData, whiteColors, spotColors, 60, 240);
+    const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
     console.log(`[SpotColor] Found ${rawPaths.length} regions for ${whiteName}`);
 
     const paths = rawPaths.map(rawPath => {
@@ -287,15 +242,14 @@ export function traceColorRegions(
     });
 
     if (paths.length > 0) {
-      regions.push({ name: whiteName, paths });
+      regions.push({ name: whiteName, paths, tintCMYK: [0, 0, 0, 1] });
     }
   }
 
   if (glossColors.length > 0) {
     console.log(`[SpotColor] Tracing ${glossColors.length} colors for ${glossName}`);
-    const mask = createColorMask(imageData, glossColors, 50);
-    const dilated = dilateMask(mask, canvas.width, canvas.height, 1);
-    const rawPaths = traceAllRegions(dilated, canvas.width, canvas.height);
+    const mask = createClosestColorMask(imageData, glossColors, spotColors, 60, 240);
+    const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
     console.log(`[SpotColor] Found ${rawPaths.length} regions for ${glossName}`);
 
     const paths = rawPaths.map(rawPath => {
@@ -307,7 +261,7 @@ export function traceColorRegions(
     });
 
     if (paths.length > 0) {
-      regions.push({ name: glossName, paths });
+      regions.push({ name: glossName, paths, tintCMYK: [1, 0, 1, 0] });
     }
   }
 
@@ -360,6 +314,54 @@ function appendContentStream(
       const newContents = context.obj([existingContents, contentStreamRef]);
       page.node.set(PDFName.of('Contents'), newContents);
     }
+  } else {
+    page.node.set(PDFName.of('Contents'), contentStreamRef);
+  }
+}
+
+function addSpotColorRegionToPage(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  region: SpotColorRegion,
+  offsetPaths: Point[][]
+): void {
+  const context = pdfDoc.context;
+
+  const tintFunction = context.obj({
+    FunctionType: 2,
+    Domain: [0, 1],
+    C0: [0, 0, 0, 0],
+    C1: region.tintCMYK,
+    N: 1,
+  });
+  const tintFunctionRef = context.register(tintFunction);
+
+  const separationColorSpace = context.obj([
+    PDFName.of('Separation'),
+    PDFName.of(region.name),
+    PDFName.of('DeviceCMYK'),
+    tintFunctionRef,
+  ]);
+  const separationRef = context.register(separationColorSpace);
+
+  let pageResources = page.node.Resources();
+  if (!pageResources) {
+    pageResources = context.obj({});
+    page.node.set(PDFName.of('Resources'), pageResources);
+  }
+
+  let colorSpaceDict = pageResources.get(PDFName.of('ColorSpace'));
+  if (!colorSpaceDict) {
+    colorSpaceDict = context.obj({});
+    (pageResources as PDFDict).set(PDFName.of('ColorSpace'), colorSpaceDict);
+  }
+  (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
+
+  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name, true);
+  console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} paths, ${pathOps.length} chars ops`);
+
+  if (pathOps.length > 0) {
+    appendContentStream(page, context, pathOps);
   }
 }
 
@@ -367,19 +369,25 @@ export function addSpotColorVectorsToPDF(
   pdfDoc: PDFDocument,
   page: PDFPage,
   image: HTMLImageElement,
-  spotColors: SpotColorInfo[],
+  spotColors: SpotColorInput[],
   widthInches: number,
   heightInches: number,
   pageHeightInches: number,
   imageOffsetXInches: number,
-  imageOffsetYInches: number
+  imageOffsetYInches: number,
+  singleArtboard: boolean = false,
+  pageWidthPts?: number,
+  pageHeightPts?: number
 ): string[] {
   if (!spotColors || spotColors.length === 0) return [];
+
+  const hasWhite = spotColors.some(c => c.spotWhite);
+  const hasGloss = spotColors.some(c => c.spotGloss);
+  if (!hasWhite && !hasGloss) return [];
 
   const regions = traceColorRegions(image, spotColors, widthInches, heightInches);
   if (regions.length === 0) return [];
 
-  const context = pdfDoc.context;
   const addedLabels: string[] = [];
 
   for (const region of regions) {
@@ -390,42 +398,14 @@ export function addSpotColorVectorsToPDF(
       }))
     );
 
-    const cmykTint = region.name.toUpperCase().includes('WHITE')
-      ? [0, 0, 0, 0]
-      : [0, 0, 0, 0];
-
-    const tintFunction = context.obj({
-      FunctionType: 2,
-      Domain: [0, 1],
-      C0: [0, 0, 0, 0],
-      C1: cmykTint,
-      N: 1,
-    });
-    const tintFunctionRef = context.register(tintFunction);
-
-    const separationColorSpace = context.obj([
-      PDFName.of('Separation'),
-      PDFName.of(region.name),
-      PDFName.of('DeviceCMYK'),
-      tintFunctionRef,
-    ]);
-    const separationRef = context.register(separationColorSpace);
-
-    const resources = page.node.Resources();
-    if (resources) {
-      let colorSpaceDict = resources.get(PDFName.of('ColorSpace'));
-      if (!colorSpaceDict) {
-        colorSpaceDict = context.obj({});
-        resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
-      }
-      (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
-    }
-
-    const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name, true);
-    console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} paths, ${pathOps.length} chars ops`);
-
-    if (pathOps.length > 0) {
-      appendContentStream(page, context, pathOps);
+    if (singleArtboard) {
+      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths);
+      addedLabels.push(region.name);
+    } else {
+      const wPts = pageWidthPts || (widthInches + imageOffsetXInches * 2) * 72;
+      const hPts = pageHeightPts || pageHeightInches * 72;
+      const newPage = pdfDoc.addPage([wPts, hPts]);
+      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths);
       addedLabels.push(region.name);
     }
   }
