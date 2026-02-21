@@ -598,51 +598,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         ctx.restore();
         
-        // Draw the CutContour path indicator (magenta dashed line) with curve detection
-        if (hasExtractedPaths) {
-          ctx.save();
-          ctx.strokeStyle = '#FF00FF';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          
-          for (const path of cutContourInfo.cutContourPoints) {
-            if (path.length < 2) continue;
-            ctx.beginPath();
-            
-            // Smooth the contour first to reduce jagged edges from alpha tracing
-            const smoothedPath = gaussianSmoothContour(path, 2);
-            
-            // Convert path to curves for smooth rendering (60+ point curves)
-            const segments = convertPolygonToCurves(smoothedPath, 70);
-            
-            for (const seg of segments) {
-              if (seg.type === 'move' && seg.point) {
-                ctx.moveTo(offsetX + seg.point.x * scale, offsetY + seg.point.y * scale);
-              } else if (seg.type === 'line' && seg.point) {
-                ctx.lineTo(offsetX + seg.point.x * scale, offsetY + seg.point.y * scale);
-              } else if (seg.type === 'curve' && seg.cp1 && seg.cp2 && seg.end) {
-                ctx.bezierCurveTo(
-                  offsetX + seg.cp1.x * scale, offsetY + seg.cp1.y * scale,
-                  offsetX + seg.cp2.x * scale, offsetY + seg.cp2.y * scale,
-                  offsetX + seg.end.x * scale, offsetY + seg.end.y * scale
-                );
-              }
-            }
-            
-            ctx.closePath();
-            ctx.stroke();
-          }
-          
-          ctx.restore();
-        } else {
-          // Draw image bounds as cut indicator when no paths extracted
-          ctx.save();
-          ctx.strokeStyle = '#FF00FF';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.strokeRect(offsetX, offsetY, scaledWidth, scaledHeight);
-          ctx.restore();
-        }
+        /* HIDDEN: CutContour magenta dashed line indicator disabled in preview */
       } else {
         // Regular image rendering (non-PDF or no CutContour)
         
@@ -678,100 +634,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       }
       
-      if (lockedContour && lockedContour.previewPathPoints.length > 2 && canvas) {
-        const pts = lockedContour.previewPathPoints;
-        const screenPts: Array<{x: number; y: number}> = [];
-        
-        if (shapeSettings.enabled && imageInfo) {
-          const shapeDims = calculateShapeDimensions(
-            resizeSettings.widthInches,
-            resizeSettings.heightInches,
-            shapeSettings.type,
-            shapeSettings.offset
-          );
-          const viewPad = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
-          const availW = canvas.width - (viewPad * 2);
-          const availH = canvas.height - (viewPad * 2);
-          const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
-          let shapeW: number, shapeH: number;
-          if (shapeAspect > (availW / availH)) {
-            shapeW = availW;
-            shapeH = availW / shapeAspect;
-          } else {
-            shapeH = availH;
-            shapeW = availH * shapeAspect;
-          }
-          const shapeX = (canvas.width - shapeW) / 2;
-          const shapeY = (canvas.height - shapeH) / 2;
-          const ppi = Math.min(shapeW / shapeDims.widthInches, shapeH / shapeDims.heightInches);
-          const imgW = resizeSettings.widthInches * ppi;
-          const imgH = resizeSettings.heightInches * ppi;
-          const imgX = shapeX + (shapeW - imgW) / 2;
-          const imgY = shapeY + (shapeH - imgH) / 2;
-          
-          const icx = lockedContour.imageCanvasX;
-          const icy = lockedContour.imageCanvasY;
-          const icw = lockedContour.imageCanvasWidth;
-          const ich = lockedContour.imageCanvasHeight;
-          const sxScale = imgW / icw;
-          const syScale = imgH / ich;
-          
-          for (const p of pts) {
-            screenPts.push({
-              x: imgX + (p.x - icx) * sxScale,
-              y: imgY + (p.y - icy) * syScale,
-            });
-          }
-        } else if (contourTransformRef.current) {
-          const ct = contourTransformRef.current;
-          const sxScale = ct.width / lockedContour.contourCanvasWidth;
-          const syScale = ct.height / lockedContour.contourCanvasHeight;
-          for (const p of pts) {
-            screenPts.push({
-              x: ct.x + p.x * sxScale,
-              y: ct.y + p.y * syScale,
-            });
-          }
-        } else {
-          const viewPadding = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
-          const availW = canvas.width - (viewPadding * 2);
-          const availH = canvas.height - (viewPadding * 2);
-          const lcAspect = lockedContour.contourCanvasWidth / lockedContour.contourCanvasHeight;
-          let lcW: number, lcH: number;
-          if (lcAspect > (availW / availH)) {
-            lcW = availW;
-            lcH = availW / lcAspect;
-          } else {
-            lcH = availH;
-            lcW = availH * lcAspect;
-          }
-          const lcX = (canvas.width - lcW) / 2;
-          const lcY = (canvas.height - lcH) / 2;
-          const sxScale = lcW / lockedContour.contourCanvasWidth;
-          const syScale = lcH / lockedContour.contourCanvasHeight;
-          for (const p of pts) {
-            screenPts.push({
-              x: lcX + p.x * sxScale,
-              y: lcY + p.y * syScale,
-            });
-          }
-        }
-        
-        if (screenPts.length > 2) {
-          ctx.save();
-          ctx.strokeStyle = '#3B82F6';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([6, 4]);
-          ctx.beginPath();
-          ctx.moveTo(screenPts[0].x, screenPts[0].y);
-          for (let i = 1; i < screenPts.length; i++) {
-            ctx.lineTo(screenPts[i].x, screenPts[i].y);
-          }
-          ctx.closePath();
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
+      /* HIDDEN: Locked contour blue dashed line disabled in preview */
       };
       doRender();
       renderRef.current = doRender;
@@ -1079,39 +942,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.fill();
       }
       
-      // Draw CutContour outline at exact cut position (without bleed)
-      ctx.strokeStyle = '#FF00FF';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2;
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'oval') {
-        const centerX = shapeX + shapeWidth / 2;
-        const centerY = shapeY + shapeHeight / 2;
-        const radiusX = shapeWidth / 2;
-        const radiusY = shapeHeight / 2;
-        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2;
-        const startY = shapeY + (shapeHeight - size) / 2;
-        ctx.rect(startX, startY, size, size);
-      } else if (shapeSettings.type === 'rounded-square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        const startX = shapeX + (shapeWidth - size) / 2;
-        const startY = shapeY + (shapeHeight - size) / 2;
-        ctx.roundRect(startX, startY, size, size, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'rounded-rectangle') {
-        ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-      } else {
-        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
-      }
-      
-      ctx.stroke();
+      /* HIDDEN: Shape mode CutContour magenta outline disabled in preview */
 
       // Draw the original image on top (clipped to cut line)
       ctx.save();

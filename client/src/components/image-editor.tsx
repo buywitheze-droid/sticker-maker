@@ -1036,72 +1036,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
               <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
             </div>
             
-            {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
-              <div className="flex flex-col items-end gap-1">
-                {lockedContour && (
-                  <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded border border-blue-200">
-                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                    <span className="text-[10px] text-blue-600 font-medium">{lockedContour.label}</span>
-                    <svg className="w-2.5 h-2.5 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    <button
-                      onClick={() => setLockedContour(null)}
-                      className="ml-0.5 text-blue-400 hover:text-blue-600 transition-colors"
-                      title="Remove locked contour"
-                    >
-                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                  </div>
-                )}
-                <div className="relative" ref={cutLabelRef}>
-                  <button
-                    onClick={() => setShowCutLabelDropdown(prev => !prev)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100 hover:bg-fuchsia-100 transition-colors cursor-pointer"
-                  >
-                    <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
-                    <span className="text-[10px] text-fuchsia-600 font-medium">{cutContourLabel}</span>
-                    <svg className="w-2.5 h-2.5 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  </button>
-                  {showCutLabelDropdown && (
-                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
-                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
-                        <button
-                          key={label}
-                          onClick={() => { setCutContourLabel(label); setShowCutLabelDropdown(false); }}
-                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-fuchsia-50 transition-colors ${
-                            cutContourLabel === label ? 'text-fuchsia-600 font-medium bg-fuchsia-50' : 'text-gray-600'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="relative" ref={applyAddRef}>
-                  <button
-                    onClick={() => setShowApplyAddDropdown(prev => !prev)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-cyan-50 rounded border border-cyan-100 hover:bg-cyan-100 transition-colors cursor-pointer"
-                  >
-                    <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
-                    <span className="text-[10px] text-cyan-600 font-medium">Add Contour</span>
-                    <svg className="w-2.5 h-2.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  </button>
-                  {showApplyAddDropdown && (
-                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
-                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
-                        <button
-                          key={label}
-                          onClick={() => handleApplyAndAdd(label)}
-                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-cyan-50 transition-colors text-gray-600`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* HIDDEN: CutContour label, locked contour, and Add Contour buttons */}
           </div>
           
           {/* Preview - Square */}
