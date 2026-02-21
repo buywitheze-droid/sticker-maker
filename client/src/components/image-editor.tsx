@@ -67,7 +67,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
   const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
   const [detectedShapeInfo, setDetectedShapeInfo] = useState<DetectedShapeInfo | null>(null);
-  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'PerfCutContour' | 'KissCut' | 'RDG_WHITE' | 'RDG_GLOSS'>('CutContour');
+  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'PerfCutContour' | 'KissCut'>('CutContour');
   const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
   const cutLabelRef = useRef<HTMLDivElement>(null);
   const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
@@ -127,7 +127,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     }
   }, [showCutLabelDropdown, showApplyAddDropdown]);
 
-  const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut' | 'RDG_WHITE' | 'RDG_GLOSS') => {
+  const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
 
@@ -1121,7 +1121,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                   </button>
                   {showCutLabelDropdown && (
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
-                      {(['CutContour', 'PerfCutContour', 'KissCut', 'RDG_WHITE', 'RDG_GLOSS'] as const).map((label) => (
+                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
                         <button
                           key={label}
                           onClick={() => { setCutContourLabel(label); setShowCutLabelDropdown(false); }}
@@ -1146,7 +1146,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                   </button>
                   {showApplyAddDropdown && (
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
-                      {(['CutContour', 'PerfCutContour', 'KissCut', 'RDG_WHITE', 'RDG_GLOSS'] as const).map((label) => (
+                      {(['CutContour', 'PerfCutContour', 'KissCut'] as const).map((label) => (
                         <button
                           key={label}
                           onClick={() => handleApplyAndAdd(label)}
