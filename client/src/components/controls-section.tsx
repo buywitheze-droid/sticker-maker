@@ -221,7 +221,8 @@ export default function ControlsSection({
     <div className="space-y-4">
       {/* All Design Options Card */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        {/* Size Selection - Collapsible */}
+        {/* Sticker Size Section - HIDDEN */}
+        {false && (
         <div className="border-b border-gray-100">
           <button
             onClick={() => setShowSizeSection(!showSizeSection)}
@@ -333,6 +334,7 @@ export default function ControlsSection({
             </div>
           )}
         </div>
+        )}
 
         {/* Remove White Background - HIDDEN */}
 
@@ -462,8 +464,8 @@ export default function ControlsSection({
           </div>
         )}
 
-        {/* Shape Options - Hidden when PDF has CutContour */}
-        {shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
+        {/* Shape Options - HIDDEN */}
+        {false && shapeSettings.enabled && !(imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour) && (
           <div className="px-4 py-3 border-b border-gray-100 space-y-3">
           <div>
             <Label className="text-xs text-gray-600">Shape</Label>

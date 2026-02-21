@@ -144,7 +144,7 @@ export function generateShapePathPointsInches(
     shapeSettings.offset
   );
 
-  const bleedInches = 0.10;
+  const bleedInches = 0;
   const totalWidthInches = shapeDims.widthInches + bleedInches * 2;
   const totalHeightInches = shapeDims.heightInches + bleedInches * 2;
 
@@ -236,7 +236,7 @@ export async function downloadShapePDF(
     shapeSettings.offset
   );
   
-  const bleedInches = 0.10; // 0.10" bleed around the shape
+  const bleedInches = 0; // Bleed disabled
   const bleedPts = bleedInches * 72;
   
   // Page size includes bleed area
