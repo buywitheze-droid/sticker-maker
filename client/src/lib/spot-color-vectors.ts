@@ -1,6 +1,5 @@
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage } from 'pdf-lib';
-import { simplifyPathForPDF, type SpotColorInput } from './contour-outline';
-import { primitiveSnap, circleToPathPDFOps, rectangleToPathPDFOps } from './primitive-snap';
+import { type SpotColorInput } from './contour-outline';
 
 interface Point {
   x: number;
@@ -78,147 +77,140 @@ function createClosestColorMask(
   return mask;
 }
 
-function findEdgePixels(mask: Uint8Array, width: number, height: number): Uint8Array {
-  const edges = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] !== 1) continue;
-      const hasTransparentNeighbor =
-        (x === 0 || mask[y * width + (x - 1)] === 0) ||
-        (x === width - 1 || mask[y * width + (x + 1)] === 0) ||
-        (y === 0 || mask[(y - 1) * width + x] === 0) ||
-        (y === height - 1 || mask[(y + 1) * width + x] === 0);
-      if (hasTransparentNeighbor) {
-        edges[y * width + x] = 1;
-      }
-    }
+function marchingSquaresTrace(mask: Uint8Array, width: number, height: number): Point[][] {
+  function getMask(x: number, y: number): number {
+    if (x < 0 || x >= width || y < 0 || y >= height) return 0;
+    return mask[y * width + x];
   }
-  return edges;
-}
 
-function traceBoundary(mask: Uint8Array, width: number, height: number): Point[] {
-  let startX = -1, startY = -1;
-  outer: for (let y = 0; y < height; y++) {
+  interface Edge {
+    fromX: number; fromY: number;
+    toX: number; toY: number;
+    dx: number; dy: number;
+  }
+
+  const edges: Edge[] = [];
+
+  for (let y = 0; y <= height; y++) {
     for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] === 1) {
-        startX = x;
-        startY = y;
-        break outer;
+      const above = getMask(x, y - 1);
+      const below = getMask(x, y);
+      if (above !== below) {
+        if (above === 1) {
+          edges.push({ fromX: x + 1, fromY: y, toX: x, toY: y, dx: -1, dy: 0 });
+        } else {
+          edges.push({ fromX: x, fromY: y, toX: x + 1, toY: y, dx: 1, dy: 0 });
+        }
       }
     }
   }
 
-  if (startX === -1) return [];
-
-  const path: Point[] = [];
-  const directions = [
-    { dx: 1, dy: 0 },
-    { dx: 1, dy: 1 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 1 },
-    { dx: -1, dy: 0 },
-    { dx: -1, dy: -1 },
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: -1 }
-  ];
-
-  let x = startX, y = startY;
-  let dir = 0;
-  const maxSteps = width * height * 2;
-  let steps = 0;
-
-  do {
-    path.push({ x, y });
-
-    let found = false;
-    for (let i = 0; i < 8; i++) {
-      const checkDir = (dir + 6 + i) % 8;
-      const nx = x + directions[checkDir].dx;
-      const ny = y + directions[checkDir].dy;
-
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny * width + nx] === 1) {
-        x = nx;
-        y = ny;
-        dir = checkDir;
-        found = true;
-        break;
+  for (let x = 0; x <= width; x++) {
+    for (let y = 0; y < height; y++) {
+      const left = getMask(x - 1, y);
+      const right = getMask(x, y);
+      if (left !== right) {
+        if (left === 1) {
+          edges.push({ fromX: x, fromY: y, toX: x, toY: y + 1, dx: 0, dy: 1 });
+        } else {
+          edges.push({ fromX: x, fromY: y + 1, toX: x, toY: y, dx: 0, dy: -1 });
+        }
       }
     }
+  }
 
-    if (!found) break;
-    steps++;
-  } while ((x !== startX || y !== startY) && steps < maxSteps);
+  if (edges.length === 0) return [];
 
-  return path;
-}
+  const fromMap = new Map<string, number[]>();
+  for (let i = 0; i < edges.length; i++) {
+    const key = `${edges[i].fromX},${edges[i].fromY}`;
+    if (!fromMap.has(key)) fromMap.set(key, []);
+    fromMap.get(key)!.push(i);
+  }
 
-function traceAllRegions(mask: Uint8Array, width: number, height: number): Point[][] {
-  const visited = new Uint8Array(width * height);
-  const regions: Point[][] = [];
-  const edgeMask = findEdgePixels(mask, width, height);
+  const rightTurnPriority: Record<string, [number, number][]> = {
+    '1,0': [[0, 1], [1, 0], [0, -1], [-1, 0]],
+    '0,1': [[-1, 0], [0, 1], [1, 0], [0, -1]],
+    '-1,0': [[0, -1], [-1, 0], [0, 1], [1, 0]],
+    '0,-1': [[1, 0], [0, -1], [-1, 0], [0, 1]],
+  };
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (edgeMask[y * width + x] === 1 && visited[y * width + x] === 0) {
-        const tempMask = new Uint8Array(width * height);
-        const queue: Point[] = [{ x, y }];
-        const regionEdges: Point[] = [];
+  const used = new Uint8Array(edges.length);
+  const contours: Point[][] = [];
 
-        while (queue.length > 0) {
-          const p = queue.pop()!;
-          const idx = p.y * width + p.x;
-          if (visited[idx] === 1 || edgeMask[idx] !== 1) continue;
-          visited[idx] = 1;
-          tempMask[idx] = 1;
-          regionEdges.push(p);
+  for (let startIdx = 0; startIdx < edges.length; startIdx++) {
+    if (used[startIdx]) continue;
 
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (dx === 0 && dy === 0) continue;
-              const nx = p.x + dx;
-              const ny = p.y + dy;
-              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                if (visited[ny * width + nx] === 0 && edgeMask[ny * width + nx] === 1) {
-                  queue.push({ x: nx, y: ny });
-                }
-              }
+    const contour: Point[] = [];
+    let edgeIdx = startIdx;
+    const maxSteps = edges.length;
+    let steps = 0;
+
+    while (!used[edgeIdx] && steps < maxSteps) {
+      used[edgeIdx] = 1;
+      const edge = edges[edgeIdx];
+      contour.push({ x: edge.fromX, y: edge.fromY });
+
+      const nextKey = `${edge.toX},${edge.toY}`;
+      const candidates = fromMap.get(nextKey);
+      if (!candidates) break;
+
+      const priority = rightTurnPriority[`${edge.dx},${edge.dy}`];
+      let nextIdx = -1;
+
+      if (priority) {
+        for (const [pdx, pdy] of priority) {
+          for (const ci of candidates) {
+            if (!used[ci] && edges[ci].dx === pdx && edges[ci].dy === pdy) {
+              nextIdx = ci;
+              break;
             }
           }
+          if (nextIdx !== -1) break;
         }
-
-        if (regionEdges.length > 10) {
-          const path = traceBoundary(tempMask, width, height);
-          if (path.length > 10) {
-            regions.push(path);
-          }
+      } else {
+        for (const ci of candidates) {
+          if (!used[ci]) { nextIdx = ci; break; }
         }
       }
+
+      if (nextIdx === -1) break;
+      edgeIdx = nextIdx;
+      steps++;
+    }
+
+    if (contour.length > 2) {
+      contours.push(contour);
     }
   }
 
-  return regions;
+  return contours;
 }
 
-function smoothPath(points: Point[], windowSize: number): Point[] {
-  if (points.length < windowSize * 2 + 1) return points;
+function collapseCollinear(contour: Point[]): Point[] {
+  if (contour.length < 3) return contour;
 
   const result: Point[] = [];
-  const n = points.length;
 
-  for (let i = 0; i < n; i++) {
-    let sumX = 0, sumY = 0;
-    for (let j = -windowSize; j <= windowSize; j++) {
-      const idx = (i + j + n) % n;
-      sumX += points[idx].x;
-      sumY += points[idx].y;
+  for (let i = 0; i < contour.length; i++) {
+    const prev = contour[(i - 1 + contour.length) % contour.length];
+    const curr = contour[i];
+    const next = contour[(i + 1) % contour.length];
+
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+
+    const sameDirX = (dx1 > 0 && dx2 > 0) || (dx1 < 0 && dx2 < 0) || (dx1 === 0 && dx2 === 0);
+    const sameDirY = (dy1 > 0 && dy2 > 0) || (dy1 < 0 && dy2 < 0) || (dy1 === 0 && dy2 === 0);
+
+    if (!(sameDirX && sameDirY)) {
+      result.push(curr);
     }
-    result.push({
-      x: sumX / (windowSize * 2 + 1),
-      y: sumY / (windowSize * 2 + 1)
-    });
   }
 
-  return result;
+  return result.length >= 3 ? result : contour;
 }
 
 function traceColorRegions(
@@ -243,39 +235,32 @@ function traceColorRegions(
   const regions: SpotColorRegion[] = [];
   const pixelsPerInch = dpi;
 
-  if (whiteColors.length > 0) {
-    console.log(`[SpotColor] Tracing ${whiteColors.length} colors for ${whiteName}`);
-    const mask = createClosestColorMask(imageData, whiteColors, spotColors, 60, 240);
-    const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
-    console.log(`[SpotColor] Found ${rawPaths.length} regions for ${whiteName}`);
-
-    const paths = rawPaths.map(rawPath => {
-      const smoothed = smoothPath(rawPath, 3);
-      return smoothed.map(p => ({
+  function traceMaskToInchPaths(mask: Uint8Array): Point[][] {
+    const rawPaths = marchingSquaresTrace(mask, canvas.width, canvas.height);
+    return rawPaths.map(rawPath => {
+      const collapsed = collapseCollinear(rawPath);
+      return collapsed.map(p => ({
         x: p.x / pixelsPerInch,
         y: p.y / pixelsPerInch
       }));
-    });
+    }).filter(p => p.length >= 3);
+  }
 
+  if (whiteColors.length > 0) {
+    console.log(`[SpotColor] Tracing ${whiteColors.length} colors for ${whiteName} (marching squares)`);
+    const mask = createClosestColorMask(imageData, whiteColors, spotColors, 60, 240);
+    const paths = traceMaskToInchPaths(mask);
+    console.log(`[SpotColor] Found ${paths.length} contours for ${whiteName}`);
     if (paths.length > 0) {
       regions.push({ name: whiteName, paths, tintCMYK: [0, 1, 0, 0] });
     }
   }
 
   if (glossColors.length > 0) {
-    console.log(`[SpotColor] Tracing ${glossColors.length} colors for ${glossName}`);
+    console.log(`[SpotColor] Tracing ${glossColors.length} colors for ${glossName} (marching squares)`);
     const mask = createClosestColorMask(imageData, glossColors, spotColors, 60, 240);
-    const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
-    console.log(`[SpotColor] Found ${rawPaths.length} regions for ${glossName}`);
-
-    const paths = rawPaths.map(rawPath => {
-      const smoothed = smoothPath(rawPath, 3);
-      return smoothed.map(p => ({
-        x: p.x / pixelsPerInch,
-        y: p.y / pixelsPerInch
-      }));
-    });
-
+    const paths = traceMaskToInchPaths(mask);
+    console.log(`[SpotColor] Found ${paths.length} contours for ${glossName}`);
     if (paths.length > 0) {
       regions.push({ name: glossName, paths, tintCMYK: [0, 1, 0, 0] });
     }
@@ -292,19 +277,10 @@ function traceColorRegions(
     const matchingColors = spotColors.filter(c => c[ft.field]);
     if (matchingColors.length > 0) {
       const fluorName = matchingColors[0][ft.nameField] || ft.defaultName;
-      console.log(`[SpotColor] Tracing ${matchingColors.length} colors for ${fluorName}`);
+      console.log(`[SpotColor] Tracing ${matchingColors.length} colors for ${fluorName} (marching squares)`);
       const mask = createClosestColorMask(imageData, matchingColors, spotColors, 60, 240);
-      const rawPaths = traceAllRegions(mask, canvas.width, canvas.height);
-      console.log(`[SpotColor] Found ${rawPaths.length} regions for ${fluorName}`);
-
-      const paths = rawPaths.map(rawPath => {
-        const smoothed = smoothPath(rawPath, 3);
-        return smoothed.map(p => ({
-          x: p.x / pixelsPerInch,
-          y: p.y / pixelsPerInch
-        }));
-      });
-
+      const paths = traceMaskToInchPaths(mask);
+      console.log(`[SpotColor] Found ${paths.length} contours for ${fluorName}`);
       if (paths.length > 0) {
         regions.push({ name: fluorName, paths, tintCMYK: [0, 1, 0, 0] });
       }
@@ -314,66 +290,25 @@ function traceColorRegions(
   return regions;
 }
 
-function computePathArea(pts: Point[]): number {
-  let area = 0;
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    area += pts[i].x * pts[j].y;
-    area -= pts[j].x * pts[i].y;
-  }
-  return Math.abs(area) / 2;
-}
-
 function spotColorPathsToPDFOps(
   pathsInches: Point[][],
-  spotColorName: string,
-  imageWidthInches: number,
-  imageHeightInches: number
+  spotColorName: string
 ): string {
-  const simplifiedPaths: Point[][] = [];
-  for (const pathPoints of pathsInches) {
-    const simplified = simplifyPathForPDF(pathPoints, 0.005);
-    if (simplified.length >= 3) {
-      simplifiedPaths.push(simplified);
-    }
-  }
+  if (pathsInches.length === 0) return '';
 
-  if (simplifiedPaths.length === 0) return '';
-
-  const areas = simplifiedPaths.map(p => computePathArea(p));
-  const maxAreaIdx = areas.indexOf(Math.max(...areas));
-
-  const snappedResults: (ReturnType<typeof primitiveSnap>)[] = simplifiedPaths.map((path, i) => {
-    if (i === maxAreaIdx || areas[i] >= areas[maxAreaIdx] * 0.15) {
-      return primitiveSnap(path, imageWidthInches, imageHeightInches);
-    }
-    return null;
-  });
+  const validPaths = pathsInches.filter(p => p.length >= 3);
+  if (validPaths.length === 0) return '';
 
   let compoundPath = 'q\n';
   compoundPath += `/${spotColorName} cs 1 scn\n`;
 
-  for (let i = 0; i < simplifiedPaths.length; i++) {
-    const snap = snappedResults[i];
-
-    if (snap?.type === 'circle') {
-      compoundPath += circleToPathPDFOps(snap.cx * 72, snap.cy * 72, snap.r * 72);
-    } else if (snap?.type === 'rectangle') {
-      const pts = snap.corners.map(p => ({ x: p.x * 72, y: p.y * 72 })) as [Point, Point, Point, Point];
-      compoundPath += rectangleToPathPDFOps(pts);
-    } else if (snap?.type === 'rounded-rect') {
-      const pts = snap.corners.map(p => ({ x: p.x * 72, y: p.y * 72 })) as [Point, Point, Point, Point];
-      compoundPath += rectangleToPathPDFOps(pts);
-    } else {
-      const path = simplifiedPaths[i];
-      const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
-      compoundPath += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
-      for (let j = 1; j < pts.length; j++) {
-        compoundPath += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
-      }
-      compoundPath += 'h\n';
+  for (const path of validPaths) {
+    const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+    compoundPath += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+    for (let j = 1; j < pts.length; j++) {
+      compoundPath += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
     }
+    compoundPath += 'h\n';
   }
 
   compoundPath += 'f*\n';
@@ -409,9 +344,7 @@ function addSpotColorRegionToPage(
   pdfDoc: PDFDocument,
   page: PDFPage,
   region: SpotColorRegion,
-  offsetPaths: Point[][],
-  imageWidthInches: number,
-  imageHeightInches: number
+  offsetPaths: Point[][]
 ): void {
   const context = pdfDoc.context;
 
@@ -445,8 +378,8 @@ function addSpotColorRegionToPage(
   }
   (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
 
-  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name, imageWidthInches, imageHeightInches);
-  console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} paths, ${pathOps.length} chars ops`);
+  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name);
+  console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} contours, ${pathOps.length} chars ops`);
 
   if (pathOps.length > 0) {
     appendContentStream(page, context, pathOps);
@@ -488,13 +421,13 @@ export function addSpotColorVectorsToPDF(
     );
 
     if (singleArtboard) {
-      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths, widthInches, heightInches);
+      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths);
       addedLabels.push(region.name);
     } else {
       const wPts = pageWidthPts || (widthInches + imageOffsetXInches * 2) * 72;
       const hPts = pageHeightPts || pageHeightInches * 72;
       const newPage = pdfDoc.addPage([wPts, hPts]);
-      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths, widthInches, heightInches);
+      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths);
       addedLabels.push(region.name);
     }
   }
