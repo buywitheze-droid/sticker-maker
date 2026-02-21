@@ -26,10 +26,12 @@ interface PreviewSectionProps {
   detectedAlgorithm?: DetectedAlgorithm;
   onStrokeChange?: (settings: Partial<StrokeSettings>) => void;
   lockedContour?: LockedContour | null;
+  artboardWidth?: number;
+  artboardHeight?: number;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12 }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -188,20 +190,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     useEffect(() => {
       if (!containerRef.current) return;
       const updateSize = () => {
-        const width = containerRef.current?.clientWidth || 0;
-        const height = containerRef.current?.clientHeight || 0;
-        const safeWidth = Math.max(220, Math.min(720, width));
-        const safeHeight = Math.max(220, Math.min(720, height));
+        const containerWidth = containerRef.current?.clientWidth || 360;
+        const safeWidth = Math.max(220, Math.min(720, containerWidth));
+        const artboardAspect = artboardWidth / artboardHeight;
+        const canvasHeight = Math.round(safeWidth / artboardAspect);
         setPreviewDims({
-          width: safeWidth || 360,
-          height: safeHeight || 360
+          width: safeWidth,
+          height: canvasHeight
         });
       };
       updateSize();
       const observer = new ResizeObserver(updateSize);
       observer.observe(containerRef.current);
       return () => observer.disconnect();
-    }, []);
+    }, [artboardWidth, artboardHeight]);
     
     // Check if image content extends close to the edges (minimal empty space)
     const checkImageHasMinimalEmptySpace = (image: HTMLImageElement): boolean => {
@@ -602,35 +604,36 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         // Regular image rendering (non-PDF or no CutContour)
         
-        // For shape mode, always use a solid light background to show cut area
+        // Draw artboard: light gray canvas bg, white artboard, image on artboard
+        ctx.fillStyle = '#e5e7eb';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw white artboard filling the canvas (aspect ratio matches artboard)
+        const artboardPadding = Math.round(Math.min(canvas.width, canvas.height) * 0.02);
+        const abX = artboardPadding;
+        const abY = artboardPadding;
+        const abW = canvas.width - artboardPadding * 2;
+        const abH = canvas.height - artboardPadding * 2;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(abX, abY, abW, abH);
+
+        // Draw subtle artboard border
+        ctx.strokeStyle = '#d1d5db';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(abX, abY, abW, abH);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(abX, abY, abW, abH);
+        ctx.clip();
+        ctx.translate(abX, abY);
         if (shapeSettings.enabled) {
-          ctx.fillStyle = '#f0f0f0';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          drawShapePreview(ctx, canvas.width, canvas.height);
-        } else if (effectiveBackgroundColor === "transparent") {
-          const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
-          if (checkerPattern) {
-            ctx.fillStyle = checkerPattern;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-          }
-          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
+          drawShapePreview(ctx, abW, abH);
         } else {
-          if (effectiveBackgroundColor === "holographic") {
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#C8C8D0');
-            gradient.addColorStop(0.17, '#E8B8B8');
-            gradient.addColorStop(0.34, '#B8D8E8');
-            gradient.addColorStop(0.51, '#E8D0F0');
-            gradient.addColorStop(0.68, '#B0C8E0');
-            gradient.addColorStop(0.85, '#C0B0D8');
-            gradient.addColorStop(1, '#C8C8D0');
-            ctx.fillStyle = gradient;
-          } else {
-            ctx.fillStyle = effectiveBackgroundColor;
-          }
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
+          drawImageWithResizePreview(ctx, abW, abH);
         }
+        ctx.restore();
 
       }
       
@@ -638,7 +641,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {

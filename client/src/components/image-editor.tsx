@@ -67,6 +67,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
   const cutLabelRef = useRef<HTMLDivElement>(null);
   const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
+  const [artboardWidth, setArtboardWidth] = useState(24);
+  const [artboardHeight, setArtboardHeight] = useState(12);
   const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
   const applyAddRef = useRef<HTMLDivElement>(null);
   
@@ -1038,8 +1040,24 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             
             {/* HIDDEN: CutContour label, locked contour, and Add Contour buttons */}
           </div>
+
+          {/* Artboard Size Selector */}
+          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 shadow-sm px-3 py-2">
+            <span className="text-xs font-medium text-gray-500">Artboard</span>
+            <span className="text-sm font-semibold text-gray-700">{artboardWidth}"</span>
+            <span className="text-gray-300">×</span>
+            <select
+              value={artboardHeight}
+              onChange={(e) => setArtboardHeight(parseInt(e.target.value))}
+              className="text-sm font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded px-2 py-1 cursor-pointer focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+            >
+              {Array.from({ length: 13 }, (_, i) => 12 + i).map((h) => (
+                <option key={h} value={h}>{h}"</option>
+              ))}
+            </select>
+          </div>
           
-          {/* Preview - Square */}
+          {/* Preview */}
           <PreviewSection
             ref={canvasRef}
             imageInfo={imageInfo}
@@ -1053,6 +1071,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             detectedShapeInfo={detectedShapeInfo}
             onStrokeChange={handleStrokeChange}
             lockedContour={lockedContour}
+            artboardWidth={artboardWidth}
+            artboardHeight={artboardHeight}
           />
         </div>
       </div>
