@@ -264,7 +264,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const prev = overlappingDesigns;
-      if (overlapping.size !== prev.size || [...overlapping].some(id => !prev.has(id))) {
+      if (overlapping.size !== prev.size || Array.from(overlapping).some(id => !prev.has(id))) {
         setOverlappingDesigns(overlapping);
       }
     }, [designs, artboardWidth, artboardHeight, overlappingDesigns]);

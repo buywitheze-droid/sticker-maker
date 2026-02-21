@@ -260,75 +260,87 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   }, [cutContourLabel, toast, imageInfo, shapeSettings, resizeSettings]);
 
   const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number) => {
-    setImageInfo(newImageInfo);
-    
-    const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
-    const detectionResult = detectShape(newImageInfo.image);
-    const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
-    const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
-    
-    setStrokeSettings({
-      width: 0.14,
-      color: "#ffffff",
-      enabled: !shouldAutoApplyShape,
-      alphaThreshold: 128,
-      backgroundColor: "#ffffff",
-      useCustomBackground: true,
-      cornerMode: 'rounded',
-      autoBridging: true,
-      autoBridgingThreshold: 0.02,
-      contourMode: undefined,
-    });
-    setDetectedAlgorithm(undefined);
-    
-    const autoType = detectedShapeType || 'square';
-    const isCircularType = autoType === 'circle' || autoType === 'oval';
-    const newShapeSettings: ShapeSettings = {
-      enabled: shouldAutoApplyShape,
-      type: autoType,
-      offset: isCircularType ? 0.05 : 0.25,
-      fillColor: '#FFFFFF',
-      strokeEnabled: false,
-      strokeWidth: 2,
-      strokeColor: '#000000',
-      cornerRadius: 0.25,
-    };
-    setShapeSettings(newShapeSettings);
-    
-    setDetectedShapeType(detectedShapeType);
-    setDetectedShapeInfo(detectedShapeType ? {
-      type: detectedShapeType,
-      boundingBox: detectionResult.boundingBox
-    } : null);
-    
-    if (shouldAutoApplyShape) {
-      setStrokeMode('shape');
-    } else {
-      setStrokeMode('contour');
-    }
-    setCadCutBounds(null);
-    setLockedContour(null);
+    const isFirstDesign = designs.length === 0;
     const newTransform = { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
-    setDesignTransform(newTransform);
-    
-    setResizeSettings(prev => ({
-      ...prev,
-      widthInches,
-      heightInches,
-    }));
-    
-    const maxDim = Math.max(widthInches, heightInches);
-    const validSizes: StickerSize[] = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5];
-    const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
-    setStickerSize(fittingSize as StickerSize);
-    
-    const shapeDims = calculateShapeDimensions(
-      widthInches,
-      heightInches,
-      newShapeSettings.type,
-      newShapeSettings.offset
-    );
-    updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
+
+    if (isFirstDesign) {
+      setImageInfo(newImageInfo);
+
+      const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
+      const detectionResult = detectShape(newImageInfo.image);
+      const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
+      const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
+
+      setStrokeSettings({
+        width: 0.14,
+        color: "#ffffff",
+        enabled: !shouldAutoApplyShape,
+        alphaThreshold: 128,
+        backgroundColor: "#ffffff",
+        useCustomBackground: true,
+        cornerMode: 'rounded',
+        autoBridging: true,
+        autoBridgingThreshold: 0.02,
+        contourMode: undefined,
+      });
+      setDetectedAlgorithm(undefined);
+
+      const autoType = detectedShapeType || 'square';
+      const isCircularType = autoType === 'circle' || autoType === 'oval';
+      const newShapeSettings: ShapeSettings = {
+        enabled: shouldAutoApplyShape,
+        type: autoType,
+        offset: isCircularType ? 0.05 : 0.25,
+        fillColor: '#FFFFFF',
+        strokeEnabled: false,
+        strokeWidth: 2,
+        strokeColor: '#000000',
+        cornerRadius: 0.25,
+      };
+      setShapeSettings(newShapeSettings);
+
+      setDetectedShapeType(detectedShapeType);
+      setDetectedShapeInfo(detectedShapeType ? {
+        type: detectedShapeType,
+        boundingBox: detectionResult.boundingBox
+      } : null);
+
+      if (shouldAutoApplyShape) {
+        setStrokeMode('shape');
+      } else {
+        setStrokeMode('contour');
+      }
+      setCadCutBounds(null);
+      setLockedContour(null);
+      setDesignTransform(newTransform);
+
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
+
+      const maxDim = Math.max(widthInches, heightInches);
+      const validSizes: StickerSize[] = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5];
+      const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
+      setStickerSize(fittingSize as StickerSize);
+
+      const shapeDims = calculateShapeDimensions(
+        widthInches,
+        heightInches,
+        newShapeSettings.type,
+        newShapeSettings.offset
+      );
+      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
+    } else {
+      setImageInfo(newImageInfo);
+      setDesignTransform(newTransform);
+      setResizeSettings(prev => ({
+        ...prev,
+        widthInches,
+        heightInches,
+      }));
+    }
 
     const newDesignId = crypto.randomUUID();
     const newDesignItem: DesignItem = {
@@ -342,7 +354,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     };
     setDesigns(prev => [...prev, newDesignItem]);
     setSelectedDesignId(newDesignId);
-  }, [updateCadCutBounds]);
+  }, [updateCadCutBounds, designs.length]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
@@ -442,7 +454,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
     
-    // Always try to crop even fallback images to remove empty space
     const croppedCanvas = cropImageToContent(image);
     const finalImage = croppedCanvas ? (() => {
       const img = new Image();
@@ -451,7 +462,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     })() : image;
 
     const processImage = () => {
-      // Close any open dropdowns by blurring active element
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
@@ -467,71 +477,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         dpi,
       };
 
-      setImageInfo(newImageInfo);
-
-      // Detect shape from image
-      const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
-      const detectionResult = detectShape(finalImage);
-      const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
-      const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
-
-      setStrokeSettings({
-        width: 0.14,
-        color: "#ffffff",
-        enabled: !shouldAutoApplyShape,
-        alphaThreshold: 128,
-        backgroundColor: "#ffffff",
-        useCustomBackground: true,
-        cornerMode: 'rounded',
-        autoBridging: true,
-        autoBridgingThreshold: 0.02,
-        contourMode: undefined,
-      });
-      setDetectedAlgorithm(undefined);
-      setDetectedShapeType(detectedShapeType);
-      setDetectedShapeInfo(detectedShapeType ? {
-        type: detectedShapeType,
-        boundingBox: detectionResult.boundingBox
-      } : null);
-      
-      const autoType2 = detectedShapeType || 'square';
-      const isCircularType2 = autoType2 === 'circle' || autoType2 === 'oval';
-      const newShapeSettings: ShapeSettings = {
-        enabled: shouldAutoApplyShape,
-        type: autoType2,
-        offset: isCircularType2 ? 0.05 : 0.25,
-        fillColor: '#FFFFFF',
-        strokeEnabled: false,
-        strokeWidth: 2,
-        strokeColor: '#000000',
-        cornerRadius: 0.25,
-      };
-      setShapeSettings(newShapeSettings);
-      
-      // Auto-apply shape mode if detected, otherwise default to contour
-      if (shouldAutoApplyShape) {
-        setStrokeMode('shape');
-      } else {
-        setStrokeMode('contour');
-      }
-      
-      setCadCutBounds(null);
-      setStickerSize(4);
-
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches,
-        heightInches,
-      }));
-      
-      // Initial bounds check with actual shape settings
-      const shapeDims = calculateShapeDimensions(
-        widthInches,
-        heightInches,
-        newShapeSettings.type,
-        newShapeSettings.offset
-      );
-      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
+      applyImageDirectly(newImageInfo, widthInches, heightInches);
 
       const effectiveDPI = Math.min(finalImage.width / widthInches, finalImage.height / heightInches);
       if (effectiveDPI < 278) {
@@ -548,7 +494,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } else {
       processImage();
     }
-  }, [stickerSize, updateCadCutBounds, toast]);
+  }, [applyImageDirectly, toast]);
 
   const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
     // Close any open dropdowns
@@ -1126,13 +1072,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                   >
                     <Copy className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => selectedDesignId && handleDeleteDesign(selectedDesignId)}
-                    className="p-1.5 rounded-md hover:bg-gray-700 text-gray-400 hover:text-red-400 transition-colors"
-                    title="Delete Design"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </div>
               </>
             )}
@@ -1177,27 +1116,38 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           )}
 
           {/* Preview */}
-          <PreviewSection
-            ref={canvasRef}
-            imageInfo={imageInfo}
-            strokeSettings={debouncedStrokeSettings}
-            resizeSettings={debouncedResizeSettings}
-            shapeSettings={debouncedShapeSettings}
-            cadCutBounds={cadCutBounds}
-            spotPreviewData={spotPreviewData}
-            showCutLineInfo={false}
-            detectedShapeType={detectedShapeType}
-            detectedShapeInfo={detectedShapeInfo}
-            onStrokeChange={handleStrokeChange}
-            lockedContour={lockedContour}
-            artboardWidth={artboardWidth}
-            artboardHeight={artboardHeight}
-            designTransform={designTransform}
-            onTransformChange={handleDesignTransformChange}
-            designs={designs}
-            selectedDesignId={selectedDesignId}
-            onSelectDesign={handleSelectDesign}
-          />
+          <div className="relative">
+            <PreviewSection
+              ref={canvasRef}
+              imageInfo={imageInfo}
+              strokeSettings={debouncedStrokeSettings}
+              resizeSettings={debouncedResizeSettings}
+              shapeSettings={debouncedShapeSettings}
+              cadCutBounds={cadCutBounds}
+              spotPreviewData={spotPreviewData}
+              showCutLineInfo={false}
+              detectedShapeType={detectedShapeType}
+              detectedShapeInfo={detectedShapeInfo}
+              onStrokeChange={handleStrokeChange}
+              lockedContour={lockedContour}
+              artboardWidth={artboardWidth}
+              artboardHeight={artboardHeight}
+              designTransform={designTransform}
+              onTransformChange={handleDesignTransformChange}
+              designs={designs}
+              selectedDesignId={selectedDesignId}
+              onSelectDesign={handleSelectDesign}
+            />
+            {selectedDesignId && (
+              <button
+                onClick={() => handleDeleteDesign(selectedDesignId)}
+                className="absolute bottom-2 left-2 p-2 rounded-lg bg-gray-900/80 border border-gray-600 hover:bg-red-900/80 hover:border-red-500 text-gray-400 hover:text-red-400 transition-colors z-10"
+                title="Delete Design"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
       
