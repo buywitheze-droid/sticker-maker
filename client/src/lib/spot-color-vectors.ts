@@ -23,10 +23,13 @@ function createClosestColorMask(
   const mask = new Uint8Array(width * height);
 
   const markedHexSet = new Set(markedColors.map(mc => mc.hex));
+  const markedRGBs = markedColors.map(mc => mc.rgb);
   const allColorsIndexed = allSpotColors.map(c => ({
     rgb: c.rgb,
     hex: c.hex
   }));
+
+  const directTolerance = 80;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -54,7 +57,19 @@ function createClosestColorMask(
       }
 
       if (closestDistance < colorTolerance && markedHexSet.has(closestHex)) {
-        mask[y * width + x] = 1;
+        let withinDirect = false;
+        for (const mrgb of markedRGBs) {
+          const dr = r - mrgb.r;
+          const dg = g - mrgb.g;
+          const db = b - mrgb.b;
+          if (Math.sqrt(dr * dr + dg * dg + db * db) < directTolerance) {
+            withinDirect = true;
+            break;
+          }
+        }
+        if (withinDirect) {
+          mask[y * width + x] = 1;
+        }
       }
     }
   }
