@@ -1,7 +1,7 @@
 import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict, type PDFImage } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
-import { simplifyPathForPDF } from './contour-outline';
+import { simplifyPathForPDF, buildSmoothPdfPath } from './contour-outline';
 
 async function createClippedShapeImage(
   image: HTMLImageElement,
@@ -426,17 +426,8 @@ export async function downloadShapePDF(
     let lcPathOps = 'q\n';
     lcPathOps += `/${lockedContour.label} CS 1 SCN\n`;
     lcPathOps += '0.5 w\n';
-    
-    for (let i = 0; i < simplified.length; i++) {
-      const xPts = simplified[i].x * 72;
-      const yPts = simplified[i].y * 72;
-      if (i === 0) {
-        lcPathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
-      } else {
-        lcPathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
-      }
-    }
-    lcPathOps += 'h S\n';
+    lcPathOps += buildSmoothPdfPath(simplified, true);
+    lcPathOps += 'S\n';
     lcPathOps += 'Q\n';
     
     const lcStream = context.stream(lcPathOps);

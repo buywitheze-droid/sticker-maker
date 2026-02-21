@@ -45,6 +45,52 @@ function perpendicularDistance(
   return num / Math.sqrt(lenSq);
 }
 
+export function buildSmoothPdfPath(
+  pointsInches: Array<{x: number; y: number}>,
+  closed: boolean = true
+): string {
+  if (pointsInches.length < 2) return '';
+
+  const pts = pointsInches.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+  const n = pts.length;
+
+  let path = `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+
+  if (n === 2) {
+    path += `${pts[1].x.toFixed(4)} ${pts[1].y.toFixed(4)} l\n`;
+    if (closed) path += 'h\n';
+    return path;
+  }
+
+  const segCount = closed ? n : n - 1;
+
+  for (let i = 0; i < segCount; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % n];
+
+    let p0: typeof p1;
+    let p3: typeof p1;
+
+    if (closed) {
+      p0 = pts[(i - 1 + n) % n];
+      p3 = pts[(i + 2) % n];
+    } else {
+      p0 = i > 0 ? pts[i - 1] : { x: 2 * p1.x - p2.x, y: 2 * p1.y - p2.y };
+      p3 = i + 2 < n ? pts[i + 2] : { x: 2 * p2.x - p1.x, y: 2 * p2.y - p1.y };
+    }
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    path += `${cp1x.toFixed(4)} ${cp1y.toFixed(4)} ${cp2x.toFixed(4)} ${cp2y.toFixed(4)} ${p2.x.toFixed(4)} ${p2.y.toFixed(4)} c\n`;
+  }
+
+  if (closed) path += 'h\n';
+
+  return path;
+}
+
 function contourPointsToPDFPathOps(
   pathPointsInches: Array<{x: number; y: number}>,
   pageHeightInches: number,
@@ -58,18 +104,8 @@ function contourPointsToPDFPathOps(
   console.log(`[PDF CutContour] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
   console.log(`[PDF CutContour] Page height: ${pageHeightInches.toFixed(3)}in`);
 
-  for (let i = 0; i < simplified.length; i++) {
-    const xPts = simplified[i].x * 72;
-    const yPts = simplified[i].y * 72;
-
-    if (i === 0) {
-      pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
-    } else {
-      pathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
-    }
-  }
-
-  pathOps += 'h S\n';
+  pathOps += buildSmoothPdfPath(simplified, true);
+  pathOps += 'S\n';
   return pathOps;
 }
 
