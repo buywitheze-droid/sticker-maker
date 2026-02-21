@@ -1761,7 +1761,7 @@ export function getContourPath(
 }
 
 export interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
   cxInches: number;
   cyInches: number;
   rxInches: number;

@@ -31,7 +31,7 @@ interface WorkerMessage {
 }
 
 interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
   cxInches: number;
   cyInches: number;
   rxInches: number;
@@ -723,7 +723,7 @@ function processContour(
 // This is a completely separate code path from sharp/smooth/scattered.
 
 interface ShapeAnalysis {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
   cx: number;
   cy: number;
   rx: number;
@@ -732,6 +732,7 @@ interface ShapeAnalysis {
   circularity: number;
   solidity: number;
   aspectRatio: number;
+  boundary?: Point[];
 }
 
 function analyzeShapeFromMask(
@@ -821,19 +822,78 @@ function analyzeShapeFromMask(
     circleFit = Math.max(0, 1.0 - meanDev);
   }
 
+  const d = Math.max(2, Math.min(bboxW, bboxH) * 0.05);
+  let topSupport = 0, bottomSupport = 0, leftSupport = 0, rightSupport = 0;
+  let totalBoundary = boundary.length;
+  if (totalBoundary > 0) {
+    for (const pt of boundary) {
+      if (Math.abs(pt.y - minY) <= d) topSupport++;
+      if (Math.abs(pt.y - maxY) <= d) bottomSupport++;
+      if (Math.abs(pt.x - minX) <= d) leftSupport++;
+      if (Math.abs(pt.x - maxX) <= d) rightSupport++;
+    }
+  }
+  const topPct = totalBoundary > 0 ? topSupport / totalBoundary : 0;
+  const bottomPct = totalBoundary > 0 ? bottomSupport / totalBoundary : 0;
+  const leftPct = totalBoundary > 0 ? leftSupport / totalBoundary : 0;
+  const rightPct = totalBoundary > 0 ? rightSupport / totalBoundary : 0;
+  const rectGateThreshold = 0.15;
+  const rectGatePasses = topPct > rectGateThreshold && bottomPct > rectGateThreshold &&
+    leftPct > rectGateThreshold && rightPct > rectGateThreshold;
+
   console.log('[Shapes] Analysis: circularity:', circularity.toFixed(3),
     'solidity:', solidity.toFixed(3), 'aspect:', aspectRatio.toFixed(3),
     'circleAreaRatio:', circleAreaRatio.toFixed(3), 'circleFit:', circleFit.toFixed(3),
     'centroid vs bbox center offset:', Math.abs(centroidCx - bboxCx).toFixed(1), Math.abs(centroidCy - bboxCy).toFixed(1));
+  console.log('[Shapes] Rect gate: top:', topPct.toFixed(3), 'bottom:', bottomPct.toFixed(3),
+    'left:', leftPct.toFixed(3), 'right:', rightPct.toFixed(3), 'passes:', rectGatePasses);
 
   let shapeType: ShapeAnalysis['type'];
   const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
 
   if (solidity > 0.85) {
-    if (circularity > 0.75) {
-      shapeType = 'rounded-rect';
+    if (rectGatePasses) {
+      if (circularity > 0.75) {
+        shapeType = 'rounded-rect';
+      } else {
+        shapeType = 'rectangle';
+      }
     } else {
-      shapeType = 'rectangle';
+      const midY = Math.round(bboxCy);
+      let midRowWidth = 0;
+      if (midY >= 0 && midY < maskHeight) {
+        let mLeft = maskWidth, mRight = 0;
+        for (let x = 0; x < maskWidth; x++) {
+          if (mask[midY * maskWidth + x]) {
+            if (x < mLeft) mLeft = x;
+            if (x > mRight) mRight = x;
+          }
+        }
+        midRowWidth = mRight - mLeft + 1;
+      }
+      const bottomY = Math.min(maskHeight - 1, maxY);
+      let bottomRowWidth = 0;
+      {
+        let bLeft = maskWidth, bRight = 0;
+        for (let x = 0; x < maskWidth; x++) {
+          if (mask[bottomY * maskWidth + x]) {
+            if (x < bLeft) bLeft = x;
+            if (x > bRight) bRight = x;
+          }
+        }
+        bottomRowWidth = bRight - bLeft + 1;
+      }
+      const taperRatio = midRowWidth > 0 ? bottomRowWidth / midRowWidth : 1;
+      console.log('[Shapes] Shield check: midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3));
+
+      if (taperRatio < 0.85) {
+        shapeType = 'shield';
+        console.log('[Shapes] Detected: shield (solidity high but rect gate failed, bottom tapers)');
+        return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
+      } else {
+        console.log('[Shapes] Rect gate failed but no taper detected — falling back to traced contour');
+        return null;
+      }
     }
   } else if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
     solidity > 0.70 && circularity > 0.70 && circleFit > 0.85) {
@@ -853,6 +913,57 @@ function analyzeShapeFromMask(
   return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio };
 }
 
+function curvatureAwareSmooth(points: Point[], sharpBelowY: number): Point[] {
+  if (points.length < 5) return points;
+
+  const result: Point[] = [];
+  const n = points.length;
+
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const curr = points[i];
+    const next = points[(i + 1) % n];
+
+    if (curr.y > sharpBelowY) {
+      result.push(curr);
+      continue;
+    }
+
+    const v1x = curr.x - prev.x, v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x, v2y = next.y - curr.y;
+    const cross = v1x * v2y - v1y * v2x;
+    const dot = v1x * v2x + v1y * v2y;
+    const angle = Math.abs(Math.atan2(cross, dot));
+
+    if (angle > Math.PI * 0.6) {
+      result.push(curr);
+    } else {
+      result.push({
+        x: curr.x * 0.5 + prev.x * 0.25 + next.x * 0.25,
+        y: curr.y * 0.5 + prev.y * 0.25 + next.y * 0.25
+      });
+    }
+  }
+
+  const pass2: Point[] = [];
+  const m = result.length;
+  for (let i = 0; i < m; i++) {
+    const curr = result[i];
+    if (curr.y > sharpBelowY) {
+      pass2.push(curr);
+      continue;
+    }
+    const prev = result[(i - 1 + m) % m];
+    const next = result[(i + 1) % m];
+    pass2.push({
+      x: curr.x * 0.6 + prev.x * 0.2 + next.x * 0.2,
+      y: curr.y * 0.6 + prev.y * 0.2 + next.y * 0.2
+    });
+  }
+
+  return pass2;
+}
+
 function generateShapeContour(
   shape: ShapeAnalysis,
   offsetPixels: number,
@@ -860,6 +971,43 @@ function generateShapeContour(
 ): Point[] {
   const { type, cx, cy, rx, ry } = shape;
   const points: Point[] = [];
+
+  if (type === 'shield' && shape.boundary && shape.boundary.length >= 10) {
+    const simplified = rdpSimplifyPolygon(shape.boundary, 1.5);
+
+    const smoothed = curvatureAwareSmooth(simplified, cy + ry * 0.5);
+
+    const clipperPath = smoothed.map(p => ({
+      X: Math.round(p.x * CLIPPER_SCALE),
+      Y: Math.round(p.y * CLIPPER_SCALE)
+    }));
+
+    const co = new ClipperLib.ClipperOffset();
+    co.MiterLimit = 3;
+    co.ArcTolerance = CLIPPER_SCALE * 0.05;
+    co.AddPath(clipperPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+
+    const offsetResult: Array<Array<{ X: number; Y: number }>> = [];
+    co.Execute(offsetResult, offsetPixels * CLIPPER_SCALE);
+
+    if (offsetResult.length > 0) {
+      let largestIdx = 0;
+      let largestArea = 0;
+      for (let i = 0; i < offsetResult.length; i++) {
+        const area = Math.abs(ClipperLib.Clipper.Area(offsetResult[i]));
+        if (area > largestArea) {
+          largestArea = area;
+          largestIdx = i;
+        }
+      }
+      return offsetResult[largestIdx].map(p => ({
+        x: p.X / CLIPPER_SCALE,
+        y: p.Y / CLIPPER_SCALE
+      }));
+    }
+
+    return smoothed;
+  }
 
   if (type === 'circle' || type === 'ellipse') {
     const oRx = rx + offsetPixels;
@@ -933,11 +1081,14 @@ function analyzeComponentShape(
     }
   }
 
-  const filledCrop = fillSilhouette(cropMask, cropW, cropH);
-  const result = analyzeShapeFromMask(filledCrop, cropW, cropH);
+  const closedCrop = morphologicalClose(cropMask, cropW, cropH, 2);
+  const result = analyzeShapeFromMask(closedCrop, cropW, cropH);
   if (result) {
     result.cx += cropMinX;
     result.cy += cropMinY;
+    if (result.boundary) {
+      result.boundary = result.boundary.map(p => ({ x: p.x + cropMinX, y: p.y + cropMinY }));
+    }
   }
   return result;
 }

@@ -36,7 +36,7 @@ export type DetectedAlgorithm = 'shapes' | 'complex' | 'scattered';
 export type ContourMode = 'sharp' | 'smooth' | 'shapes' | 'scattered';
 
 export interface ShapeInfoForPDF {
-  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect';
+  type: 'circle' | 'ellipse' | 'rectangle' | 'rounded-rect' | 'shield';
   cxInches: number;
   cyInches: number;
   rxInches: number;
