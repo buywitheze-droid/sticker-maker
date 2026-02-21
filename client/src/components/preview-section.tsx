@@ -4,7 +4,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour } from "./image-editor";
+import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour, type ImageTransform } from "./image-editor";
+import { computeLayerRect } from "@/lib/types";
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
@@ -28,10 +29,12 @@ interface PreviewSectionProps {
   lockedContour?: LockedContour | null;
   artboardWidth?: number;
   artboardHeight?: number;
+  designTransform?: ImageTransform;
+  onTransformChange?: (transform: ImageTransform) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12 }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24, artboardHeight = 12, designTransform, onTransformChange }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -59,79 +62,236 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const contourTransformRef = useRef<{x: number; y: number; width: number; height: number; canvasW: number; canvasH: number} | null>(null);
     const lastCanvasDimsRef = useRef<{width: number; height: number}>({width: 0, height: 0});
     
-    // Drag-to-pan state
-    const [isDragging, setIsDragging] = useState(false);
-    const dragStartRef = useRef<{x: number; y: number; panX: number; panY: number} | null>(null);
-    
-    const maxPanXY = useCallback(() => {
-      const limit = 25 + Math.max(0, (zoom - 1) * 50);
-      return { x: limit, y: limit };
-    }, [zoom]);
-    
-    const clampPan = useCallback((px: number, py: number) => {
-      const limit = maxPanXY();
-      return {
-        x: Math.max(-limit.x, Math.min(limit.x, px)),
-        y: Math.max(-limit.y, Math.min(limit.y, py)),
-      };
-    }, [maxPanXY]);
-    
-    const pxToPanXY = useCallback((dxPx: number, dyPx: number) => {
-      const el = canvasRef.current;
-      if (!el) return { dx: 0, dy: 0 };
-      const w = Math.max(el.clientWidth, 1);
-      const h = Math.max(el.clientHeight, 1);
-      return { dx: (dxPx / w) * 100, dy: (dyPx / h) * 100 };
+    const isDraggingRef = useRef(false);
+    const isResizingRef = useRef(false);
+    const isRotatingRef = useRef(false);
+    const dragStartMouseRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const dragStartTransformRef = useRef<ImageTransform>({nx: 0.5, ny: 0.5, s: 1, rotation: 0});
+    const resizeStartDistRef = useRef(0);
+    const resizeStartSRef = useRef(1);
+    const rotateStartAngleRef = useRef(0);
+    const rotateStartRotationRef = useRef(0);
+    const transformRef = useRef<ImageTransform>(designTransform || {nx: 0.5, ny: 0.5, s: 1, rotation: 0});
+    const onTransformChangeRef = useRef(onTransformChange);
+    onTransformChangeRef.current = onTransformChange;
+
+    useEffect(() => {
+      if (designTransform) {
+        transformRef.current = designTransform;
+      }
+    }, [designTransform]);
+
+    const getDesignRect = useCallback(() => {
+      if (!imageInfo || !designTransform) return null;
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      return computeLayerRect(
+        imageInfo.image.width, imageInfo.image.height,
+        transformRef.current,
+        canvas.width, canvas.height,
+        artboardWidth, artboardHeight,
+        resizeSettings.widthInches, resizeSettings.heightInches,
+      );
+    }, [imageInfo, designTransform, artboardWidth, artboardHeight, resizeSettings.widthInches, resizeSettings.heightInches]);
+
+    const hitTestDesign = useCallback((px: number, py: number): boolean => {
+      const rect = getDesignRect();
+      if (!rect) return false;
+      const t = transformRef.current;
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const rad = -(t.rotation * Math.PI) / 180;
+      const dx = px - cx;
+      const dy = py - cy;
+      const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+      return Math.abs(lx) <= rect.width / 2 && Math.abs(ly) <= rect.height / 2;
+    }, [getDesignRect]);
+
+    const getHandlePositions = useCallback(() => {
+      const rect = getDesignRect();
+      if (!rect) return [];
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const hw = rect.width / 2;
+      const hh = rect.height / 2;
+      const rad = (transformRef.current.rotation * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const corners = [
+        { lx: -hw, ly: -hh, id: 'tl' },
+        { lx: hw, ly: -hh, id: 'tr' },
+        { lx: hw, ly: hh, id: 'br' },
+        { lx: -hw, ly: hh, id: 'bl' },
+      ];
+      return corners.map(c => ({
+        x: cx + c.lx * cos - c.ly * sin,
+        y: cy + c.lx * sin + c.ly * cos,
+        id: c.id,
+      }));
+    }, [getDesignRect]);
+
+    const hitTestHandles = useCallback((px: number, py: number): { type: 'resize' | 'rotate'; id: string } | null => {
+      const handles = getHandlePositions();
+      if (handles.length === 0) return null;
+      const rect = getDesignRect();
+      if (!rect) return null;
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const rad = (transformRef.current.rotation * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      for (const h of handles) {
+        const dx = h.x - cx;
+        const dy = h.y - cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len > 0) {
+          const rotX = cx + (dx / len) * (len + 24);
+          const rotY = cy + (dy / len) * (len + 24);
+          if (Math.abs(px - rotX) < 14 && Math.abs(py - rotY) < 14) {
+            return { type: 'rotate', id: `rot-${h.id}` };
+          }
+        }
+        if (Math.abs(px - h.x) < 14 && Math.abs(py - h.y) < 14) {
+          return { type: 'resize', id: h.id };
+        }
+      }
+      return null;
+    }, [getHandlePositions, getDesignRect]);
+
+    const canvasToLocal = useCallback((clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return { x: 0, y: 0 };
+      const canvasRect = canvas.getBoundingClientRect();
+      const x = ((clientX - canvasRect.left) / canvasRect.width) * canvas.width;
+      const y = ((clientY - canvasRect.top) / canvasRect.height) * canvas.height;
+      return { x, y };
     }, []);
-    
+
+    const handleInteractionStart = useCallback((clientX: number, clientY: number) => {
+      if (!imageInfo || !onTransformChange) return;
+      const local = canvasToLocal(clientX, clientY);
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const handleHit = hitTestHandles(local.x, local.y);
+      if (handleHit) {
+        if (handleHit.type === 'resize') {
+          isResizingRef.current = true;
+          const rect = getDesignRect();
+          if (rect) {
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            resizeStartDistRef.current = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
+            resizeStartSRef.current = transformRef.current.s;
+          }
+        } else {
+          isRotatingRef.current = true;
+          const rect = getDesignRect();
+          if (rect) {
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            rotateStartAngleRef.current = Math.atan2(local.y - cy, local.x - cx);
+            rotateStartRotationRef.current = transformRef.current.rotation;
+          }
+        }
+        return;
+      }
+
+      if (hitTestDesign(local.x, local.y)) {
+        isDraggingRef.current = true;
+        dragStartMouseRef.current = { x: clientX, y: clientY };
+        dragStartTransformRef.current = { ...transformRef.current };
+      }
+    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, getDesignRect]);
+
+    const handleInteractionMove = useCallback((clientX: number, clientY: number) => {
+      if (!onTransformChange) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      if (isDraggingRef.current) {
+        const canvasRect = canvas.getBoundingClientRect();
+        const dx = clientX - dragStartMouseRef.current.x;
+        const dy = clientY - dragStartMouseRef.current.y;
+        const dnx = dx / canvasRect.width;
+        const dny = dy / canvasRect.height;
+        const newTransform = {
+          ...dragStartTransformRef.current,
+          nx: dragStartTransformRef.current.nx + dnx,
+          ny: dragStartTransformRef.current.ny + dny,
+        };
+        transformRef.current = newTransform;
+        onTransformChangeRef.current?.(newTransform);
+      } else if (isResizingRef.current) {
+        const local = canvasToLocal(clientX, clientY);
+        const rect = getDesignRect();
+        if (rect) {
+          const cx = rect.x + rect.width / 2;
+          const cy = rect.y + rect.height / 2;
+          const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
+          const ratio = dist / Math.max(resizeStartDistRef.current, 1);
+          const newS = Math.max(0.1, Math.min(10, resizeStartSRef.current * ratio));
+          const newTransform = { ...transformRef.current, s: newS };
+          transformRef.current = newTransform;
+          onTransformChangeRef.current?.(newTransform);
+        }
+      } else if (isRotatingRef.current) {
+        const local = canvasToLocal(clientX, clientY);
+        const rect = getDesignRect();
+        if (rect) {
+          const cx = rect.x + rect.width / 2;
+          const cy = rect.y + rect.height / 2;
+          const angle = Math.atan2(local.y - cy, local.x - cx);
+          const delta = ((angle - rotateStartAngleRef.current) * 180) / Math.PI;
+          let newRot = rotateStartRotationRef.current + delta;
+          newRot = ((newRot % 360) + 360) % 360;
+          const newTransform = { ...transformRef.current, rotation: Math.round(newRot) };
+          transformRef.current = newTransform;
+          onTransformChangeRef.current?.(newTransform);
+        }
+      }
+    }, [onTransformChange, canvasToLocal, getDesignRect]);
+
+    const handleInteractionEnd = useCallback(() => {
+      isDraggingRef.current = false;
+      isResizingRef.current = false;
+      isRotatingRef.current = false;
+    }, []);
+
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
-      setIsDragging(true);
-      dragStartRef.current = { x: e.clientX, y: e.clientY, panX, panY };
-    }, [panX, panY]);
-    
+      handleInteractionStart(e.clientX, e.clientY);
+    }, [handleInteractionStart]);
+
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-      if (!isDragging || !dragStartRef.current) return;
-      const d = pxToPanXY(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y);
-      const clamped = clampPan(dragStartRef.current.panX + d.dx, dragStartRef.current.panY + d.dy);
-      setPanX(clamped.x);
-      setPanY(clamped.y);
-    }, [isDragging, pxToPanXY, clampPan]);
-    
+      handleInteractionMove(e.clientX, e.clientY);
+    }, [handleInteractionMove]);
+
     const handleMouseUp = useCallback(() => {
-      setIsDragging(false);
-      dragStartRef.current = null;
-    }, []);
-    
+      handleInteractionEnd();
+    }, [handleInteractionEnd]);
+
     const handleMouseLeave = useCallback(() => {
-      if (isDragging) {
-        setIsDragging(false);
-        dragStartRef.current = null;
-      }
-    }, [isDragging]);
-    
+      handleInteractionEnd();
+    }, [handleInteractionEnd]);
+
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
       if (e.touches.length !== 1) return;
       e.preventDefault();
-      const t = e.touches[0];
-      setIsDragging(true);
-      dragStartRef.current = { x: t.clientX, y: t.clientY, panX, panY };
-    }, [panX, panY]);
-    
+      handleInteractionStart(e.touches[0].clientX, e.touches[0].clientY);
+    }, [handleInteractionStart]);
+
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
-      if (!isDragging || !dragStartRef.current || e.touches.length !== 1) return;
+      if (e.touches.length !== 1) return;
       e.preventDefault();
-      const t = e.touches[0];
-      const d = pxToPanXY(t.clientX - dragStartRef.current.x, t.clientY - dragStartRef.current.y);
-      const clamped = clampPan(dragStartRef.current.panX + d.dx, dragStartRef.current.panY + d.dy);
-      setPanX(clamped.x);
-      setPanY(clamped.y);
-    }, [isDragging, pxToPanXY, clampPan]);
-    
+      handleInteractionMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, [handleInteractionMove]);
+
     const handleTouchEnd = useCallback(() => {
-      setIsDragging(false);
-      dragStartRef.current = null;
-    }, []);
+      handleInteractionEnd();
+    }, [handleInteractionEnd]);
     
     // Fit to View: calculate zoom to fit canvas within container and reset pan
     const fitToView = useCallback(() => {
@@ -618,7 +778,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {
@@ -962,126 +1122,97 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      const viewPadding = 0;
-      const availableWidth = canvasWidth;
-      const availableHeight = canvasHeight;
-      
-      if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
-        const contourCanvas = contourCacheRef.current.canvas;
-        
-        const contourAspectRatio = contourCanvas.width / contourCanvas.height;
-        
-        let contourWidth, contourHeight;
-        if (contourAspectRatio > (availableWidth / availableHeight)) {
-          contourWidth = availableWidth;
-          contourHeight = availableWidth / contourAspectRatio;
-        } else {
-          contourHeight = availableHeight;
-          contourWidth = availableHeight * contourAspectRatio;
-        }
-        
-        const contourX = (canvasWidth - contourWidth) / 2;
-        const contourY = (canvasHeight - contourHeight) / 2;
-        
-        contourTransformRef.current = {
-          x: contourX, y: contourY,
-          width: contourWidth, height: contourHeight,
-          canvasW: contourCanvas.width, canvasH: contourCanvas.height
-        };
-        
-        if (strokeSettings.backgroundColor === 'holographic') {
-          const holoKey = `${contourCacheRef.current?.key || ''}-${contourCanvas.width}x${contourCanvas.height}`;
-          let holoCanvas = holographicCacheRef.current?.contourKey === holoKey ? holographicCacheRef.current.canvas : null;
-          
-          if (!holoCanvas) {
-            holoCanvas = document.createElement('canvas');
-            holoCanvas.width = contourCanvas.width;
-            holoCanvas.height = contourCanvas.height;
-            const tempCtx = holoCanvas.getContext('2d')!;
-            tempCtx.drawImage(contourCanvas, 0, 0);
-            
-            const imageData = tempCtx.getImageData(0, 0, holoCanvas.width, holoCanvas.height);
-            const pixels = imageData.data;
-            
-            const gradientCanvas = document.createElement('canvas');
-            gradientCanvas.width = holoCanvas.width;
-            gradientCanvas.height = holoCanvas.height;
-            const gradCtx = gradientCanvas.getContext('2d')!;
-            const gradient = gradCtx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
-            gradient.addColorStop(0, '#C8C8D0');
-            gradient.addColorStop(0.17, '#E8B8B8');
-            gradient.addColorStop(0.34, '#B8D8E8');
-            gradient.addColorStop(0.51, '#E8D0F0');
-            gradient.addColorStop(0.68, '#B0C8E0');
-            gradient.addColorStop(0.85, '#C0B0D8');
-            gradient.addColorStop(1, '#C8C8D0');
-            gradCtx.fillStyle = gradient;
-            gradCtx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
-            const gradientData = gradCtx.getImageData(0, 0, gradientCanvas.width, gradientCanvas.height);
-            const gradPixels = gradientData.data;
-            
-            for (let i = 0; i < pixels.length; i += 4) {
-              if (pixels[i + 3] > 200 && pixels[i] > 240 && pixels[i + 1] > 240 && pixels[i + 2] > 240) {
-                pixels[i] = gradPixels[i];
-                pixels[i + 1] = gradPixels[i + 1];
-                pixels[i + 2] = gradPixels[i + 2];
-              }
-            }
-            
-            tempCtx.putImageData(imageData, 0, 0);
-            holographicCacheRef.current = { contourKey: holoKey, canvas: holoCanvas };
-          }
-          
-          ctx.drawImage(holoCanvas, contourX, contourY, contourWidth, contourHeight);
-        } else {
-          ctx.drawImage(contourCanvas, contourX, contourY, contourWidth, contourHeight);
-        }
-        
-        const spotOverlay = createSpotOverlayCanvas();
-        if (spotOverlay) {
-          const dsScale = contourCacheRef.current?.downsampleScale ?? 1;
-          const dsWidth = Math.round(imageInfo.image.width * dsScale);
-          const dsHeight = Math.round(imageInfo.image.height * dsScale);
-          const imgX = contourCacheRef.current?.imageCanvasX ?? 0;
-          const imgY = contourCacheRef.current?.imageCanvasY ?? 0;
-          
-          const scaleX = contourWidth / contourCanvas.width;
-          const scaleY = contourHeight / contourCanvas.height;
-          
-          const spotX = contourX + (imgX * scaleX);
-          const spotY = contourY + (imgY * scaleY);
-          const spotWidth = dsWidth * scaleX;
-          const spotHeight = dsHeight * scaleY;
-          
+      const t = designTransform || { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
+      const rect = computeLayerRect(
+        imageInfo.image.width, imageInfo.image.height,
+        t,
+        canvasWidth, canvasHeight,
+        artboardWidth, artboardHeight,
+        resizeSettings.widthInches, resizeSettings.heightInches,
+      );
+
+      ctx.save();
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((t.rotation * Math.PI) / 180);
+      ctx.drawImage(imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+
+      const spotOverlay = createSpotOverlayCanvas();
+      if (spotOverlay) {
+        ctx.globalAlpha = spotPulseRef.current;
+        ctx.drawImage(spotOverlay, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+
+      drawSelectionHandles(ctx, rect, t);
+    };
+
+    const drawSelectionHandles = (ctx: CanvasRenderingContext2D, rect: {x: number; y: number; width: number; height: number}, t: ImageTransform) => {
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const hw = rect.width / 2;
+      const hh = rect.height / 2;
+      const rad = (t.rotation * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      const corners = [
+        { lx: -hw, ly: -hh },
+        { lx: hw, ly: -hh },
+        { lx: hw, ly: hh },
+        { lx: -hw, ly: hh },
+      ];
+      const pts = corners.map(c => ({
+        x: cx + c.lx * cos - c.ly * sin,
+        y: cy + c.lx * sin + c.ly * cos,
+      }));
+
+      ctx.save();
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const handleSize = 10;
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 2;
+      for (const p of pts) {
+        ctx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
+        ctx.strokeRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
+      }
+
+      ctx.fillStyle = '#00ffff';
+      for (const p of pts) {
+        const dx = p.x - cx;
+        const dy = p.y - cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len > 0) {
+          const rx = cx + (dx / len) * (len + 24);
+          const ry = cy + (dy / len) * (len + 24);
+
           ctx.save();
-          ctx.globalAlpha = spotPulseRef.current;
-          ctx.drawImage(spotOverlay, spotX, spotY, spotWidth, spotHeight);
+          ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(rx, ry);
+          ctx.stroke();
           ctx.restore();
-        }
-      } else {
-        const aspectRatio = imageInfo.image.width / imageInfo.image.height;
-        let displayWidth, displayHeight;
-        if (aspectRatio > (availableWidth / availableHeight)) {
-          displayWidth = availableWidth;
-          displayHeight = availableWidth / aspectRatio;
-        } else {
-          displayHeight = availableHeight;
-          displayWidth = availableHeight * aspectRatio;
-        }
-        
-        const displayX = (canvasWidth - displayWidth) / 2;
-        const displayY = (canvasHeight - displayHeight) / 2;
-        
-        ctx.drawImage(imageInfo.image, displayX, displayY, displayWidth, displayHeight);
-        
-        const spotOverlay = createSpotOverlayCanvas();
-        if (spotOverlay) {
-          ctx.save();
-          ctx.globalAlpha = spotPulseRef.current;
-          ctx.drawImage(spotOverlay, displayX, displayY, displayWidth, displayHeight);
-          ctx.restore();
+
+          ctx.beginPath();
+          ctx.arc(rx, ry, 5, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
+      ctx.restore();
     };
 
     const getBackgroundStyle = () => {
@@ -1113,7 +1244,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 <div 
                   ref={containerRef}
                   onWheel={handleWheel}
-                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-600 flex items-center justify-center cursor-zoom-in transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseLeave}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-600 flex items-center justify-center cursor-default transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
                   style={{ 
                     width: '100%',
                     height: '100%',

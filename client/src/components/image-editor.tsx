@@ -18,8 +18,8 @@ import type { ParsedPDFData } from "@/lib/pdf-parser";
 import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 import { useToast } from "@/hooks/use-toast";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour } from "@/lib/types";
+export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform } from "@/lib/types";
+import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform } from "@/lib/types";
 
 export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: () => void } = {}) {
   const { toast } = useToast();
@@ -69,6 +69,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
   const [artboardWidth, setArtboardWidth] = useState(24);
   const [artboardHeight, setArtboardHeight] = useState(12);
+  const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
   const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
   const applyAddRef = useRef<HTMLDivElement>(null);
   
@@ -246,6 +247,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     }
     setCadCutBounds(null);
     setLockedContour(null);
+    setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
     
     setResizeSettings(prev => ({
       ...prev,
@@ -1060,6 +1062,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             lockedContour={lockedContour}
             artboardWidth={artboardWidth}
             artboardHeight={artboardHeight}
+            designTransform={designTransform}
+            onTransformChange={setDesignTransform}
           />
         </div>
       </div>
