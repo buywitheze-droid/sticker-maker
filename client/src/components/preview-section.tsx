@@ -54,6 +54,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const checkerboardPatternRef = useRef<{width: number; height: number; pattern: CanvasPattern} | null>(null);
     const croppedImageCacheRef = useRef<{src: string; canvas: HTMLCanvasElement | HTMLImageElement} | null>(null);
     const holographicCacheRef = useRef<{contourKey: string; canvas: HTMLCanvasElement} | null>(null);
+    const contourTransformRef = useRef<{x: number; y: number; width: number; height: number; canvasW: number; canvasH: number} | null>(null);
     const lastCanvasDimsRef = useRef<{width: number; height: number}>({width: 0, height: 0});
     
     // Drag-to-pan state
@@ -358,6 +359,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
         contourCacheRef.current = null;
+        contourTransformRef.current = null;
         return;
       }
 
@@ -674,23 +676,32 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       
       if (lockedContour && lockedContour.previewPathPoints.length > 2 && canvas) {
-        const viewPadding = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
-        const availW = canvas.width - (viewPadding * 2);
-        const availH = canvas.height - (viewPadding * 2);
+        let lcX: number, lcY: number, scaleXL: number, scaleYL: number;
         
-        const lcAspect = lockedContour.contourCanvasWidth / lockedContour.contourCanvasHeight;
-        let lcW, lcH;
-        if (lcAspect > (availW / availH)) {
-          lcW = availW;
-          lcH = availW / lcAspect;
+        if (contourTransformRef.current) {
+          const ct = contourTransformRef.current;
+          scaleXL = ct.width / lockedContour.contourCanvasWidth;
+          scaleYL = ct.height / lockedContour.contourCanvasHeight;
+          lcX = ct.x;
+          lcY = ct.y;
         } else {
-          lcH = availH;
-          lcW = availH * lcAspect;
+          const viewPadding = Math.max(4, Math.round(Math.min(canvas.width, canvas.height) * 0.03));
+          const availW = canvas.width - (viewPadding * 2);
+          const availH = canvas.height - (viewPadding * 2);
+          const lcAspect = lockedContour.contourCanvasWidth / lockedContour.contourCanvasHeight;
+          let lcW, lcH;
+          if (lcAspect > (availW / availH)) {
+            lcW = availW;
+            lcH = availW / lcAspect;
+          } else {
+            lcH = availH;
+            lcW = availH * lcAspect;
+          }
+          lcX = (canvas.width - lcW) / 2;
+          lcY = (canvas.height - lcH) / 2;
+          scaleXL = lcW / lockedContour.contourCanvasWidth;
+          scaleYL = lcH / lockedContour.contourCanvasHeight;
         }
-        const lcX = (canvas.width - lcW) / 2;
-        const lcY = (canvas.height - lcH) / 2;
-        const scaleXL = lcW / lockedContour.contourCanvasWidth;
-        const scaleYL = lcH / lockedContour.contourCanvasHeight;
         
         ctx.save();
         ctx.strokeStyle = '#3B82F6';
@@ -1093,6 +1104,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         const contourX = (canvasWidth - contourWidth) / 2;
         const contourY = (canvasHeight - contourHeight) / 2;
+        
+        contourTransformRef.current = {
+          x: contourX, y: contourY,
+          width: contourWidth, height: contourHeight,
+          canvasW: contourCanvas.width, canvasH: contourCanvas.height
+        };
         
         if (strokeSettings.backgroundColor === 'holographic') {
           const holoKey = `${contourCacheRef.current?.key || ''}-${contourCanvas.width}x${contourCanvas.height}`;
