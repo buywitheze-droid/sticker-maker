@@ -10,7 +10,7 @@ import { createTrueContour } from "@/lib/true-contour";
 import { createCTContour } from "@/lib/ctcontour";
 import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
-import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outline";
+import { downloadContourPDF, type CachedContourData, type SpotColorInput } from "@/lib/contour-outline";
 import { getContourWorkerManager, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
 import { downloadShapePDF, calculateShapeDimensions, generateShapePathPointsInches } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
@@ -762,7 +762,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
 
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png', spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>, singleArtboard: boolean = false) => {
+  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png', spotColors?: SpotColorInput[], singleArtboard: boolean = false) => {
     if (!imageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);

@@ -2,7 +2,6 @@ import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, subsamplePolygon } from "@/lib/clipper-path";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
-import { addSpotColorVectorsToPDF } from "@/lib/spot-color-vectors";
 
 export function simplifyPathForPDF(points: Array<{x: number; y: number}>, epsilon: number = 1.0): Array<{x: number; y: number}> {
   if (points.length <= 2) return points;
@@ -1757,14 +1756,23 @@ export interface CachedContourData {
   bleedInches: number;
 }
 
+export interface SpotColorInput {
+  hex: string;
+  rgb: { r: number; g: number; b: number };
+  spotWhite: boolean;
+  spotGloss: boolean;
+  spotWhiteName?: string;
+  spotGlossName?: string;
+}
+
 export async function downloadContourPDF(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
   cachedContourData?: CachedContourData,
-  spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
-  _singleArtboard?: boolean,
+  spotColors?: SpotColorInput[],
+  singleArtboard: boolean = false,
   cutContourLabel: string = 'CutContour',
   lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number } | null
 ): Promise<void> {
@@ -1933,15 +1941,6 @@ export async function downloadContourPDF(
     height: imageHeightPts,
   });
 
-  if (spotColors && spotColors.length > 0) {
-    const spotLabels = addSpotColorVectorsToPDF(
-      pdfDoc, page, image, spotColors,
-      resizeSettings.widthInches, resizeSettings.heightInches,
-      heightInches, imageOffsetX, imageOffsetY
-    );
-    console.log('[downloadContourPDF] Added spot color layers:', spotLabels);
-  }
-  
   const context = pdfDoc.context;
   
   if (pathPoints.length > 2) {
@@ -2039,14 +2038,262 @@ export async function downloadContourPDF(
     }
   }
   
-  const allLabels = [cutContourLabel];
-  if (lockedContour?.label && lockedContour.label !== cutContourLabel) {
-    allLabels.push(lockedContour.label);
+  if (spotColors && spotColors.length > 0) {
+    const resources = page.node.Resources();
+    
+    const hasWhite = spotColors.some(c => c.spotWhite);
+    const hasGloss = spotColors.some(c => c.spotGloss);
+    
+    if (hasWhite || hasGloss) {
+      const maskCanvas = document.createElement('canvas');
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        maskCanvas.width = image.width;
+        maskCanvas.height = image.height;
+        maskCtx.drawImage(image, 0, 0);
+        const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+        const data = imageData.data;
+        
+        const createSpotColorLayer = async (
+          colorName: string,
+          markedColors: SpotColorInput[],
+          tintCMYK: [number, number, number, number],
+          targetPage: typeof page
+        ): Promise<void> => {
+          const w = maskCanvas.width;
+          const h = maskCanvas.height;
+          
+          const binaryMask: boolean[][] = [];
+          const colorTolerance = 60;
+          const alphaThreshold = 240;
+          
+          const markedHexSet = new Set(markedColors.map(mc => mc.hex));
+          
+          const allSpotColorsIndexed = spotColors.map((c, idx) => ({ 
+            rgb: c.rgb, 
+            hex: c.hex,
+            index: idx
+          }));
+          
+          for (let y = 0; y < h; y++) {
+            binaryMask[y] = [];
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+              const a = data[i + 3];
+              
+              if (a < alphaThreshold) {
+                binaryMask[y][x] = false;
+                continue;
+              }
+              
+              let closestHex = '';
+              let closestDistance = Infinity;
+              
+              for (const sc of allSpotColorsIndexed) {
+                const dr = r - sc.rgb.r;
+                const dg = g - sc.rgb.g;
+                const db = b - sc.rgb.b;
+                const distance = Math.sqrt(dr*dr + dg*dg + db*db);
+                
+                if (distance < closestDistance) {
+                  closestDistance = distance;
+                  closestHex = sc.hex;
+                }
+              }
+              
+              const matches = closestDistance < colorTolerance && markedHexSet.has(closestHex);
+              binaryMask[y][x] = matches;
+            }
+          }
+          
+          let hasMatch = false;
+          outer: for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              if (binaryMask[y][x]) {
+                hasMatch = true;
+                break outer;
+              }
+            }
+          }
+          
+          if (!hasMatch) {
+            console.log(`[PDF] No matching pixels found for ${colorName}`);
+            return;
+          }
+          
+          const spotTintFunction = context.obj({
+            FunctionType: 2,
+            Domain: [0, 1],
+            C0: [0, 0, 0, 0],
+            C1: tintCMYK,
+            N: 1,
+          });
+          const spotTintRef = context.register(spotTintFunction);
+          
+          const separation = context.obj([
+            PDFName.of('Separation'),
+            PDFName.of(colorName),
+            PDFName.of('DeviceCMYK'),
+            spotTintRef,
+          ]);
+          const sepRef = context.register(separation);
+          
+          let pageResources = targetPage.node.Resources();
+          if (!pageResources) {
+            pageResources = context.obj({});
+            targetPage.node.set(PDFName.of('Resources'), pageResources);
+          }
+          
+          let colorSpaceDict = pageResources.get(PDFName.of('ColorSpace'));
+          if (!colorSpaceDict) {
+            colorSpaceDict = context.obj({});
+            (pageResources as PDFDict).set(PDFName.of('ColorSpace'), colorSpaceDict);
+          }
+          (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
+          
+          const scaleX = (resizeSettings.widthInches * 72) / w;
+          const scaleY = (resizeSettings.heightInches * 72) / h;
+          const offsetX = imageOffsetX * 72;
+          const offsetY = imageOffsetY * 72;
+          
+          const toY = (py: number) => offsetY + (h - py) * scaleY;
+          const toX = (px: number) => offsetX + px * scaleX;
+          
+          const spans: Array<{y: number; x1: number; x2: number}> = [];
+          
+          for (let y = 0; y < h; y++) {
+            let inSpan = false;
+            let spanStart = 0;
+            
+            for (let x = 0; x <= w; x++) {
+              const filled = x < w && binaryMask[y][x];
+              
+              if (filled && !inSpan) {
+                inSpan = true;
+                spanStart = x;
+              } else if (!filled && inSpan) {
+                inSpan = false;
+                spans.push({ y, x1: spanStart, x2: x });
+              }
+            }
+          }
+          
+          if (spans.length === 0) {
+            console.log(`[PDF] No matching pixels for ${colorName}`);
+            return;
+          }
+          
+          const spansByY = new Map<number, Array<{x1: number; x2: number}>>();
+          for (const span of spans) {
+            if (!spansByY.has(span.y)) spansByY.set(span.y, []);
+            spansByY.get(span.y)!.push({x1: span.x1, x2: span.x2});
+          }
+          
+          const regions: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
+          const processed = new Set<string>();
+          
+          for (const span of spans) {
+            const key = `${span.y},${span.x1},${span.x2}`;
+            if (processed.has(key)) continue;
+            processed.add(key);
+            
+            let y1 = span.y;
+            let y2 = span.y;
+            
+            for (let y = span.y - 1; y >= 0; y--) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y1 = y;
+                processed.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            for (let y = span.y + 1; y < h; y++) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y2 = y;
+                processed.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
+          }
+          
+          let spotOps = `q /${colorName} cs 1 scn\n`;
+          
+          for (const r of regions) {
+            const x1 = toX(r.x1);
+            const y1 = toY(r.y2 + 1);
+            const x2 = toX(r.x2);
+            const y2 = toY(r.y1);
+            const rw = x2 - x1;
+            const rh = y2 - y1;
+            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${rw.toFixed(2)} ${rh.toFixed(2)} re\n`;
+          }
+          
+          console.log(`[PDF] ${colorName}: ${regions.length} rectangles`);
+          
+          spotOps += 'f\nQ\n';
+          
+          const spotStream = context.stream(spotOps);
+          const spotStreamRef = context.register(spotStream);
+          
+          const existingContents = targetPage.node.Contents();
+          if (existingContents) {
+            if (existingContents instanceof PDFArray) {
+              existingContents.push(spotStreamRef);
+            } else {
+              const newContents = context.obj([existingContents, spotStreamRef]);
+              targetPage.node.set(PDFName.of('Contents'), newContents);
+            }
+          } else {
+            targetPage.node.set(PDFName.of('Contents'), spotStreamRef);
+          }
+          
+          console.log(`[PDF] Added ${colorName} spot color layer with ${regions.length} solid regions`);
+        };
+        
+        const whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+        const glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+        
+        if (singleArtboard) {
+          if (hasWhite) {
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], page);
+          }
+          
+          if (hasGloss) {
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], page);
+          }
+        } else {
+          if (hasWhite) {
+            const whitePage = pdfDoc.addPage([widthPts, heightPts]);
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayer(whiteName, whiteColors, [0, 0, 0, 1], whitePage);
+          }
+          
+          if (hasGloss) {
+            const glossPage = pdfDoc.addPage([widthPts, heightPts]);
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayer(glossName, glossColors, [1, 0, 1, 0], glossPage);
+          }
+        }
+      }
+    }
   }
   
-  pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject(`Contains ${allLabels.join(', ')} spot color for cutting machines`);
-  pdfDoc.setKeywords([...allLabels, 'spot color', 'cutting', 'vector']);
+  const whiteName = spotColors?.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+  const glossName = spotColors?.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+  
+  pdfDoc.setTitle('Sticker with CutContour and Spot Colors');
+  pdfDoc.setSubject(singleArtboard 
+    ? `Single artboard with Design + CutContour + ${whiteName} + ${glossName}`
+    : `Page 1: Raster + CutContour, Page 2: ${whiteName}, Page 3: ${glossName}`);
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', whiteName, glossName]);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });

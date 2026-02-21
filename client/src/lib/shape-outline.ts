@@ -1,8 +1,7 @@
 import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict, type PDFImage } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
-import { simplifyPathForPDF, buildSmoothPdfPath } from './contour-outline';
-import { addSpotColorVectorsToPDF } from './spot-color-vectors';
+import { simplifyPathForPDF, buildSmoothPdfPath, type SpotColorInput } from './contour-outline';
 
 async function createClippedShapeImage(
   image: HTMLImageElement,
@@ -223,8 +222,8 @@ export async function downloadShapePDF(
   shapeSettings: ShapeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
-  spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
-  _singleArtboard?: boolean,
+  spotColors?: SpotColorInput[],
+  singleArtboard: boolean = true,
   cutContourLabel: string = 'CutContour',
   lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number; imageOffsetX: number; imageOffsetY: number } | null
 ): Promise<void> {
@@ -344,6 +343,9 @@ export async function downloadShapePDF(
   let imageWidth = resizeSettings.widthInches * 72;
   let imageHeight = resizeSettings.heightInches * 72;
   
+  const imageX = (widthPts - imageWidth) / 2;
+  const imageY = (heightPts - imageHeight) / 2;
+  
   // For circles and ovals, clip the image to the shape boundary
   // Render on a canvas with shape clipping, then embed the clipped result
   if (shapeSettings.type === 'circle' || shapeSettings.type === 'oval') {
@@ -359,9 +361,6 @@ export async function downloadShapePDF(
       height: shapeHeightPts,
     });
   } else {
-    const imageX = (widthPts - imageWidth) / 2;
-    const imageY = (heightPts - imageHeight) / 2;
-    
     page.drawImage(pngImage, {
       x: imageX,
       y: imageY,
@@ -370,19 +369,6 @@ export async function downloadShapePDF(
     });
   }
 
-  if (spotColors && spotColors.length > 0) {
-    const pageWidthInches = widthPts / 72;
-    const pageHeightInches = heightPts / 72;
-    const imgOffsetXInches = (pageWidthInches - resizeSettings.widthInches) / 2;
-    const imgOffsetYInches = (pageHeightInches - resizeSettings.heightInches) / 2;
-    const spotLabels = addSpotColorVectorsToPDF(
-      pdfDoc, page, image, spotColors,
-      resizeSettings.widthInches, resizeSettings.heightInches,
-      pageHeightInches, imgOffsetXInches, imgOffsetYInches
-    );
-    console.log('[downloadShapePDF] Added spot color layers:', spotLabels);
-  }
-  
   let resources = page.node.Resources();
   
   const tintFunction = context.obj({
@@ -548,14 +534,260 @@ export async function downloadShapePDF(
     }
   }
   
-  const allLabels = [cutContourLabel];
-  if (lockedContour?.label && lockedContour.label !== cutContourLabel) {
-    allLabels.push(lockedContour.label);
+  if (spotColors && spotColors.length > 0) {
+    const hasWhite = spotColors.some(c => c.spotWhite);
+    const hasGloss = spotColors.some(c => c.spotGloss);
+    
+    if (hasWhite || hasGloss) {
+      const maskCanvas = document.createElement('canvas');
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        maskCanvas.width = image.width;
+        maskCanvas.height = image.height;
+        maskCtx.drawImage(image, 0, 0);
+        const imgData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+        const pixelData = imgData.data;
+        
+        const createSpotColorLayerForShape = async (
+          colorName: string,
+          markedColors: SpotColorInput[],
+          tintCMYK: [number, number, number, number],
+          targetPage: typeof page
+        ): Promise<void> => {
+          const w = maskCanvas.width;
+          const h = maskCanvas.height;
+          
+          const binaryMask: boolean[][] = [];
+          const colorTolerance = 60;
+          const alphaThreshold = 240;
+          
+          const markedHexSet = new Set(markedColors.map(mc => mc.hex));
+          
+          const allSpotColorsIndexed = spotColors.map((c, idx) => ({ 
+            rgb: c.rgb, 
+            hex: c.hex,
+            index: idx
+          }));
+          
+          for (let y = 0; y < h; y++) {
+            binaryMask[y] = [];
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const r = pixelData[i];
+              const g = pixelData[i + 1];
+              const b = pixelData[i + 2];
+              const a = pixelData[i + 3];
+              
+              if (a < alphaThreshold) {
+                binaryMask[y][x] = false;
+                continue;
+              }
+              
+              let closestHex = '';
+              let closestDistance = Infinity;
+              
+              for (const sc of allSpotColorsIndexed) {
+                const dr = r - sc.rgb.r;
+                const dg = g - sc.rgb.g;
+                const db = b - sc.rgb.b;
+                const distance = Math.sqrt(dr*dr + dg*dg + db*db);
+                
+                if (distance < closestDistance) {
+                  closestDistance = distance;
+                  closestHex = sc.hex;
+                }
+              }
+              
+              const matches = closestDistance < colorTolerance && markedHexSet.has(closestHex);
+              binaryMask[y][x] = matches;
+            }
+          }
+          
+          let hasMatch = false;
+          outer: for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              if (binaryMask[y][x]) {
+                hasMatch = true;
+                break outer;
+              }
+            }
+          }
+          
+          if (!hasMatch) {
+            console.log(`[Shape PDF] No matching pixels found for ${colorName}`);
+            return;
+          }
+          
+          const spotTintFunction = context.obj({
+            FunctionType: 2,
+            Domain: [0, 1],
+            C0: [0, 0, 0, 0],
+            C1: tintCMYK,
+            N: 1,
+          });
+          const spotTintRef = context.register(spotTintFunction);
+          
+          const separation = context.obj([
+            PDFName.of('Separation'),
+            PDFName.of(colorName),
+            PDFName.of('DeviceCMYK'),
+            spotTintRef,
+          ]);
+          const sepRef = context.register(separation);
+          
+          let pageResources = targetPage.node.Resources();
+          if (!pageResources) {
+            pageResources = context.obj({});
+            targetPage.node.set(PDFName.of('Resources'), pageResources);
+          }
+          
+          let colorSpaceDict = pageResources.get(PDFName.of('ColorSpace'));
+          if (!colorSpaceDict) {
+            colorSpaceDict = context.obj({});
+            (pageResources as PDFDict).set(PDFName.of('ColorSpace'), colorSpaceDict);
+          }
+          (colorSpaceDict as PDFDict).set(PDFName.of(colorName), sepRef);
+          
+          const scaleX = (resizeSettings.widthInches * 72) / w;
+          const scaleY = (resizeSettings.heightInches * 72) / h;
+          const spotOffsetX = imageX;
+          const spotOffsetY = imageY;
+          
+          const toY = (py: number) => spotOffsetY + (h - py) * scaleY;
+          const toX = (px: number) => spotOffsetX + px * scaleX;
+          
+          const spans: Array<{y: number; x1: number; x2: number}> = [];
+          
+          for (let y = 0; y < h; y++) {
+            let inSpan = false;
+            let spanStart = 0;
+            
+            for (let x = 0; x <= w; x++) {
+              const filled = x < w && binaryMask[y][x];
+              
+              if (filled && !inSpan) {
+                inSpan = true;
+                spanStart = x;
+              } else if (!filled && inSpan) {
+                inSpan = false;
+                spans.push({ y, x1: spanStart, x2: x });
+              }
+            }
+          }
+          
+          if (spans.length === 0) {
+            console.log(`[Shape PDF] No matching pixels for ${colorName}`);
+            return;
+          }
+          
+          const spansByY = new Map<number, Array<{x1: number; x2: number}>>();
+          for (const span of spans) {
+            if (!spansByY.has(span.y)) spansByY.set(span.y, []);
+            spansByY.get(span.y)!.push({x1: span.x1, x2: span.x2});
+          }
+          
+          const regions: Array<{x1: number; x2: number; y1: number; y2: number}> = [];
+          const processedSpans = new Set<string>();
+          
+          for (const span of spans) {
+            const key = `${span.y},${span.x1},${span.x2}`;
+            if (processedSpans.has(key)) continue;
+            processedSpans.add(key);
+            
+            let y1 = span.y;
+            let y2 = span.y;
+            
+            for (let y = span.y - 1; y >= 0; y--) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y1 = y;
+                processedSpans.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            for (let y = span.y + 1; y < h; y++) {
+              const rowSpans = spansByY.get(y) || [];
+              if (rowSpans.some(s => s.x1 === span.x1 && s.x2 === span.x2)) {
+                y2 = y;
+                processedSpans.add(`${y},${span.x1},${span.x2}`);
+              } else break;
+            }
+            
+            regions.push({ x1: span.x1, x2: span.x2, y1, y2 });
+          }
+          
+          let spotOps = `q /${colorName} cs 1 scn\n`;
+          
+          for (const r of regions) {
+            const x1 = toX(r.x1);
+            const y1 = toY(r.y2 + 1);
+            const x2 = toX(r.x2);
+            const y2 = toY(r.y1);
+            const rw = x2 - x1;
+            const rh = y2 - y1;
+            spotOps += `${x1.toFixed(2)} ${y1.toFixed(2)} ${rw.toFixed(2)} ${rh.toFixed(2)} re\n`;
+          }
+          
+          console.log(`[Shape PDF] ${colorName}: ${regions.length} rectangles`);
+          
+          spotOps += 'f\nQ\n';
+          
+          const spotStream = context.stream(spotOps);
+          const spotStreamRef = context.register(spotStream);
+          
+          const pageContents = targetPage.node.Contents();
+          if (pageContents) {
+            if (pageContents instanceof PDFArray) {
+              pageContents.push(spotStreamRef);
+            } else {
+              const newContents = context.obj([pageContents, spotStreamRef]);
+              targetPage.node.set(PDFName.of('Contents'), newContents);
+            }
+          } else {
+            targetPage.node.set(PDFName.of('Contents'), spotStreamRef);
+          }
+          
+          console.log(`[Shape PDF] Added ${colorName} spot color layer with ${regions.length} solid regions`);
+        };
+        
+        const whiteName = spotColors.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+        const glossName = spotColors.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+        
+        if (singleArtboard) {
+          if (hasWhite) {
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayerForShape(whiteName, whiteColors, [0, 0, 0, 1], page);
+          }
+          
+          if (hasGloss) {
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayerForShape(glossName, glossColors, [1, 0, 1, 0], page);
+          }
+        } else {
+          if (hasWhite) {
+            const whitePage = pdfDoc.addPage([widthPts, heightPts]);
+            const whiteColors = spotColors.filter(c => c.spotWhite);
+            await createSpotColorLayerForShape(whiteName, whiteColors, [0, 0, 0, 1], whitePage);
+          }
+          
+          if (hasGloss) {
+            const glossPage = pdfDoc.addPage([widthPts, heightPts]);
+            const glossColors = spotColors.filter(c => c.spotGloss);
+            await createSpotColorLayerForShape(glossName, glossColors, [1, 0, 1, 0], glossPage);
+          }
+        }
+      }
+    }
   }
   
-  pdfDoc.setTitle('Shape with CutContour');
-  pdfDoc.setSubject(`Contains ${allLabels.join(', ')} spot color for cutting machines`);
-  pdfDoc.setKeywords([...allLabels, 'spot color', 'cutting', 'vector', 'shape']);
+  const whiteName = spotColors?.find(c => c.spotWhite)?.spotWhiteName || 'RDG_WHITE';
+  const glossName = spotColors?.find(c => c.spotGloss)?.spotGlossName || 'RDG_GLOSS';
+  
+  pdfDoc.setTitle('Shape with CutContour and Spot Colors');
+  pdfDoc.setSubject(singleArtboard 
+    ? `Single artboard with Design + CutContour + ${whiteName} + ${glossName}`
+    : `Contains CutContour and spot color layers for cutting machines`);
+  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'shape']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
