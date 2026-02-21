@@ -138,6 +138,10 @@ class ContourWorkerManager {
   }
 
   private initWorker() {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
     try {
       this.worker = new ContourWorker();
       this.worker.onmessage = this.handleMessage.bind(this);
@@ -206,6 +210,8 @@ class ContourWorkerManager {
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
   ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
+    this.initWorker();
+
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
       return { canvas, downsampleScale: 1, imageCanvasX: 0, imageCanvasY: 0 };
