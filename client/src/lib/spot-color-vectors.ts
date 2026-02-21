@@ -1,5 +1,6 @@
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage } from 'pdf-lib';
 import { simplifyPathForPDF, type SpotColorInput } from './contour-outline';
+import { primitiveSnap, circleToPathPDFOps, rectangleToPathPDFOps } from './primitive-snap';
 
 interface Point {
   x: number;
@@ -313,9 +314,22 @@ function traceColorRegions(
   return regions;
 }
 
+function computePathArea(pts: Point[]): number {
+  let area = 0;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += pts[i].x * pts[j].y;
+    area -= pts[j].x * pts[i].y;
+  }
+  return Math.abs(area) / 2;
+}
+
 function spotColorPathsToPDFOps(
   pathsInches: Point[][],
-  spotColorName: string
+  spotColorName: string,
+  imageWidthInches: number,
+  imageHeightInches: number
 ): string {
   const simplifiedPaths: Point[][] = [];
   for (const pathPoints of pathsInches) {
@@ -327,16 +341,39 @@ function spotColorPathsToPDFOps(
 
   if (simplifiedPaths.length === 0) return '';
 
+  const areas = simplifiedPaths.map(p => computePathArea(p));
+  const maxAreaIdx = areas.indexOf(Math.max(...areas));
+
+  const snappedResults: (ReturnType<typeof primitiveSnap>)[] = simplifiedPaths.map((path, i) => {
+    if (i === maxAreaIdx || areas[i] >= areas[maxAreaIdx] * 0.15) {
+      return primitiveSnap(path, imageWidthInches, imageHeightInches);
+    }
+    return null;
+  });
+
   let compoundPath = 'q\n';
   compoundPath += `/${spotColorName} cs 1 scn\n`;
 
-  for (const path of simplifiedPaths) {
-    const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
-    compoundPath += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
-    for (let j = 1; j < pts.length; j++) {
-      compoundPath += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
+  for (let i = 0; i < simplifiedPaths.length; i++) {
+    const snap = snappedResults[i];
+
+    if (snap?.type === 'circle') {
+      compoundPath += circleToPathPDFOps(snap.cx * 72, snap.cy * 72, snap.r * 72);
+    } else if (snap?.type === 'rectangle') {
+      const pts = snap.corners.map(p => ({ x: p.x * 72, y: p.y * 72 })) as [Point, Point, Point, Point];
+      compoundPath += rectangleToPathPDFOps(pts);
+    } else if (snap?.type === 'rounded-rect') {
+      const pts = snap.corners.map(p => ({ x: p.x * 72, y: p.y * 72 })) as [Point, Point, Point, Point];
+      compoundPath += rectangleToPathPDFOps(pts);
+    } else {
+      const path = simplifiedPaths[i];
+      const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+      compoundPath += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+      for (let j = 1; j < pts.length; j++) {
+        compoundPath += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
+      }
+      compoundPath += 'h\n';
     }
-    compoundPath += 'h\n';
   }
 
   compoundPath += 'f*\n';
@@ -372,7 +409,9 @@ function addSpotColorRegionToPage(
   pdfDoc: PDFDocument,
   page: PDFPage,
   region: SpotColorRegion,
-  offsetPaths: Point[][]
+  offsetPaths: Point[][],
+  imageWidthInches: number,
+  imageHeightInches: number
 ): void {
   const context = pdfDoc.context;
 
@@ -406,7 +445,7 @@ function addSpotColorRegionToPage(
   }
   (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
 
-  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name);
+  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name, imageWidthInches, imageHeightInches);
   console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} paths, ${pathOps.length} chars ops`);
 
   if (pathOps.length > 0) {
@@ -449,13 +488,13 @@ export function addSpotColorVectorsToPDF(
     );
 
     if (singleArtboard) {
-      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths);
+      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths, widthInches, heightInches);
       addedLabels.push(region.name);
     } else {
       const wPts = pageWidthPts || (widthInches + imageOffsetXInches * 2) * 72;
       const hPts = pageHeightPts || pageHeightInches * 72;
       const newPage = pdfDoc.addPage([wPts, hPts]);
-      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths);
+      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths, widthInches, heightInches);
       addedLabels.push(region.name);
     }
   }
