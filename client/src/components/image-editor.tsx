@@ -328,17 +328,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             dpi,
           };
           
-          const aspectRatio = croppedImage.width / croppedImage.height;
-          const DEFAULT_SIZE = 3;
-          let widthInches: number;
-          let heightInches: number;
-          if (aspectRatio >= 1) {
-            widthInches = DEFAULT_SIZE;
-            heightInches = parseFloat((DEFAULT_SIZE / aspectRatio).toFixed(2));
-          } else {
-            heightInches = DEFAULT_SIZE;
-            widthInches = parseFloat((DEFAULT_SIZE * aspectRatio).toFixed(2));
-          }
+          const widthInches = parseFloat((finalWidth / dpi).toFixed(2));
+          const heightInches = parseFloat((finalHeight / dpi).toFixed(2));
           
           applyImageDirectly(newImageInfo, widthInches, heightInches);
 
@@ -388,15 +379,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         document.activeElement.blur();
       }
       
-      let { widthInches, heightInches } = calculateImageDimensions(finalImage.width, finalImage.height, dpi);
-      
-      // Always resize to fit within the selected sticker size
-      const maxDimension = Math.max(widthInches, heightInches);
-      if (maxDimension > stickerSize) {
-        const scale = stickerSize / maxDimension;
-        widthInches = parseFloat((widthInches * scale).toFixed(2));
-        heightInches = parseFloat((heightInches * scale).toFixed(2));
-      }
+      const widthInches = parseFloat((finalImage.width / dpi).toFixed(2));
+      const heightInches = parseFloat((finalImage.height / dpi).toFixed(2));
 
       const newImageInfo: ImageInfo = {
         file,

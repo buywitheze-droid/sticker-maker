@@ -790,9 +790,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       );
 
       const bleedInches = 0; // Bleed disabled
-      const padding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
-      const availableWidth = canvasWidth - (padding * 2);
-      const availableHeight = canvasHeight - (padding * 2);
+      const padding = 0;
+      const availableWidth = canvasWidth;
+      const availableHeight = canvasHeight;
       const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
       
       let shapeWidth, shapeHeight;
@@ -962,9 +962,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
 
-      const viewPadding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
-      const availableWidth = canvasWidth - (viewPadding * 2);
-      const availableHeight = canvasHeight - (viewPadding * 2);
+      const viewPadding = 0;
+      const availableWidth = canvasWidth;
+      const availableHeight = canvasHeight;
       
       if (strokeSettings.enabled && contourCacheRef.current?.canvas && !isProcessing) {
         const contourCanvas = contourCacheRef.current.canvas;
