@@ -341,6 +341,15 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           }
           
           applyImageDirectly(newImageInfo, widthInches, heightInches);
+
+          const effectiveDPI = Math.min(finalWidth / widthInches, finalHeight / heightInches);
+          if (effectiveDPI < 278) {
+            toast({
+              title: "Low Resolution Warning",
+              description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
+              variant: "destructive",
+            });
+          }
         };
         
         if (finalImage === croppedImage) {
@@ -462,6 +471,15 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         newShapeSettings.offset
       );
       updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
+
+      const effectiveDPI = Math.min(finalImage.width / widthInches, finalImage.height / heightInches);
+      if (effectiveDPI < 278) {
+        toast({
+          title: "Low Resolution Warning",
+          description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
+          variant: "destructive",
+        });
+      }
     };
 
     if (croppedCanvas) {
@@ -469,7 +487,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } else {
       processImage();
     }
-  }, [stickerSize, updateCadCutBounds]);
+  }, [stickerSize, updateCadCutBounds, toast]);
 
   const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
     // Close any open dropdowns
@@ -968,11 +986,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   // Empty state - no image uploaded
   if (!imageInfo) {
     return (
-      <div className="min-h-[70vh] flex items-center justify-center">
+      <div className="min-h-[70vh] flex items-center justify-center bg-black">
         <div className="w-full max-w-xl mx-auto transition-all duration-300">
           <UploadSection 
             onImageUpload={handleImageUpload}
-            onPDFUpload={handlePDFUpload}
             showCutLineInfo={false}
             imageInfo={null}
             resizeSettings={resizeSettings}
@@ -1017,7 +1034,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             {/* Change Image - glowing button */}
             <UploadSection 
               onImageUpload={handleImageUpload}
-              onPDFUpload={handlePDFUpload}
               showCutLineInfo={false}
               imageInfo={imageInfo}
               resizeSettings={resizeSettings}
