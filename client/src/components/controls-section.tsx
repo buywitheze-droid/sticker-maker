@@ -373,55 +373,6 @@ export default function ControlsSection({
             
             {showContourOptions && (
               <div className="space-y-3 px-4 pb-3">
-              {/* Auto-detection Info + Mode Selector */}
-              <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 space-y-2">
-                <p className="text-xs text-gray-600">
-                  <span className="font-medium">Smart Detection:</span>{' '}
-                  {detectedAlgorithm === 'complex' ? 'Standard' :
-                   detectedAlgorithm === 'scattered' ? 'Multi-part/Smooth' :
-                   'Detecting...'}
-                </p>
-                {detectedAlgorithm && strokeSettings.enabled && (() => {
-                  const autoMode = detectedAlgorithm === 'scattered' ? 'scattered' as const
-                    : 'smooth' as const;
-                  const effectiveMode = strokeSettings.contourMode ?? autoMode;
-                  const isOverridden = strokeSettings.contourMode !== undefined;
-                  const modes = [
-                    { key: 'smooth' as const, label: 'Sharp' },
-                    { key: 'scattered' as const, label: 'Smooth' },
-                  ];
-                  return (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-gray-500">Mode:</span>
-                      {modes.map((mode, i) => (
-                        <button
-                          key={mode.key}
-                          className={`text-[10px] px-2 py-0.5 border transition-colors ${
-                            i === 0 ? 'rounded-l' : i === modes.length - 1 ? 'rounded-r' : ''
-                          } ${i > 0 ? 'border-l-0' : ''} ${
-                            effectiveMode === mode.key
-                              ? 'bg-blue-500 text-white border-blue-500'
-                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
-                          }`}
-                          onClick={() => onStrokeChange({ contourMode: mode.key })}
-                        >
-                          {mode.label}
-                        </button>
-                      ))}
-                      {isOverridden && (
-                        <button
-                          className="text-[10px] px-1.5 py-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-                          onClick={() => onStrokeChange({ contourMode: undefined })}
-                          title="Reset to auto-detected"
-                        >
-                          Reset
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-              
               <div>
                 <Label className="text-xs text-gray-500 font-medium">Contour Margin</Label>
                 <Select

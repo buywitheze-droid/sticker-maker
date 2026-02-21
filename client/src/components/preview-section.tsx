@@ -9,7 +9,7 @@ import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
 import { processContourInWorker, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
-import { cropImageToContent, getImageBounds, createEdgeBleedCanvas } from "@/lib/image-crop";
+import { cropImageToContent, getImageBounds } from "@/lib/image-crop";
 import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
 
 interface PreviewSectionProps {
@@ -23,10 +23,12 @@ interface PreviewSectionProps {
   onDetectedAlgorithm?: (algo: DetectedAlgorithm) => void;
   detectedShapeType?: 'circle' | 'oval' | 'square' | 'rectangle' | null;
   detectedShapeInfo?: DetectedShapeInfo | null;
+  detectedAlgorithm?: DetectedAlgorithm;
+  onStrokeChange?: (settings: Partial<StrokeSettings>) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
@@ -433,7 +435,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const availableHeight = canvas.height - (viewPadding * 2);
         
         // Get actual content bounds of the rendered PDF (removes empty space and white background)
-        const contentBounds = getImageBounds(imageInfo.image, true);
+        const contentBounds = getImageBounds(imageInfo.image);
         
         // Use content bounds for sizing, not full PDF page size
         const contentWidth = contentBounds.width;
@@ -1233,6 +1235,47 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   </div>
                 )}
                 
+                {detectedAlgorithm && strokeSettings.enabled && onStrokeChange && (() => {
+                  const autoMode = detectedAlgorithm === 'scattered' ? 'scattered' as const : 'smooth' as const;
+                  const effectiveMode = strokeSettings.contourMode ?? autoMode;
+                  const isOverridden = strokeSettings.contourMode !== undefined;
+                  const modes = [
+                    { key: 'smooth' as const, label: 'Sharp' },
+                    { key: 'scattered' as const, label: 'Smooth' },
+                  ];
+                  return (
+                    <div className="absolute bottom-2 right-2 z-20 bg-white/90 backdrop-blur-sm rounded-md px-2 py-1 border border-gray-200 shadow-sm flex items-center gap-1.5">
+                      <span className="text-[9px] text-gray-400">
+                        {detectedAlgorithm === 'complex' ? 'Std' : detectedAlgorithm === 'scattered' ? 'Multi' : '...'}
+                      </span>
+                      {modes.map((mode, i) => (
+                        <button
+                          key={mode.key}
+                          className={`text-[9px] px-1.5 py-0.5 border transition-colors ${
+                            i === 0 ? 'rounded-l' : 'rounded-r'
+                          } ${i > 0 ? 'border-l-0' : ''} ${
+                            effectiveMode === mode.key
+                              ? 'bg-blue-500 text-white border-blue-500'
+                              : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-100'
+                          }`}
+                          onClick={() => onStrokeChange({ contourMode: mode.key })}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
+                      {isOverridden && (
+                        <button
+                          className="text-[9px] px-1 py-0.5 text-gray-400 hover:text-gray-600 transition-colors"
+                          onClick={() => onStrokeChange({ contourMode: undefined })}
+                          title="Reset to auto-detected"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {isProcessing && imageInfo && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
                     <div className="text-center">

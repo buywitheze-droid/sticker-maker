@@ -67,6 +67,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
   const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
   const [detectedShapeInfo, setDetectedShapeInfo] = useState<DetectedShapeInfo | null>(null);
+  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'perfCutContour' | 'KissCut'>('CutContour');
+  const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
+  const cutLabelRef = useRef<HTMLDivElement>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -105,6 +108,18 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       onDesignUploaded();
     }
   }, [imageInfo, onDesignUploaded]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (cutLabelRef.current && !cutLabelRef.current.contains(e.target as Node)) {
+        setShowCutLabelDropdown(false);
+      }
+    };
+    if (showCutLabelDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showCutLabelDropdown]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
@@ -685,7 +700,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           imageInfo.pdfCutContourInfo.pageWidth,
           imageInfo.pdfCutContourInfo.pageHeight,
           imageInfo.dpi || 300,
-          `${nameWithoutExt}_with_cutcontour.pdf`
+          `${nameWithoutExt}_with_cutcontour.pdf`,
+          cutContourLabel
         );
         setIsProcessing(false);
         return;
@@ -850,7 +866,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             filename,
             cachedData,
             spotColors,
-            singleArtboard
+            singleArtboard,
+            cutContourLabel
           );
         } else if (shapeSettings.enabled) {
           // Shape background mode: Download PDF with shape + CutContour spot color
@@ -861,7 +878,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             resizeSettings,
             filename,
             spotColors,
-            singleArtboard
+            singleArtboard,
+            cutContourLabel
           );
         } else {
           // No mode selected - just download the image
@@ -891,7 +909,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } finally {
       setIsProcessing(false);
     }
-  }, [imageInfo, strokeSettings, resizeSettings, shapeSettings]);
+  }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cutContourLabel]);
 
   // Empty state - no image uploaded
   if (!imageInfo) {
@@ -997,9 +1015,30 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             </div>
             
             {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
-              <div className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100">
-                <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
-                <span className="text-[10px] text-fuchsia-600 font-medium">CutContour</span>
+              <div className="relative" ref={cutLabelRef}>
+                <button
+                  onClick={() => setShowCutLabelDropdown(prev => !prev)}
+                  className="flex items-center gap-1.5 px-2 py-1 bg-fuchsia-50 rounded border border-fuchsia-100 hover:bg-fuchsia-100 transition-colors cursor-pointer"
+                >
+                  <div className="w-2 h-2 rounded-full bg-fuchsia-500"></div>
+                  <span className="text-[10px] text-fuchsia-600 font-medium">{cutContourLabel}</span>
+                  <svg className="w-2.5 h-2.5 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                {showCutLabelDropdown && (
+                  <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
+                    {(['CutContour', 'perfCutContour', 'KissCut'] as const).map((label) => (
+                      <button
+                        key={label}
+                        onClick={() => { setCutContourLabel(label); setShowCutLabelDropdown(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-fuchsia-50 transition-colors ${
+                          cutContourLabel === label ? 'text-fuchsia-600 font-medium bg-fuchsia-50' : 'text-gray-600'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1017,6 +1056,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             onDetectedAlgorithm={setDetectedAlgorithm}
             detectedShapeType={detectedShapeType}
             detectedShapeInfo={detectedShapeInfo}
+            detectedAlgorithm={detectedAlgorithm}
+            onStrokeChange={handleStrokeChange}
           />
         </div>
       </div>

@@ -624,7 +624,8 @@ export async function generatePDFWithVectorCutContour(
   pageWidth: number,
   pageHeight: number,
   dpi: number,
-  filename: string
+  filename: string,
+  cutContourLabel: string = 'CutContour'
 ): Promise<void> {
   const { PDFDocument, PDFName, PDFArray, PDFDict } = await import('pdf-lib');
   
@@ -667,7 +668,7 @@ export async function generatePDFWithVectorCutContour(
     
     const separationColorSpace = context.obj([
       PDFName.of('Separation'),
-      PDFName.of('CutContour'),
+      PDFName.of(cutContourLabel),
       PDFName.of('DeviceCMYK'),
       tintFunctionRef,
     ]);
@@ -681,11 +682,11 @@ export async function generatePDFWithVectorCutContour(
         colorSpaceDict = context.obj({});
         resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
       }
-      (colorSpaceDict as any).set(PDFName.of('CutContour'), separationRef);
+      (colorSpaceDict as any).set(PDFName.of(cutContourLabel), separationRef);
     }
     
     // Build path operators
-    let pathOps = '/CutContour CS 1 SCN\n0.5 w\n';
+    let pathOps = `/${cutContourLabel} CS 1 SCN\n0.5 w\n`;
     
     for (const path of cutContourPoints) {
       if (path.length < 2) continue;
@@ -723,8 +724,8 @@ export async function generatePDFWithVectorCutContour(
   }
   
   pdfDoc.setTitle('PDF with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
+  pdfDoc.setKeywords([cutContourLabel, 'spot color', 'cutting', 'vector']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });

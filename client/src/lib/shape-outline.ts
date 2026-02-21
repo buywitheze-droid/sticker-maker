@@ -130,7 +130,8 @@ export async function downloadShapePDF(
   resizeSettings: ResizeSettings,
   filename: string,
   _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
-  _singleArtboard?: boolean
+  _singleArtboard?: boolean,
+  cutContourLabel: string = 'CutContour'
 ): Promise<void> {
   // Calculate shape size based on design size + offset
   const { widthInches, heightInches } = calculateShapeDimensions(
@@ -287,7 +288,7 @@ export async function downloadShapePDF(
   
   const separationColorSpace = context.obj([
     PDFName.of('Separation'),
-    PDFName.of('CutContour'),
+    PDFName.of(cutContourLabel),
     PDFName.of('DeviceCMYK'),
     tintFunctionRef,
   ]);
@@ -299,12 +300,12 @@ export async function downloadShapePDF(
       colorSpaceDict = context.obj({});
       resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
     }
-    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+    (colorSpaceDict as PDFDict).set(PDFName.of(cutContourLabel), separationRef);
   }
   
   // Cut line path (at exact cut position, without bleed)
   let pathOps = 'q\n';
-  pathOps += '/CutContour CS 1 SCN\n';
+  pathOps += `/${cutContourLabel} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
   
   const outlineCx = cx;
@@ -374,8 +375,8 @@ export async function downloadShapePDF(
   }
   
   pdfDoc.setTitle('Shape with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector', 'shape']);
+  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
+  pdfDoc.setKeywords([cutContourLabel, 'spot color', 'cutting', 'vector', 'shape']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -393,7 +394,8 @@ export async function downloadShapePDF(
 export async function generateShapePDFBase64(
   image: HTMLImageElement,
   shapeSettings: ShapeSettings,
-  resizeSettings: ResizeSettings
+  resizeSettings: ResizeSettings,
+  cutContourLabel: string = 'CutContour'
 ): Promise<string | null> {
   // Calculate shape size based on design size + offset
   const { widthInches, heightInches } = calculateShapeDimensions(
@@ -468,7 +470,7 @@ export async function generateShapePDFBase64(
   
   const separationColorSpace = context.obj([
     PDFName.of('Separation'),
-    PDFName.of('CutContour'),
+    PDFName.of(cutContourLabel),
     PDFName.of('DeviceCMYK'),
     tintFunctionRef,
   ]);
@@ -480,11 +482,11 @@ export async function generateShapePDFBase64(
       colorSpaceDict = context.obj({});
       resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
     }
-    (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+    (colorSpaceDict as PDFDict).set(PDFName.of(cutContourLabel), separationRef);
   }
   
   let pathOps = 'q\n';
-  pathOps += '/CutContour CS 1 SCN\n';
+  pathOps += `/${cutContourLabel} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
   
   const outlineCx = cx;
@@ -553,7 +555,7 @@ export async function generateShapePDFBase64(
   }
   
   pdfDoc.setTitle('Shape with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
   
   const pdfBytes = await pdfDoc.save();
   

@@ -47,10 +47,11 @@ function perpendicularDistance(
 
 function contourPointsToPDFPathOps(
   pathPointsInches: Array<{x: number; y: number}>,
-  pageHeightInches: number
+  pageHeightInches: number,
+  spotColorName: string = 'CutContour'
 ): string {
   let pathOps = '';
-  pathOps += '/CutContour CS 1 SCN\n';
+  pathOps += `/${spotColorName} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
 
   const simplified = simplifyPathForPDF(pathPointsInches, 0.01);
@@ -1713,7 +1714,8 @@ export async function downloadContourPDF(
   filename: string,
   cachedContourData?: CachedContourData,
   _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
-  _singleArtboard?: boolean
+  _singleArtboard?: boolean,
+  cutContourLabel: string = 'CutContour'
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -1894,7 +1896,7 @@ export async function downloadContourPDF(
     
     const separationColorSpace = context.obj([
       PDFName.of('Separation'),
-      PDFName.of('CutContour'),
+      PDFName.of(cutContourLabel),
       PDFName.of('DeviceCMYK'),
       tintFunctionRef,
     ]);
@@ -1907,10 +1909,10 @@ export async function downloadContourPDF(
         colorSpaceDict = context.obj({});
         resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
       }
-      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+      (colorSpaceDict as PDFDict).set(PDFName.of(cutContourLabel), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches);
+    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, cutContourLabel);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -1927,8 +1929,8 @@ export async function downloadContourPDF(
   }
   
   pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
-  pdfDoc.setKeywords(['CutContour', 'spot color', 'cutting', 'vector']);
+  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
+  pdfDoc.setKeywords([cutContourLabel, 'spot color', 'cutting', 'vector']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -1951,7 +1953,8 @@ export async function generateContourPDFBase64(
   image: HTMLImageElement,
   strokeSettings: StrokeSettings,
   resizeSettings: ResizeSettings,
-  cachedContourData?: CachedContourData
+  cachedContourData?: CachedContourData,
+  cutContourLabel: string = 'CutContour'
 ): Promise<string | null> {
   let pathPoints: Array<{x: number; y: number}>;
   let previewPathPoints: Array<{x: number; y: number}>;
@@ -2133,7 +2136,7 @@ export async function generateContourPDFBase64(
     
     const separationColorSpace = context.obj([
       PDFName.of('Separation'),
-      PDFName.of('CutContour'),
+      PDFName.of(cutContourLabel),
       PDFName.of('DeviceCMYK'),
       tintFunctionRef,
     ]);
@@ -2146,10 +2149,10 @@ export async function generateContourPDFBase64(
         colorSpaceDict = context.obj({});
         resources.set(PDFName.of('ColorSpace'), colorSpaceDict);
       }
-      (colorSpaceDict as PDFDict).set(PDFName.of('CutContour'), separationRef);
+      (colorSpaceDict as PDFDict).set(PDFName.of(cutContourLabel), separationRef);
     }
     
-    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches);
+    const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, cutContourLabel);
     
     const existingContents = page.node.Contents();
     if (existingContents) {
@@ -2166,7 +2169,7 @@ export async function generateContourPDFBase64(
   }
   
   pdfDoc.setTitle('Sticker with CutContour');
-  pdfDoc.setSubject('Contains CutContour spot color for cutting machines');
+  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
   
   const pdfBytes = await pdfDoc.save();
   
