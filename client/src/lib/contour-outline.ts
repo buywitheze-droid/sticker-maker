@@ -100,11 +100,17 @@ function contourPointsToPDFPathOps(
   pathOps += `/${spotColorName} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
 
-  const simplified = simplifyPathForPDF(pathPointsInches, 0.01);
+  const simplified = simplifyPathForPDF(pathPointsInches, 0.005);
   console.log(`[PDF CutContour] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
   console.log(`[PDF CutContour] Page height: ${pageHeightInches.toFixed(3)}in`);
 
-  pathOps += buildSmoothPdfPath(simplified, true);
+  if (simplified.length < 2) return pathOps;
+  const pts = simplified.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+  pathOps += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+  for (let i = 1; i < pts.length; i++) {
+    pathOps += `${pts[i].x.toFixed(4)} ${pts[i].y.toFixed(4)} l\n`;
+  }
+  pathOps += 'h\n';
   pathOps += 'S\n';
   return pathOps;
 }
@@ -1833,18 +1839,9 @@ export async function downloadContourPDF(
         
         if (drawPath.length > 0) {
           bgCtx.beginPath();
-          const n = drawPath.length;
           bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
-          for (let i = 0; i < n; i++) {
-            const p0 = drawPath[(i - 1 + n) % n];
-            const p1 = drawPath[i];
-            const p2 = drawPath[(i + 1) % n];
-            const p3 = drawPath[(i + 2) % n];
-            const cp1x = (p1.x + (p2.x - p0.x) / 6) * bgDPI;
-            const cp1y = (p1.y + (p2.y - p0.y) / 6) * bgDPI;
-            const cp2x = (p2.x - (p3.x - p1.x) / 6) * bgDPI;
-            const cp2y = (p2.y - (p3.y - p1.y) / 6) * bgDPI;
-            bgCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x * bgDPI, p2.y * bgDPI);
+          for (let i = 1; i < drawPath.length; i++) {
+            bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
           }
           bgCtx.closePath();
           bgCtx.stroke();
@@ -2134,18 +2131,9 @@ export async function generateContourPDFBase64(
       
       if (drawPath.length > 0) {
         bgCtx.beginPath();
-        const n = drawPath.length;
         bgCtx.moveTo(drawPath[0].x * bgDPI, drawPath[0].y * bgDPI);
-        for (let i = 0; i < n; i++) {
-          const p0 = drawPath[(i - 1 + n) % n];
-          const p1 = drawPath[i];
-          const p2 = drawPath[(i + 1) % n];
-          const p3 = drawPath[(i + 2) % n];
-          const cp1x = (p1.x + (p2.x - p0.x) / 6) * bgDPI;
-          const cp1y = (p1.y + (p2.y - p0.y) / 6) * bgDPI;
-          const cp2x = (p2.x - (p3.x - p1.x) / 6) * bgDPI;
-          const cp2y = (p2.y - (p3.y - p1.y) / 6) * bgDPI;
-          bgCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x * bgDPI, p2.y * bgDPI);
+        for (let i = 1; i < drawPath.length; i++) {
+          bgCtx.lineTo(drawPath[i].x * bgDPI, drawPath[i].y * bgDPI);
         }
         bgCtx.closePath();
         bgCtx.stroke();
