@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection, { SpotPreviewData } from "./controls-section";
-import ResizeModal from "./resize-modal";
 import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
 import { cropImageToContent } from "@/lib/image-crop";
 import { createVectorStroke, downloadVectorStroke, createVectorPaths, type VectorFormat } from "@/lib/vector-stroke";
@@ -60,9 +59,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRemovingBackground, setIsRemovingBackground] = useState(false);
-  const [showResizeModal, setShowResizeModal] = useState(false);
-  const [detectedDimensions, setDetectedDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [pendingImageInfo, setPendingImageInfo] = useState<ImageInfo | null>(null);
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
   const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
   const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
@@ -199,122 +195,14 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     setShowApplyAddDropdown(false);
   }, [cutContourLabel, toast, imageInfo, shapeSettings, resizeSettings]);
 
-  const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
-    try {
-      // Validate image size - allow very large images since we auto-downsample
-      // 1 billion pixels = ~1000MP, enough for 10ft+ prints at 300 DPI
-      if (image.width * image.height > 1000000000) { // 1000MP limit
-        alert('Image is too large. Please upload an image smaller than 1000 megapixels.');
-        return;
-      }
-      
-      // Validate image dimensions
-      if (image.width <= 0 || image.height <= 0) {
-        alert('Invalid image dimensions.');
-        return;
-      }
-      
-      // Automatically crop the image to remove ALL empty space
-      const croppedCanvas = cropImageToContent(image);
-      if (!croppedCanvas) {
-        console.error('Failed to crop image, using original');
-        handleFallbackImage(file, image);
-        return;
-      }
-      
-      const croppedImage = new Image();
-      
-      croppedImage.onload = () => {
-        // Close any open dropdowns by blurring active element
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
-        
-        const dpi = 300; // Default DPI for high-quality printing
-        
-        // Downsample very large images to prevent performance issues
-        // 4000px max dimension provides enough quality for contour generation
-        const MAX_STORED_DIMENSION = 4000;
-        let finalImage = croppedImage;
-        let finalWidth = croppedImage.width;
-        let finalHeight = croppedImage.height;
-        
-        const maxDim = Math.max(croppedImage.width, croppedImage.height);
-        if (maxDim > MAX_STORED_DIMENSION) {
-          const scale = MAX_STORED_DIMENSION / maxDim;
-          finalWidth = Math.round(croppedImage.width * scale);
-          finalHeight = Math.round(croppedImage.height * scale);
-          
-          console.log(`[Upload] Downsampling from ${croppedImage.width}x${croppedImage.height} to ${finalWidth}x${finalHeight}`);
-          
-          const downsampleCanvas = document.createElement('canvas');
-          downsampleCanvas.width = finalWidth;
-          downsampleCanvas.height = finalHeight;
-          const dsCtx = downsampleCanvas.getContext('2d')!;
-          dsCtx.imageSmoothingEnabled = true;
-          dsCtx.imageSmoothingQuality = 'high';
-          dsCtx.drawImage(croppedImage, 0, 0, finalWidth, finalHeight);
-          
-          // Create new image from downsampled canvas
-          finalImage = new Image();
-          finalImage.src = downsampleCanvas.toDataURL('image/png');
-        }
-        
-        // Wait for final image to be ready (only needed if we downsampled)
-        const processImage = () => {
-          // Create final cropped image info with zero padding
-          const newImageInfo: ImageInfo = {
-            file,
-            image: finalImage,
-            originalWidth: finalWidth,
-            originalHeight: finalHeight,
-            dpi,
-          };
-          
-          // Calculate detected dimensions based on ORIGINAL image size, not downsampled
-          // This preserves the correct aspect ratio for resize calculations
-          const originalMaxDim = Math.max(croppedImage.width, croppedImage.height);
-          const { widthInches, heightInches } = calculateImageDimensions(croppedImage.width, croppedImage.height, dpi);
-          
-          // Store pending info and show resize modal
-          setPendingImageInfo(newImageInfo);
-          setDetectedDimensions({ width: widthInches, height: heightInches });
-          setShowResizeModal(true);
-        };
-        
-        if (finalImage === croppedImage) {
-          processImage();
-        } else {
-          finalImage.onload = processImage;
-        }
-      };
-      
-      croppedImage.onerror = () => {
-        console.error('Error loading cropped image, using original');
-        handleFallbackImage(file, image);
-      };
-      
-      croppedImage.src = croppedCanvas.toDataURL('image/png');
-    } catch (error) {
-      console.error('Error processing uploaded image:', error);
-      handleFallbackImage(file, image);
-    }
-  }, [shapeSettings, stickerSize, updateCadCutBounds]);
-
-  const handleResizeConfirm = useCallback((widthInches: number, heightInches: number) => {
-    if (!pendingImageInfo) return;
+  const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number) => {
+    setImageInfo(newImageInfo);
     
-    // Apply the pending image info
-    setImageInfo(pendingImageInfo);
-    
-    // Detect shape from image (threshold must match detectShape's internal confidenceThreshold of 0.88)
     const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
-    const detectionResult = detectShape(pendingImageInfo.image);
+    const detectionResult = detectShape(newImageInfo.image);
     const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
     const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
     
-    // Reset all settings to defaults when new image is uploaded
-    // If shape detected, enable shape mode; otherwise default to contour mode
     setStrokeSettings({
       width: 0.14,
       color: "#ffffff",
@@ -368,7 +256,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
     setStickerSize(fittingSize as StickerSize);
     
-    // Initial bounds check with the actual shape settings being applied
     const shapeDims = calculateShapeDimensions(
       widthInches,
       heightInches,
@@ -376,18 +263,102 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       newShapeSettings.offset
     );
     updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
-    
-    // Close modal and clear pending state
-    setShowResizeModal(false);
-    setPendingImageInfo(null);
-    setDetectedDimensions(null);
-  }, [pendingImageInfo, updateCadCutBounds]);
+  }, [updateCadCutBounds]);
 
-  const handleResizeModalClose = useCallback(() => {
-    setShowResizeModal(false);
-    setPendingImageInfo(null);
-    setDetectedDimensions(null);
-  }, []);
+  const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
+    try {
+      if (image.width * image.height > 1000000000) {
+        alert('Image is too large. Please upload an image smaller than 1000 megapixels.');
+        return;
+      }
+      
+      if (image.width <= 0 || image.height <= 0) {
+        alert('Invalid image dimensions.');
+        return;
+      }
+      
+      const croppedCanvas = cropImageToContent(image);
+      if (!croppedCanvas) {
+        console.error('Failed to crop image, using original');
+        handleFallbackImage(file, image);
+        return;
+      }
+      
+      const croppedImage = new Image();
+      
+      croppedImage.onload = () => {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        
+        const dpi = 300;
+        const MAX_STORED_DIMENSION = 4000;
+        let finalImage = croppedImage;
+        let finalWidth = croppedImage.width;
+        let finalHeight = croppedImage.height;
+        
+        const maxDim = Math.max(croppedImage.width, croppedImage.height);
+        if (maxDim > MAX_STORED_DIMENSION) {
+          const scale = MAX_STORED_DIMENSION / maxDim;
+          finalWidth = Math.round(croppedImage.width * scale);
+          finalHeight = Math.round(croppedImage.height * scale);
+          
+          console.log(`[Upload] Downsampling from ${croppedImage.width}x${croppedImage.height} to ${finalWidth}x${finalHeight}`);
+          
+          const downsampleCanvas = document.createElement('canvas');
+          downsampleCanvas.width = finalWidth;
+          downsampleCanvas.height = finalHeight;
+          const dsCtx = downsampleCanvas.getContext('2d')!;
+          dsCtx.imageSmoothingEnabled = true;
+          dsCtx.imageSmoothingQuality = 'high';
+          dsCtx.drawImage(croppedImage, 0, 0, finalWidth, finalHeight);
+          
+          finalImage = new Image();
+          finalImage.src = downsampleCanvas.toDataURL('image/png');
+        }
+        
+        const processImage = () => {
+          const newImageInfo: ImageInfo = {
+            file,
+            image: finalImage,
+            originalWidth: finalWidth,
+            originalHeight: finalHeight,
+            dpi,
+          };
+          
+          const aspectRatio = croppedImage.width / croppedImage.height;
+          const DEFAULT_SIZE = 3;
+          let widthInches: number;
+          let heightInches: number;
+          if (aspectRatio >= 1) {
+            widthInches = DEFAULT_SIZE;
+            heightInches = parseFloat((DEFAULT_SIZE / aspectRatio).toFixed(2));
+          } else {
+            heightInches = DEFAULT_SIZE;
+            widthInches = parseFloat((DEFAULT_SIZE * aspectRatio).toFixed(2));
+          }
+          
+          applyImageDirectly(newImageInfo, widthInches, heightInches);
+        };
+        
+        if (finalImage === croppedImage) {
+          processImage();
+        } else {
+          finalImage.onload = processImage;
+        }
+      };
+      
+      croppedImage.onerror = () => {
+        console.error('Error loading cropped image, using original');
+        handleFallbackImage(file, image);
+      };
+      
+      croppedImage.src = croppedCanvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Error processing uploaded image:', error);
+      handleFallbackImage(file, image);
+    }
+  }, [applyImageDirectly]);
 
   const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
     const dpi = 300;
@@ -426,7 +397,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
       setImageInfo(newImageInfo);
 
-      // Detect shape from image (same logic as handleResizeConfirm)
+      // Detect shape from image
       const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
       const detectionResult = detectShape(finalImage);
       const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
@@ -997,40 +968,13 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     return (
       <div className="min-h-[70vh] flex items-center justify-center">
         <div className="w-full max-w-xl mx-auto transition-all duration-300">
-          {showResizeModal && detectedDimensions ? (
-            <ResizeModal
-              open={showResizeModal}
-              onClose={handleResizeModalClose}
-              onConfirm={handleResizeConfirm}
-              detectedWidth={detectedDimensions.width}
-              detectedHeight={detectedDimensions.height}
-            />
-          ) : (
-            <UploadSection 
-              onImageUpload={handleImageUpload}
-              onPDFUpload={handlePDFUpload}
-              showCutLineInfo={false}
-              imageInfo={null}
-              resizeSettings={resizeSettings}
-              stickerSize={stickerSize}
-            />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Show inline resize panel when re-uploading from loaded state
-  if (showResizeModal && detectedDimensions) {
-    return (
-      <div className="min-h-[70vh] flex items-center justify-center">
-        <div className="w-full max-w-xl mx-auto transition-all duration-300">
-          <ResizeModal
-            open={showResizeModal}
-            onClose={handleResizeModalClose}
-            onConfirm={handleResizeConfirm}
-            detectedWidth={detectedDimensions.width}
-            detectedHeight={detectedDimensions.height}
+          <UploadSection 
+            onImageUpload={handleImageUpload}
+            onPDFUpload={handlePDFUpload}
+            showCutLineInfo={false}
+            imageInfo={null}
+            resizeSettings={resizeSettings}
+            stickerSize={stickerSize}
           />
         </div>
       </div>
