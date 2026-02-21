@@ -261,7 +261,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
   const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number) => {
     const isFirstDesign = designs.length === 0;
-    const newTransform = { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
+    const offset = designs.length * 0.05;
+    const newTransform = { nx: Math.min(0.5 + offset, 0.85), ny: Math.min(0.5 + offset, 0.85), s: 1, rotation: 0 };
 
     if (isFirstDesign) {
       setImageInfo(newImageInfo);
