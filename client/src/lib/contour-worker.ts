@@ -1,4 +1,5 @@
 import ClipperLib from 'js-clipper';
+import { fitCompositeShape } from './composite-shape-fit';
 
 interface Point {
   x: number;
@@ -676,6 +677,16 @@ function processContour(
   smoothedPath = removeNearDuplicatePoints(smoothedPath, 0.01);
   
   console.log('[Worker] Dilated contour traced, welded, and simplified:', smoothedPath.length, 'points');
+
+  if (effectiveMode === 'smooth') {
+    const compositeResult = fitCompositeShape(smoothedPath, effectiveDPI);
+    if (compositeResult.fitted) {
+      smoothedPath = compositeResult.path;
+      console.log('[Worker] Sharp mode: composite shape fitted, using geometric outline:', smoothedPath.length, 'points');
+    } else {
+      console.log('[Worker] Sharp mode: no composite shape detected, using traced contour');
+    }
+  }
 
   if (effectiveMode === 'scattered') {
     const iterations = 3;
