@@ -935,7 +935,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             filename,
             spotColors,
             singleArtboard,
-            cutContourLabel
+            cutContourLabel,
+            lockedContour ? { label: lockedContour.label, pathPoints: lockedContour.pathPoints, widthInches: lockedContour.widthInches, heightInches: lockedContour.heightInches, imageOffsetX: lockedContour.imageOffsetX, imageOffsetY: lockedContour.imageOffsetY } : null
           );
         } else {
           // No mode selected - just download the image

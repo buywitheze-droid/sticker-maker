@@ -1,6 +1,7 @@
 import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict, type PDFImage } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
+import { simplifyPathForPDF } from './contour-outline';
 
 async function createClippedShapeImage(
   image: HTMLImageElement,
@@ -131,7 +132,8 @@ export async function downloadShapePDF(
   filename: string,
   _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
   _singleArtboard?: boolean,
-  cutContourLabel: string = 'CutContour'
+  cutContourLabel: string = 'CutContour',
+  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number; imageOffsetX: number; imageOffsetY: number } | null
 ): Promise<void> {
   // Calculate shape size based on design size + offset
   const { widthInches, heightInches } = calculateShapeDimensions(
@@ -374,9 +376,89 @@ export async function downloadShapePDF(
     page.node.set(PDFName.of('Contents'), outlineStreamRef);
   }
   
+  if (lockedContour && lockedContour.pathPoints.length > 2) {
+    const lcPageHeight = lockedContour.heightInches;
+    const lcImgOffX = lockedContour.imageOffsetX;
+    const lcImgOffY = lockedContour.imageOffsetY;
+    const imgWidthInches = resizeSettings.widthInches;
+    const imgHeightInches = resizeSettings.heightInches;
+    
+    const lcImgBottomY = lcPageHeight - lcImgOffY - imgHeightInches;
+    
+    const shapeImgXInches = (widthPts / 72 - imgWidthInches) / 2;
+    const shapeImgYInches = (heightPts / 72 - imgHeightInches) / 2;
+    
+    const mappedPoints = lockedContour.pathPoints.map(p => ({
+      x: shapeImgXInches + (p.x - lcImgOffX),
+      y: shapeImgYInches + (p.y - lcImgBottomY),
+    }));
+    
+    if (lockedContour.label !== cutContourLabel) {
+      const lcTintFunction = context.obj({
+        FunctionType: 2,
+        Domain: [0, 1],
+        C0: [0, 0, 0, 0],
+        C1: [0, 1, 0, 0],
+        N: 1,
+      });
+      const lcTintRef = context.register(lcTintFunction);
+      
+      const lcSepCS = context.obj([
+        PDFName.of('Separation'),
+        PDFName.of(lockedContour.label),
+        PDFName.of('DeviceCMYK'),
+        lcTintRef,
+      ]);
+      const lcSepRef = context.register(lcSepCS);
+      
+      const lcResources = page.node.Resources();
+      if (lcResources) {
+        let lcColorSpaceDict = lcResources.get(PDFName.of('ColorSpace'));
+        if (!lcColorSpaceDict) {
+          lcColorSpaceDict = context.obj({});
+          lcResources.set(PDFName.of('ColorSpace'), lcColorSpaceDict);
+        }
+        (lcColorSpaceDict as PDFDict).set(PDFName.of(lockedContour.label), lcSepRef);
+      }
+    }
+    
+    const simplified = simplifyPathForPDF(mappedPoints, 0.01);
+    let lcPathOps = 'q\n';
+    lcPathOps += `/${lockedContour.label} CS 1 SCN\n`;
+    lcPathOps += '0.5 w\n';
+    
+    for (let i = 0; i < simplified.length; i++) {
+      const xPts = simplified[i].x * 72;
+      const yPts = simplified[i].y * 72;
+      if (i === 0) {
+        lcPathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} m\n`;
+      } else {
+        lcPathOps += `${xPts.toFixed(4)} ${yPts.toFixed(4)} l\n`;
+      }
+    }
+    lcPathOps += 'h S\n';
+    lcPathOps += 'Q\n';
+    
+    const lcStream = context.stream(lcPathOps);
+    const lcStreamRef = context.register(lcStream);
+    
+    const lcExistingContents = page.node.Contents();
+    if (lcExistingContents instanceof PDFArray) {
+      lcExistingContents.push(lcStreamRef);
+    } else if (lcExistingContents) {
+      const contentsArray = context.obj([lcExistingContents, lcStreamRef]);
+      page.node.set(PDFName.of('Contents'), contentsArray);
+    }
+  }
+  
+  const allLabels = [cutContourLabel];
+  if (lockedContour?.label && lockedContour.label !== cutContourLabel) {
+    allLabels.push(lockedContour.label);
+  }
+  
   pdfDoc.setTitle('Shape with CutContour');
-  pdfDoc.setSubject(`Contains ${cutContourLabel} spot color for cutting machines`);
-  pdfDoc.setKeywords([cutContourLabel, 'spot color', 'cutting', 'vector', 'shape']);
+  pdfDoc.setSubject(`Contains ${allLabels.join(', ')} spot color for cutting machines`);
+  pdfDoc.setKeywords([...allLabels, 'spot color', 'cutting', 'vector', 'shape']);
   
   const pdfBytes = await pdfDoc.save();
   const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
