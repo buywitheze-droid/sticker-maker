@@ -355,6 +355,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       setStrokeMode('contour');
     }
     setCadCutBounds(null);
+    setLockedContour(null);
     
     setResizeSettings(prev => ({
       ...prev,
