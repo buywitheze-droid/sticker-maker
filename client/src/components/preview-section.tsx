@@ -838,7 +838,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
-      if (!imageInfo) return;
+      if (!imageInfo || !selectedDesignId) return;
 
       const hasPdfCutContour = imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour;
       const effectiveBackgroundColor = hasPdfCutContour 
@@ -1001,15 +1001,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         
         /* HIDDEN: CutContour magenta dashed line indicator disabled in preview */
       } else {
-        // Regular image rendering (non-PDF or no CutContour)
-        
-        // Transparent artboard - checkerboard background fills the entire canvas
-        const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
-        if (checkerPattern) {
-          ctx.fillStyle = checkerPattern;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
         if (shapeSettings.enabled) {
           drawShapePreview(ctx, canvas.width, canvas.height);
         } else {

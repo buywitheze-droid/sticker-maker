@@ -1065,15 +1065,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                   <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={handleDuplicateDesign}
-                    className="p-1.5 rounded-md hover:bg-gray-700 text-gray-400 hover:text-cyan-400 transition-colors"
-                    title="Duplicate Design"
-                  >
-                    <Copy className="w-4 h-4" />
-                  </button>
-                </div>
               </>
             )}
           </div>
@@ -1140,13 +1131,22 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
               onSelectDesign={handleSelectDesign}
             />
             {selectedDesignId && (
-              <button
-                onClick={() => handleDeleteDesign(selectedDesignId)}
-                className="absolute bottom-2 left-2 p-2 rounded-lg bg-gray-900/80 border border-gray-600 hover:bg-red-900/80 hover:border-red-500 text-gray-400 hover:text-red-400 transition-colors z-10"
-                title="Delete Design"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
+              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 z-10">
+                <button
+                  onClick={handleDuplicateDesign}
+                  className="p-2 rounded-lg bg-gray-900/80 border border-gray-600 hover:bg-gray-700/80 hover:border-cyan-500 text-gray-400 hover:text-cyan-400 transition-colors"
+                  title="Duplicate Design"
+                >
+                  <Copy className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => handleDeleteDesign(selectedDesignId)}
+                  className="p-2 rounded-lg bg-gray-900/80 border border-red-800 hover:bg-red-900/80 hover:border-red-500 text-red-500 hover:text-red-400 transition-colors"
+                  title="Delete Design"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </div>
             )}
           </div>
         </div>
