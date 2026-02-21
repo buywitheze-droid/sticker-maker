@@ -138,10 +138,6 @@ class ContourWorkerManager {
   }
 
   private initWorker() {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
     try {
       this.worker = new ContourWorker();
       this.worker.onmessage = this.handleMessage.bind(this);
@@ -150,6 +146,24 @@ class ContourWorkerManager {
       console.warn('Web Worker not available, falling back to main thread');
       this.worker = null;
     }
+  }
+
+  recreateWorker() {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    if (this.currentRequest) {
+      this.currentRequest.reject(new Error('Worker recreated due to code update'));
+    }
+    if (this.pendingRequest) {
+      this.pendingRequest.reject(new Error('Worker recreated due to code update'));
+    }
+    this.isProcessing = false;
+    this.pendingRequest = null;
+    this.currentRequest = null;
+    this.initWorker();
+    console.log('[ContourWorker] Worker recreated for code update');
   }
 
   private handleMessage(e: MessageEvent<WorkerResponse>) {
@@ -210,8 +224,6 @@ class ContourWorkerManager {
     resizeSettings: ResizeSettings,
     onProgress?: ProgressCallback
   ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
-    this.initWorker();
-
     if (!this.worker) {
       const canvas = await this.processFallback(image, strokeSettings, resizeSettings);
       return { canvas, downsampleScale: 1, imageCanvasX: 0, imageCanvasY: 0 };
@@ -364,4 +376,12 @@ export async function processContourInWorker(
 ): Promise<{ canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number; contourData?: ContourData; detectedAlgorithm?: DetectedAlgorithm }> {
   const manager = getContourWorkerManager();
   return manager.process(image, strokeSettings, resizeSettings, onProgress);
+}
+
+if (import.meta.hot) {
+  import.meta.hot.accept('./contour-worker', () => {
+    if (managerInstance) {
+      managerInstance.recreateWorker();
+    }
+  });
 }
