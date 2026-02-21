@@ -96,15 +96,19 @@ function contourPointsToPDFPathOps(
   pageHeightInches: number,
   spotColorName: string = 'CutContour'
 ): string {
-  let pathOps = '';
+  const simplified = simplifyPathForPDF(pathPointsInches, 0.005);
+  console.log(`[PDF ${spotColorName}] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
+  console.log(`[PDF ${spotColorName}] Page height: ${pageHeightInches.toFixed(3)}in`);
+
+  if (simplified.length < 2) {
+    console.warn(`[PDF ${spotColorName}] Too few points after simplification, skipping`);
+    return '';
+  }
+
+  let pathOps = 'q\n';
   pathOps += `/${spotColorName} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
 
-  const simplified = simplifyPathForPDF(pathPointsInches, 0.005);
-  console.log(`[PDF CutContour] Simplified ${pathPointsInches.length} points to ${simplified.length} points`);
-  console.log(`[PDF CutContour] Page height: ${pageHeightInches.toFixed(3)}in`);
-
-  if (simplified.length < 2) return pathOps;
   const pts = simplified.map(p => ({ x: p.x * 72, y: p.y * 72 }));
   pathOps += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
   for (let i = 1; i < pts.length; i++) {
@@ -112,6 +116,9 @@ function contourPointsToPDFPathOps(
   }
   pathOps += 'h\n';
   pathOps += 'S\n';
+  pathOps += 'Q\n';
+
+  console.log(`[PDF ${spotColorName}] Generated pathOps: ${pathOps.length} chars, first 200: ${pathOps.substring(0, 200)}`);
   return pathOps;
 }
 
@@ -1958,16 +1965,18 @@ export async function downloadContourPDF(
     
     const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, cutContourLabel);
     
-    const existingContents = page.node.Contents();
-    if (existingContents) {
-      const contentStream = context.stream(pathOps);
-      const contentStreamRef = context.register(contentStream);
-      
-      if (existingContents instanceof PDFArray) {
-        existingContents.push(contentStreamRef);
-      } else {
-        const newContents = context.obj([existingContents, contentStreamRef]);
-        page.node.set(PDFName.of('Contents'), newContents);
+    if (pathOps.length > 0) {
+      const existingContents = page.node.Contents();
+      if (existingContents) {
+        const contentStream = context.stream(pathOps);
+        const contentStreamRef = context.register(contentStream);
+        
+        if (existingContents instanceof PDFArray) {
+          existingContents.push(contentStreamRef);
+        } else {
+          const newContents = context.obj([existingContents, contentStreamRef]);
+          page.node.set(PDFName.of('Contents'), newContents);
+        }
       }
     }
   }
@@ -2004,16 +2013,18 @@ export async function downloadContourPDF(
     
     const lockedPathOps = contourPointsToPDFPathOps(lockedContour.pathPoints, heightInches, lockedContour.label);
     
-    const existingContents = page.node.Contents();
-    if (existingContents) {
-      const contentStream = context.stream(lockedPathOps);
-      const contentStreamRef = context.register(contentStream);
-      
-      if (existingContents instanceof PDFArray) {
-        existingContents.push(contentStreamRef);
-      } else {
-        const newContents = context.obj([existingContents, contentStreamRef]);
-        page.node.set(PDFName.of('Contents'), newContents);
+    if (lockedPathOps.length > 0) {
+      const existingContents = page.node.Contents();
+      if (existingContents) {
+        const contentStream = context.stream(lockedPathOps);
+        const contentStreamRef = context.register(contentStream);
+        
+        if (existingContents instanceof PDFArray) {
+          existingContents.push(contentStreamRef);
+        } else {
+          const newContents = context.obj([existingContents, contentStreamRef]);
+          page.node.set(PDFName.of('Contents'), newContents);
+        }
       }
     }
   }
@@ -2249,16 +2260,18 @@ export async function generateContourPDFBase64(
     
     const pathOps = contourPointsToPDFPathOps(pathPoints, heightInches, cutContourLabel);
     
-    const existingContents = page.node.Contents();
-    if (existingContents) {
-      const contentStream = context.stream(pathOps);
-      const contentStreamRef = context.register(contentStream);
-      
-      if (existingContents instanceof PDFArray) {
-        existingContents.push(contentStreamRef);
-      } else {
-        const newContents = context.obj([existingContents, contentStreamRef]);
-        page.node.set(PDFName.of('Contents'), newContents);
+    if (pathOps.length > 0) {
+      const existingContents = page.node.Contents();
+      if (existingContents) {
+        const contentStream = context.stream(pathOps);
+        const contentStreamRef = context.register(contentStream);
+        
+        if (existingContents instanceof PDFArray) {
+          existingContents.push(contentStreamRef);
+        } else {
+          const newContents = context.obj([existingContents, contentStreamRef]);
+          page.node.set(PDFName.of('Contents'), newContents);
+        }
       }
     }
   }

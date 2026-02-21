@@ -314,14 +314,20 @@ async function extractCutContourFromRawPDF(arrayBuffer: ArrayBuffer): Promise<PD
       
       const contents = page.node.Contents();
       if (contents) {
-        // Get content stream as string to parse path commands
         let contentStr = '';
         if (contents instanceof PDFStream) {
           const decoded = contents.getContents();
           contentStr = new TextDecoder().decode(decoded);
         } else if (contents instanceof PDFArray) {
           for (let i = 0; i < contents.size(); i++) {
-            const stream = contents.get(i);
+            let stream: any = contents.get(i);
+            if (stream && !(stream instanceof PDFStream)) {
+              try {
+                stream = context.lookup(stream as any);
+              } catch (e) {
+                console.warn('[PDF Parser] Could not resolve content stream ref at index', i);
+              }
+            }
             if (stream instanceof PDFStream) {
               const decoded = stream.getContents();
               contentStr += new TextDecoder().decode(decoded) + '\n';
