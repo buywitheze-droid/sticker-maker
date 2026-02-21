@@ -1081,14 +1081,18 @@ function analyzeComponentShape(
     }
   }
 
+  console.log('[Shapes] analyzeComponentShape: crop', cropW, 'x', cropH, 'pixels:', comp.pixels.length);
   const closedCrop = morphologicalClose(cropMask, cropW, cropH, 2);
   const result = analyzeShapeFromMask(closedCrop, cropW, cropH);
   if (result) {
+    console.log('[Shapes] analyzeComponentShape result:', result.type, 'solidity:', result.solidity.toFixed(3), 'boundary pts:', result.boundary?.length || 0);
     result.cx += cropMinX;
     result.cy += cropMinY;
     if (result.boundary) {
       result.boundary = result.boundary.map(p => ({ x: p.x + cropMinX, y: p.y + cropMinY }));
     }
+  } else {
+    console.log('[Shapes] analyzeComponentShape: no shape detected for this component');
   }
   return result;
 }
@@ -1295,12 +1299,18 @@ function processShapesMode(
 
   console.log('[Shapes] Found', comps.length, 'components. Dominant ratio:', (dominantRatio * 100).toFixed(1) + '%');
 
+  console.log('[Shapes] Analyzing dominant component (area:', dominantComp.area, 'px, bounds:', JSON.stringify(dominantComp.bounds), ')');
   const dominantShape = analyzeComponentShape(dominantComp, hiResWidth, hiResHeight);
 
   if (!dominantShape) {
+    console.log('[Shapes] Dominant component shape analysis returned null, trying whole-mask fallback...');
     const wholeShape = analyzeShapeFromMask(filledMainMask, hiResWidth, hiResHeight);
     if (!wholeShape) {
-      console.log('[Shapes] No shape detected on dominant component or whole mask, falling back');
+      console.log('[Shapes] No shape detected on dominant component or whole mask, falling back to traced contour');
+      return null;
+    }
+    if ((wholeShape.type === 'circle' || wholeShape.type === 'ellipse') && comps.length > 1) {
+      console.log('[Shapes] Whole-mask fallback detected', wholeShape.type, 'but design has', comps.length, 'components — filled mask may be misleading. Rejecting, using traced contour instead.');
       return null;
     }
     const shape: ShapeAnalysis = {
@@ -1309,6 +1319,7 @@ function processShapesMode(
       cy: wholeShape.cy / SUPER_SAMPLE,
       rx: wholeShape.rx / SUPER_SAMPLE,
       ry: wholeShape.ry / SUPER_SAMPLE,
+      boundary: wholeShape.boundary ? wholeShape.boundary.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE })) : undefined,
     };
     const contour = generateShapeContour(shape, totalOffsetPixels);
     console.log('[Shapes] Whole-mask fallback:', shape.type, 'with', contour.length, 'points');
@@ -1345,11 +1356,12 @@ function processShapesMode(
         cy: compShape.cy / SUPER_SAMPLE,
         rx: compShape.rx / SUPER_SAMPLE,
         ry: compShape.ry / SUPER_SAMPLE,
+        boundary: compShape.boundary ? compShape.boundary.map(p => ({ x: p.x / SUPER_SAMPLE, y: p.y / SUPER_SAMPLE })) : undefined,
       };
       if (i === 0) scaledDominantShape = scaledShape;
       const contour = generateShapeContour(scaledShape, totalOffsetPixels);
       allContours.push(contour);
-      console.log('[Shapes] Component', i, ':', compShape.type, '(', (compRatio * 100).toFixed(1), '% area) → perfect', compShape.type, 'with', contour.length, 'points');
+      console.log('[Shapes] Component', i, ':', compShape.type, '(', (compRatio * 100).toFixed(1), '% area) →', compShape.type, 'contour with', contour.length, 'points');
     } else {
       const hiResTraced = generateTracedContourForComponent(
         comp, hiResWidth, hiResHeight, totalOffsetPixels * SUPER_SAMPLE
