@@ -63,6 +63,11 @@
   }
 }
 
+@keyframes gradientShift {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
 .checkerboard {
   background-image: url('data:image/svg+xml,<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="10" height="10" fill="%23f3f4f6"/><rect x="10" y="10" width="10" height="10" fill="%23f3f4f6"/></svg>');
   background-size: 20px 20px;
