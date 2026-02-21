@@ -317,27 +317,32 @@ function spotColorPathsToPDFOps(
   pathsInches: Point[][],
   spotColorName: string
 ): string {
-  let allOps = '';
-
+  const simplifiedPaths: Point[][] = [];
   for (const pathPoints of pathsInches) {
     const simplified = simplifyPathForPDF(pathPoints, 0.005);
-    if (simplified.length < 3) continue;
-
-    let pathOps = 'q\n';
-    pathOps += `/${spotColorName} cs 1 scn\n`;
-
-    const pts = simplified.map(p => ({ x: p.x * 72, y: p.y * 72 }));
-    pathOps += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
-    for (let i = 1; i < pts.length; i++) {
-      pathOps += `${pts[i].x.toFixed(4)} ${pts[i].y.toFixed(4)} l\n`;
+    if (simplified.length >= 3) {
+      simplifiedPaths.push(simplified);
     }
-    pathOps += 'h\n';
-    pathOps += 'f\n';
-    pathOps += 'Q\n';
-    allOps += pathOps;
   }
 
-  return allOps;
+  if (simplifiedPaths.length === 0) return '';
+
+  let compoundPath = 'q\n';
+  compoundPath += `/${spotColorName} cs 1 scn\n`;
+
+  for (const path of simplifiedPaths) {
+    const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+    compoundPath += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+    for (let j = 1; j < pts.length; j++) {
+      compoundPath += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
+    }
+    compoundPath += 'h\n';
+  }
+
+  compoundPath += 'f*\n';
+  compoundPath += 'Q\n';
+
+  return compoundPath;
 }
 
 function appendContentStream(
