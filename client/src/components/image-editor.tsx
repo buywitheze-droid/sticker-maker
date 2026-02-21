@@ -1053,7 +1053,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             </div>
             
             {(strokeSettings.enabled || shapeSettings.enabled || (imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour)) && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-col items-end gap-1">
                 {lockedContour && (
                   <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded border border-blue-200">
                     <div className="w-2 h-2 rounded-full bg-blue-500"></div>
@@ -1096,10 +1096,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                 <div className="relative" ref={applyAddRef}>
                   <button
                     onClick={() => setShowApplyAddDropdown(prev => !prev)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100 transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-2 py-1 bg-cyan-50 rounded border border-cyan-100 hover:bg-cyan-100 transition-colors cursor-pointer"
                   >
-                    <span className="text-[10px] text-gray-600 font-medium">Apply and Add..</span>
-                    <svg className="w-2.5 h-2.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
+                    <span className="text-[10px] text-cyan-600 font-medium">Add Contour</span>
+                    <svg className="w-2.5 h-2.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                   </button>
                   {showApplyAddDropdown && (
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
@@ -1107,7 +1108,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                         <button
                           key={label}
                           onClick={() => handleApplyAndAdd(label)}
-                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-gray-50 transition-colors text-gray-600`}
+                          className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-cyan-50 transition-colors text-gray-600`}
                         >
                           {label}
                         </button>
