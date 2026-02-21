@@ -1149,7 +1149,7 @@ export default function ControlsSection({
         {/* Download Buttons */}
         <div className="px-4 py-3 space-y-2">
           <Button
-            onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss || c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).map(c => ({
+            onClick={() => onDownload('standard', 'pdf', extractedColors.map(c => ({
               ...c,
               spotWhiteName,
               spotGlossName,
@@ -1177,7 +1177,7 @@ export default function ControlsSection({
           {canDownload && imageInfo && (
             <Button
               variant="outline"
-              onClick={() => onDownload('standard', 'pdf', extractedColors.filter(c => c.spotWhite || c.spotGloss || c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).map(c => ({
+              onClick={() => onDownload('standard', 'pdf', extractedColors.map(c => ({
                 ...c,
                 spotWhiteName,
                 spotGlossName,
