@@ -851,6 +851,41 @@ function analyzeShapeFromMask(
   let shapeType: ShapeAnalysis['type'];
   const isNearSquareAspect = Math.abs(aspectRatio - 1) < 0.20;
 
+  const centroidOffsetY = (centroidCy - bboxCy) / bboxH;
+  const centroidOffsetX = (centroidCx - bboxCx) / bboxW;
+  const centroidIsOffCenter = Math.abs(centroidOffsetY) > 0.06 || Math.abs(centroidOffsetX) > 0.06;
+  console.log('[Shapes] Centroid offset: dY:', centroidOffsetY.toFixed(3), 'dX:', centroidOffsetX.toFixed(3), 'offCenter:', centroidIsOffCenter);
+
+  const checkShieldTaper = (): { isShield: boolean; taperRatio: number } => {
+    const midY = Math.round(bboxCy);
+    let midRowWidth = 0;
+    if (midY >= 0 && midY < maskHeight) {
+      let mLeft = maskWidth, mRight = 0;
+      for (let x = 0; x < maskWidth; x++) {
+        if (mask[midY * maskWidth + x]) {
+          if (x < mLeft) mLeft = x;
+          if (x > mRight) mRight = x;
+        }
+      }
+      midRowWidth = mRight - mLeft + 1;
+    }
+    const bottomY = Math.min(maskHeight - 1, maxY);
+    let bottomRowWidth = 0;
+    {
+      let bLeft = maskWidth, bRight = 0;
+      for (let x = 0; x < maskWidth; x++) {
+        if (mask[bottomY * maskWidth + x]) {
+          if (x < bLeft) bLeft = x;
+          if (x > bRight) bRight = x;
+        }
+      }
+      bottomRowWidth = bRight - bLeft + 1;
+    }
+    const taperRatio = midRowWidth > 0 ? bottomRowWidth / midRowWidth : 1;
+    console.log('[Shapes] Shield check: midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3));
+    return { isShield: taperRatio < 0.85, taperRatio };
+  };
+
   if (solidity > 0.85) {
     if (rectGatePasses) {
       if (circularity > 0.75) {
@@ -859,34 +894,8 @@ function analyzeShapeFromMask(
         shapeType = 'rectangle';
       }
     } else {
-      const midY = Math.round(bboxCy);
-      let midRowWidth = 0;
-      if (midY >= 0 && midY < maskHeight) {
-        let mLeft = maskWidth, mRight = 0;
-        for (let x = 0; x < maskWidth; x++) {
-          if (mask[midY * maskWidth + x]) {
-            if (x < mLeft) mLeft = x;
-            if (x > mRight) mRight = x;
-          }
-        }
-        midRowWidth = mRight - mLeft + 1;
-      }
-      const bottomY = Math.min(maskHeight - 1, maxY);
-      let bottomRowWidth = 0;
-      {
-        let bLeft = maskWidth, bRight = 0;
-        for (let x = 0; x < maskWidth; x++) {
-          if (mask[bottomY * maskWidth + x]) {
-            if (x < bLeft) bLeft = x;
-            if (x > bRight) bRight = x;
-          }
-        }
-        bottomRowWidth = bRight - bLeft + 1;
-      }
-      const taperRatio = midRowWidth > 0 ? bottomRowWidth / midRowWidth : 1;
-      console.log('[Shapes] Shield check: midRowWidth:', midRowWidth, 'bottomRowWidth:', bottomRowWidth, 'taperRatio:', taperRatio.toFixed(3));
-
-      if (taperRatio < 0.85) {
+      const { isShield } = checkShieldTaper();
+      if (isShield) {
         shapeType = 'shield';
         console.log('[Shapes] Detected: shield (solidity high but rect gate failed, bottom tapers)');
         return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
@@ -895,7 +904,22 @@ function analyzeShapeFromMask(
         return null;
       }
     }
-  } else if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
+  } else if (solidity > 0.65 && !rectGatePasses && centroidIsOffCenter) {
+    const { isShield } = checkShieldTaper();
+    if (isShield) {
+      shapeType = 'shield';
+      console.log('[Shapes] Detected: shield (moderate solidity, centroid off-center, bottom tapers)');
+      return { type: shapeType, cx: bboxCx, cy: bboxCy, rx, ry, angle: 0, circularity, solidity, aspectRatio, boundary };
+    }
+    console.log('[Shapes] Moderate solidity, centroid off-center, but no taper — not a shield');
+  }
+
+  if (centroidIsOffCenter) {
+    console.log('[Shapes] Centroid significantly off-center — rejecting circle/ellipse classification');
+    return null;
+  }
+
+  if (isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
     solidity > 0.70 && circularity > 0.70 && circleFit > 0.85) {
     shapeType = 'circle';
   } else if (!isNearSquareAspect && circleAreaRatio > 0.85 && circleAreaRatio < 1.15 &&
