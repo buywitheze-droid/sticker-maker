@@ -2048,7 +2048,7 @@ export async function downloadContourPDF(
   }
   
   if (spotColors && spotColors.length > 0) {
-    const spotLabels = addSpotColorVectorsToPDF(
+    const spotLabels = await addSpotColorVectorsToPDF(
       pdfDoc, page, image, spotColors,
       resizeSettings.widthInches, resizeSettings.heightInches,
       heightInches, imageOffsetX, imageOffsetY,

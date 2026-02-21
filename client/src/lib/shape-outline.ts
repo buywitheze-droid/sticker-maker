@@ -540,7 +540,7 @@ export async function downloadShapePDF(
     const pageHeightInches = heightPts / 72;
     const imgOffsetXInches = (pageWidthInches - resizeSettings.widthInches) / 2;
     const imgOffsetYInches = (pageHeightInches - resizeSettings.heightInches) / 2;
-    const spotLabels = addSpotColorVectorsToPDF(
+    const spotLabels = await addSpotColorVectorsToPDF(
       pdfDoc, page, image, spotColors,
       resizeSettings.widthInches, resizeSettings.heightInches,
       pageHeightInches, imgOffsetXInches, imgOffsetYInches,
