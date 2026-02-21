@@ -242,7 +242,7 @@ function traceColorRegions(
     });
 
     if (paths.length > 0) {
-      regions.push({ name: whiteName, paths, tintCMYK: [0, 0, 0, 1] });
+      regions.push({ name: whiteName, paths, tintCMYK: [0, 1, 0, 0] });
     }
   }
 
@@ -261,7 +261,7 @@ function traceColorRegions(
     });
 
     if (paths.length > 0) {
-      regions.push({ name: glossName, paths, tintCMYK: [1, 0, 1, 0] });
+      regions.push({ name: glossName, paths, tintCMYK: [0, 1, 0, 0] });
     }
   }
 
@@ -270,8 +270,7 @@ function traceColorRegions(
 
 function spotColorPathsToPDFOps(
   pathsInches: Point[][],
-  spotColorName: string,
-  fill: boolean = true
+  spotColorName: string
 ): string {
   let allOps = '';
 
@@ -280,7 +279,8 @@ function spotColorPathsToPDFOps(
     if (simplified.length < 3) continue;
 
     let pathOps = 'q\n';
-    pathOps += `/${spotColorName} cs 1 scn\n`;
+    pathOps += `/${spotColorName} CS 1 SCN\n`;
+    pathOps += '0.5 w\n';
 
     const pts = simplified.map(p => ({ x: p.x * 72, y: p.y * 72 }));
     pathOps += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
@@ -288,7 +288,7 @@ function spotColorPathsToPDFOps(
       pathOps += `${pts[i].x.toFixed(4)} ${pts[i].y.toFixed(4)} l\n`;
     }
     pathOps += 'h\n';
-    pathOps += fill ? 'f\n' : 'S\n';
+    pathOps += 'S\n';
     pathOps += 'Q\n';
     allOps += pathOps;
   }
@@ -357,7 +357,7 @@ function addSpotColorRegionToPage(
   }
   (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
 
-  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name, true);
+  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name);
   console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} paths, ${pathOps.length} chars ops`);
 
   if (pathOps.length > 0) {
