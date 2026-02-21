@@ -125,6 +125,98 @@ export function calculateShapeDimensions(
   }
 }
 
+export function generateShapePathPointsInches(
+  shapeSettings: ShapeSettings,
+  resizeSettings: ResizeSettings,
+): {
+  pathPoints: Array<{x: number; y: number}>;
+  widthInches: number;
+  heightInches: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  bleedInches: number;
+} {
+  const shapeDims = calculateShapeDimensions(
+    resizeSettings.widthInches,
+    resizeSettings.heightInches,
+    shapeSettings.type,
+    shapeSettings.offset
+  );
+
+  const bleedInches = 0.10;
+  const totalWidthInches = shapeDims.widthInches + bleedInches * 2;
+  const totalHeightInches = shapeDims.heightInches + bleedInches * 2;
+
+  const cx = totalWidthInches / 2;
+  const cy = totalHeightInches / 2;
+
+  const imgW = resizeSettings.widthInches;
+  const imgH = resizeSettings.heightInches;
+  const imageOffsetX = (totalWidthInches - imgW) / 2;
+  const imageOffsetY = (totalHeightInches - imgH) / 2;
+
+  const points: Array<{x: number; y: number}> = [];
+
+  if (shapeSettings.type === 'circle') {
+    const r = Math.min(shapeDims.widthInches, shapeDims.heightInches) / 2;
+    const numPts = 256;
+    for (let i = 0; i < numPts; i++) {
+      const angle = (i / numPts) * Math.PI * 2;
+      points.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+    }
+  } else if (shapeSettings.type === 'oval') {
+    const rx = shapeDims.widthInches / 2;
+    const ry = shapeDims.heightInches / 2;
+    const numPts = 256;
+    for (let i = 0; i < numPts; i++) {
+      const angle = (i / numPts) * Math.PI * 2;
+      points.push({ x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) });
+    }
+  } else if (shapeSettings.type === 'square') {
+    const size = Math.min(shapeDims.widthInches, shapeDims.heightInches);
+    const sx = (totalWidthInches - size) / 2;
+    const sy = (totalHeightInches - size) / 2;
+    points.push({ x: sx, y: sy }, { x: sx + size, y: sy }, { x: sx + size, y: sy + size }, { x: sx, y: sy + size });
+  } else if (shapeSettings.type === 'rounded-square') {
+    const size = Math.min(shapeDims.widthInches, shapeDims.heightInches);
+    const sx = (totalWidthInches - size) / 2;
+    const sy = (totalHeightInches - size) / 2;
+    const r = Math.min(shapeSettings.cornerRadius || 0.25, size / 2);
+    const segs = 16;
+    for (let c = 0; c < 4; c++) {
+      const cornerX = c === 0 || c === 3 ? sx + r : sx + size - r;
+      const cornerY = c < 2 ? sy + r : sy + size - r;
+      const startAngle = [Math.PI, Math.PI * 1.5, 0, Math.PI * 0.5][c];
+      for (let j = 0; j <= segs; j++) {
+        const a = startAngle + (j / segs) * (Math.PI / 2);
+        points.push({ x: cornerX + r * Math.cos(a), y: cornerY + r * Math.sin(a) });
+      }
+    }
+  } else if (shapeSettings.type === 'rounded-rectangle') {
+    const w = shapeDims.widthInches;
+    const h = shapeDims.heightInches;
+    const r = Math.min(shapeSettings.cornerRadius || 0.25, w / 2, h / 2);
+    const segs = 16;
+    for (let c = 0; c < 4; c++) {
+      const cornerX = c === 0 || c === 3 ? bleedInches + r : bleedInches + w - r;
+      const cornerY = c < 2 ? bleedInches + r : bleedInches + h - r;
+      const startAngle = [Math.PI, Math.PI * 1.5, 0, Math.PI * 0.5][c];
+      for (let j = 0; j <= segs; j++) {
+        const a = startAngle + (j / segs) * (Math.PI / 2);
+        points.push({ x: cornerX + r * Math.cos(a), y: cornerY + r * Math.sin(a) });
+      }
+    }
+  } else {
+    const sx = bleedInches;
+    const sy = bleedInches;
+    const w = shapeDims.widthInches;
+    const h = shapeDims.heightInches;
+    points.push({ x: sx, y: sy }, { x: sx + w, y: sy }, { x: sx + w, y: sy + h }, { x: sx, y: sy + h });
+  }
+
+  return { pathPoints: points, widthInches: totalWidthInches, heightInches: totalHeightInches, imageOffsetX, imageOffsetY, bleedInches };
+}
+
 export async function downloadShapePDF(
   image: HTMLImageElement,
   shapeSettings: ShapeSettings,

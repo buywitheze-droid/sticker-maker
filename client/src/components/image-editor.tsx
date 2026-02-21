@@ -12,7 +12,7 @@ import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
 import { downloadZipPackage } from "@/lib/zip-download";
 import { downloadContourPDF, type CachedContourData } from "@/lib/contour-outline";
 import { getContourWorkerManager, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
-import { downloadShapePDF, calculateShapeDimensions } from "@/lib/shape-outline";
+import { downloadShapePDF, calculateShapeDimensions, generateShapePathPointsInches } from "@/lib/shape-outline";
 import { useDebouncedValue } from "@/hooks/use-debounce";
 import { removeBackgroundFromImage } from "@/lib/background-removal";
 import type { ParsedPDFData } from "@/lib/pdf-parser";
@@ -130,8 +130,62 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
     const workerManager = getContourWorkerManager();
     const contourData = workerManager.getCachedContourData();
-    if (!contourData || !contourData.pathPoints || contourData.pathPoints.length < 3) {
-      console.warn('[AddContour] No cached contour data available. pathPoints:', contourData?.pathPoints?.length);
+
+    if (contourData && contourData.pathPoints && contourData.pathPoints.length >= 3) {
+      const previewCanvas = canvasRef.current as any;
+      const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
+      const cw = contourCanvasInfo?.width ?? 1;
+      const ch = contourCanvasInfo?.height ?? 1;
+      const icx = contourCanvasInfo?.imageCanvasX ?? 0;
+      const icy = contourCanvasInfo?.imageCanvasY ?? 0;
+      const ds = contourCanvasInfo?.downsampleScale ?? 1;
+      const icw = imageInfo ? Math.round(imageInfo.image.width * ds) : cw;
+      const ich = imageInfo ? Math.round(imageInfo.image.height * ds) : ch;
+
+      setLockedContour({
+        label: cutContourLabel,
+        pathPoints: [...contourData.pathPoints],
+        previewPathPoints: [...contourData.previewPathPoints],
+        widthInches: contourData.widthInches,
+        heightInches: contourData.heightInches,
+        imageOffsetX: contourData.imageOffsetX,
+        imageOffsetY: contourData.imageOffsetY,
+        backgroundColor: contourData.backgroundColor,
+        effectiveDPI: contourData.effectiveDPI,
+        minPathX: contourData.minPathX,
+        minPathY: contourData.minPathY,
+        bleedInches: contourData.bleedInches,
+        contourCanvasWidth: cw,
+        contourCanvasHeight: ch,
+        imageCanvasX: icx,
+        imageCanvasY: icy,
+        imageCanvasWidth: icw,
+        imageCanvasHeight: ich,
+      });
+    } else if (shapeSettings.enabled) {
+      const shapeData = generateShapePathPointsInches(shapeSettings, resizeSettings);
+      setLockedContour({
+        label: cutContourLabel,
+        pathPoints: shapeData.pathPoints,
+        previewPathPoints: shapeData.pathPoints,
+        widthInches: shapeData.widthInches,
+        heightInches: shapeData.heightInches,
+        imageOffsetX: shapeData.imageOffsetX,
+        imageOffsetY: shapeData.imageOffsetY,
+        backgroundColor: '#ffffff',
+        effectiveDPI: 300,
+        minPathX: 0,
+        minPathY: 0,
+        bleedInches: shapeData.bleedInches,
+        contourCanvasWidth: 1,
+        contourCanvasHeight: 1,
+        imageCanvasX: 0,
+        imageCanvasY: 0,
+        imageCanvasWidth: 1,
+        imageCanvasHeight: 1,
+      });
+    } else {
+      console.warn('[AddContour] No contour data available');
       toast({
         title: "No contour available",
         description: "Please wait for the contour to finish generating before adding another.",
@@ -141,40 +195,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       return;
     }
 
-    const previewCanvas = canvasRef.current as any;
-    const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
-    const cw = contourCanvasInfo?.width ?? 1;
-    const ch = contourCanvasInfo?.height ?? 1;
-    const icx = contourCanvasInfo?.imageCanvasX ?? 0;
-    const icy = contourCanvasInfo?.imageCanvasY ?? 0;
-    const ds = contourCanvasInfo?.downsampleScale ?? 1;
-    const icw = imageInfo ? Math.round(imageInfo.image.width * ds) : cw;
-    const ich = imageInfo ? Math.round(imageInfo.image.height * ds) : ch;
-
-    setLockedContour({
-      label: cutContourLabel,
-      pathPoints: [...contourData.pathPoints],
-      previewPathPoints: [...contourData.previewPathPoints],
-      widthInches: contourData.widthInches,
-      heightInches: contourData.heightInches,
-      imageOffsetX: contourData.imageOffsetX,
-      imageOffsetY: contourData.imageOffsetY,
-      backgroundColor: contourData.backgroundColor,
-      effectiveDPI: contourData.effectiveDPI,
-      minPathX: contourData.minPathX,
-      minPathY: contourData.minPathY,
-      bleedInches: contourData.bleedInches,
-      contourCanvasWidth: cw,
-      contourCanvasHeight: ch,
-      imageCanvasX: icx,
-      imageCanvasY: icy,
-      imageCanvasWidth: icw,
-      imageCanvasHeight: ich,
-    });
-
     setCutContourLabel(newLabel);
     setShowApplyAddDropdown(false);
-  }, [cutContourLabel, toast, imageInfo]);
+  }, [cutContourLabel, toast, imageInfo, shapeSettings, resizeSettings]);
 
   const handleImageUpload = useCallback((file: File, image: HTMLImageElement) => {
     try {
