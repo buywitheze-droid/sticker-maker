@@ -2,6 +2,7 @@ import type { ShapeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict, type PDFImage } from 'pdf-lib';
 import { cropImageToContent } from './image-crop';
 import { simplifyPathForPDF, buildSmoothPdfPath } from './contour-outline';
+import { addSpotColorVectorsToPDF } from './spot-color-vectors';
 
 async function createClippedShapeImage(
   image: HTMLImageElement,
@@ -222,7 +223,7 @@ export async function downloadShapePDF(
   shapeSettings: ShapeSettings,
   resizeSettings: ResizeSettings,
   filename: string,
-  _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
+  spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
   _singleArtboard?: boolean,
   cutContourLabel: string = 'CutContour',
   lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number; imageOffsetX: number; imageOffsetY: number } | null
@@ -367,6 +368,19 @@ export async function downloadShapePDF(
       width: imageWidth,
       height: imageHeight,
     });
+  }
+
+  if (spotColors && spotColors.length > 0) {
+    const pageWidthInches = widthPts / 72;
+    const pageHeightInches = heightPts / 72;
+    const imgOffsetXInches = (pageWidthInches - resizeSettings.widthInches) / 2;
+    const imgOffsetYInches = (pageHeightInches - resizeSettings.heightInches) / 2;
+    const spotLabels = addSpotColorVectorsToPDF(
+      pdfDoc, page, image, spotColors,
+      resizeSettings.widthInches, resizeSettings.heightInches,
+      pageHeightInches, imgOffsetXInches, imgOffsetYInches
+    );
+    console.log('[downloadShapePDF] Added spot color layers:', spotLabels);
   }
   
   let resources = page.node.Resources();

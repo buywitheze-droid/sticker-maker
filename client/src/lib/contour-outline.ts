@@ -2,6 +2,7 @@ import type { StrokeSettings, ResizeSettings } from "@/lib/types";
 import { PDFDocument, PDFName, PDFArray, PDFDict } from 'pdf-lib';
 import { removeLoopsWithClipper, ensureClockwise, detectSelfIntersections, gaussianSmoothContour, subsamplePolygon } from "@/lib/clipper-path";
 import { getContourWorkerManager } from "@/lib/contour-worker-manager";
+import { addSpotColorVectorsToPDF } from "@/lib/spot-color-vectors";
 
 export function simplifyPathForPDF(points: Array<{x: number; y: number}>, epsilon: number = 1.0): Array<{x: number; y: number}> {
   if (points.length <= 2) return points;
@@ -1762,7 +1763,7 @@ export async function downloadContourPDF(
   resizeSettings: ResizeSettings,
   filename: string,
   cachedContourData?: CachedContourData,
-  _spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
+  spotColors?: Array<{hex: string; rgb: {r: number; g: number; b: number}; spotWhite: boolean; spotGloss: boolean; spotWhiteName?: string; spotGlossName?: string}>,
   _singleArtboard?: boolean,
   cutContourLabel: string = 'CutContour',
   lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number } | null
@@ -1931,6 +1932,15 @@ export async function downloadContourPDF(
     width: imageWidthPts,
     height: imageHeightPts,
   });
+
+  if (spotColors && spotColors.length > 0) {
+    const spotLabels = addSpotColorVectorsToPDF(
+      pdfDoc, page, image, spotColors,
+      resizeSettings.widthInches, resizeSettings.heightInches,
+      heightInches, imageOffsetX, imageOffsetY
+    );
+    console.log('[downloadContourPDF] Added spot color layers:', spotLabels);
+  }
   
   const context = pdfDoc.context;
   
