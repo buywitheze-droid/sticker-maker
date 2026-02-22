@@ -226,7 +226,8 @@ export async function downloadShapePDF(
   spotColors?: SpotColorInput[],
   singleArtboard: boolean = true,
   cutContourLabel: string = 'CutContour',
-  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number; imageOffsetX: number; imageOffsetY: number } | null
+  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number; imageOffsetX: number; imageOffsetY: number } | null,
+  skipCutContour: boolean = false
 ): Promise<void> {
   // Calculate shape size based on design size + offset
   const { widthInches, heightInches } = calculateShapeDimensions(
@@ -370,6 +371,7 @@ export async function downloadShapePDF(
     });
   }
 
+  if (!skipCutContour) {
   let resources = page.node.Resources();
   
   const tintFunction = context.obj({
@@ -398,7 +400,6 @@ export async function downloadShapePDF(
     (colorSpaceDict as PDFDict).set(PDFName.of(cutContourLabel), separationRef);
   }
   
-  // Cut line path (at exact cut position, without bleed)
   let pathOps = 'q\n';
   pathOps += `/${cutContourLabel} CS 1 SCN\n`;
   pathOps += '0.5 w\n';
@@ -409,7 +410,7 @@ export async function downloadShapePDF(
   const cutCornerRadiusPts = (shapeSettings.cornerRadius || 0.25) * 72;
   
   if (shapeSettings.type === 'circle') {
-    const r = Math.min(shapeWidthPts, shapeHeightPts) / 2; // Without bleed
+    const r = Math.min(shapeWidthPts, shapeHeightPts) / 2;
     const k = 0.5522847498;
     const rk = r * k;
     const circleCy = outlineCy;
@@ -419,7 +420,7 @@ export async function downloadShapePDF(
     pathOps += `${outlineCx - r} ${circleCy - rk} ${outlineCx - rk} ${circleCy - r} ${outlineCx} ${circleCy - r} c\n`;
     pathOps += `${outlineCx + rk} ${circleCy - r} ${outlineCx + r} ${circleCy - rk} ${outlineCx + r} ${circleCy} c\n`;
   } else if (shapeSettings.type === 'oval') {
-    const rx = shapeWidthPts / 2; // Without bleed
+    const rx = shapeWidthPts / 2;
     const ry = shapeHeightPts / 2;
     const k = 0.5522847498;
     const rxk = rx * k;
@@ -430,7 +431,7 @@ export async function downloadShapePDF(
     pathOps += `${outlineCx - rx} ${outlineCy - ryk} ${outlineCx - rxk} ${outlineCy - ry} ${outlineCx} ${outlineCy - ry} c\n`;
     pathOps += `${outlineCx + rxk} ${outlineCy - ry} ${outlineCx + rx} ${outlineCy - ryk} ${outlineCx + rx} ${outlineCy} c\n`;
   } else if (shapeSettings.type === 'square') {
-    const size = Math.min(shapeWidthPts, shapeHeightPts); // Without bleed
+    const size = Math.min(shapeWidthPts, shapeHeightPts);
     const sx = (widthPts - size) / 2;
     const sy = (heightPts - size) / 2;
     pathOps += `${sx} ${sy} m\n`;
@@ -445,7 +446,6 @@ export async function downloadShapePDF(
   } else if (shapeSettings.type === 'rounded-rectangle') {
     pathOps += getRoundedRectPath(bleedPts, bleedPts, shapeWidthPts, shapeHeightPts, cutCornerRadiusPts);
   } else {
-    // Rectangle without bleed
     pathOps += `${bleedPts} ${bleedPts} m\n`;
     pathOps += `${bleedPts + shapeWidthPts} ${bleedPts} l\n`;
     pathOps += `${bleedPts + shapeWidthPts} ${bleedPts + shapeHeightPts} l\n`;
@@ -468,8 +468,9 @@ export async function downloadShapePDF(
   } else {
     page.node.set(PDFName.of('Contents'), outlineStreamRef);
   }
+  }
   
-  if (lockedContour && lockedContour.pathPoints.length > 2) {
+  if (!skipCutContour && lockedContour && lockedContour.pathPoints.length > 2) {
     const lcPageHeight = lockedContour.heightInches;
     const lcImgOffX = lockedContour.imageOffsetX;
     const lcImgOffY = lockedContour.imageOffsetY;
@@ -544,7 +545,6 @@ export async function downloadShapePDF(
       pdfDoc, page, image, spotColors,
       resizeSettings.widthInches, resizeSettings.heightInches,
       pageHeightInches, imgOffsetXInches, imgOffsetYInches,
-      singleArtboard, widthPts, heightPts
     );
     console.log('[downloadShapePDF] Added spot color vector layers:', spotLabels);
   }

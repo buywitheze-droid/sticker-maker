@@ -2,11 +2,11 @@ import ImageEditor from "@/components/image-editor";
 
 export default function StickerMaker() {
   return (
-    <div className="min-h-screen bg-black">
-      <header className="bg-black border-b border-gray-800 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+    <div className="h-screen flex flex-col bg-black overflow-hidden">
+      <header className="flex-shrink-0 bg-black border-b border-gray-800 px-4 py-2">
+        <div className="flex items-center justify-between">
           <h1
-            className="text-2xl font-black tracking-widest"
+            className="text-xl font-black tracking-widest"
             style={{
               fontFamily: "'Orbitron', sans-serif",
               background: 'linear-gradient(90deg, #22c55e, #eab308, #f97316, #ec4899, #22c55e)',
@@ -18,11 +18,11 @@ export default function StickerMaker() {
               filter: 'drop-shadow(0 0 8px rgba(34,197,94,0.6)) drop-shadow(0 0 16px rgba(236,72,153,0.4))',
             }}
           >NEON TRANSFERS</h1>
-          <span className="text-sm text-gray-400 font-medium">Powered by <span className="text-white font-semibold">DTFMASTERS</span></span>
+          <span className="text-xs text-gray-400 font-medium">Powered by <span className="text-white font-semibold">DTFMASTERS</span></span>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <main className="flex-1 min-h-0">
         <ImageEditor />
       </main>
     </div>

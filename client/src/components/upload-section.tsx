@@ -1,9 +1,19 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { Upload } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import type { ImageInfo, ResizeSettings } from "./image-editor";
 
+const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.pdf'];
+const GRADIENT_COLORS = [
+  { bg: 'rgb(34, 197, 94)', glow: 'rgba(34, 197, 94, 0.5)' },
+  { bg: 'rgb(234, 179, 8)', glow: 'rgba(234, 179, 8, 0.5)' },
+  { bg: 'rgb(249, 115, 22)', glow: 'rgba(249, 115, 22, 0.5)' },
+  { bg: 'rgb(236, 72, 153)', glow: 'rgba(236, 72, 153, 0.5)' },
+];
+
 interface UploadSectionProps {
-  onImageUpload: (file: File, image: HTMLImageElement) => void;
+  onImageUpload: (file: File, image: HTMLImageElement | null) => void;
   showCutLineInfo?: boolean;
   imageInfo?: ImageInfo | null;
   resizeSettings?: ResizeSettings | null;
@@ -11,22 +21,76 @@ interface UploadSectionProps {
 }
 
 export default function UploadSection({ onImageUpload, showCutLineInfo = false, imageInfo, resizeSettings, stickerSize }: UploadSectionProps) {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const handleFileUpload = useCallback(async (file: File) => {
-    if (file.type !== 'image/png' && !file.name.toLowerCase().endsWith('.png')) {
-      alert('Please upload a PNG file only.');
+    const ext = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || ext.endsWith('.pdf');
+    const isImage = ACCEPTED_TYPES.includes(file.type) || ACCEPTED_EXTENSIONS.some(e => ext.endsWith(e));
+
+    if (!isImage && !isPdf) {
+      toast({ title: "Unsupported format", description: "Please upload a PNG, JPEG, WebP, or PDF file.", variant: "destructive" });
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
+    if (isPdf) {
+      onImageUpload(file, null as unknown as HTMLImageElement);
+      return;
+    }
+
+    const img = new Image();
+    const originalUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(originalUrl);
+
+      const c = document.createElement('canvas');
+      c.width = Math.min(img.width, 512);
+      c.height = Math.min(img.height, 512);
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const { data } = ctx.getImageData(0, 0, c.width, c.height);
+        let hasTransparency = false;
+        for (let i = 3; i < data.length; i += 16) {
+          if (data[i] < 250) { hasTransparency = true; break; }
+        }
+        if (!hasTransparency) {
+          toast({
+            title: "Solid background detected",
+            description: "This image has no transparent background. For best print results, remove the background first.",
+            variant: "destructive",
+          });
+        }
+      }
+
+      const isPng = file.type === 'image/png' || ext.endsWith('.png');
+      if (!isPng) {
+        const cvs = document.createElement('canvas');
+        cvs.width = img.width;
+        cvs.height = img.height;
+        const cctx = cvs.getContext('2d');
+        if (!cctx) { onImageUpload(file, img); return; }
+        cctx.drawImage(img, 0, 0);
+        cvs.toBlob((blob) => {
+          if (!blob) { onImageUpload(file, img); return; }
+          const pngFile = new File([blob], file.name.replace(/\.\w+$/, '.png'), { type: 'image/png' });
+          const pngImg = new Image();
+          const u = URL.createObjectURL(blob);
+          pngImg.onload = () => { URL.revokeObjectURL(u); onImageUpload(pngFile, pngImg); };
+          pngImg.onerror = () => { URL.revokeObjectURL(u); onImageUpload(file, img); };
+          pngImg.src = u;
+        }, 'image/png');
+      } else {
         onImageUpload(file, img);
-      };
-      img.src = e.target?.result as string;
+      }
     };
-    reader.readAsDataURL(file);
-  }, [onImageUpload]);
+    img.onerror = () => {
+      URL.revokeObjectURL(originalUrl);
+      toast({ title: "Failed to load image", description: "Please try another file.", variant: "destructive" });
+    };
+    img.src = originalUrl;
+  }, [onImageUpload, toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -44,40 +108,34 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
     if (e.target.files && e.target.files.length > 0) {
       handleFileUpload(e.target.files[0]);
     }
+    e.target.value = '';
   }, [handleFileUpload]);
 
   const isEmptyState = !imageInfo;
-
-  const gradientColors = [
-    { bg: 'rgb(34, 197, 94)', glow: 'rgba(34, 197, 94, 0.5)' },
-    { bg: 'rgb(234, 179, 8)', glow: 'rgba(234, 179, 8, 0.5)' },
-    { bg: 'rgb(249, 115, 22)', glow: 'rgba(249, 115, 22, 0.5)' },
-    { bg: 'rgb(236, 72, 153)', glow: 'rgba(236, 72, 153, 0.5)' },
-  ];
 
   const [colorIndex, setColorIndex] = useState(0);
 
   useEffect(() => {
     if (!isEmptyState) return;
     const interval = setInterval(() => {
-      setColorIndex(prev => (prev + 1) % gradientColors.length);
+      setColorIndex(prev => (prev + 1) % GRADIENT_COLORS.length);
     }, 2000);
     return () => clearInterval(interval);
   }, [isEmptyState]);
 
-  const currentColor = gradientColors[colorIndex];
+  const currentColor = GRADIENT_COLORS[colorIndex];
 
   return (
-    <div className="w-full">
+    <div className={isEmptyState ? 'w-full' : 'flex-shrink-0'}>
       <div 
         onDrop={handleDrop}
         onDragOver={handleDragOver}
-        onClick={() => document.getElementById('imageInput')?.click()}
+        onClick={() => fileInputRef.current?.click()}
         className={`
-          rounded-2xl text-center cursor-pointer
+          text-center cursor-pointer
           ${isEmptyState 
-            ? 'p-10 hover:scale-[1.02] transform transition-transform duration-300' 
-            : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 px-4 py-2 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/40'
+            ? 'rounded-2xl p-10 hover:scale-[1.02] transform transition-transform duration-300' 
+            : 'rounded-md bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 px-5 py-1 shadow-md shadow-cyan-500/20 hover:shadow-cyan-400/30'
           }
         `}
         style={isEmptyState ? {
@@ -86,7 +144,7 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
           transition: 'background 1.5s ease-in-out, box-shadow 1.5s ease-in-out',
         } : undefined}
       >
-        <div className={`flex items-center ${isEmptyState ? 'flex-col' : 'gap-2'}`}>
+        <div className={`flex items-center ${isEmptyState ? 'flex-col' : 'gap-1.5'}`}>
           {isEmptyState && (
             <>
               <div className="w-20 h-20 rounded-2xl bg-white/30 backdrop-blur-sm shadow-inner flex items-center justify-center mb-5 border border-white/40">
@@ -96,24 +154,24 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
                 Make a Gangsheet
               </p>
               <p className="text-sm text-white/80 mb-4">
-                PNG files only
+                Preferred format&nbsp;:&nbsp; <span className="font-semibold text-white">PNG</span> with Transparent background
               </p>
             </>
           )}
           {!isEmptyState && (
-            <Upload className="w-4 h-4 text-white" />
+            <Upload className="w-3.5 h-3.5 text-white" />
           )}
           {!isEmptyState && (
-            <p className="font-medium text-white text-sm">
-              Add Design
+            <p className="font-medium text-white text-[11px] whitespace-nowrap">
+              Add
             </p>
           )}
         </div>
         <input 
           type="file" 
-          id="imageInput" 
+          ref={fileInputRef}
           className="hidden" 
-          accept=".png,image/png" 
+          accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf" 
           onChange={handleFileInputChange}
         />
       </div>

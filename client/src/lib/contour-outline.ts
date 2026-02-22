@@ -1783,7 +1783,8 @@ export async function downloadContourPDF(
   spotColors?: SpotColorInput[],
   singleArtboard: boolean = false,
   cutContourLabel: string = 'CutContour',
-  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number } | null
+  lockedContour?: { label: string; pathPoints: Array<{x: number; y: number}>; widthInches: number; heightInches: number } | null,
+  skipCutContour: boolean = false
 ): Promise<void> {
   try {
     console.log('[downloadContourPDF] Starting, cached:', !!cachedContourData);
@@ -1952,7 +1953,7 @@ export async function downloadContourPDF(
 
   const context = pdfDoc.context;
   
-  if (pathPoints.length > 2) {
+  if (!skipCutContour && pathPoints.length > 2) {
     
     const tintFunction = context.obj({
       FunctionType: 2,
@@ -1999,7 +2000,7 @@ export async function downloadContourPDF(
     }
   }
   
-  if (lockedContour && lockedContour.pathPoints.length > 2) {
+  if (!skipCutContour && lockedContour && lockedContour.pathPoints.length > 2) {
     if (lockedContour.label !== cutContourLabel) {
       const lockedTintFunction = context.obj({
         FunctionType: 2,
@@ -2052,7 +2053,6 @@ export async function downloadContourPDF(
       pdfDoc, page, image, spotColors,
       resizeSettings.widthInches, resizeSettings.heightInches,
       heightInches, imageOffsetX, imageOffsetY,
-      singleArtboard, widthPts, heightPts
     );
     console.log('[downloadContourPDF] Added spot color vector layers:', spotLabels);
   }

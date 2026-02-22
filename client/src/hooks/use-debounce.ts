@@ -27,6 +27,12 @@ export function useDebouncedCallback<T extends (...args: any[]) => void>(
     callbackRef.current = callback;
   }, [callback]);
 
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
   const debouncedCallback = useCallback((...args: Parameters<T>) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -50,6 +56,12 @@ export function useThrottledCallback<T extends (...args: any[]) => void>(
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const throttledCallback = useCallback((...args: Parameters<T>) => {
     const now = Date.now();

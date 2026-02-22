@@ -1,4 +1,4 @@
-import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage, PDFHexString } from 'pdf-lib';
 import { type SpotColorInput } from './contour-outline';
 import SpotColorWorker from './spot-color-worker?worker';
 
@@ -151,11 +151,12 @@ function appendContentStream(
   }
 }
 
-function addSpotColorRegionToPage(
+function addSpotColorRegionAsLayer(
   pdfDoc: PDFDocument,
   page: PDFPage,
   region: SpotColorRegion,
-  offsetPaths: Point[][]
+  offsetPaths: Point[][],
+  ocgRef: any
 ): void {
   const context = pdfDoc.context;
 
@@ -189,14 +190,37 @@ function addSpotColorRegionToPage(
   }
   (colorSpaceDict as PDFDict).set(PDFName.of(region.name), separationRef);
 
-  const pathOps = spotColorPathsToPDFOps(offsetPaths, region.name);
-  console.log(`[SpotColor PDF] ${region.name}: ${region.paths.length} contours, ${pathOps.length} chars ops`);
-
-  if (pathOps.length > 0) {
-    appendContentStream(page, context, pathOps);
+  let propertiesDict = pageResources.get(PDFName.of('Properties'));
+  if (!propertiesDict) {
+    propertiesDict = context.obj({});
+    (pageResources as PDFDict).set(PDFName.of('Properties'), propertiesDict);
   }
+  const ocgTag = `OC_${region.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  (propertiesDict as PDFDict).set(PDFName.of(ocgTag), ocgRef);
+
+  const validPaths = offsetPaths.filter(p => p.length >= 3);
+  if (validPaths.length === 0) return;
+
+  let ops = `/OC /${ocgTag} BDC\nq\n`;
+  ops += `/${region.name} cs 1 scn\n`;
+  for (const path of validPaths) {
+    const pts = path.map(p => ({ x: p.x * 72, y: p.y * 72 }));
+    ops += `${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)} m\n`;
+    for (let j = 1; j < pts.length; j++) {
+      ops += `${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)} l\n`;
+    }
+    ops += 'h\n';
+  }
+  ops += 'f*\nQ\nEMC\n';
+
+  console.log(`[SpotColor PDF] Layer "${region.name}": ${region.paths.length} contours, ${ops.length} chars`);
+  appendContentStream(page, context, ops);
 }
 
+/**
+ * Add spot color vectors to the same page as the raster image,
+ * each fluorescent color in its own named OCG layer.
+ */
 export async function addSpotColorVectorsToPDF(
   pdfDoc: PDFDocument,
   page: PDFPage,
@@ -207,9 +231,7 @@ export async function addSpotColorVectorsToPDF(
   pageHeightInches: number,
   imageOffsetXInches: number,
   imageOffsetYInches: number,
-  singleArtboard: boolean = false,
-  pageWidthPts?: number,
-  pageHeightPts?: number
+  rotationDeg: number = 0,
 ): Promise<string[]> {
   if (!spotColors || spotColors.length === 0) return [];
 
@@ -221,25 +243,96 @@ export async function addSpotColorVectorsToPDF(
   const regions = await traceColorRegionsAsync(image, spotColors, widthInches, heightInches);
   if (regions.length === 0) return [];
 
+  const context = pdfDoc.context;
   const addedLabels: string[] = [];
+  const ocgRefs: any[] = [];
+
+  // Reuse existing OCGs for same-named regions across multiple designs
+  const existingOcgTags = new Map<string, any>();
+  try {
+    const res = page.node.Resources();
+    const props = res?.get(PDFName.of('Properties'));
+    if (props instanceof PDFDict) {
+      const entries = props.entries();
+      for (const [key, val] of entries) {
+        existingOcgTags.set(key.toString().replace('/', ''), val);
+      }
+    }
+  } catch { /* first call, no properties yet */ }
+
+  // Design center in canvas coords (Y-down)
+  const designCx = imageOffsetXInches + widthInches / 2;
+  const designCy = imageOffsetYInches + heightInches / 2;
+  const rad = (-rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(rad);
+  const sinR = Math.sin(rad);
 
   for (const region of regions) {
     const offsetPaths = region.paths.map(path =>
-      path.map(p => ({
-        x: p.x + imageOffsetXInches,
-        y: pageHeightInches - (p.y + imageOffsetYInches)
-      }))
+      path.map(p => {
+        // Image-relative to image-centered
+        const relX = p.x - widthInches / 2;
+        const relY = p.y - heightInches / 2;
+        // Rotate around image center
+        const rotX = relX * cosR - relY * sinR;
+        const rotY = relX * sinR + relY * cosR;
+        // Translate to absolute page coords, flip Y for PDF
+        return {
+          x: designCx + rotX,
+          y: pageHeightInches - (designCy + rotY),
+        };
+      })
     );
 
-    if (singleArtboard) {
-      addSpotColorRegionToPage(pdfDoc, page, region, offsetPaths);
+    const ocgTag = `OC_${region.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    let ocgRef = existingOcgTags.get(ocgTag);
+    let isNewOcg = false;
+
+    if (!ocgRef) {
+      const ocgDict = context.obj({
+        Type: PDFName.of('OCG'),
+        Name: PDFHexString.fromText(region.name),
+      });
+      ocgRef = context.register(ocgDict);
+      isNewOcg = true;
+    }
+
+    if (isNewOcg) {
+      ocgRefs.push(ocgRef);
+    }
+
+    addSpotColorRegionAsLayer(pdfDoc, page, region, offsetPaths, ocgRef);
+    if (!addedLabels.includes(region.name)) {
       addedLabels.push(region.name);
-    } else {
-      const wPts = pageWidthPts || (widthInches + imageOffsetXInches * 2) * 72;
-      const hPts = pageHeightPts || pageHeightInches * 72;
-      const newPage = pdfDoc.addPage([wPts, hPts]);
-      addSpotColorRegionToPage(pdfDoc, newPage, region, offsetPaths);
-      addedLabels.push(region.name);
+    }
+  }
+
+  if (ocgRefs.length === 0) return addedLabels;
+
+  const catalog = pdfDoc.catalog;
+  let ocProperties = catalog.get(PDFName.of('OCProperties'));
+  if (!ocProperties) {
+    const ocgsArray = context.obj([...ocgRefs]);
+    const orderArray = context.obj([...ocgRefs]);
+    const onArray = context.obj([...ocgRefs]);
+    const dDict = context.obj({ ON: onArray, Order: orderArray, BaseState: PDFName.of('ON') });
+    ocProperties = context.obj({ OCGs: ocgsArray, D: dDict });
+    catalog.set(PDFName.of('OCProperties'), ocProperties);
+  } else {
+    const existingOCGs = (ocProperties as PDFDict).get(PDFName.of('OCGs'));
+    if (existingOCGs instanceof PDFArray) {
+      for (const ref of ocgRefs) existingOCGs.push(ref);
+    }
+    const dDict = (ocProperties as PDFDict).get(PDFName.of('D'));
+    if (dDict instanceof PDFDict) {
+      const order = dDict.get(PDFName.of('Order'));
+      if (order instanceof PDFArray) {
+        for (const ref of ocgRefs) order.push(ref);
+      }
+      const on = dDict.get(PDFName.of('ON'));
+      if (on instanceof PDFArray) {
+        for (const ref of ocgRefs) on.push(ref);
+      }
     }
   }
 

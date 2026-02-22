@@ -68,18 +68,12 @@ export async function downloadCanvas(
   if (shapeSettings?.enabled) {
     // Crop image to remove empty space before processing
     const croppedCanvas = cropImageToContent(image);
-    const sourceImage = croppedCanvas ? (() => {
+    const sourceImage: HTMLImageElement = croppedCanvas ? await new Promise((resolve, reject) => {
       const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load cropped image'));
       img.src = croppedCanvas.toDataURL();
-      return img;
-    })() : image;
-
-    // Wait for cropped image to load if created
-    if (croppedCanvas) {
-      await new Promise((resolve) => {
-        sourceImage.onload = resolve;
-      });
-    }
+    }) : image;
 
     // Calculate image placement with manual offset
     const imageAspect = sourceImage.width / sourceImage.height;

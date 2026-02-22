@@ -1,20 +1,36 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ImageIcon, Palette, Loader2, Maximize2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { ZoomIn, ZoomOut, RotateCcw, Loader2, Maximize2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour, type ImageTransform, type DesignItem } from "./image-editor";
 import { computeLayerRect } from "@/lib/types";
 
 const DPI_SCALE = 2;
-const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4'/%3E%3Cpath d='m19 4 0 4-4 0'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4'/%3E%3Cpath d='m5 20 0-4 4 0'/%3E%3C/svg%3E") 10 10, pointer`;
+const ZOOM_MIN_ABSOLUTE = 0.5;
+const ZOOM_MAX = 3;
+const ZOOM_WHEEL_FACTOR = 1.1;
+const ZOOM_BUTTON_FACTOR = 1.2;
+const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round'%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='white' stroke-width='2'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='white' stroke-width='2'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 11 11, pointer`;
 import { SpotPreviewData } from "./controls-section";
 import { CadCutBounds } from "@/lib/cadcut-bounds";
-import { processContourInWorker, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
+import { type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
 import { calculateShapeDimensions } from "@/lib/shape-outline";
 import { cropImageToContent, getImageBounds } from "@/lib/image-crop";
 import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
+
+function getResizeCursor(handleId: string, rotationDeg: number): string {
+  const baseMap: Record<string, number> = { tl: 315, tr: 45, br: 135, bl: 225 };
+  const base = baseMap[handleId] ?? 135;
+  const angle = ((base + rotationDeg) % 360 + 360) % 360;
+  if (angle >= 337.5 || angle < 22.5) return 'n-resize';
+  if (angle >= 22.5 && angle < 67.5) return 'ne-resize';
+  if (angle >= 67.5 && angle < 112.5) return 'e-resize';
+  if (angle >= 112.5 && angle < 157.5) return 'se-resize';
+  if (angle >= 157.5 && angle < 202.5) return 's-resize';
+  if (angle >= 202.5 && angle < 247.5) return 'sw-resize';
+  if (angle >= 247.5 && angle < 292.5) return 'w-resize';
+  return 'nw-resize';
+}
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
@@ -36,16 +52,30 @@ interface PreviewSectionProps {
   onTransformChange?: (transform: ImageTransform) => void;
   designs?: DesignItem[];
   selectedDesignId?: string | null;
+  selectedDesignIds?: Set<string>;
   onSelectDesign?: (id: string | null) => void;
+  onMultiSelect?: (ids: string[]) => void;
+  onMultiDragDelta?: (dnx: number, dny: number) => void;
+  onDuplicateSelected?: () => string[];
+  onInteractionEnd?: () => void;
+  onExpandArtboard?: () => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, onSelectDesign }, ref) => {
+  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard }, ref) => {
+    const { toast } = useToast();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const resizeLimitToastRef = useRef(0);
     const [zoom, setZoom] = useState(1);
-    const [panX, setPanX] = useState(0); // -100 to 100 (percent offset)
-    const [panY, setPanY] = useState(0); // -100 to 100 (percent offset)
+    const [panX, setPanX] = useState(0);
+    const [panY, setPanY] = useState(0);
+    const zoomRef = useRef(zoom);
+    const panXRef = useRef(panX);
+    const panYRef = useRef(panY);
+    zoomRef.current = zoom;
+    panXRef.current = panX;
+    panYRef.current = panY;
     const [backgroundColor, setBackgroundColor] = useState("transparent");
     const lastImageRef = useRef<string | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -58,6 +88,34 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastImageRenderRef = useRef<{x: number; y: number; width: number; height: number} | null>(null);
     const [previewDims, setPreviewDims] = useState({ width: 360, height: 360 });
+    const previewDimsRef = useRef(previewDims);
+    previewDimsRef.current = previewDims;
+
+    const getMinZoom = useCallback(() => {
+      const container = containerRef.current;
+      if (!container) return ZOOM_MIN_ABSOLUTE;
+      const dims = previewDimsRef.current;
+      const padFraction = 0.03;
+      const padX = Math.max(4, Math.round(dims.width * padFraction));
+      const padY = Math.max(4, Math.round(dims.height * padFraction));
+      const availW = container.clientWidth - padX * 2;
+      const availH = container.clientHeight - padY * 2;
+      if (availW <= 0 || availH <= 0 || dims.width <= 0 || dims.height <= 0) return ZOOM_MIN_ABSOLUTE;
+      const fitScale = Math.min(availW / dims.width, availH / dims.height);
+      return Math.max(ZOOM_MIN_ABSOLUTE, Math.round(fitScale * 20) / 20);
+    }, []);
+    const minZoomRef = useRef(1);
+
+    const clampPanValue = useCallback((px: number, py: number, z: number) => {
+      const dims = previewDimsRef.current;
+      const maxPanX = dims.width * 0.5 / z;
+      const maxPanY = dims.height * 0.5 / z;
+      return {
+        x: Math.max(-maxPanX, Math.min(maxPanX, px)),
+        y: Math.max(-maxPanY, Math.min(maxPanY, py)),
+      };
+    }, []);
+
     const spotPulseRef = useRef(1);
     const spotAnimFrameRef = useRef<number | null>(null);
     const renderRef = useRef<(() => void) | null>(null);
@@ -72,27 +130,109 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const [editingRotation, setEditingRotation] = useState(false);
     const [rotationInput, setRotationInput] = useState('0');
     const [overlappingDesigns, setOverlappingDesigns] = useState<Set<string>>(new Set());
-    const [previewBgColor, setPreviewBgColor] = useState('#ffffff');
-    const [showBgPicker, setShowBgPicker] = useState(false);
-
+    const [previewBgColor, setPreviewBgColor] = useState('#d1d5db');
     const isDraggingRef = useRef(false);
     const isResizingRef = useRef(false);
     const isRotatingRef = useRef(false);
+    const activeResizeHandleRef = useRef<string>('br');
+    const shiftKeyRef = useRef(false);
+    const isPanningRef = useRef(false);
+    const panStartRef = useRef<{x: number; y: number; px: number; py: number}>({x: 0, y: 0, px: 0, py: 0});
+    const spaceDownRef = useRef(false);
+    const isKeyboardScopeActiveRef = useRef(false);
+    const wheelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isWheelZoomingRef = useRef(false);
+    const snapGuidesRef = useRef<Array<{axis: 'x' | 'y'; pos: number}>>([]);
     const dragStartMouseRef = useRef<{x: number; y: number}>({x: 0, y: 0});
     const dragStartTransformRef = useRef<ImageTransform>({nx: 0.5, ny: 0.5, s: 1, rotation: 0});
     const resizeStartDistRef = useRef(0);
     const resizeStartSRef = useRef(1);
+    const resizeCommittedRef = useRef(false);
     const rotateStartAngleRef = useRef(0);
     const rotateStartRotationRef = useRef(0);
     const transformRef = useRef<ImageTransform>(designTransform || {nx: 0.5, ny: 0.5, s: 1, rotation: 0});
     const onTransformChangeRef = useRef(onTransformChange);
     onTransformChangeRef.current = onTransformChange;
 
-    useEffect(() => {
-      if (designTransform) {
-        transformRef.current = designTransform;
+    const isMarqueeRef = useRef(false);
+    const marqueeStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const marqueeEndRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const [marqueeRect, setMarqueeRect] = useState<{x: number; y: number; w: number; h: number} | null>(null);
+
+    const isMultiDragRef = useRef(false);
+    const multiDragStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+
+    const overlapCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const [bottomGlow, setBottomGlow] = useState(0);
+    const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const expandTimerStartRef = useRef<number>(0);
+    const glowAnimRef = useRef<number | null>(null);
+    const onExpandArtboardRef = useRef(onExpandArtboard);
+    onExpandArtboardRef.current = onExpandArtboard;
+    const bottomGlowActiveRef = useRef(false);
+
+    const startBottomGlow = useCallback(() => {
+      if (bottomGlowActiveRef.current) return;
+      bottomGlowActiveRef.current = true;
+      expandTimerStartRef.current = Date.now();
+      const tick = () => {
+        if (!bottomGlowActiveRef.current) return;
+        const elapsed = Date.now() - expandTimerStartRef.current;
+        setBottomGlow(Math.min(1, elapsed / 1900));
+        glowAnimRef.current = requestAnimationFrame(tick);
+      };
+      glowAnimRef.current = requestAnimationFrame(tick);
+      expandTimerRef.current = setTimeout(() => {
+        onExpandArtboardRef.current?.();
+        stopBottomGlow();
+      }, 1900);
+    }, []);
+
+    const stopBottomGlow = useCallback(() => {
+      bottomGlowActiveRef.current = false;
+      if (expandTimerRef.current) {
+        clearTimeout(expandTimerRef.current);
+        expandTimerRef.current = null;
       }
+      if (glowAnimRef.current !== null) {
+        cancelAnimationFrame(glowAnimRef.current);
+        glowAnimRef.current = null;
+      }
+      setBottomGlow(0);
+    }, []);
+    useEffect(() => () => stopBottomGlow(), [stopBottomGlow]);
+
+    const altDragDuplicatedRef = useRef(false);
+    const altKeyRef = useRef(false);
+
+    useEffect(() => {
+      transformRef.current = designTransform || { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
     }, [designTransform]);
+
+    useEffect(() => {
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (!isKeyboardScopeActiveRef.current) return;
+        shiftKeyRef.current = e.shiftKey;
+        altKeyRef.current = e.altKey;
+        if (e.code === 'Space' && !spaceDownRef.current) {
+          spaceDownRef.current = true;
+          e.preventDefault();
+        }
+      };
+      const onKeyUp = (e: KeyboardEvent) => {
+        if (!isKeyboardScopeActiveRef.current) return;
+        shiftKeyRef.current = e.shiftKey;
+        altKeyRef.current = e.altKey;
+        if (e.code === 'Space') {
+          spaceDownRef.current = false;
+          isPanningRef.current = false;
+        }
+      };
+      window.addEventListener('keydown', onKeyDown);
+      window.addEventListener('keyup', onKeyUp);
+      return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
+    }, []);
 
     const getDesignRect = useCallback(() => {
       if (!imageInfo || !designTransform) return null;
@@ -119,6 +259,23 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
       const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
       return Math.abs(lx) <= rect.width / 2 && Math.abs(ly) <= rect.height / 2;
+    }, [getDesignRect]);
+
+    const isClickInDesignInterior = useCallback((px: number, py: number): boolean => {
+      const rect = getDesignRect();
+      if (!rect) return false;
+      const z = Math.max(0.25, zoomRef.current);
+      const inv = DPI_SCALE / z;
+      const margin = Math.min(10 * inv, Math.min(rect.width, rect.height) * 0.25);
+      const t = transformRef.current;
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const rad = -(t.rotation * Math.PI) / 180;
+      const dx = px - cx;
+      const dy = py - cy;
+      const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+      return Math.abs(lx) <= (rect.width / 2 - margin) && Math.abs(ly) <= (rect.height / 2 - margin);
     }, [getDesignRect]);
 
     const getHandlePositions = useCallback(() => {
@@ -149,26 +306,39 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (handles.length === 0) return null;
       const rect = getDesignRect();
       if (!rect) return null;
-      const cx = rect.x + rect.width / 2;
-      const cy = rect.y + rect.height / 2;
-      const hitR = 14 * DPI_SCALE;
-      const rotOff = 24 * DPI_SCALE;
+      const z = Math.max(0.25, zoomRef.current);
+      const inv = DPI_SCALE / z;
+      const resizeR = 7 * inv;
+      const rotateOuterR = 18 * inv;
+
+      const tl = handles.find(h => h.id === 'tl');
+      const tr = handles.find(h => h.id === 'tr');
+      if (tl && tr) {
+        const topMidX = (tl.x + tr.x) / 2;
+        const topMidY = (tl.y + tr.y) / 2;
+        const rad = (transformRef.current.rotation * Math.PI) / 180;
+        const rotDist = 24 * inv;
+        const rotHandleX = topMidX + (-Math.sin(rad)) * rotDist;
+        const rotHandleY = topMidY + (-Math.cos(rad)) * rotDist;
+        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < resizeR) {
+          return { type: 'rotate', id: 'rot-top' };
+        }
+      }
 
       for (const h of handles) {
-        const dx = h.x - cx;
-        const dy = h.y - cy;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len > 0) {
-          const rotX = cx + (dx / len) * (len + rotOff);
-          const rotY = cy + (dy / len) * (len + rotOff);
-          if (Math.abs(px - rotX) < hitR && Math.abs(py - rotY) < hitR) {
-            return { type: 'rotate', id: `rot-${h.id}` };
-          }
-        }
-        if (Math.abs(px - h.x) < hitR && Math.abs(py - h.y) < hitR) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        if (d < resizeR) {
           return { type: 'resize', id: h.id };
         }
       }
+
+      for (const h of handles) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        if (d >= resizeR && d < rotateOuterR) {
+          return { type: 'rotate', id: `rot-${h.id}` };
+        }
+      }
+
       return null;
     }, [getHandlePositions, getDesignRect]);
 
@@ -181,49 +351,153 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return { x, y };
     }, []);
 
-    const clampTransformToArtboard = useCallback((t: ImageTransform, imgW?: number, imgH?: number, wInches?: number, hInches?: number): ImageTransform => {
-      const canvas = canvasRef.current;
-      const iw = imgW ?? imageInfo?.image.width;
-      const ih = imgH ?? imageInfo?.image.height;
+    const getMaxScaleForArtboard = useCallback((t: ImageTransform, wInches?: number, hInches?: number): number => {
       const wi = wInches ?? resizeSettings.widthInches;
       const hi = hInches ?? resizeSettings.heightInches;
-      if (!canvas || !iw || !ih) return t;
-      const rect = computeLayerRect(iw, ih, t, canvas.width, canvas.height, artboardWidth, artboardHeight, wi, hi);
+      if (!wi || !hi) return 10;
       const rad = (t.rotation * Math.PI) / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      const rotW = wi * cos + hi * sin;
+      const rotH = wi * sin + hi * cos;
+      const maxSx = artboardWidth / rotW;
+      const maxSy = artboardHeight / rotH;
+      return Math.min(maxSx, maxSy);
+    }, [artboardWidth, artboardHeight, resizeSettings.widthInches, resizeSettings.heightInches]);
+
+    const clampTransformToArtboard = useCallback((t: ImageTransform, opts?: { clampScale?: boolean; imgW?: number; imgH?: number; wInches?: number; hInches?: number }): ImageTransform => {
+      const canvas = canvasRef.current;
+      const iw = opts?.imgW ?? imageInfo?.image.width;
+      const ih = opts?.imgH ?? imageInfo?.image.height;
+      const wi = opts?.wInches ?? resizeSettings.widthInches;
+      const hi = opts?.hInches ?? resizeSettings.heightInches;
+      const shouldClampScale = opts?.clampScale ?? false;
+      if (!canvas || !iw || !ih) return t;
+
+      let clamped = t;
+      if (shouldClampScale) {
+        const maxS = getMaxScaleForArtboard(t, wi, hi);
+        const clampedS = Math.min(t.s, maxS);
+        if (clampedS !== t.s) clamped = { ...t, s: clampedS };
+      }
+
+      const rect = computeLayerRect(iw, ih, clamped, canvas.width, canvas.height, artboardWidth, artboardHeight, wi, hi);
+      const rad = (clamped.rotation * Math.PI) / 180;
       const cos = Math.abs(Math.cos(rad));
       const sin = Math.abs(Math.sin(rad));
       const rotW = rect.width * cos + rect.height * sin;
       const rotH = rect.width * sin + rect.height * cos;
 
-      const cx = t.nx * canvas.width;
-      const cy = t.ny * canvas.height;
+      const cx = clamped.nx * canvas.width;
+      const cy = clamped.ny * canvas.height;
       const halfW = rotW / 2;
       const halfH = rotH / 2;
 
       let newCx = cx;
       let newCy = cy;
-      if (cx - halfW < 0) newCx = halfW;
-      if (cx + halfW > canvas.width) newCx = canvas.width - halfW;
-      if (cy - halfH < 0) newCy = halfH;
-      if (cy + halfH > canvas.height) newCy = canvas.height - halfH;
 
-      return { ...t, nx: newCx / canvas.width, ny: newCy / canvas.height };
-    }, [imageInfo, artboardWidth, artboardHeight, resizeSettings.widthInches, resizeSettings.heightInches]);
+      // If the design fits within the artboard, clamp normally.
+      // If it's too large, allow positioning anywhere within the artboard
+      // center range so the user can still drag it.
+      if (rotW <= canvas.width) {
+        if (cx - halfW < 0) newCx = halfW;
+        if (cx + halfW > canvas.width) newCx = canvas.width - halfW;
+      } else {
+        newCx = Math.max(canvas.width - halfW, Math.min(halfW, cx));
+      }
+      if (rotH <= canvas.height) {
+        if (cy - halfH < 0) newCy = halfH;
+        if (cy + halfH > canvas.height) newCy = canvas.height - halfH;
+      } else {
+        newCy = Math.max(canvas.height - halfH, Math.min(halfH, cy));
+      }
+
+      return { ...clamped, nx: newCx / canvas.width, ny: newCy / canvas.height };
+    }, [imageInfo, artboardWidth, artboardHeight, resizeSettings.widthInches, resizeSettings.heightInches, getMaxScaleForArtboard]);
+
+    const overlappingDesignsRef = useRef(overlappingDesigns);
+    overlappingDesignsRef.current = overlappingDesigns;
 
     const checkPixelOverlap = useCallback(() => {
-      if (designs.length < 2) {
-        if (overlappingDesigns.size > 0) setOverlappingDesigns(new Set());
-        return;
-      }
       const canvas = canvasRef.current;
       if (!canvas) return;
+
+      if (designs.length === 0) {
+        if (overlappingDesignsRef.current.size > 0) {
+          setOverlappingDesigns(new Set());
+        }
+        return;
+      }
+
       const scale = 0.25;
       const sw = Math.max(60, Math.round(canvas.width * scale));
       const sh = Math.max(30, Math.round(canvas.height * scale));
-      const overlapping = new Set<string>();
 
-      const alphaBuffers: { id: string; data: Uint8ClampedArray }[] = [];
+      const designRects: Array<{id: string; left: number; top: number; right: number; bottom: number; design: DesignItem}> = [];
       for (const d of designs) {
+        const rect = computeLayerRect(
+          d.imageInfo.image.width, d.imageInfo.image.height,
+          d.transform, sw, sh,
+          artboardWidth, artboardHeight,
+          d.widthInches, d.heightInches,
+        );
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        const rad = Math.abs(d.transform.rotation * Math.PI / 180);
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const rotW = rect.width * cos + rect.height * sin;
+        const rotH = rect.width * sin + rect.height * cos;
+        designRects.push({ id: d.id, left: cx - rotW / 2, top: cy - rotH / 2, right: cx + rotW / 2, bottom: cy + rotH / 2, design: d });
+      }
+
+      // Mark any design that extends outside the artboard bounds
+      const outOfBounds = new Set<string>();
+      for (const dr of designRects) {
+        if (dr.left < -1 || dr.top < -1 || dr.right > sw + 1 || dr.bottom > sh + 1) {
+          outOfBounds.add(dr.id);
+        }
+      }
+
+      if (designs.length < 2) {
+        const prev = overlappingDesignsRef.current;
+        if (outOfBounds.size !== prev.size || Array.from(outOfBounds).some(id => !prev.has(id))) {
+          setOverlappingDesigns(outOfBounds);
+        }
+        return;
+      }
+
+      // Find AABB-overlapping pairs
+      const aabbPairs: [number, number][] = [];
+      for (let i = 0; i < designRects.length; i++) {
+        for (let j = i + 1; j < designRects.length; j++) {
+          const a = designRects[i], b = designRects[j];
+          if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+            aabbPairs.push([i, j]);
+          }
+        }
+      }
+
+      if (aabbPairs.length === 0 && outOfBounds.size === 0) {
+        if (overlappingDesignsRef.current.size > 0) setOverlappingDesigns(new Set());
+        return;
+      }
+      if (aabbPairs.length === 0) {
+        const prev = overlappingDesignsRef.current;
+        if (outOfBounds.size !== prev.size || Array.from(outOfBounds).some(id => !prev.has(id))) {
+          setOverlappingDesigns(outOfBounds);
+        }
+        return;
+      }
+
+      // Only rasterize designs involved in AABB overlaps
+      const neededSet = new Set<number>();
+      for (const [i, j] of aabbPairs) { neededSet.add(i); neededSet.add(j); }
+      const needed = Array.from(neededSet);
+
+      const alphaBuffers = new Map<number, Uint8ClampedArray>();
+      for (const idx of needed) {
+        const d = designRects[idx].design;
         const offscreen = document.createElement('canvas');
         offscreen.width = sw;
         offscreen.height = sh;
@@ -242,33 +516,34 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         octx.rotate((d.transform.rotation * Math.PI) / 180);
         octx.drawImage(d.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
         octx.restore();
-        const imgData = octx.getImageData(0, 0, sw, sh);
-        alphaBuffers.push({ id: d.id, data: imgData.data });
+        alphaBuffers.set(idx, octx.getImageData(0, 0, sw, sh).data);
       }
 
-      for (let i = 0; i < alphaBuffers.length; i++) {
-        for (let j = i + 1; j < alphaBuffers.length; j++) {
-          const a = alphaBuffers[i].data;
-          const b = alphaBuffers[j].data;
-          let found = false;
+      const overlapping = new Set<string>(outOfBounds);
+      for (const [i, j] of aabbPairs) {
+        const a = alphaBuffers.get(i);
+        const b = alphaBuffers.get(j);
+        if (!a || !b) continue;
+        let found = false;
+        for (let p = 3; p < a.length; p += 16) {
+          if (a[p] > 20 && b[p] > 20) { found = true; break; }
+        }
+        if (!found) {
           for (let p = 3; p < a.length; p += 4) {
-            if (a[p] > 20 && b[p] > 20) {
-              found = true;
-              break;
-            }
+            if (a[p] > 20 && b[p] > 20) { found = true; break; }
           }
-          if (found) {
-            overlapping.add(alphaBuffers[i].id);
-            overlapping.add(alphaBuffers[j].id);
-          }
+        }
+        if (found) {
+          overlapping.add(designRects[i].id);
+          overlapping.add(designRects[j].id);
         }
       }
 
-      const prev = overlappingDesigns;
+      const prev = overlappingDesignsRef.current;
       if (overlapping.size !== prev.size || Array.from(overlapping).some(id => !prev.has(id))) {
         setOverlappingDesigns(overlapping);
       }
-    }, [designs, artboardWidth, artboardHeight, overlappingDesigns]);
+    }, [designs, artboardWidth, artboardHeight]);
 
     const findDesignAtPoint = useCallback((px: number, py: number): string | null => {
       const canvas = canvasRef.current;
@@ -302,10 +577,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       if (selectedDesignId && imageInfo && onTransformChange) {
         const handleHit = hitTestHandles(local.x, local.y);
+
+        if (handleHit && handleHit.type === 'resize' && isClickInDesignInterior(local.x, local.y)) {
+          isDraggingRef.current = true;
+          altDragDuplicatedRef.current = false;
+          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          dragStartMouseRef.current = { x: clientX, y: clientY };
+          dragStartTransformRef.current = { ...transformRef.current };
+          return;
+        }
+
         if (handleHit) {
           if (handleHit.type === 'resize') {
             isResizingRef.current = true;
-            if (containerRef.current) containerRef.current.style.cursor = 'nwse-resize';
+            resizeCommittedRef.current = false;
+            activeResizeHandleRef.current = handleHit.id;
+            if (containerRef.current) containerRef.current.style.cursor = getResizeCursor(handleHit.id, transformRef.current.rotation);
             const rect = getDesignRect();
             if (rect) {
               const cx = rect.x + rect.width / 2;
@@ -315,7 +602,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             }
           } else {
             isRotatingRef.current = true;
-            if (containerRef.current) containerRef.current.style.cursor = 'grabbing';
+            if (containerRef.current) containerRef.current.style.cursor = ROTATE_CURSOR;
             const rect = getDesignRect();
             if (rect) {
               const cx = rect.x + rect.width / 2;
@@ -328,7 +615,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
         if (hitTestDesign(local.x, local.y)) {
+          if (selectedDesignIds.size > 1 && selectedDesignIds.has(selectedDesignId)) {
+            isMultiDragRef.current = true;
+            multiDragStartRef.current = { x: clientX, y: clientY };
+            altDragDuplicatedRef.current = false;
+            if (containerRef.current) containerRef.current.style.cursor = 'move';
+            return;
+          }
           isDraggingRef.current = true;
+          altDragDuplicatedRef.current = false;
           if (containerRef.current) containerRef.current.style.cursor = 'move';
           dragStartMouseRef.current = { x: clientX, y: clientY };
           dragStartTransformRef.current = { ...transformRef.current };
@@ -337,36 +632,154 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       const hitId = findDesignAtPoint(local.x, local.y);
-      if (hitId && hitId !== selectedDesignId) {
-        onSelectDesign?.(hitId);
+
+      if (hitId && selectedDesignIds.size > 1 && selectedDesignIds.has(hitId)) {
+        isMultiDragRef.current = true;
+        multiDragStartRef.current = { x: clientX, y: clientY };
+        altDragDuplicatedRef.current = false;
+        if (containerRef.current) containerRef.current.style.cursor = 'move';
         return;
       }
 
-      if (!hitId) {
-        onSelectDesign?.(null);
+      if (hitId) {
+        if (hitId !== selectedDesignId) {
+          onSelectDesign?.(hitId);
+        } else {
+          isDraggingRef.current = true;
+          altDragDuplicatedRef.current = false;
+          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          dragStartMouseRef.current = { x: clientX, y: clientY };
+          dragStartTransformRef.current = { ...transformRef.current };
+        }
+        return;
       }
-    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, getDesignRect, selectedDesignId, findDesignAtPoint, onSelectDesign]);
+
+      onSelectDesign?.(null);
+      isMarqueeRef.current = true;
+      marqueeStartRef.current = { x: local.x, y: local.y };
+      marqueeEndRef.current = { x: local.x, y: local.y };
+      setMarqueeRect(null);
+    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, isClickInDesignInterior, getDesignRect, selectedDesignId, selectedDesignIds, findDesignAtPoint, onSelectDesign]);
 
     const handleInteractionMove = useCallback((clientX: number, clientY: number) => {
-      if (!onTransformChange) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
 
+      if (isMarqueeRef.current) {
+        const local = canvasToLocal(clientX, clientY);
+        marqueeEndRef.current = { x: local.x, y: local.y };
+        const sx = marqueeStartRef.current.x;
+        const sy = marqueeStartRef.current.y;
+        setMarqueeRect({
+          x: Math.min(sx, local.x),
+          y: Math.min(sy, local.y),
+          w: Math.abs(local.x - sx),
+          h: Math.abs(local.y - sy),
+        });
+        return;
+      }
+
+      if (isMultiDragRef.current) {
+        if (altKeyRef.current && !altDragDuplicatedRef.current) {
+          altDragDuplicatedRef.current = true;
+          onDuplicateSelected?.();
+        }
+        const canvasRect = canvas.getBoundingClientRect();
+        const dx = clientX - multiDragStartRef.current.x;
+        const dy = clientY - multiDragStartRef.current.y;
+        const dnx = dx / canvasRect.width;
+        const dny = dy / canvasRect.height;
+        multiDragStartRef.current = { x: clientX, y: clientY };
+        onMultiDragDelta?.(dnx, dny);
+        return;
+      }
+
+      if (!onTransformChange) return;
+
       if (isDraggingRef.current) {
+        if (altKeyRef.current && !altDragDuplicatedRef.current) {
+          altDragDuplicatedRef.current = true;
+          onDuplicateSelected?.();
+        }
         const canvasRect = canvas.getBoundingClientRect();
         const dx = clientX - dragStartMouseRef.current.x;
         const dy = clientY - dragStartMouseRef.current.y;
         const dnx = dx / canvasRect.width;
         const dny = dy / canvasRect.height;
-        const unclamped = {
+        let unclamped = {
           ...dragStartTransformRef.current,
           nx: dragStartTransformRef.current.nx + dnx,
           ny: dragStartTransformRef.current.ny + dny,
         };
+
+        // Smart guides snapping
+        const SNAP_THRESHOLD = 0.008;
+        const guides: Array<{axis: 'x' | 'y'; pos: number}> = [];
+        const snapTargetsX = [0.5]; // artboard center
+        const snapTargetsY = [0.5];
+
+        for (const d of designs) {
+          if (d.id === selectedDesignId) continue;
+          snapTargetsX.push(d.transform.nx);
+          snapTargetsY.push(d.transform.ny);
+        }
+
+        let snappedNx = unclamped.nx;
+        let snappedNy = unclamped.ny;
+        let bestDx = SNAP_THRESHOLD;
+        let bestTx: number | null = null;
+        for (const tx of snapTargetsX) {
+          const dx = Math.abs(unclamped.nx - tx);
+          if (dx < bestDx) {
+            bestDx = dx;
+            bestTx = tx;
+          }
+        }
+        if (bestTx !== null) {
+          snappedNx = bestTx;
+          guides.push({ axis: 'x', pos: bestTx });
+        }
+        let bestDy = SNAP_THRESHOLD;
+        let bestTy: number | null = null;
+        for (const ty of snapTargetsY) {
+          const dy = Math.abs(unclamped.ny - ty);
+          if (dy < bestDy) {
+            bestDy = dy;
+            bestTy = ty;
+          }
+        }
+        if (bestTy !== null) {
+          snappedNy = bestTy;
+          guides.push({ axis: 'y', pos: bestTy });
+        }
+        unclamped = { ...unclamped, nx: snappedNx, ny: snappedNy };
+        snapGuidesRef.current = guides;
+
         const newTransform = clampTransformToArtboard(unclamped);
         transformRef.current = newTransform;
         onTransformChangeRef.current?.(newTransform);
-        checkPixelOverlap();
+
+        // Bottom-edge expand detection
+        if (canvas && artboardHeight < 24) {
+          const selDesign = designs.find(d => d.id === selectedDesignId);
+          if (selDesign) {
+            const wi = selDesign.widthInches * newTransform.s;
+            const hi = selDesign.heightInches * newTransform.s;
+            const rad = (newTransform.rotation * Math.PI) / 180;
+            const cosR = Math.abs(Math.cos(rad));
+            const sinR = Math.abs(Math.sin(rad));
+            const rotH = wi * sinR + hi * cosR;
+            const bottomEdge = newTransform.ny + (rotH / 2) / artboardHeight;
+
+            if (bottomEdge >= 0.92) {
+              startBottomGlow();
+            } else {
+              stopBottomGlow();
+            }
+          }
+        } else {
+          stopBottomGlow();
+        }
       } else if (isResizingRef.current) {
         const local = canvasToLocal(clientX, clientY);
         const rect = getDesignRect();
@@ -375,12 +788,19 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const cy = rect.y + rect.height / 2;
           const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
           const ratio = dist / Math.max(resizeStartDistRef.current, 1);
-          const newS = Math.max(0.1, Math.min(10, resizeStartSRef.current * ratio));
+          if (!resizeCommittedRef.current && Math.abs(ratio - 1) < 0.04) return;
+          resizeCommittedRef.current = true;
+          const maxS = getMaxScaleForArtboard(transformRef.current);
+          const rawS = resizeStartSRef.current * ratio;
+          const newS = Math.max(0.1, Math.min(maxS, rawS));
+          if (rawS > maxS && Date.now() - resizeLimitToastRef.current > 3000) {
+            resizeLimitToastRef.current = Date.now();
+            toast({ title: "Design fills the sheet", description: "Try a larger gangsheet size to fit bigger designs." });
+          }
           const unclamped = { ...transformRef.current, s: newS };
-          const newTransform = clampTransformToArtboard(unclamped);
+          const newTransform = clampTransformToArtboard(unclamped, { clampScale: true });
           transformRef.current = newTransform;
           onTransformChangeRef.current?.(newTransform);
-          checkPixelOverlap();
         }
       } else if (isRotatingRef.current) {
         const local = canvasToLocal(clientX, clientY);
@@ -392,52 +812,125 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const delta = ((angle - rotateStartAngleRef.current) * 180) / Math.PI;
           let newRot = rotateStartRotationRef.current + delta;
           newRot = ((newRot % 360) + 360) % 360;
-          const newTransform = { ...transformRef.current, rotation: Math.round(newRot) };
+          if (shiftKeyRef.current) {
+            newRot = Math.round(newRot / 15) * 15;
+          }
+          const rotated = { ...transformRef.current, rotation: Math.round(newRot) };
+          const newTransform = clampTransformToArtboard(rotated);
           transformRef.current = newTransform;
           onTransformChangeRef.current?.(newTransform);
-          checkPixelOverlap();
         }
       }
-    }, [onTransformChange, canvasToLocal, getDesignRect, clampTransformToArtboard, checkPixelOverlap]);
+    }, [onTransformChange, canvasToLocal, getDesignRect, clampTransformToArtboard, getMaxScaleForArtboard, toast, onMultiDragDelta, onDuplicateSelected, startBottomGlow, stopBottomGlow, designs, selectedDesignId, artboardHeight]);
 
     useEffect(() => {
-      checkPixelOverlap();
-    }, [designs]);
-
-    useEffect(() => {
-      if (!showBgPicker) return;
-      const close = (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-        if (!target.closest('[data-bg-picker]')) setShowBgPicker(false);
-      };
-      document.addEventListener('mousedown', close);
-      return () => document.removeEventListener('mousedown', close);
-    }, [showBgPicker]);
+      if (overlapCheckTimerRef.current) clearTimeout(overlapCheckTimerRef.current);
+      overlapCheckTimerRef.current = setTimeout(() => { checkPixelOverlap(); }, 150);
+      return () => { if (overlapCheckTimerRef.current) clearTimeout(overlapCheckTimerRef.current); };
+    }, [checkPixelOverlap]);
 
     const handleInteractionEnd = useCallback(() => {
+      if (isMarqueeRef.current) {
+        isMarqueeRef.current = false;
+        const mr = marqueeRect;
+        setMarqueeRect(null);
+        const cvs = canvasRef.current;
+        if (mr && mr.w > 4 && mr.h > 4 && cvs) {
+          const hitIds: string[] = [];
+          for (const d of designs) {
+            const rect = computeLayerRect(
+              d.imageInfo.image.width, d.imageInfo.image.height,
+              d.transform, cvs.width, cvs.height,
+              artboardWidth, artboardHeight,
+              d.widthInches, d.heightInches,
+            );
+            const dcx = rect.x + rect.width / 2;
+            const dcy = rect.y + rect.height / 2;
+            const dhw = rect.width / 2;
+            const dhh = rect.height / 2;
+            if (dcx + dhw > mr.x && dcx - dhw < mr.x + mr.w &&
+                dcy + dhh > mr.y && dcy - dhh < mr.y + mr.h) {
+              hitIds.push(d.id);
+            }
+          }
+          if (hitIds.length > 0) {
+            onMultiSelect?.(hitIds);
+          }
+        }
+        return;
+      }
+
+      if (isMultiDragRef.current) {
+        isMultiDragRef.current = false;
+        altDragDuplicatedRef.current = false;
+        stopBottomGlow();
+        if (containerRef.current) containerRef.current.style.cursor = 'default';
+        onInteractionEnd?.();
+        return;
+      }
+
+      const wasInteracting = isDraggingRef.current || isResizingRef.current || isRotatingRef.current;
       isDraggingRef.current = false;
       isResizingRef.current = false;
       isRotatingRef.current = false;
+      resizeCommittedRef.current = false;
+      altDragDuplicatedRef.current = false;
+      snapGuidesRef.current = [];
+      stopBottomGlow();
       if (containerRef.current) containerRef.current.style.cursor = 'default';
       checkPixelOverlap();
-    }, [checkPixelOverlap]);
+      if (wasInteracting) onInteractionEnd?.();
+    }, [checkPixelOverlap, onInteractionEnd, marqueeRect, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow]);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
+      if (e.button === 1 || (e.button === 0 && spaceDownRef.current)) {
+        isPanningRef.current = true;
+        panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+        if (containerRef.current) containerRef.current.style.cursor = 'grabbing';
+        return;
+      }
       handleInteractionStart(e.clientX, e.clientY);
-    }, [handleInteractionStart]);
+    }, [handleInteractionStart, panX, panY]);
+
+    const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+      if (!selectedDesignId || !onTransformChange) return;
+      const local = canvasToLocal(e.clientX, e.clientY);
+      const handleHit = hitTestHandles(local.x, local.y);
+      if (handleHit?.type === 'rotate') {
+        const updated = { ...transformRef.current, rotation: 0 };
+        transformRef.current = updated;
+        onTransformChange(updated);
+      }
+    }, [selectedDesignId, onTransformChange, canvasToLocal, hitTestHandles]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-      if (isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
+      if (isPanningRef.current) {
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        const rawPx = panStartRef.current.px + dx / zoom;
+        const rawPy = panStartRef.current.py + dy / zoom;
+        const clamped = clampPanValue(rawPx, rawPy, zoom);
+        setPanX(clamped.x);
+        setPanY(clamped.y);
+        return;
+      }
+      if (isMarqueeRef.current || isMultiDragRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
         handleInteractionMove(e.clientX, e.clientY);
         return;
       }
       if (!containerRef.current) return;
+      if (spaceDownRef.current) {
+        containerRef.current.style.cursor = 'grab';
+        return;
+      }
       const local = canvasToLocal(e.clientX, e.clientY);
       if (imageInfo && selectedDesignId) {
         const handleHit = hitTestHandles(local.x, local.y);
         if (handleHit) {
-          containerRef.current.style.cursor = handleHit.type === 'resize' ? 'nwse-resize' : ROTATE_CURSOR;
+          containerRef.current.style.cursor = handleHit.type === 'resize'
+            ? getResizeCursor(handleHit.id, transformRef.current.rotation)
+            : ROTATE_CURSOR;
           return;
         }
         if (hitTestDesign(local.x, local.y)) {
@@ -447,13 +940,28 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       const hitId = findDesignAtPoint(local.x, local.y);
       containerRef.current.style.cursor = hitId ? 'pointer' : 'default';
-    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, hitTestHandles, hitTestDesign, findDesignAtPoint]);
+    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, hitTestHandles, hitTestDesign, findDesignAtPoint, zoom, clampPanValue]);
 
     const handleMouseUp = useCallback(() => {
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        if (containerRef.current) containerRef.current.style.cursor = spaceDownRef.current ? 'grab' : 'default';
+        return;
+      }
       handleInteractionEnd();
     }, [handleInteractionEnd]);
 
+    const handleMouseEnter = useCallback(() => {
+      isKeyboardScopeActiveRef.current = true;
+    }, []);
+
     const handleMouseLeave = useCallback(() => {
+      isKeyboardScopeActiveRef.current = false;
+      spaceDownRef.current = false;
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        return;
+      }
       handleInteractionEnd();
     }, [handleInteractionEnd]);
 
@@ -481,8 +989,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const containerHeight = containerRef.current.clientHeight - viewPadding * 2;
       const scaleX = containerWidth / previewDims.width;
       const scaleY = containerHeight / previewDims.height;
-      const fitZoom = Math.min(scaleX, scaleY, 1); // max at 100%
-      setZoom(Math.max(1, Math.round(fitZoom * 20) / 20)); // round to 5% steps
+      const fitZoom = Math.min(scaleX, scaleY);
+      setZoom(Math.max(minZoomRef.current, Math.min(ZOOM_MAX, Math.round(fitZoom * 20) / 20)));
       setPanX(0);
       setPanY(0);
     }, [previewDims.height, previewDims.width]);
@@ -494,14 +1002,48 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       setPanY(0);
     }, []);
     
-    // Mouse wheel zoom handler
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoom(prev => Math.max(1, Math.min(3, prev + delta)));
+    useEffect(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      const onWheel = (e: WheelEvent) => {
+        e.preventDefault();
+        isWheelZoomingRef.current = true;
+        if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+        wheelTimeoutRef.current = setTimeout(() => { isWheelZoomingRef.current = false; }, 200);
+
+        const oldZoom = zoomRef.current;
+        const factor = e.deltaY > 0 ? 1 / ZOOM_WHEEL_FACTOR : ZOOM_WHEEL_FACTOR;
+        const effectiveMin = minZoomRef.current;
+        const newZoom = Math.max(effectiveMin, Math.min(ZOOM_MAX, oldZoom * factor));
+        if (newZoom === oldZoom) return;
+
+        const rect = el.getBoundingClientRect();
+        const cursorX = e.clientX - (rect.left + rect.width / 2);
+        const cursorY = e.clientY - (rect.top + rect.height / 2);
+
+        const ratio = newZoom / oldZoom;
+        const oldPx = panXRef.current;
+        const oldPy = panYRef.current;
+        const rawPanX = oldPx - (cursorX / oldZoom) * (ratio - 1);
+        const rawPanY = oldPy - (cursorY / oldZoom) * (ratio - 1);
+        const dims = previewDimsRef.current;
+        const maxPx = dims.width * 0.5 / newZoom;
+        const maxPy = dims.height * 0.5 / newZoom;
+        const clampedPanX = Math.max(-maxPx, Math.min(maxPx, rawPanX));
+        const clampedPanY = Math.max(-maxPy, Math.min(maxPy, rawPanY));
+
+        setZoom(newZoom);
+        setPanX(clampedPanX);
+        setPanY(clampedPanY);
+      };
+      el.addEventListener('wheel', onWheel, { passive: false });
+      return () => {
+        el.removeEventListener('wheel', onWheel);
+        if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+      };
     }, []);
     
-    // Auto-set zoom to 75% for images with no empty space around them
+    // Reset zoom to 100% and pan to origin when a new image is loaded
     const knownImageKeysRef = useRef<Set<string>>(new Set());
     useEffect(() => {
       if (!imageInfo) {
@@ -522,24 +1064,33 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!knownImageKeysRef.current.has(imageKey)) {
         knownImageKeysRef.current.add(imageKey);
         setZoom(1);
+        setPanX(0);
+        setPanY(0);
       }
     }, [imageInfo]);
 
     useEffect(() => {
-      if (!containerRef.current) return;
+      const wrapper = containerRef.current?.parentElement?.parentElement;
+      if (!wrapper) return;
       const updateSize = () => {
-        const containerWidth = containerRef.current?.clientWidth || 360;
-        const safeWidth = Math.max(220, Math.min(720, containerWidth));
+        const availW = wrapper.clientWidth - 48;
+        const availH = wrapper.clientHeight - 48;
+        if (availW <= 0 || availH <= 0) return;
         const artboardAspect = artboardWidth / artboardHeight;
-        const canvasHeight = Math.round(safeWidth / artboardAspect);
-        setPreviewDims({
-          width: safeWidth,
-          height: canvasHeight
-        });
+        let w: number, h: number;
+        if (availW / availH > artboardAspect) {
+          h = Math.round(Math.max(200, availH));
+          w = Math.round(h * artboardAspect);
+        } else {
+          w = Math.round(Math.max(200, availW));
+          h = Math.round(w / artboardAspect);
+        }
+        setPreviewDims({ width: w, height: h });
+        requestAnimationFrame(() => { minZoomRef.current = getMinZoom(); });
       };
       updateSize();
       const observer = new ResizeObserver(updateSize);
-      observer.observe(containerRef.current);
+      observer.observe(wrapper);
       return () => observer.disconnect();
     }, [artboardWidth, artboardHeight]);
     
@@ -635,7 +1186,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     useImperativeHandle(ref, () => {
-      const canvas = canvasRef.current!;
+      const canvas = canvasRef.current;
+      if (!canvas) return null as any;
       (canvas as any).getContourCanvasInfo = () => {
         if (contourCacheRef.current?.canvas) {
           return {
@@ -694,79 +1246,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, strokeSettings.contourMode, strokeSettings.autoBridging, strokeSettings.autoBridgingThreshold, resizeSettings.widthInches, resizeSettings.heightInches, detectedShapeType, detectedShapeInfo]);
 
     useEffect(() => {
-      // Clear any pending debounce
       if (contourDebounceRef.current) {
         clearTimeout(contourDebounceRef.current);
         contourDebounceRef.current = null;
       }
-      
-      if (!imageInfo || !strokeSettings.enabled || shapeSettings.enabled) {
-        contourCacheRef.current = null;
-        contourTransformRef.current = null;
-        return;
-      }
-
-      const cacheKey = generateContourCacheKey();
-      if (contourCacheRef.current?.key === cacheKey) return;
-
-      const cachedResult = contourCacheMapRef.current.get(cacheKey);
-      if (cachedResult) {
-        contourCacheRef.current = { key: cacheKey, ...cachedResult };
-        return;
-      }
-
-      contourDebounceRef.current = setTimeout(() => {
-        const currentId = ++processingIdRef.current;
-        setIsProcessing(true);
-        setProcessingProgress(0);
-
-        const previewStrokeSettings = { ...strokeSettings, color: '#FF00FF' };
-        const workerResizeSettings = {
-          widthInches: resizeSettings.widthInches,
-          heightInches: resizeSettings.heightInches,
-          maintainAspectRatio: resizeSettings.maintainAspectRatio,
-          outputDPI: 100
-        };
-
-        processContourInWorker(
-          imageInfo.image,
-          previewStrokeSettings,
-          workerResizeSettings,
-          (progress) => {
-            if (processingIdRef.current === currentId) {
-              setProcessingProgress(progress);
-            }
-          },
-          detectedShapeType,
-          detectedShapeInfo
-        ).then((result) => {
-          if (processingIdRef.current === currentId) {
-            const entry = { canvas: result.canvas, downsampleScale: result.downsampleScale, imageCanvasX: result.imageCanvasX, imageCanvasY: result.imageCanvasY };
-            contourCacheRef.current = { key: cacheKey, ...entry };
-            contourCacheMapRef.current.set(cacheKey, entry);
-            if (contourCacheMapRef.current.size > 20) {
-              const firstKey = contourCacheMapRef.current.keys().next().value;
-              if (firstKey) contourCacheMapRef.current.delete(firstKey);
-            }
-            setIsProcessing(false);
-            if (result.detectedAlgorithm && onDetectedAlgorithm) {
-              onDetectedAlgorithm(result.detectedAlgorithm);
-            }
-          }
-        }).catch((error) => {
-          console.error('Contour processing error:', error);
-          if (processingIdRef.current === currentId) {
-            setIsProcessing(false);
-          }
-        });
-      }, 100);
-      
-      return () => {
-        if (contourDebounceRef.current) {
-          clearTimeout(contourDebounceRef.current);
-        }
-      };
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings.enabled, generateContourCacheKey, detectedShapeType, detectedShapeInfo]);
+      contourCacheRef.current = null;
+      contourTransformRef.current = null;
+    }, [imageInfo]);
 
     const drawSingleDesign = useCallback((ctx: CanvasRenderingContext2D, design: DesignItem, cw: number, ch: number) => {
       const rect = computeLayerRect(
@@ -780,6 +1266,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate((design.transform.rotation * Math.PI) / 180);
+      ctx.scale(design.transform.flipX ? -1 : 1, design.transform.flipY ? -1 : 1);
       ctx.drawImage(design.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
       ctx.restore();
     }, [artboardWidth, artboardHeight]);
@@ -804,17 +1291,23 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
 
       if (previewBgColor === 'transparent') {
-        const checkerSize = 10 * DPI_SCALE;
-        for (let y = 0; y < canvasHeight; y += checkerSize) {
-          for (let x = 0; x < canvasWidth; x += checkerSize) {
-            ctx.fillStyle = ((x / checkerSize + y / checkerSize) % 2 === 0) ? '#e0e0e0' : '#ffffff';
-            ctx.fillRect(x, y, checkerSize, checkerSize);
-          }
+        const pattern = getCheckerboardPattern(ctx, canvasWidth, canvasHeight);
+        if (pattern) {
+          ctx.fillStyle = pattern;
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         }
       } else {
         ctx.fillStyle = previewBgColor;
         ctx.fillRect(0, 0, canvasWidth, canvasHeight);
       }
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(100, 116, 139, 0.6)';
+      ctx.lineWidth = Math.max(1, DPI_SCALE);
+      ctx.setLineDash([6 * DPI_SCALE, 4 * DPI_SCALE]);
+      ctx.strokeRect(0.5, 0.5, canvasWidth - 1, canvasHeight - 1);
+      ctx.setLineDash([]);
+      ctx.restore();
 
       for (const design of designs) {
         if (design.id === selectedDesignId) continue;
@@ -987,7 +1480,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         // For extracted paths: fill the path, then clip for the image
         if (effectiveBackgroundColor !== "transparent") {
           if (effectiveBackgroundColor === "holographic") {
-            const bounds = ctx.getTransform();
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
             gradient.addColorStop(0, '#C8C8D0');
             gradient.addColorStop(0.17, '#E8B8B8');
@@ -1023,12 +1515,121 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
       }
+
+      // Draw smart alignment guides
+      if (snapGuidesRef.current.length > 0) {
+        ctx.save();
+        ctx.strokeStyle = '#f472b6';
+        ctx.lineWidth = 1 * DPI_SCALE;
+        ctx.setLineDash([4 * DPI_SCALE, 4 * DPI_SCALE]);
+        ctx.globalAlpha = 0.8;
+        for (const guide of snapGuidesRef.current) {
+          ctx.beginPath();
+          if (guide.axis === 'x') {
+            const px = guide.pos * canvasWidth;
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, canvasHeight);
+          } else {
+            const py = guide.pos * canvasHeight;
+            ctx.moveTo(0, py);
+            ctx.lineTo(canvasWidth, py);
+          }
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
       
-      /* HIDDEN: Locked contour blue dashed line disabled in preview */
+      
+      
+      if (marqueeRect) {
+        ctx.save();
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 1 * DPI_SCALE;
+        ctx.setLineDash([4 * DPI_SCALE, 4 * DPI_SCALE]);
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.08)';
+        ctx.fillRect(marqueeRect.x, marqueeRect.y, marqueeRect.w, marqueeRect.h);
+        ctx.strokeRect(marqueeRect.x, marqueeRect.y, marqueeRect.w, marqueeRect.h);
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+
+      if (selectedDesignIds.size > 1) {
+        const z = Math.max(0.25, zoomRef.current);
+        const inv = DPI_SCALE / z;
+        for (const d of designs) {
+          if (!selectedDesignIds.has(d.id)) continue;
+          const r = computeLayerRect(
+            d.imageInfo.image.width, d.imageInfo.image.height,
+            d.transform, canvasWidth, canvasHeight,
+            artboardWidth, artboardHeight, d.widthInches, d.heightInches,
+          );
+          const cx2 = r.x + r.width / 2;
+          const cy2 = r.y + r.height / 2;
+          const hw2 = r.width / 2;
+          const hh2 = r.height / 2;
+          const rad2 = (d.transform.rotation * Math.PI) / 180;
+          const cos2 = Math.cos(rad2);
+          const sin2 = Math.sin(rad2);
+          const corners2 = [
+            { lx: -hw2, ly: -hh2 }, { lx: hw2, ly: -hh2 },
+            { lx: hw2, ly: hh2 }, { lx: -hw2, ly: hh2 },
+          ];
+          const pts2 = corners2.map(c => ({
+            x: cx2 + c.lx * cos2 - c.ly * sin2,
+            y: cy2 + c.lx * sin2 + c.ly * cos2,
+          }));
+          ctx.save();
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1.5 * inv;
+          ctx.setLineDash([3 * inv, 3 * inv]);
+          ctx.globalAlpha = 0.6;
+          ctx.beginPath();
+          ctx.moveTo(pts2[0].x, pts2[0].y);
+          for (let i = 1; i < pts2.length; i++) ctx.lineTo(pts2[i].x, pts2[i].y);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+      }
+
+      // Draw bottom-edge glow when user is dragging near the bottom
+      if (bottomGlow > 0 && artboardHeight < 24) {
+        ctx.save();
+        const glowH = canvasHeight * 0.18;
+        const grad = ctx.createLinearGradient(0, canvasHeight - glowH, 0, canvasHeight);
+        const alpha = 0.15 + bottomGlow * 0.45;
+        grad.addColorStop(0, 'rgba(6, 182, 212, 0)');
+        grad.addColorStop(0.5, `rgba(6, 182, 212, ${(alpha * 0.5).toFixed(3)})`);
+        grad.addColorStop(1, `rgba(6, 182, 212, ${alpha.toFixed(3)})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, canvasHeight - glowH, canvasWidth, glowH);
+
+        // Progress bar at the very bottom
+        const barH = 4 * DPI_SCALE;
+        ctx.fillStyle = `rgba(34, 211, 238, ${(0.6 + bottomGlow * 0.4).toFixed(2)})`;
+        ctx.fillRect(0, canvasHeight - barH, canvasWidth * bottomGlow, barH);
+
+        // Text label
+        const fontSize = Math.max(11, 13 * DPI_SCALE);
+        ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = `rgba(255, 255, 255, ${(0.5 + bottomGlow * 0.5).toFixed(2)})`;
+        const seconds = Math.max(0, 2 - Math.round(bottomGlow * 2));
+        ctx.fillText(
+          seconds > 0 ? `Expand to ${artboardHeight + 1}" in ${seconds}s…` : 'Expanding…',
+          canvasWidth / 2,
+          canvasHeight - barH - 6 * DPI_SCALE,
+        );
+        ctx.restore();
+      }
+
       };
       doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, drawSingleDesign, overlappingDesigns, previewBgColor]);
+    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, selectedDesignIds, drawSingleDesign, overlappingDesigns, previewBgColor, marqueeRect, bottomGlow]);
 
     useEffect(() => {
       if (!spotPreviewData?.enabled) {
@@ -1182,6 +1783,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!imageInfo) return;
       const settingsKey = `${strokeSettings.enabled}-${strokeSettings.width}-${shapeSettings.enabled}-${shapeSettings.type}-${resizeSettings.widthInches}`;
       if (lastSettingsRef.current && lastSettingsRef.current !== settingsKey) {
+        lastSettingsRef.current = settingsKey;
         setShowHighlight(true);
         const timer = setTimeout(() => setShowHighlight(false), 500);
         return () => clearTimeout(timer);
@@ -1386,6 +1988,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const cy = rect.y + rect.height / 2;
       ctx.translate(cx, cy);
       ctx.rotate((t.rotation * Math.PI) / 180);
+      ctx.scale(t.flipX ? -1 : 1, t.flipY ? -1 : 1);
       ctx.drawImage(imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
 
       const spotOverlay = createSpotOverlayCanvas();
@@ -1401,7 +2004,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     const drawSelectionHandles = (ctx: CanvasRenderingContext2D, rect: {x: number; y: number; width: number; height: number}, t: ImageTransform) => {
       const isOverlap = selectedDesignId ? overlappingDesigns.has(selectedDesignId) : false;
-      const accentColor = isOverlap ? '#ff0000' : '#00ffff';
+      const accentColor = isOverlap ? '#ff4444' : '#22d3ee';
+      const accentGlow = isOverlap ? 'rgba(255,68,68,0.3)' : 'rgba(34,211,238,0.25)';
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
       const hw = rect.width / 2;
@@ -1409,6 +2013,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const rad = (t.rotation * Math.PI) / 180;
       const cos = Math.cos(rad);
       const sin = Math.sin(rad);
+
+      const z = Math.max(0.25, zoomRef.current);
+      const inv = DPI_SCALE / z;
 
       const corners = [
         { lx: -hw, ly: -hh },
@@ -1422,66 +2029,111 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }));
 
       ctx.save();
+
+      ctx.shadowColor = accentGlow;
+      ctx.shadowBlur = 8 * inv;
       ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1.5 * DPI_SCALE;
-      ctx.setLineDash([6 * DPI_SCALE, 4 * DPI_SCALE]);
+      ctx.lineWidth = 1.5 * inv;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath();
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
 
       if (isOverlap) {
-        const fontSize = Math.round(12 * DPI_SCALE);
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.fillStyle = '#ff0000';
+        const fontSize = Math.round(11 * inv);
+        ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
+        ctx.fillStyle = '#ff4444';
         ctx.textAlign = 'center';
-        const topMidX = (pts[0].x + pts[1].x) / 2;
-        const topMidY = (pts[0].y + pts[1].y) / 2;
-        const offsetUp = 8 * DPI_SCALE;
-        const textX = topMidX;
-        const textY = topMidY - offsetUp;
+        const botMidX = (pts[2].x + pts[3].x) / 2;
+        const botMidY = (pts[2].y + pts[3].y) / 2;
+        const offsetDown = 14 * inv;
+        const labelX = botMidX + sin * offsetDown;
+        const labelY = botMidY + cos * offsetDown;
         ctx.save();
-        ctx.shadowColor = 'rgba(0,0,0,0.7)';
-        ctx.shadowBlur = 4;
-        ctx.fillText('Design OVERLAPPING', textX, textY);
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 6;
+        ctx.fillText('Overlapping', labelX, labelY);
         ctx.restore();
       }
 
-      const handleSize = 10 * DPI_SCALE;
-      ctx.fillStyle = '#ffffff';
+      const handleSize = 5 * inv;
+      const handleR = 1.5 * inv;
+      const borderW = 1.5 * inv;
+      for (const p of pts) {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(rad);
+        ctx.shadowColor = 'rgba(0,0,0,0.25)';
+        ctx.shadowBlur = 3 * inv;
+        ctx.shadowOffsetY = 1 * inv;
+        ctx.beginPath();
+        ctx.roundRect(-handleSize, -handleSize, handleSize * 2, handleSize * 2, handleR);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = borderW;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const topMidX = (pts[0].x + pts[1].x) / 2;
+      const topMidY = (pts[0].y + pts[1].y) / 2;
+      const rotDist = 24 * inv;
+      const upDirX = -sin;
+      const upDirY = -cos;
+      const rotHandleX = topMidX + upDirX * rotDist;
+      const rotHandleY = topMidY + upDirY * rotDist;
+
       ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 2 * DPI_SCALE;
-      for (const p of pts) {
-        ctx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
-        ctx.strokeRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
-      }
+      ctx.lineWidth = 1 * inv;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(topMidX, topMidY);
+      ctx.lineTo(rotHandleX, rotHandleY);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
 
-      const rotOff = 24 * DPI_SCALE;
-      ctx.fillStyle = accentColor;
-      for (const p of pts) {
-        const dx = p.x - cx;
-        const dy = p.y - cy;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len > 0) {
-          const rx = cx + (dx / len) * (len + rotOff);
-          const ry = cy + (dy / len) * (len + rotOff);
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.25)';
+      ctx.shadowBlur = 3 * inv;
+      ctx.shadowOffsetY = 1 * inv;
+      const rotR = 6 * inv;
+      ctx.beginPath();
+      ctx.arc(rotHandleX, rotHandleY, rotR, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = borderW;
+      ctx.stroke();
+      ctx.restore();
 
-          ctx.save();
-          ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-          ctx.lineWidth = 1 * DPI_SCALE;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(rx, ry);
-          ctx.stroke();
-          ctx.restore();
+      ctx.save();
+      ctx.translate(rotHandleX, rotHandleY);
+      ctx.rotate(rad);
+      const arrowR = 3.5 * inv;
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 1.2 * inv;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 0, arrowR, -Math.PI * 0.7, Math.PI * 0.4);
+      ctx.stroke();
+      const tipAngle = Math.PI * 0.4;
+      const tipX = arrowR * Math.cos(tipAngle);
+      const tipY = arrowR * Math.sin(tipAngle);
+      const aLen = 2.5 * inv;
+      ctx.beginPath();
+      ctx.moveTo(tipX + aLen * Math.cos(tipAngle - 0.3), tipY + aLen * Math.sin(tipAngle - 0.3));
+      ctx.lineTo(tipX, tipY);
+      ctx.lineTo(tipX + aLen * Math.cos(tipAngle + Math.PI * 0.5), tipY + aLen * Math.sin(tipAngle + Math.PI * 0.5));
+      ctx.stroke();
+      ctx.restore();
 
-          ctx.beginPath();
-          ctx.arc(rx, ry, 5 * DPI_SCALE, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
       ctx.restore();
     };
 
@@ -1506,79 +2158,82 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     };
 
     return (
-      <div className="w-full">
-        <Card className="bg-gray-900 border-gray-800 shadow-sm rounded-2xl overflow-hidden" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
-          <CardContent className="p-3 sm:p-4">
-            <div className="flex flex-col items-start">
-              <div className="flex w-full">
-                <div 
-                  ref={containerRef}
-                  onWheel={handleWheel}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseLeave}
-                  onTouchStart={handleTouchStart}
-                  onTouchMove={handleTouchMove}
-                  onTouchEnd={handleTouchEnd}
-                  className={`relative w-full max-w-[720px] rounded-xl border border-gray-600 flex items-center justify-center cursor-default transition-all duration-300 ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
-                  style={{ 
-                    width: '100%',
-                    height: '100%',
-                    aspectRatio: `${artboardWidth} / ${artboardHeight}`,
-                    maxHeight: '70vh',
-                    backgroundColor: previewBgColor === 'transparent' ? '#e0e0e0' : previewBgColor,
-                    overflow: 'hidden',
-                    userSelect: 'none',
-                    touchAction: 'none'
-                  }}
-                >
-                <canvas 
-                  ref={canvasRef}
-                  className="relative z-10 block"
-                  style={{ 
-                    width: previewDims.width,
-                    height: previewDims.height,
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    transform: `scale(${zoom})`,
-                    transformOrigin: 'center',
-                    transition: 'transform 0.15s ease-out'
-                  }}
-                />
-                
-                {!imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <p className="text-gray-300 text-sm opacity-50">Upload a design</p>
-                  </div>
-                )}
-                
-                {/* Contour mode buttons (Sharp/Smooth) - HIDDEN */}
-
-                {isProcessing && imageInfo && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
-                    <div className="text-center">
-                      <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
-                      <p className="text-white text-sm">Processing... {processingProgress}%</p>
-                    </div>
-                  </div>
-                )}
+      <div className="h-full flex flex-col">
+        {/* Canvas area - fills available height */}
+        <div className="flex-1 min-h-0 flex items-center justify-center bg-gray-950 p-3 relative">
+          <div className="relative" style={{ paddingBottom: 16, paddingRight: 14 }}>
+            <div 
+              ref={containerRef}
+              onMouseDown={handleMouseDown}
+              onDoubleClick={handleDoubleClick}
+              onMouseMove={handleMouseMove}
+              onMouseEnter={handleMouseEnter}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              className={`relative rounded-lg border border-gray-600 flex items-center justify-center cursor-default ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+              style={{ 
+                width: previewDims.width,
+                height: previewDims.height,
+                backgroundColor: previewBgColor === 'transparent' ? '#e0e0e0' : previewBgColor,
+                overflow: 'hidden',
+                userSelect: 'none',
+                touchAction: 'none'
+              }}
+            >
+              <canvas 
+                ref={canvasRef}
+                className="relative z-10 block"
+                style={{ 
+                  width: previewDims.width,
+                  height: previewDims.height,
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
+                  transformOrigin: 'center',
+                  transition: isWheelZoomingRef.current || isPanningRef.current ? 'none' : 'transform 0.15s ease-out'
+                }}
+              />
+              
+              {!imageInfo && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <p className="text-gray-300 text-sm opacity-50">Upload a design</p>
                 </div>
-              </div>
-            </div>
+              )}
 
-            <div className="mt-4">
-              <div className="flex items-center justify-center gap-1.5 bg-gray-800 rounded-lg p-1.5 border border-gray-700 flex-wrap">
+              {isProcessing && imageInfo && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
+                    <p className="text-white text-sm">Processing... {processingProgress}%</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
+              <span className="text-[10px] text-gray-500 font-medium tracking-wide">{artboardWidth}"</span>
+            </div>
+            <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
+              <span className="text-[10px] text-gray-500 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom toolbar */}
+        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-900 border-t border-gray-800 px-3 py-1.5">
+              <div className="flex items-center gap-1.5">
                 {selectedDesignId && designTransform && (
                   <>
-                    <span className="text-xs text-gray-400 font-medium">
+                    <span className="text-[11px] text-gray-400 font-medium tabular-nums">
                       {(resizeSettings.widthInches * (designTransform.s || 1)).toFixed(2)}" × {(resizeSettings.heightInches * (designTransform.s || 1)).toFixed(2)}"
                     </span>
-                    <div className="w-px h-4 bg-gray-600 mx-0.5" />
+                    <div className="w-px h-3.5 bg-gray-600" />
                     {editingRotation ? (
                       <input
                         type="number"
-                        className="w-14 h-6 bg-gray-700 text-xs text-gray-200 text-center rounded border border-gray-600 outline-none"
+                        className="w-12 h-5 bg-gray-700 text-[11px] text-gray-200 text-center rounded border border-gray-600 outline-none"
                         value={rotationInput}
                         autoFocus
                         onChange={(e) => setRotationInput(e.target.value)}
@@ -1595,7 +2250,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       />
                     ) : (
                       <span
-                        className="text-xs text-gray-400 font-medium cursor-pointer hover:text-gray-200"
+                        className="text-[11px] text-gray-400 font-medium cursor-pointer hover:text-gray-200 tabular-nums"
                         title="Click to edit rotation"
                         onClick={() => {
                           setRotationInput(String(Math.round(designTransform.rotation || 0)));
@@ -1605,114 +2260,93 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         {Math.round(designTransform.rotation || 0)}°
                       </span>
                     )}
-                    <div className="w-px h-4 bg-gray-600 mx-0.5" />
+                    <div className="w-px h-3.5 bg-gray-600" />
                   </>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setZoom(prev => Math.max(prev - 0.1, 1))}
-                  className="h-7 w-7 p-0 hover:bg-gray-700 rounded-md"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="h-3.5 w-3.5 text-gray-400" />
-                </Button>
-                
-                <span className="text-xs text-gray-400 min-w-[42px] text-center font-medium">
-                  {Math.round(zoom * 100)}%
-                </span>
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setZoom(prev => Math.min(prev + 0.1, 3))}
-                  className="h-7 w-7 p-0 hover:bg-gray-700 rounded-md"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="h-3.5 w-3.5 text-gray-400" />
-                </Button>
-                
-                <div className="w-px h-4 bg-gray-600 mx-0.5" />
-                
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setZoom(prev => Math.max(prev / ZOOM_BUTTON_FACTOR, minZoomRef.current))}
+                    className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="h-3 w-3 text-gray-400" />
+                  </Button>
+                  <span className="text-[11px] text-gray-400 min-w-[36px] text-center font-medium tabular-nums">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setZoom(prev => Math.min(prev * ZOOM_BUTTON_FACTOR, ZOOM_MAX))}
+                    className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="h-3 w-3 text-gray-400" />
+                  </Button>
+                </div>
+                <div className="w-px h-3.5 bg-gray-600" />
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={fitToView}
-                  className="h-7 px-2 hover:bg-gray-700 rounded-md text-gray-400 text-xs"
+                  className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
                   title="Fit to View"
                 >
-                  <Maximize2 className="h-3 w-3 mr-1" />
+                  <Maximize2 className="h-2.5 w-2.5 mr-0.5" />
                   Fit
                 </Button>
-                
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-7 px-2 hover:bg-gray-700 rounded-md text-gray-400 text-xs"
-                  title="Reset"
+                  className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
+                  title="Reset View"
                 >
-                  <RotateCcw className="h-3 w-3 mr-1" />
+                  <RotateCcw className="h-2.5 w-2.5 mr-0.5" />
                   Reset
                 </Button>
+              </div>
 
-                <div className="w-px h-4 bg-gray-600 mx-0.5" />
-
-                <div className="relative" data-bg-picker>
+              <div className="flex items-center gap-1">
+                {[
+                  { color: 'transparent', label: 'Transparent' },
+                  { color: '#ffffff', label: 'White' },
+                  { color: '#d1d5db', label: 'Light Gray' },
+                  { color: '#6b7280', label: 'Gray' },
+                  { color: '#000000', label: 'Black' },
+                ].map(({ color, label }) => (
                   <button
-                    onClick={() => setShowBgPicker(prev => !prev)}
-                    className="h-7 w-7 rounded-md border border-gray-600 hover:border-gray-400 flex items-center justify-center"
-                    title="Preview Background"
+                    key={color}
+                    onClick={() => setPreviewBgColor(color)}
+                    className={`w-4.5 h-4.5 rounded-full border-2 transition-all ${previewBgColor === color ? 'border-cyan-400 scale-110' : 'border-gray-600 hover:border-gray-400'}`}
+                    title={label}
                     style={{
-                      background: previewBgColor === 'transparent'
-                        ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 10px 10px'
-                        : previewBgColor
+                      width: 18,
+                      height: 18,
+                      background: color === 'transparent'
+                        ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 6px 6px'
+                        : color
                     }}
                   />
-                  {showBgPicker && (
-                    <div className="absolute bottom-full mb-2 right-0 bg-gray-800 border border-gray-600 rounded-lg p-2 shadow-xl z-30 min-w-[140px]">
-                      <p className="text-[10px] text-gray-400 mb-1.5 font-medium">Preview Background</p>
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        {[
-                          { color: 'transparent', label: 'None' },
-                          { color: '#ffffff', label: 'White' },
-                          { color: '#d1d5db', label: 'Light Gray' },
-                          { color: '#6b7280', label: 'Gray' },
-                          { color: '#1f2937', label: 'Dark' },
-                          { color: '#000000', label: 'Black' },
-                          { color: '#ff00ff', label: 'Magenta' },
-                          { color: '#00ffff', label: 'Cyan' },
-                        ].map(({ color, label }) => (
-                          <button
-                            key={color}
-                            onClick={() => { setPreviewBgColor(color); setShowBgPicker(false); }}
-                            className={`w-6 h-6 rounded border ${previewBgColor === color ? 'border-cyan-400 ring-1 ring-cyan-400' : 'border-gray-500 hover:border-gray-300'}`}
-                            title={label}
-                            style={{
-                              background: color === 'transparent'
-                                ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 8px 8px'
-                                : color
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <label className="text-[10px] text-gray-400">Custom:</label>
-                        <input
-                          type="color"
-                          value={previewBgColor === 'transparent' ? '#ffffff' : previewBgColor}
-                          onChange={(e) => setPreviewBgColor(e.target.value)}
-                          className="w-6 h-6 rounded border border-gray-500 cursor-pointer bg-transparent p-0"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
             </div>
 
-          </CardContent>
-        </Card>
+        {/* Keyboard shortcut hints */}
+        <div className="hidden lg:flex flex-shrink-0 items-center justify-center gap-4 bg-gray-950/80 border-t border-gray-800/50 px-3 py-0.5 text-[9px] text-gray-600">
+          {[
+            ['Ctrl+Z', 'Undo'], ['Ctrl+C/V', 'Copy/Paste'],
+            ['Alt+Drag', 'Duplicate'], ['Drag Empty', 'Select'],
+            ['Arrows', 'Nudge'], ['Scroll', 'Zoom'],
+          ].map(([key, label]) => (
+            <span key={key} className="flex items-center gap-1">
+              <kbd className="px-1 py-px rounded bg-gray-800/60 text-gray-500 font-mono">{key}</kbd>
+              <span>{label}</span>
+            </span>
+          ))}
+        </div>
       </div>
     );
   }

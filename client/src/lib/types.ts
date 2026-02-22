@@ -75,6 +75,8 @@ export interface ImageTransform {
   ny: number;
   s: number;
   rotation: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 export interface DesignItem {

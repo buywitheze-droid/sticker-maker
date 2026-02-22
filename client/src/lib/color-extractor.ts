@@ -529,17 +529,73 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
 export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 18): ExtractedColor[] {
   if (!image.complete || image.width === 0 || image.height === 0) return [];
   
-  // Use full image resolution for better color detection
+  const MAX_DIM = 512;
+  let w = image.width;
+  let h = image.height;
+  if (Math.max(w, h) > MAX_DIM) {
+    const ratio = MAX_DIM / Math.max(w, h);
+    w = Math.round(w * ratio);
+    h = Math.round(h * ratio);
+  }
+
   const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = image.width;
-  tempCanvas.height = image.height;
+  tempCanvas.width = w;
+  tempCanvas.height = h;
   const tempCtx = tempCanvas.getContext('2d');
   if (!tempCtx) return [];
   
-  tempCtx.drawImage(image, 0, 0);
-  const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  tempCtx.drawImage(image, 0, 0, w, h);
+  const imageData = tempCtx.getImageData(0, 0, w, h);
   
   const colors = extractDominantColors(imageData, maxColors);
   console.log('[ColorExtractor] Detected colors:', colors.map(c => ({ name: c.name, hex: c.hex, pct: c.percentage.toFixed(2) })));
   return colors;
+}
+
+import ColorExtractionWorker from './color-extraction-worker?worker';
+
+let _colorWorker: Worker | null = null;
+function getColorWorker(): Worker | null {
+  if (!_colorWorker) {
+    try { _colorWorker = new ColorExtractionWorker(); }
+    catch { return null; }
+  }
+  return _colorWorker;
+}
+
+export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: number = 999): Promise<ExtractedColor[]> {
+  return new Promise((resolve) => {
+    if (!image.complete || image.width === 0 || image.height === 0) { resolve([]); return; }
+
+    const MAX_DIM = 512;
+    let w = image.width, h = image.height;
+    if (Math.max(w, h) > MAX_DIM) {
+      const ratio = MAX_DIM / Math.max(w, h);
+      w = Math.round(w * ratio); h = Math.round(h * ratio);
+    }
+    const tc = document.createElement('canvas');
+    tc.width = w; tc.height = h;
+    const ctx = tc.getContext('2d');
+    if (!ctx) { resolve(extractColorsFromImage(image, maxColors)); return; }
+    ctx.drawImage(image, 0, 0, w, h);
+    const imageData = ctx.getImageData(0, 0, w, h);
+
+    const worker = getColorWorker();
+    if (!worker) { resolve(extractDominantColors(imageData, maxColors)); return; }
+
+    const buffer = imageData.data.buffer.slice(0);
+    const timeout = setTimeout(() => {
+      resolve(extractDominantColors(ctx.getImageData(0, 0, w, h), maxColors));
+    }, 10000);
+
+    const handler = (e: MessageEvent) => {
+      if (e.data.type === 'result') {
+        clearTimeout(timeout);
+        worker.removeEventListener('message', handler);
+        resolve(e.data.colors);
+      }
+    };
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: 'extract', pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
+  });
 }
