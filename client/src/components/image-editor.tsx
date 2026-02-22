@@ -82,7 +82,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   
   // Debounced settings for heavy processing
   const debouncedStrokeSettings = useDebouncedValue(strokeSettings, 100);
-  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 250); // Higher debounce for size changes
+  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 250);
   const debouncedShapeSettings = useDebouncedValue(shapeSettings, 100);
 
   // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
@@ -110,11 +110,22 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     setCadCutBounds(bounds);
   }, [imageInfo]);
 
+  const selectedDesign = useMemo(() => designs.find(d => d.id === selectedDesignId) || null, [designs, selectedDesignId]);
+  const activeImageInfo = useMemo(() => selectedDesign?.imageInfo || imageInfo, [selectedDesign, imageInfo]);
+  const activeDesignTransform = useMemo(() => selectedDesign?.transform || designTransform, [selectedDesign, designTransform]);
+  const activeWidthInches = useMemo(() => selectedDesign?.widthInches || resizeSettings.widthInches, [selectedDesign, resizeSettings.widthInches]);
+  const activeHeightInches = useMemo(() => selectedDesign?.heightInches || resizeSettings.heightInches, [selectedDesign, resizeSettings.heightInches]);
+  const activeResizeSettings = useMemo(() => ({
+    ...resizeSettings,
+    widthInches: activeWidthInches,
+    heightInches: activeHeightInches,
+  }), [resizeSettings, activeWidthInches, activeHeightInches]);
+
   useEffect(() => {
-    if (imageInfo && onDesignUploaded) {
+    if (activeImageInfo && onDesignUploaded) {
       onDesignUploaded();
     }
-  }, [imageInfo, onDesignUploaded]);
+  }, [activeImageInfo, onDesignUploaded]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -136,15 +147,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
   const handleSelectDesign = useCallback((id: string | null) => {
     setSelectedDesignId(id);
-    if (id) {
-      const design = designs.find(d => d.id === id);
-      if (design) {
-        setImageInfo(design.imageInfo);
-        setDesignTransform(design.transform);
-        setResizeSettings(prev => ({ ...prev, widthInches: design.widthInches, heightInches: design.heightInches }));
-      }
-    }
-  }, [designs]);
+  }, []);
 
   const handleDesignTransformChange = useCallback((transform: ImageTransform) => {
     setDesignTransform(transform);
@@ -166,7 +169,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     };
     setDesigns(prev => [...prev, newDesign]);
     setSelectedDesignId(newId);
-    setDesignTransform(newDesign.transform);
   }, [selectedDesignId, designs]);
 
   const handleDeleteDesign = useCallback((id: string) => {
@@ -174,15 +176,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     if (selectedDesignId === id) {
       const remaining = designs.filter(d => d.id !== id);
       if (remaining.length > 0) {
-        const next = remaining[remaining.length - 1];
-        setSelectedDesignId(next.id);
-        setImageInfo(next.imageInfo);
-        setDesignTransform(next.transform);
-        setResizeSettings(prev => ({ ...prev, widthInches: next.widthInches, heightInches: next.heightInches }));
+        setSelectedDesignId(remaining[remaining.length - 1].id);
       } else {
         setSelectedDesignId(null);
         setImageInfo(null);
-        setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
       }
     }
   }, [selectedDesignId, designs]);
@@ -199,8 +196,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       const icx = contourCanvasInfo?.imageCanvasX ?? 0;
       const icy = contourCanvasInfo?.imageCanvasY ?? 0;
       const ds = contourCanvasInfo?.downsampleScale ?? 1;
-      const icw = imageInfo ? Math.round(imageInfo.image.width * ds) : cw;
-      const ich = imageInfo ? Math.round(imageInfo.image.height * ds) : ch;
+      const currentImg = selectedDesign?.imageInfo || imageInfo;
+      const icw = currentImg ? Math.round(currentImg.image.width * ds) : cw;
+      const ich = currentImg ? Math.round(currentImg.image.height * ds) : ch;
 
       setLockedContour({
         label: cutContourLabel,
@@ -572,17 +570,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
     setResizeSettings(prev => {
       const updated = { ...prev, ...newSettings };
+      const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
       
-      // Handle aspect ratio maintenance
-      if (updated.maintainAspectRatio && imageInfo && newSettings.widthInches !== undefined) {
-        const aspectRatio = imageInfo.originalHeight / imageInfo.originalWidth;
+      if (updated.maintainAspectRatio && currentImageInfo && newSettings.widthInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalHeight / currentImageInfo.originalWidth;
         updated.heightInches = parseFloat((newSettings.widthInches * aspectRatio).toFixed(1));
-      } else if (updated.maintainAspectRatio && imageInfo && newSettings.heightInches !== undefined) {
-        const aspectRatio = imageInfo.originalWidth / imageInfo.originalHeight;
+      } else if (updated.maintainAspectRatio && currentImageInfo && newSettings.heightInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
         updated.widthInches = parseFloat((newSettings.heightInches * aspectRatio).toFixed(1));
       }
       
-      // Recalculate bounds with auto-sized shape dimensions
       if (shapeSettings.enabled) {
         const shapeDims = calculateShapeDimensions(
           updated.widthInches,
@@ -592,17 +589,21 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         );
         updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
       }
+
+      if (selectedDesignId) {
+        setDesigns(prevDesigns => prevDesigns.map(d => d.id === selectedDesignId ? { ...d, widthInches: updated.widthInches, heightInches: updated.heightInches } : d));
+      }
       
       return updated;
     });
-  }, [imageInfo, shapeSettings, updateCadCutBounds]);
+  }, [imageInfo, selectedDesign, selectedDesignId, shapeSettings, updateCadCutBounds]);
 
   const handleStickerSizeChange = useCallback((newSize: StickerSize) => {
     setStickerSize(newSize);
     
-    // Resize the design to fit within the new sticker size
-    if (imageInfo) {
-      const aspectRatio = imageInfo.originalWidth / imageInfo.originalHeight;
+    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
+    if (currentImageInfo) {
+      const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
       let newWidth: number;
       let newHeight: number;
       
@@ -622,7 +623,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         heightInches: newHeight,
       }));
       
-      // Recalculate bounds with auto-sized shape dimensions
+      if (selectedDesignId) {
+        setDesigns(prevDesigns => prevDesigns.map(d => d.id === selectedDesignId ? { ...d, widthInches: newWidth, heightInches: newHeight } : d));
+      }
+      
       if (shapeSettings.enabled) {
         const shapeDims = calculateShapeDimensions(
           newWidth,
@@ -633,16 +637,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
       }
     }
-  }, [imageInfo, shapeSettings, updateCadCutBounds]);
+  }, [imageInfo, selectedDesign, selectedDesignId, shapeSettings, updateCadCutBounds]);
 
   const handleRemoveBackground = useCallback(async (threshold: number) => {
-    if (!imageInfo) return;
+    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
+    if (!currentImageInfo) return;
     
     setIsRemovingBackground(true);
     try {
-      const bgRemovedImage = await removeBackgroundFromImage(imageInfo.image, threshold);
+      const bgRemovedImage = await removeBackgroundFromImage(currentImageInfo.image, threshold);
       
-      // Crop to content bounds after background removal so shape fits actual visible content
       const croppedCanvas = cropImageToContent(bgRemovedImage);
       if (!croppedCanvas) {
         console.error('Failed to crop image after background removal');
@@ -650,7 +654,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         return;
       }
       
-      // Convert cropped canvas to image
       const finalImage = await new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
@@ -661,19 +664,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       const newWidth = finalImage.naturalWidth || finalImage.width;
       const newHeight = finalImage.naturalHeight || finalImage.height;
       
-      // Create new image info with the processed and cropped image
       const newImageInfo: ImageInfo = {
-        ...imageInfo,
+        ...currentImageInfo,
         image: finalImage,
         originalWidth: newWidth,
         originalHeight: newHeight,
       };
       
-      // Recalculate resize settings based on cropped image dimensions
-      const dpi = imageInfo.dpi || 300;
+      const dpi = currentImageInfo.dpi || 300;
       let { widthInches, heightInches } = calculateImageDimensions(newWidth, newHeight, dpi);
       
-      // Scale to fit within the selected sticker size if needed
       const maxDimension = Math.max(widthInches, heightInches);
       if (maxDimension > stickerSize) {
         const scale = stickerSize / maxDimension;
@@ -687,19 +687,18 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         heightInches,
       }));
       
-      // Clear contour cache to force recomputation with new image
       const workerManager = getContourWorkerManager();
       workerManager.clearCache();
-      
-      // Reset CadCut bounds
       setCadCutBounds(null);
       
-      // Log the change
-      console.log(`[BackgroundRemoval] Complete! Original: ${imageInfo.originalWidth}x${imageInfo.originalHeight}, New: ${newWidth}x${newHeight}`);
+      console.log(`[BackgroundRemoval] Complete! Original: ${currentImageInfo.originalWidth}x${currentImageInfo.originalHeight}, New: ${newWidth}x${newHeight}`);
       
       setImageInfo(newImageInfo);
       
-      // Show success toast
+      if (selectedDesignId) {
+        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, imageInfo: newImageInfo, widthInches, heightInches } : d));
+      }
+      
       toast({
         title: "Background Removed",
         description: "White background removed from edges. Select Contour to see the new outline.",
@@ -714,7 +713,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } finally {
       setIsRemovingBackground(false);
     }
-  }, [imageInfo, stickerSize]);
+  }, [imageInfo, selectedDesign, selectedDesignId, stickerSize]);
 
   const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
     const updated = { ...strokeSettings, ...newSettings };
@@ -763,21 +762,22 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
 
   const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: VectorFormat = 'png', spotColors?: SpotColorInput[], singleArtboard: boolean = false) => {
-    if (!imageInfo || !canvasRef.current) return;
+    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
+    if (!currentImageInfo || !canvasRef.current) return;
     
     setIsProcessing(true);
     
     try {
       // Handle PDF with existing CutContour - generate proper vector CutContour PDF
-      if (imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour && downloadType === 'cutcontour') {
+      if (currentImageInfo.isPDF && currentImageInfo.pdfCutContourInfo?.hasCutContour && downloadType === 'cutcontour') {
         const { generatePDFWithVectorCutContour } = await import('@/lib/pdf-parser');
-        const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
+        const nameWithoutExt = currentImageInfo.file.name.replace(/\.[^/.]+$/, '');
         await generatePDFWithVectorCutContour(
-          imageInfo.image,
-          imageInfo.pdfCutContourInfo.cutContourPoints,
-          imageInfo.pdfCutContourInfo.pageWidth,
-          imageInfo.pdfCutContourInfo.pageHeight,
-          imageInfo.dpi || 300,
+          currentImageInfo.image,
+          currentImageInfo.pdfCutContourInfo.cutContourPoints,
+          currentImageInfo.pdfCutContourInfo.pageWidth,
+          currentImageInfo.pdfCutContourInfo.pageHeight,
+          currentImageInfo.dpi || 300,
           `${nameWithoutExt}_with_cutcontour.pdf`,
           cutContourLabel
         );
@@ -837,13 +837,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Crop image to remove empty space before processing
-        const croppedCanvas = cropImageToContent(imageInfo.image);
+        const croppedCanvas = cropImageToContent(currentImageInfo.image);
         const finalImage = croppedCanvas ? (() => {
           const img = new Image();
           img.src = croppedCanvas.toDataURL();
           return img;
-        })() : imageInfo.image;
+        })() : currentImageInfo.image;
 
         // Wait for cropped image to load if created
         if (croppedCanvas) {
@@ -872,8 +871,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         ctx.drawImage(finalImage, imageX, imageY, imageWidth, imageHeight);
         ctx.restore();
 
-        // Download final design only
-        const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
+        const nameWithoutExt = currentImageInfo.file.name.replace(/\.[^/.]+$/, '');
         canvas.toBlob((blob) => {
           if (blob) {
             const url = URL.createObjectURL(blob);
@@ -892,7 +890,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         // Generate magenta vector path along transparent pixel boundaries
         await new Promise(resolve => setTimeout(resolve, 100)); // UI feedback delay
         
-        const magentaCutCanvas = createVectorStroke(imageInfo.image, {
+        const magentaCutCanvas = createVectorStroke(currentImageInfo.image, {
           strokeSettings: { ...strokeSettings, color: '#FF00FF', enabled: true }, // Force magenta
           exportCutContour: true, // Enable cut contour mode
           vectorQuality: 'high' // High quality for precise cutting paths
@@ -913,7 +911,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         }, 'image/png');
         
         // Also generate vector formats for cutting machines
-        const vectorPaths = createVectorPaths(imageInfo.image, {
+        const vectorPaths = createVectorPaths(currentImageInfo.image, {
           ...strokeSettings, 
           color: '#FF00FF', 
           enabled: true
@@ -926,8 +924,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           downloadVectorStroke(magentaCutCanvas, 'cut_contour.eps', 'eps', vectorPaths);
         }
       } else {
-        // Standard download - shape background or contour outline
-        const nameWithoutExt = imageInfo.file.name.replace(/\.[^/.]+$/, '');
+        const nameWithoutExt = currentImageInfo.file.name.replace(/\.[^/.]+$/, '');
         
         if (strokeSettings.enabled) {
           // Contour mode: Download PDF with raster image + vector contour
@@ -938,7 +935,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           const cachedData = workerManager.getCachedContourData() as CachedContourData | undefined;
           
           await downloadContourPDF(
-            imageInfo.image,
+            currentImageInfo.image,
             strokeSettings,
             resizeSettings,
             filename,
@@ -952,7 +949,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           // Shape background mode: Download PDF with shape + CutContour spot color
           const filename = `${nameWithoutExt}_with_shape.pdf`;
           await downloadShapePDF(
-            imageInfo.image,
+            currentImageInfo.image,
             shapeSettings,
             resizeSettings,
             filename,
@@ -966,7 +963,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           const dpi = 300;
           const filename = `${nameWithoutExt}.png`;
           await downloadCanvas(
-            imageInfo.image,
+            currentImageInfo.image,
             strokeSettings,
             resizeSettings.widthInches,
             resizeSettings.heightInches,
@@ -979,7 +976,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } catch (error) {
       console.error("Download failed:", error);
       console.error("Error details:", {
-        hasImage: !!imageInfo,
+        hasImage: !!currentImageInfo,
         hasCanvas: !!canvasRef.current,
         shapeSettings,
         resizeSettings,
@@ -989,10 +986,10 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     } finally {
       setIsProcessing(false);
     }
-  }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cutContourLabel]);
+  }, [imageInfo, selectedDesign, strokeSettings, resizeSettings, shapeSettings, cutContourLabel]);
 
   // Empty state - no image uploaded
-  if (!imageInfo) {
+  if (!activeImageInfo) {
     return (
       <div className="min-h-[70vh] flex items-center justify-center bg-black">
         <div className="w-full max-w-xl mx-auto transition-all duration-300">
@@ -1015,7 +1012,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       <div className="lg:col-span-4 xl:col-span-3 space-y-3" style={{ boxShadow: '0 0 15px rgba(255,255,255,0.3), 0 0 30px rgba(255,255,255,0.15)' }}>
         <ControlsSection
           strokeSettings={strokeSettings}
-          resizeSettings={resizeSettings}
+          resizeSettings={activeResizeSettings}
           shapeSettings={shapeSettings}
           stickerSize={stickerSize}
           onStrokeChange={handleStrokeChange}
@@ -1024,7 +1021,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           onStickerSizeChange={handleStickerSizeChange}
           onDownload={handleDownload}
           isProcessing={isProcessing}
-          imageInfo={imageInfo}
+          imageInfo={activeImageInfo}
           canvasRef={canvasRef}
           onStepChange={() => {}}
           onSpotPreviewChange={setSpotPreviewData}
@@ -1042,27 +1039,27 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             <UploadSection 
               onImageUpload={handleImageUpload}
               showCutLineInfo={false}
-              imageInfo={imageInfo}
-              resizeSettings={resizeSettings}
+              imageInfo={activeImageInfo}
+              resizeSettings={activeResizeSettings}
               stickerSize={stickerSize}
             />
             
-            {imageInfo && (
+            {activeImageInfo && (
               <>
                 <div className="w-px h-6 bg-gray-700"></div>
                 
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {imageInfo?.file?.name && (
-                    <p className="text-xs text-gray-400 truncate max-w-[120px]" title={imageInfo.file.name}>
-                      {imageInfo.file.name}
+                  {activeImageInfo?.file?.name && (
+                    <p className="text-xs text-gray-400 truncate max-w-[120px]" title={activeImageInfo.file.name}>
+                      {activeImageInfo.file.name}
                     </p>
                   )}
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-semibold text-gray-300">{(resizeSettings.widthInches * designTransform.s).toFixed(1)}"</span>
+                    <span className="text-sm font-semibold text-gray-300">{(activeResizeSettings.widthInches * activeDesignTransform.s).toFixed(1)}"</span>
                     <span className="text-gray-500">×</span>
-                    <span className="text-sm font-semibold text-gray-300">{(resizeSettings.heightInches * designTransform.s).toFixed(1)}"</span>
+                    <span className="text-sm font-semibold text-gray-300">{(activeResizeSettings.heightInches * activeDesignTransform.s).toFixed(1)}"</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{resizeSettings.outputDPI} DPI</span>
+                  <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">{activeResizeSettings.outputDPI} DPI</span>
                 </div>
 
               </>
@@ -1111,9 +1108,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           <div className="relative">
             <PreviewSection
               ref={canvasRef}
-              imageInfo={imageInfo}
+              imageInfo={activeImageInfo}
               strokeSettings={debouncedStrokeSettings}
-              resizeSettings={debouncedResizeSettings}
+              resizeSettings={activeResizeSettings}
               shapeSettings={debouncedShapeSettings}
               cadCutBounds={cadCutBounds}
               spotPreviewData={spotPreviewData}
@@ -1124,7 +1121,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
               lockedContour={lockedContour}
               artboardWidth={artboardWidth}
               artboardHeight={artboardHeight}
-              designTransform={designTransform}
+              designTransform={activeDesignTransform}
               onTransformChange={handleDesignTransformChange}
               designs={designs}
               selectedDesignId={selectedDesignId}
