@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import sharp from "sharp";
+import path from "path";
+import express from "express";
 
 import sgMail from "@sendgrid/mail";
 
@@ -25,6 +27,8 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.use("/downloads", express.static(path.resolve(process.cwd(), "downloads")));
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
