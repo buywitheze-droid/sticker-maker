@@ -946,10 +946,26 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return null;
     }, [designs, artboardWidth, artboardHeight]);
 
-    const handleInteractionStart = useCallback((clientX: number, clientY: number) => {
+    const handleInteractionStart = useCallback((clientX: number, clientY: number, ctrlKey = false) => {
       const local = canvasToLocal(clientX, clientY);
       const canvas = canvasRef.current;
       if (!canvas) return;
+
+      // Ctrl+Click toggles multi-selection on any design
+      if (ctrlKey) {
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId) {
+          const current = new Set(selectedDesignIds);
+          if (selectedDesignId && !current.has(selectedDesignId)) current.add(selectedDesignId);
+          if (current.has(hitId)) {
+            current.delete(hitId);
+          } else {
+            current.add(hitId);
+          }
+          onMultiSelect?.(Array.from(current));
+          return;
+        }
+      }
 
       // Group handles take priority when multiple designs are selected
       if (selectedDesignIds.size > 1) {
@@ -1093,7 +1109,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
       setMarqueeScreenRect(null);
-    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, isClickInDesignInterior, getDesignRect, selectedDesignId, selectedDesignIds, findDesignAtPoint, onSelectDesign, hitTestMultiHandles, getMultiSelectionBBox]);
+    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, isClickInDesignInterior, getDesignRect, selectedDesignId, selectedDesignIds, findDesignAtPoint, onSelectDesign, onMultiSelect, hitTestMultiHandles, getMultiSelectionBBox]);
 
     const handleInteractionMove = useCallback((clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -1408,7 +1424,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'grabbing';
         return;
       }
-      handleInteractionStart(e.clientX, e.clientY);
+      handleInteractionStart(e.clientX, e.clientY, e.ctrlKey || e.metaKey);
     }, [handleInteractionStart, panX, panY, isHorizOverflow]);
 
     const handleDoubleClick = useCallback((e: React.MouseEvent) => {

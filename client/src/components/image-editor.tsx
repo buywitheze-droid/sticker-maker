@@ -931,16 +931,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     setDesignTransform(prev => ({ ...prev, nx: pos.nx, ny: pos.ny }));
   }, [selectedDesignId, saveSnapshot, getAlignNxNy]);
 
-  const lastArrangeTimeRef = useRef(0);
   const contentFillCacheRef = useRef<Map<string, number>>(new Map());
 
   const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean }) => {
     if (designs.length === 0) return;
     if (!opts?.skipSnapshot) saveSnapshot();
 
-    const now = Date.now();
-    const isAggressive = (now - lastArrangeTimeRef.current) < 2000;
-    lastArrangeTimeRef.current = now;
+    const isAggressive = true;
 
     const usableW = artboardWidth;
     const usableH = artboardHeight;
@@ -994,10 +991,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean) => {
       if (hasOverflow) {
         toast({ title: "Artboard overflow", description: "Some designs don't fit. Consider using a larger gangsheet size.", variant: "destructive" });
-      } else if (isAggressive && anyRotated) {
-        toast({ title: "Tight pack applied", description: "Designs rotated for optimal fit." });
-      } else if (isAggressive) {
-        toast({ title: "Tight pack applied", description: "Best packing strategy selected." });
+      } else if (anyRotated) {
+        toast({ title: "Auto-arranged", description: "Designs rotated for optimal fit." });
       }
       setDesigns(prev => prev.map(d => {
         const p = bestResult.find(r => r.id === d.id);
@@ -1043,7 +1038,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       // Fallback: synchronous on main thread (same logic lives in arrange-worker.ts)
       // This path only triggers if the worker fails to load
       const hasCustomGap = designGap !== undefined && designGap >= 0;
-      const GAP = hasCustomGap ? designGap : (isAggressive ? 0.25 : 0.5);
+      const GAP = hasCustomGap ? designGap : 0.25;
       const getItemGapVal = (_fill: number) => GAP;
 
       type SkylineSeg = { x: number; y: number; w: number };
@@ -1096,23 +1091,149 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         if (orient === 'portrait' && w > h) { const t = w; w = h; h = t; rot = 90; }
         return { id: d.id, w, h, rotation: rot, gap: g };
       });
+      const greedyOrientPack = (sortedItems: Array<{ id: string; w: number; h: number; gap: number }>) => {
+        let sky: SkylineSeg[] = [{ x: 0, y: 0, w: usableW }]; const res: PlacedItem[] = []; let tw = 0;
+        for (const it of sortedItems) {
+          const g = it.gap;
+          const orients: Array<{ w: number; h: number; rot: number }> = [{ w: it.w, h: it.h, rot: 0 }];
+          if (Math.abs(it.w - it.h) > 0.1) orients.push({ w: it.h, h: it.w, rot: 90 });
+          let bp: { x: number; y: number; waste: number } | null = null, bo = orients[0], bs = sky;
+          for (const o of orients) { const hg = g / 2; for (const a of [{ w: o.w + g, h: o.h + g }, { w: o.w + hg, h: o.h + hg }]) { const pos = findBestPos(sky, a.w, a.h); if (!pos) continue; const sc = pos.y * 10000 + pos.x * 10 + pos.waste; if (!bp || sc < bp.y * 10000 + bp.x * 10 + bp.waste) { bp = pos; bo = o; bs = placeSeg(sky.map(s => ({ ...s })), pos.x, a.w, a.h); } break; } }
+          if (bp) { tw += bp.waste; sky = bs; const p = toNxNy(bp.x + bo.w / 2, bp.y + bo.h / 2, bo.w, bo.h); res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: bo.rot, overflows: false }); }
+          else { const sm = sky.length > 0 ? Math.max(...sky.map(s => s.y)) : 0; sky = placeSeg(sky, 0, Math.min(it.w + g, usableW), it.h + g); const p = toNxNy(it.w / 2, sm + it.h / 2, it.w, it.h); res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: 0, overflows: true }); }
+        }
+        return { result: res, maxHeight: sky.length > 0 ? Math.max(...sky.map(s => s.y)) : 0, wastedArea: tw };
+      };
+      const mixedOrientPack = (pi: PackItem[]) => {
+        const halfW = usableW / 2;
+        const adj: PackItem[] = pi.map(it => (it.w > halfW && it.h < it.w && it.h <= halfW) ? { ...it, w: it.h, h: it.w, rotation: it.rotation === 0 ? 90 : 0 } : it);
+        return skylinePack(adj);
+      };
+      type FreeRect = { x: number; y: number; w: number; h: number };
+      const maxRectsPack = (pi: PackItem[], heuristic: 'bssf' | 'baf') => {
+        let freeRects: FreeRect[] = [{ x: 0, y: 0, w: usableW, h: usableH }];
+        const res: PlacedItem[] = []; let mH = 0, tia = 0;
+        for (const it of pi) {
+          const g = it.gap, iw = it.w + g, ih = it.h + g;
+          let bsc = Infinity, bse = Infinity, bx = 0, by = 0, found = false;
+          for (const fr of freeRects) {
+            if (iw > fr.w + 0.001 || ih > fr.h + 0.001) continue;
+            let sc: number, se: number;
+            if (heuristic === 'bssf') { sc = Math.min(fr.w - iw, fr.h - ih); se = Math.max(fr.w - iw, fr.h - ih); }
+            else { sc = fr.w * fr.h - iw * ih; se = Math.min(fr.w - iw, fr.h - ih); }
+            if (sc < bsc - 0.001 || (Math.abs(sc - bsc) < 0.001 && se < bse - 0.001)) { bsc = sc; bse = se; bx = fr.x; by = fr.y; found = true; }
+          }
+          if (found) {
+            mH = Math.max(mH, by + ih); tia += it.w * it.h;
+            const p = toNxNy(bx + it.w / 2, by + it.h / 2, it.w, it.h);
+            res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: it.rotation, overflows: false });
+            const pl = { x: bx, y: by, w: iw, h: ih };
+            const nf: FreeRect[] = [];
+            for (const fr of freeRects) {
+              if (pl.x >= fr.x + fr.w - 0.001 || pl.x + pl.w <= fr.x + 0.001 || pl.y >= fr.y + fr.h - 0.001 || pl.y + pl.h <= fr.y + 0.001) { nf.push(fr); continue; }
+              if (pl.x > fr.x + 0.001) nf.push({ x: fr.x, y: fr.y, w: pl.x - fr.x, h: fr.h });
+              if (pl.x + pl.w < fr.x + fr.w - 0.001) nf.push({ x: pl.x + pl.w, y: fr.y, w: fr.x + fr.w - pl.x - pl.w, h: fr.h });
+              if (pl.y > fr.y + 0.001) nf.push({ x: fr.x, y: fr.y, w: fr.w, h: pl.y - fr.y });
+              if (pl.y + pl.h < fr.y + fr.h - 0.001) nf.push({ x: fr.x, y: pl.y + pl.h, w: fr.w, h: fr.y + fr.h - pl.y - pl.h });
+            }
+            freeRects = [];
+            for (let i = 0; i < nf.length; i++) {
+              if (nf[i].w < 0.01 || nf[i].h < 0.01) continue;
+              let cont = false;
+              for (let j = 0; j < nf.length; j++) { if (i !== j && nf[i].x >= nf[j].x - 0.001 && nf[i].y >= nf[j].y - 0.001 && nf[i].x + nf[i].w <= nf[j].x + nf[j].w + 0.001 && nf[i].y + nf[i].h <= nf[j].y + nf[j].h + 0.001) { cont = true; break; } }
+              if (!cont) freeRects.push(nf[i]);
+            }
+          } else {
+            const p = toNxNy(it.w / 2, mH + it.h / 2, it.w, it.h);
+            res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: it.rotation, overflows: true }); mH += ih;
+          }
+        }
+        return { result: res, maxHeight: mH, wastedArea: Math.max(0, usableW * mH - tia) };
+      };
+      const shelfPack = (pi: PackItem[]) => {
+        const res: PlacedItem[] = []; let cY = 0, cX = 0, sH = 0, tia = 0;
+        for (const it of pi) {
+          const g = it.gap, iw = it.w + g, ih = it.h + g;
+          if (cX + iw > usableW + 0.001) { cY += sH; cX = 0; sH = 0; }
+          sH = Math.max(sH, ih); tia += it.w * it.h;
+          const ov = cX + iw > usableW + 0.001 || cY + ih > usableH + 0.001;
+          const p = toNxNy(cX + it.w / 2, cY + it.h / 2, it.w, it.h);
+          res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: it.rotation, overflows: ov }); cX += iw;
+        }
+        const mH = cY + sH;
+        return { result: res, maxHeight: mH, wastedArea: Math.max(0, usableW * mH - tia) };
+      };
+      const gridPack = (g: number) => {
+        if (items.length < 2) return null;
+        const ref = items[0];
+        if (!items.every(d => Math.abs(d.w - ref.w) < 0.2 && Math.abs(d.h - ref.h) < 0.2)) return null;
+        const tryGrid = (iw: number, ih: number, rot: number) => {
+          const cols = Math.max(1, Math.floor((usableW + g) / (iw + g)));
+          const rows = Math.ceil(items.length / cols);
+          const totalH = rows * ih + (rows - 1) * g;
+          const totalWUsed = cols * iw + (cols - 1) * g;
+          const res: PlacedItem[] = [];
+          for (let idx = 0; idx < items.length; idx++) {
+            const col = idx % cols, row = Math.floor(idx / cols);
+            const ax = col * (iw + g) + iw / 2, ay = row * (ih + g) + ih / 2;
+            const ov = ax + iw / 2 > usableW + 0.001 || ay + ih / 2 > usableH + 0.001;
+            const p = toNxNy(ax, ay, iw, ih);
+            res.push({ id: items[idx].id, nx: p.nx, ny: p.ny, rotation: rot, overflows: ov });
+          }
+          return { result: res, maxHeight: totalH, wastedArea: (usableW - totalWUsed) * totalH };
+        };
+        const ng = tryGrid(ref.w, ref.h, 0);
+        if (Math.abs(ref.w - ref.h) < 0.2) return ng;
+        const rg = tryGrid(ref.h, ref.w, 90);
+        const no = ng.result.filter(r => r.overflows).length, ro = rg.result.filter(r => r.overflows).length;
+        if (no !== ro) return no < ro ? ng : rg;
+        if (Math.abs(ng.maxHeight - rg.maxHeight) > 0.01) return ng.maxHeight < rg.maxHeight ? ng : rg;
+        return ng.wastedArea <= rg.wastedArea ? ng : rg;
+      };
       const ev = (p: { result: PlacedItem[]; maxHeight: number; wastedArea: number }) => ({ ...p, overflows: p.result.filter(r => r.overflows).length });
+      const totalItemArea = items.reduce((sum, d) => sum + d.w * d.h, 0);
+      const byAreaDesc = [...items].sort((a, b) => (b.w * b.h) - (a.w * a.h));
+      const altArr: typeof items = [];
+      for (let lo = 0, hi = byAreaDesc.length - 1; lo <= hi;) { altArr.push(byAreaDesc[lo++]); if (lo <= hi) altArr.push(byAreaDesc[hi--]); }
       const sorts = [
         [...items].sort((a, b) => b.w - a.w || b.h - a.h),
         [...items].sort((a, b) => Math.max(b.h, b.w) - Math.max(a.h, a.w)),
-        [...items].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        byAreaDesc,
         [...items].sort((a, b) => (b.w + b.h) - (a.w + a.h)),
         [...items].sort((a, b) => a.fill - b.fill || (b.w * b.h) - (a.w * a.h)),
+        [...items].sort((a, b) => (b.w / Math.max(b.h, 0.01)) - (a.w / Math.max(a.h, 0.01))),
+        [...items].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h) || (b.w * b.h) - (a.w * a.h)),
+        altArr,
+        [...items].sort((a, b) => (a.w * a.h) - (b.w * b.h)),
       ];
       type Candidate = { result: PlacedItem[]; maxHeight: number; wastedArea: number; overflows: number };
       const cands: Candidate[] = [];
       for (const go of hasCustomGap ? [undefined] : [undefined, 0.125, 0.0625]) {
+        const g = go !== undefined ? go : GAP;
         for (const s of sorts) {
-          cands.push(ev(skylinePack(mkPi(s, 'normal', go))));
-          if (isAggressive) { cands.push(ev(skylinePack(mkPi(s, 'landscape', go)))); cands.push(ev(skylinePack(mkPi(s, 'portrait', go)))); }
+          const npi = mkPi(s, 'normal', go);
+          cands.push(ev(skylinePack(npi)));
+          const greedyItems = s.map(d => ({ id: d.id, w: d.w, h: d.h, gap: go !== undefined ? go : getItemGapVal(d.fill) }));
+          cands.push(ev(greedyOrientPack(greedyItems)));
+          cands.push(ev(mixedOrientPack(npi)));
+          cands.push(ev(maxRectsPack(npi, 'bssf')));
+          cands.push(ev(maxRectsPack(npi, 'baf')));
+          cands.push(ev(shelfPack(npi)));
+          cands.push(ev(skylinePack(mkPi(s, 'landscape', go)))); cands.push(ev(skylinePack(mkPi(s, 'portrait', go))));
         }
+        const gr = gridPack(g);
+        if (gr) cands.push(ev(gr));
       }
-      cands.sort((a, b) => { if (a.overflows !== b.overflows) return a.overflows - b.overflows; if (Math.abs(a.maxHeight - b.maxHeight) > 0.01) return a.maxHeight - b.maxHeight; return a.wastedArea - b.wastedArea; });
+      cands.sort((a, b) => {
+        if (a.overflows !== b.overflows) return a.overflows - b.overflows;
+        const af = a.maxHeight <= usableH ? 0 : 1, bf = b.maxHeight <= usableH ? 0 : 1;
+        if (af !== bf) return af - bf;
+        const aU = totalItemArea / (usableW * Math.max(a.maxHeight, 0.01));
+        const bU = totalItemArea / (usableW * Math.max(b.maxHeight, 0.01));
+        if (Math.abs(aU - bU) > 0.02) return bU - aU;
+        if (Math.abs(a.maxHeight - b.maxHeight) > 0.01) return a.maxHeight - b.maxHeight;
+        return a.wastedArea - b.wastedArea;
+      });
       const best = cands[0].result;
       applyResult(best, best.some(p => p.rotation !== 0), best.some(p => p.overflows));
     }
@@ -1722,48 +1843,77 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [imageInfo, selectedDesign, selectedDesignId, saveSnapshot, resizeSettings]);
 
 
-  const handleThresholdAlpha = useCallback(() => {
+  const thresholdAlphaForDesign = useCallback((info: ImageInfo): Promise<ImageInfo | null> => {
+    return new Promise(resolve => {
+      try {
+        const src = info.image;
+        const w = src.naturalWidth || src.width;
+        const h = src.naturalHeight || src.height;
+        if (!w || !h) { resolve(null); return; }
+        const cvs = document.createElement('canvas');
+        cvs.width = w; cvs.height = h;
+        const ctx = cvs.getContext('2d');
+        if (!ctx) { resolve(null); return; }
+        ctx.drawImage(src, 0, 0);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+        for (let i = 3; i < data.length; i += 4) {
+          data[i] = data[i] >= 128 ? 255 : 0;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        cvs.toBlob(blob => {
+          if (!blob) { resolve(null); return; }
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); resolve({ ...info, image: img }); };
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+          img.src = url;
+        }, 'image/png');
+      } catch { resolve(null); }
+    });
+  }, []);
+
+  const handleThresholdAlpha = useCallback(async () => {
     try {
-      const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
-      if (!currentImageInfo) return;
-      const src = currentImageInfo.image;
-      const w = src.naturalWidth || src.width;
-      const h = src.naturalHeight || src.height;
-      if (!w || !h) return;
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(src, 0, 0);
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      for (let i = 3; i < data.length; i += 4) {
-        data[i] = data[i] >= 128 ? 255 : 0;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      canvas.toBlob(blob => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          const newInfo: ImageInfo = { ...currentImageInfo, image: img };
-          saveSnapshot();
-          setImageInfo(newInfo);
-          if (selectedDesignId) {
-            setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d));
-          }
-          toast({ title: "Alpha threshold applied", description: "Semi-transparent pixels removed." });
-        };
-        img.onerror = () => URL.revokeObjectURL(url);
-        img.src = url;
-      }, 'image/png');
+      const targetIds = selectedDesignIds.size > 0 ? Array.from(selectedDesignIds) : (selectedDesignId ? [selectedDesignId] : []);
+      if (targetIds.length === 0) return;
+      saveSnapshot();
+      const targetDesigns = designs.filter(d => targetIds.includes(d.id));
+      const results = await Promise.all(targetDesigns.map(d => thresholdAlphaForDesign(d.imageInfo)));
+      const updates = new Map<string, ImageInfo>();
+      targetDesigns.forEach((d, i) => { if (results[i]) updates.set(d.id, results[i]!); });
+      if (updates.size === 0) { toast({ title: "Alpha threshold failed", description: "Could not process the image(s).", variant: "destructive" }); return; }
+      setDesigns(prev => prev.map(d => {
+        const newInfo = updates.get(d.id);
+        return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
+      }));
+      if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
+      toast({ title: "Alpha threshold applied", description: `Semi-transparent pixels removed from ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
     } catch (err) {
       console.error('Alpha threshold failed:', err);
-      toast({ title: "Alpha threshold failed", description: "Could not process the image.", variant: "destructive" });
+      toast({ title: "Alpha threshold failed", description: "Could not process the image(s).", variant: "destructive" });
     }
-  }, [imageInfo, selectedDesign, selectedDesignId, saveSnapshot, toast]);
+  }, [designs, selectedDesignId, selectedDesignIds, saveSnapshot, toast, thresholdAlphaForDesign]);
+
+  const handleThresholdAlphaAll = useCallback(async () => {
+    try {
+      if (designs.length === 0) return;
+      saveSnapshot();
+      const results = await Promise.all(designs.map(d => thresholdAlphaForDesign(d.imageInfo)));
+      const updates = new Map<string, ImageInfo>();
+      designs.forEach((d, i) => { if (results[i]) updates.set(d.id, results[i]!); });
+      if (updates.size === 0) { toast({ title: "Alpha threshold failed", description: "Could not process the images.", variant: "destructive" }); return; }
+      setDesigns(prev => prev.map(d => {
+        const newInfo = updates.get(d.id);
+        return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
+      }));
+      if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
+      toast({ title: "Alpha threshold applied to all", description: `Semi-transparent pixels removed from ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
+    } catch (err) {
+      console.error('Alpha threshold all failed:', err);
+      toast({ title: "Alpha threshold failed", description: "Could not process the images.", variant: "destructive" });
+    }
+  }, [designs, selectedDesignId, saveSnapshot, toast, thresholdAlphaForDesign]);
 
 
 
@@ -1863,26 +2013,32 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       } else {
         const filename = `${firstName}.png`;
 
-        const TARGET_DPI = 300;
-        const MAX_EXPORT_PIXELS = 80_000_000;
-        const MAX_EXPORT_DIM = 12_000;
-        const dpiByArea = Math.sqrt(MAX_EXPORT_PIXELS / Math.max(1e-6, artboardWidth * artboardHeight));
-        const dpiByDim = Math.min(MAX_EXPORT_DIM / artboardWidth, MAX_EXPORT_DIM / artboardHeight);
-        const exportDpi = Math.min(TARGET_DPI, dpiByArea, dpiByDim);
-        if (exportDpi < TARGET_DPI) {
-          toast({
-            title: "Large sheet detected",
-            description: `Exporting at ${Math.floor(exportDpi)} DPI to keep download stable.`,
-          });
+        const worker = getExportWorker();
+        const useWorker = worker && typeof OffscreenCanvas !== 'undefined';
+
+        let exportDpi: number;
+        if (useWorker) {
+          exportDpi = 300;
+        } else {
+          const MAX_FALLBACK_PIXELS = 80_000_000;
+          const MAX_FALLBACK_DIM = 12_000;
+          const dpiByArea = Math.sqrt(MAX_FALLBACK_PIXELS / Math.max(1e-6, artboardWidth * artboardHeight));
+          const dpiByDim = Math.min(MAX_FALLBACK_DIM / artboardWidth, MAX_FALLBACK_DIM / artboardHeight);
+          exportDpi = Math.min(300, dpiByArea, dpiByDim);
+          if (exportDpi < 300) {
+            toast({
+              title: "Large sheet detected",
+              description: `Exporting at ${Math.floor(exportDpi)} DPI (upgrade browser for full 300 DPI).`,
+            });
+          }
         }
 
         const outW = Math.max(1, Math.round(artboardWidth * exportDpi));
         const outH = Math.max(1, Math.round(artboardHeight * exportDpi));
 
-        const worker = getExportWorker();
         let pngBlob: Blob;
 
-        if (worker && typeof OffscreenCanvas !== 'undefined') {
+        if (useWorker) {
           const bitmaps = await Promise.all(
             designs.map(d => createImageBitmap(d.imageInfo.image))
           );
@@ -1900,7 +2056,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           }));
           const requestId = ++_exportReqCounter;
           pngBlob = await new Promise<Blob>((resolve, reject) => {
-            const EXPORT_TIMEOUT_MS = 120_000;
+            const EXPORT_TIMEOUT_MS = 300_000;
             let settled = false;
             const cleanup = () => {
               worker.removeEventListener('message', handler);
@@ -2329,16 +2485,29 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             <div className="w-px h-4 bg-gray-700 mx-0.5" />
             <button
               onClick={handleThresholdAlpha}
-              disabled={!selectedDesignId}
+              disabled={!selectedDesignId && selectedDesignIds.size === 0}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all whitespace-nowrap ${
-                selectedDesignId
+                selectedDesignId || selectedDesignIds.size > 0
                   ? 'bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
                   : 'bg-gray-800 text-gray-600 opacity-30 pointer-events-none'
               }`}
-              title="Remove Semi Transparencies (best for Sharp edges)"
+              title="Remove Semi Transparencies from selected design(s)"
             >
               <Droplets className="w-3.5 h-3.5" />
               <span className="text-[10px] font-medium">Clean Alpha</span>
+            </button>
+            <button
+              onClick={handleThresholdAlphaAll}
+              disabled={designs.length === 0}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all whitespace-nowrap ${
+                designs.length > 0
+                  ? 'bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
+                  : 'bg-gray-800 text-gray-600 opacity-30 pointer-events-none'
+              }`}
+              title="Remove Semi Transparencies from ALL designs on the gangsheet"
+            >
+              <Droplets className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-medium">Clean Alpha All</span>
             </button>
           </div>
         </div>

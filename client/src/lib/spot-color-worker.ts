@@ -286,10 +286,10 @@ function processSpotColors(
   }
 
   const fluorTypes = [
-    { field: 'spotFluorY' as const, nameField: 'spotFluorYName' as const, defaultName: 'Fluorescent_Y' },
-    { field: 'spotFluorM' as const, nameField: 'spotFluorMName' as const, defaultName: 'Fluorescent_M' },
-    { field: 'spotFluorG' as const, nameField: 'spotFluorGName' as const, defaultName: 'Fluorescent_G' },
-    { field: 'spotFluorOrange' as const, nameField: 'spotFluorOrangeName' as const, defaultName: 'Fluorescent_Orange' },
+    { field: 'spotFluorY' as const, nameField: 'spotFluorYName' as const, defaultName: 'FY' },
+    { field: 'spotFluorM' as const, nameField: 'spotFluorMName' as const, defaultName: 'FM' },
+    { field: 'spotFluorG' as const, nameField: 'spotFluorGName' as const, defaultName: 'FG' },
+    { field: 'spotFluorOrange' as const, nameField: 'spotFluorOrangeName' as const, defaultName: 'FO' },
   ];
 
   for (const ft of fluorTypes) {

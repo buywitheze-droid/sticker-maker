@@ -8,7 +8,7 @@ import Landing from "@/pages/landing";
 import StickerMaker from "@/pages/sticker-maker";
 import EmbedPage from "@/pages/embed";
 import NotFound from "@/pages/not-found";
-import { HOT_PEEL_PROFILE, FLUORESCENT_PROFILE, UV_DTF_PROFILE } from "@/lib/profiles";
+import { HOT_PEEL_PROFILE, FLUORESCENT_PROFILE, UV_DTF_PROFILE, SPECIALTY_DTF_PROFILE } from "@/lib/profiles";
 
 function Router() {
   return (
@@ -17,6 +17,7 @@ function Router() {
       <Route path="/hot-peel">{() => <StickerMaker profile={HOT_PEEL_PROFILE} />}</Route>
       <Route path="/fluorescent">{() => <StickerMaker profile={FLUORESCENT_PROFILE} />}</Route>
       <Route path="/uv-dtf">{() => <StickerMaker profile={UV_DTF_PROFILE} />}</Route>
+      <Route path="/specialty-dtf">{() => <StickerMaker profile={SPECIALTY_DTF_PROFILE} />}</Route>
       <Route path="/embed" component={EmbedPage} />
       <Route component={NotFound} />
     </Switch>

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
-import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, Pencil, Check, X, Info } from "lucide-react";
+import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, Info } from "lucide-react";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -69,12 +69,10 @@ export default function ControlsSection({
   const [showFluorInfo, setShowFluorInfo] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
   const [spotPreviewEnabled, setSpotPreviewEnabled] = useState(true);
-  const [spotFluorYName, setSpotFluorYName] = useState("Fluorescent_Y");
-  const [spotFluorMName, setSpotFluorMName] = useState("Fluorescent_M");
-  const [spotFluorGName, setSpotFluorGName] = useState("Fluorescent_G");
-  const [spotFluorOrangeName, setSpotFluorOrangeName] = useState("Fluorescent_Orange");
-  const [editingFluorName, setEditingFluorName] = useState<string | null>(null);
-  const [tempFluorName, setTempFluorName] = useState("");
+  const spotFluorYName = "FY";
+  const spotFluorMName = "FM";
+  const spotFluorGName = "FG";
+  const spotFluorOrangeName = "FO";
   const colorCacheRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const spotSelectionsRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const prevDesignIdRef = useRef<string | null | undefined>(null);
@@ -357,49 +355,6 @@ export default function ControlsSection({
                 </div>
               )}
 
-              <div className="text-[10px] text-gray-500 pt-1.5 border-t border-gray-700 space-y-0.5">
-                {([
-                  { key: 'Y', name: spotFluorYName, setName: setSpotFluorYName, defaultName: 'Fluorescent_Y', neonColor: '#DFFF00' },
-                  { key: 'M', name: spotFluorMName, setName: setSpotFluorMName, defaultName: 'Fluorescent_M', neonColor: '#FF00FF' },
-                  { key: 'G', name: spotFluorGName, setName: setSpotFluorGName, defaultName: 'Fluorescent_G', neonColor: '#39FF14' },
-                  { key: 'Orange', name: spotFluorOrangeName, setName: setSpotFluorOrangeName, defaultName: 'Fluorescent_Orange', neonColor: '#FF6600' },
-                ] as const).map(({ key, name, setName, defaultName, neonColor }) => (
-                  <div key={key} className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: neonColor }} />
-                    <span className="font-semibold" style={{ color: neonColor, textShadow: '0 0 1px rgba(0,0,0,0.3)' }}>{key}</span>
-                    <span className="text-gray-600">{'->'}</span>
-                    {editingFluorName === key ? (
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={tempFluorName}
-                          onChange={(e) => setTempFluorName(e.target.value)}
-                          className="w-24 px-1 py-0.5 text-[10px] border border-gray-600 rounded bg-gray-800 text-gray-200"
-                          autoFocus
-                          onBlur={() => { setName(tempFluorName || defaultName); setEditingFluorName(null); }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') { setName(tempFluorName || defaultName); setEditingFluorName(null); }
-                            else if (e.key === 'Escape') setEditingFluorName(null);
-                          }}
-                        />
-                        <button onClick={() => { setName(tempFluorName || defaultName); setEditingFluorName(null); }} className="p-0.5 hover:bg-green-500/20 rounded" title="Save">
-                          <Check className="w-2.5 h-2.5 text-green-400" />
-                        </button>
-                        <button onClick={() => setEditingFluorName(null)} className="p-0.5 hover:bg-red-500/20 rounded" title="Cancel">
-                          <X className="w-2.5 h-2.5 text-red-400" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <span className="font-medium text-gray-400">{name}</span>
-                        <button onClick={() => { setTempFluorName(name); setEditingFluorName(key); }} className="p-0.5 hover:bg-gray-700 rounded" title="Edit name">
-                          <Pencil className="w-2.5 h-2.5 text-gray-500" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>,

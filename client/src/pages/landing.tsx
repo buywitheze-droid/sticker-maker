@@ -1,23 +1,26 @@
 import { Link } from "wouter";
 import { ALL_PROFILES, type ProfileConfig } from "@/lib/profiles";
-import { Zap, Sparkles, Sun } from "lucide-react";
+import { Zap, Sparkles, Sun, Diamond } from "lucide-react";
 
 const PROFILE_ICONS: Record<string, React.ReactNode> = {
   'hot-peel': <Zap className="w-8 h-8" />,
   'fluorescent': <Sparkles className="w-8 h-8" />,
   'uv-dtf': <Sun className="w-8 h-8" />,
+  'specialty-dtf': <Diamond className="w-8 h-8" />,
 };
 
 const PROFILE_GRADIENTS: Record<string, string> = {
   'hot-peel': 'from-cyan-500 to-blue-600',
   'fluorescent': 'from-purple-500 to-pink-500',
   'uv-dtf': 'from-amber-400 to-orange-500',
+  'specialty-dtf': 'from-yellow-300 to-yellow-500',
 };
 
 const PROFILE_GLOWS: Record<string, string> = {
   'hot-peel': 'hover:shadow-cyan-500/30',
   'fluorescent': 'hover:shadow-purple-500/30',
   'uv-dtf': 'hover:shadow-amber-500/30',
+  'specialty-dtf': 'hover:shadow-yellow-400/30',
 };
 
 function ProfileCard({ profile }: { profile: ProfileConfig }) {
@@ -87,9 +90,9 @@ export default function Landing() {
       </header>
 
       <main className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-6xl">
           <p className="text-center text-gray-400 mb-10 text-sm">Choose a print profile to get started</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {ALL_PROFILES.map(profile => (
               <ProfileCard key={profile.id} profile={profile} />
             ))}

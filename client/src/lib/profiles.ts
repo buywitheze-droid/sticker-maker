@@ -31,7 +31,7 @@ export const FLUORESCENT_PROFILE: ProfileConfig = {
   gangsheetHeights: [12, 14, 16, 18],
   downloadFormat: 'pdf',
   enableFluorescent: true,
-  description: 'Fluorescent spot color gang sheets with vector PDF export.',
+  description: 'Almost same as regular but you can select to have custom Fluorescent ink that Glows under Black light in your Design.',
 };
 
 export const UV_DTF_PROFILE: ProfileConfig = {
@@ -46,7 +46,19 @@ export const UV_DTF_PROFILE: ProfileConfig = {
   description: 'UV-DTF gang sheets, 22" wide, PNG export at 300 DPI.',
 };
 
-export const ALL_PROFILES = [HOT_PEEL_PROFILE, FLUORESCENT_PROFILE, UV_DTF_PROFILE];
+export const SPECIALTY_DTF_PROFILE: ProfileConfig = {
+  id: 'specialty-dtf',
+  name: 'Specialty DTF',
+  title: 'SPECIALTY DTF GANGSHEET',
+  route: '/specialty-dtf',
+  artboardWidth: 22,
+  gangsheetHeights: [12, 18, 24, 35, 40, 45, 48, 50, 55, 60],
+  downloadFormat: 'png',
+  enableFluorescent: false,
+  description: 'Silver & Gold Foil, Reflective & Glow, and Glitter DTF gang sheets.',
+};
+
+export const ALL_PROFILES = [HOT_PEEL_PROFILE, FLUORESCENT_PROFILE, UV_DTF_PROFILE, SPECIALTY_DTF_PROFILE];
 
 export function getProfileById(id: string): ProfileConfig {
   return ALL_PROFILES.find(p => p.id === id) ?? HOT_PEEL_PROFILE;
