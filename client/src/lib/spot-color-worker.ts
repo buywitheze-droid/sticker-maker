@@ -60,7 +60,7 @@ function createClosestColorMask(
     hex: c.hex
   }));
 
-  const directTolerance = 80;
+  const directTolerance = 100;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -270,7 +270,7 @@ function processSpotColors(
   const regions: SpotColorRegionWorker[] = [];
 
   if (whiteColors.length > 0) {
-    const mask = createClosestColorMask(pixelData, width, height, whiteColors, spotColors, 60, 240);
+    const mask = createClosestColorMask(pixelData, width, height, whiteColors, spotColors, 80, 128);
     const paths = traceMaskToInchPaths(mask, width, height, dpi);
     if (paths.length > 0) {
       regions.push({ name: whiteName, paths, tintCMYK: [0, 1, 0, 0] });
@@ -278,7 +278,7 @@ function processSpotColors(
   }
 
   if (glossColors.length > 0) {
-    const mask = createClosestColorMask(pixelData, width, height, glossColors, spotColors, 60, 240);
+    const mask = createClosestColorMask(pixelData, width, height, glossColors, spotColors, 80, 128);
     const paths = traceMaskToInchPaths(mask, width, height, dpi);
     if (paths.length > 0) {
       regions.push({ name: glossName, paths, tintCMYK: [0, 1, 0, 0] });
@@ -296,7 +296,7 @@ function processSpotColors(
     const matchingColors = spotColors.filter(c => c[ft.field]);
     if (matchingColors.length > 0) {
       const fluorName = matchingColors[0][ft.nameField] || ft.defaultName;
-      const mask = createClosestColorMask(pixelData, width, height, matchingColors, spotColors, 60, 240);
+      const mask = createClosestColorMask(pixelData, width, height, matchingColors, spotColors, 80, 128);
       const paths = traceMaskToInchPaths(mask, width, height, dpi);
       if (paths.length > 0) {
         regions.push({ name: fluorName, paths, tintCMYK: [0, 1, 0, 0] });
@@ -308,11 +308,15 @@ function processSpotColors(
 }
 
 self.onmessage = function(e: MessageEvent<WorkerMessage>) {
-  if (e.data.type === 'trace') {
-    const { imageBuffer, imageWidth, imageHeight, spotColors, dpi } = e.data;
-    const pixelData = new Uint8ClampedArray(imageBuffer);
-    const regions = processSpotColors(pixelData, imageWidth, imageHeight, spotColors, dpi);
-    const response: WorkerResponse = { type: 'result', regions };
-    self.postMessage(response);
+  try {
+    if (e.data.type === 'trace') {
+      const { imageBuffer, imageWidth, imageHeight, spotColors, dpi } = e.data;
+      const pixelData = new Uint8ClampedArray(imageBuffer);
+      const regions = processSpotColors(pixelData, imageWidth, imageHeight, spotColors, dpi);
+      const response: WorkerResponse = { type: 'result', regions };
+      self.postMessage(response);
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', error: String(err) });
   }
 };

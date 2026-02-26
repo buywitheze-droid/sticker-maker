@@ -4,6 +4,8 @@ export interface HistorySnapshot {
   designsJson: string;
   selectedDesignId: string | null;
   imageInfoMap?: Map<string, unknown>;
+  artboardWidth?: number;
+  artboardHeight?: number;
 }
 
 const MAX_HISTORY = 50;

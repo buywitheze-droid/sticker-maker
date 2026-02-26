@@ -1,22 +1,15 @@
-import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, Loader2, Maximize2 } from "lucide-react";
+import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
+import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, MousePointer2, Focus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { ImageInfo, StrokeSettings, ResizeSettings, ShapeSettings, type LockedContour, type ImageTransform, type DesignItem } from "./image-editor";
+import { ImageInfo, ResizeSettings, type ImageTransform, type DesignItem } from "./image-editor";
 import { computeLayerRect } from "@/lib/types";
 
-const DPI_SCALE = 2;
-const ZOOM_MIN_ABSOLUTE = 0.5;
-const ZOOM_MAX = 3;
+const BASE_DPI_SCALE = 2;
+const ZOOM_MIN_ABSOLUTE = 0.1;
 const ZOOM_WHEEL_FACTOR = 1.1;
 const ZOOM_BUTTON_FACTOR = 1.2;
 const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round'%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='white' stroke-width='2'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='white' stroke-width='2'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 11 11, pointer`;
-import { SpotPreviewData } from "./controls-section";
-import { CadCutBounds } from "@/lib/cadcut-bounds";
-import { type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
-import { calculateShapeDimensions } from "@/lib/shape-outline";
-import { cropImageToContent, getImageBounds } from "@/lib/image-crop";
-import { convertPolygonToCurves, gaussianSmoothContour } from "@/lib/clipper-path";
 
 function getResizeCursor(handleId: string, rotationDeg: number): string {
   const baseMap: Record<string, number> = { tl: 315, tr: 45, br: 135, bl: 225 };
@@ -34,18 +27,7 @@ function getResizeCursor(handleId: string, rotationDeg: number): string {
 
 interface PreviewSectionProps {
   imageInfo: ImageInfo | null;
-  strokeSettings: StrokeSettings;
   resizeSettings: ResizeSettings;
-  shapeSettings: ShapeSettings;
-  cadCutBounds?: CadCutBounds | null;
-  spotPreviewData?: SpotPreviewData;
-  showCutLineInfo?: boolean;
-  onDetectedAlgorithm?: (algo: DetectedAlgorithm) => void;
-  detectedShapeType?: 'circle' | 'oval' | 'square' | 'rectangle' | null;
-  detectedShapeInfo?: DetectedShapeInfo | null;
-  detectedAlgorithm?: DetectedAlgorithm;
-  onStrokeChange?: (settings: Partial<StrokeSettings>) => void;
-  lockedContour?: LockedContour | null;
   artboardWidth?: number;
   artboardHeight?: number;
   designTransform?: ImageTransform;
@@ -56,40 +38,62 @@ interface PreviewSectionProps {
   onSelectDesign?: (id: string | null) => void;
   onMultiSelect?: (ids: string[]) => void;
   onMultiDragDelta?: (dnx: number, dny: number) => void;
+  onMultiResizeDelta?: (scaleRatio: number, centerNx: number, centerNy: number) => void;
+  onMultiRotateDelta?: (angleDeg: number, centerNx: number, centerNy: number) => void;
   onDuplicateSelected?: () => string[];
   onInteractionEnd?: () => void;
   onExpandArtboard?: () => void;
+  spotPreviewData?: { enabled: boolean; colors: Array<{ hex: string; rgb: { r: number; g: number; b: number }; spotWhite?: boolean; spotGloss?: boolean; spotFluorY?: boolean; spotFluorM?: boolean; spotFluorG?: boolean; spotFluorOrange?: boolean }> };
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, spotPreviewData, showCutLineInfo, onDetectedAlgorithm, detectedShapeType, detectedShapeInfo, detectedAlgorithm, onStrokeChange, lockedContour, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, spotPreviewData }, ref) => {
     const { toast } = useToast();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const resizeLimitToastRef = useRef(0);
+    const zoomMax = Math.max(10, Math.ceil(artboardHeight / artboardWidth) * 3);
+    const zoomMaxRef = useRef(zoomMax);
+    zoomMaxRef.current = zoomMax;
     const [zoom, setZoom] = useState(1);
+    const zoomDpiTier = useMemo(() => (zoom <= 2 ? 1 : zoom <= 5 ? 2 : 3), [zoom]);
     const [panX, setPanX] = useState(0);
     const [panY, setPanY] = useState(0);
     const zoomRef = useRef(zoom);
     const panXRef = useRef(panX);
     const panYRef = useRef(panY);
+    const pendingPanCommitRef = useRef<{ x: number; y: number } | null>(null);
+    const panCommitRafRef = useRef<number | null>(null);
+    const scrollDragRef = useRef<{ axis: 'x' | 'y'; startMouse: number; startScroll: number; maxScroll: number; scrollable: number } | null>(null);
+    const nativeScrollRef = useRef<HTMLDivElement>(null);
+    const syncingScrollRef = useRef(false);
     zoomRef.current = zoom;
-    panXRef.current = panX;
-    panYRef.current = panY;
-    const [backgroundColor, setBackgroundColor] = useState("transparent");
+    if (!scrollDragRef.current) {
+      panXRef.current = panX;
+      panYRef.current = panY;
+    }
+    const [selectionZoomActive, setSelectionZoomActive] = useState(false);
+    const selectionZoomActiveRef = useRef(false);
+    selectionZoomActiveRef.current = selectionZoomActive;
+    const [moveMode, setMoveMode] = useState(false);
+    const moveModeRef = useRef(false);
+    moveModeRef.current = moveMode;
+    const isSelectionZoomDragging = useRef(false);
+    const suppressTransitionRef = useRef(false);
+    const selZoomScreenStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const [selZoomRect, setSelZoomRect] = useState<{x: number; y: number; w: number; h: number} | null>(null);
+    const selZoomRectRef = useRef(selZoomRect);
+    selZoomRectRef.current = selZoomRect;
+    const canvasAreaRef = useRef<HTMLDivElement>(null);
+    const dpiScaleRef = useRef(BASE_DPI_SCALE);
     const lastImageRef = useRef<string | null>(null);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [processingProgress, setProcessingProgress] = useState(0);
-    const contourCacheRef = useRef<{key: string; canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number} | null>(null);
-    const contourCacheMapRef = useRef<Map<string, {canvas: HTMLCanvasElement; downsampleScale: number; imageCanvasX: number; imageCanvasY: number}>>(new Map());
-    const processingIdRef = useRef(0);
-    const [showHighlight, setShowHighlight] = useState(false);
-    const lastSettingsRef = useRef<string>('');
-    const contourDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const lastImageRenderRef = useRef<{x: number; y: number; width: number; height: number} | null>(null);
     const [previewDims, setPreviewDims] = useState({ width: 360, height: 360 });
     const previewDimsRef = useRef(previewDims);
     previewDimsRef.current = previewDims;
+    const spotPulseRef = useRef(1);
+    const spotAnimFrameRef = useRef<number | null>(null);
+    const spotOverlayCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+    const createSpotOverlayCanvasRef = useRef<((source?: HTMLImageElement | HTMLCanvasElement) => HTMLCanvasElement | null) | null>(null);
 
     const getMinZoom = useCallback(() => {
       const container = containerRef.current;
@@ -106,25 +110,226 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, []);
     const minZoomRef = useRef(1);
 
+    // True when artboard width overflows viewport (left-click panning takes priority over design interaction)
+    const isHorizOverflow = useCallback(() => {
+      const el = canvasAreaRef.current;
+      if (!el) return false;
+      return zoomRef.current * previewDimsRef.current.width > el.clientWidth * 1.05;
+    }, []);
+
+    const getIdleCursor = useCallback(() => {
+      if (isHorizOverflow() && !moveModeRef.current) return 'grab';
+      return 'default';
+    }, [isHorizOverflow]);
+
+
     const clampPanValue = useCallback((px: number, py: number, z: number) => {
       const dims = previewDimsRef.current;
-      const maxPanX = dims.width * 0.5 / z;
-      const maxPanY = dims.height * 0.5 / z;
+      const el = canvasAreaRef.current;
+      const vw = el ? el.clientWidth : dims.width;
+      const vh = el ? el.clientHeight : dims.height;
+      const maxPanX = Math.max(0, dims.width / 2 - vw / (2 * z));
+      const maxPanY = Math.max(0, dims.height / 2 - vh / (2 * z));
       return {
         x: Math.max(-maxPanX, Math.min(maxPanX, px)),
         y: Math.max(-maxPanY, Math.min(maxPanY, py)),
       };
     }, []);
 
-    const spotPulseRef = useRef(1);
-    const spotAnimFrameRef = useRef<number | null>(null);
+    const getMaxPan = useCallback((axis: 'x' | 'y', z: number) => {
+      const dims = previewDimsRef.current;
+      const el = canvasAreaRef.current;
+      if (axis === 'x') {
+        const vw = el ? el.clientWidth : dims.width;
+        return Math.max(0, dims.width / 2 - vw / (2 * z));
+      } else {
+        const vh = el ? el.clientHeight : dims.height;
+        return Math.max(0, dims.height / 2 - vh / (2 * z));
+      }
+    }, []);
+
+    const getScrollMetrics = useCallback((axis: 'x' | 'y', z: number) => {
+      const dims = previewDimsRef.current;
+      const el = canvasAreaRef.current;
+      const viewport = axis === 'x'
+        ? (el ? el.clientWidth : dims.width)
+        : (el ? el.clientHeight : dims.height);
+      const rendered = z * (axis === 'x' ? dims.width : dims.height);
+      const maxScroll = Math.max(0, rendered - viewport);
+      const rawThumbFrac = rendered > 0 ? Math.min(1, viewport / rendered) : 1;
+      return { viewport, rendered, maxScroll, rawThumbFrac };
+    }, []);
+
+    const panToScroll = useCallback((axis: 'x' | 'y', panVal: number, z: number) => {
+      const maxPan = getMaxPan(axis, z);
+      const { maxScroll } = getScrollMetrics(axis, z);
+      if (maxPan <= 0 || maxScroll <= 0) return 0;
+      const t = Math.max(0, Math.min(1, (maxPan - panVal) / (2 * maxPan)));
+      return t * maxScroll;
+    }, [getMaxPan, getScrollMetrics]);
+
+    const scrollToPan = useCallback((axis: 'x' | 'y', scrollVal: number, z: number) => {
+      const maxPan = getMaxPan(axis, z);
+      const { maxScroll } = getScrollMetrics(axis, z);
+      if (maxPan <= 0 || maxScroll <= 0) return 0;
+      const t = Math.max(0, Math.min(1, scrollVal / maxScroll));
+      return maxPan * (1 - 2 * t);
+    }, [getMaxPan, getScrollMetrics]);
+
+    const [scrollbarHover, setScrollbarHover] = useState<'x' | 'y' | null>(null);
+    const [activeScrollAxis, setActiveScrollAxis] = useState<'x' | 'y' | null>(null);
+    const showDragPerfDebug = useMemo(() => {
+      if (!import.meta.env.DEV || typeof window === 'undefined') return false;
+      const params = new URLSearchParams(window.location.search);
+      return params.get('dragPerf') === '1';
+    }, []);
+    const [dragPerfText, setDragPerfText] = useState('');
+    const dragPerfRafRef = useRef<number | null>(null);
+    const dragPerfLastTsRef = useRef<number | null>(null);
+    const dragPerfSamplesRef = useRef<number[]>([]);
+    const dragPerfLastCommitRef = useRef(0);
+    const queuePanStateCommit = useCallback((x: number, y: number) => {
+      panXRef.current = x;
+      panYRef.current = y;
+      pendingPanCommitRef.current = { x, y };
+      if (panCommitRafRef.current != null) return;
+      panCommitRafRef.current = requestAnimationFrame(() => {
+        panCommitRafRef.current = null;
+        const next = pendingPanCommitRef.current;
+        if (!next) return;
+        setPanX(next.x);
+        setPanY(next.y);
+      });
+    }, []);
+
+    const AUTOPAN_EDGE = 60;
+    const AUTOPAN_MAX_SPEED = 8;
+
+    const stopAutoPan = useCallback(() => {
+      autoPanActiveRef.current = false;
+      if (autoPanRafRef.current != null) {
+        cancelAnimationFrame(autoPanRafRef.current);
+        autoPanRafRef.current = null;
+      }
+    }, []);
+
+    const tickAutoPan = useCallback(() => {
+      if (!autoPanActiveRef.current) return;
+      const el = canvasAreaRef.current;
+      if (!el) { stopAutoPan(); return; }
+
+      const rect = el.getBoundingClientRect();
+      const mx = autoPanMouseRef.current.x;
+      const my = autoPanMouseRef.current.y;
+      const z = zoomRef.current;
+
+      let dx = 0;
+      let dy = 0;
+
+      const distLeft = mx - rect.left;
+      const distRight = rect.right - mx;
+      const distTop = my - rect.top;
+      const distBottom = rect.bottom - my;
+
+      if (distLeft < AUTOPAN_EDGE) dx = AUTOPAN_MAX_SPEED * (1 - distLeft / AUTOPAN_EDGE);
+      else if (distRight < AUTOPAN_EDGE) dx = -AUTOPAN_MAX_SPEED * (1 - distRight / AUTOPAN_EDGE);
+      if (distTop < AUTOPAN_EDGE) dy = AUTOPAN_MAX_SPEED * (1 - distTop / AUTOPAN_EDGE);
+      else if (distBottom < AUTOPAN_EDGE) dy = -AUTOPAN_MAX_SPEED * (1 - distBottom / AUTOPAN_EDGE);
+
+      if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+        autoPanRafRef.current = requestAnimationFrame(tickAutoPan);
+        return;
+      }
+
+      const oldPx = panXRef.current;
+      const oldPy = panYRef.current;
+      const rawPx = oldPx + dx / z;
+      const rawPy = oldPy + dy / z;
+      const clamped = clampPanValue(rawPx, rawPy, z);
+
+      const actualDpx = clamped.x - oldPx;
+      const actualDpy = clamped.y - oldPy;
+      const panChanged = Math.abs(actualDpx) > 0.01 || Math.abs(actualDpy) > 0.01;
+
+      if (panChanged) {
+        queuePanStateCommit(clamped.x, clamped.y);
+
+        const screenShiftX = actualDpx * z;
+        const screenShiftY = actualDpy * z;
+
+        if (isDraggingRef.current) {
+          dragStartMouseRef.current = {
+            x: dragStartMouseRef.current.x + screenShiftX,
+            y: dragStartMouseRef.current.y + screenShiftY,
+          };
+        }
+
+        if (isMultiDragRef.current) {
+          multiDragStartRef.current = {
+            x: multiDragStartRef.current.x + screenShiftX,
+            y: multiDragStartRef.current.y + screenShiftY,
+          };
+        }
+
+        handleInteractionMoveRef.current?.(mx, my);
+      }
+
+      autoPanRafRef.current = requestAnimationFrame(tickAutoPan);
+    }, [clampPanValue, queuePanStateCommit, stopAutoPan]);
+
+    const startAutoPan = useCallback((clientX: number, clientY: number) => {
+      autoPanMouseRef.current = { x: clientX, y: clientY };
+      if (!autoPanActiveRef.current) {
+        autoPanActiveRef.current = true;
+        autoPanRafRef.current = requestAnimationFrame(tickAutoPan);
+      }
+    }, [tickAutoPan]);
+
+    const updateAutoPanMouse = useCallback((clientX: number, clientY: number) => {
+      autoPanMouseRef.current = { x: clientX, y: clientY };
+    }, []);
+
+    useEffect(() => {
+      if (!showDragPerfDebug) return;
+      const loop = (ts: number) => {
+        const prev = dragPerfLastTsRef.current;
+        if (prev != null) {
+          const dt = ts - prev;
+          if (dt > 0 && dt < 1000) {
+            const samples = dragPerfSamplesRef.current;
+            samples.push(dt);
+            if (samples.length > 120) samples.shift();
+          }
+        }
+        dragPerfLastTsRef.current = ts;
+
+        const active = !!scrollDragRef.current || isPanningRef.current;
+        if (active && ts - dragPerfLastCommitRef.current > 250) {
+          const samples = dragPerfSamplesRef.current;
+          if (samples.length > 0) {
+            const avgMs = samples.reduce((a, b) => a + b, 0) / samples.length;
+            const fps = avgMs > 0 ? 1000 / avgMs : 0;
+            const p95 = [...samples].sort((a, b) => a - b)[Math.max(0, Math.floor(samples.length * 0.95) - 1)];
+            setDragPerfText(`drag fps ${Math.round(fps)} | avg ${avgMs.toFixed(1)}ms | p95 ${p95.toFixed(1)}ms`);
+            dragPerfLastCommitRef.current = ts;
+          }
+        } else if (!active && dragPerfText) {
+          setDragPerfText('');
+        }
+
+        dragPerfRafRef.current = requestAnimationFrame(loop);
+      };
+      dragPerfRafRef.current = requestAnimationFrame(loop);
+      return () => {
+        if (dragPerfRafRef.current != null) {
+          cancelAnimationFrame(dragPerfRafRef.current);
+          dragPerfRafRef.current = null;
+        }
+      };
+    }, [dragPerfText, showDragPerfDebug]);
     const renderRef = useRef<(() => void) | null>(null);
     
-    const spotOverlayCacheRef = useRef<{key: string; canvas: HTMLCanvasElement} | null>(null);
     const checkerboardPatternRef = useRef<{width: number; height: number; pattern: CanvasPattern} | null>(null);
-    const croppedImageCacheRef = useRef<{src: string; canvas: HTMLCanvasElement | HTMLImageElement} | null>(null);
-    const holographicCacheRef = useRef<{contourKey: string; canvas: HTMLCanvasElement} | null>(null);
-    const contourTransformRef = useRef<{x: number; y: number; width: number; height: number; canvasW: number; canvasH: number} | null>(null);
     const lastCanvasDimsRef = useRef<{width: number; height: number}>({width: 0, height: 0});
     
     const [editingRotation, setEditingRotation] = useState(false);
@@ -148,23 +353,40 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const resizeStartDistRef = useRef(0);
     const resizeStartSRef = useRef(1);
     const resizeCommittedRef = useRef(false);
+    const resizeStartScreenCenterRef = useRef<{x: number; y: number}>({x: 0, y: 0});
     const rotateStartAngleRef = useRef(0);
     const rotateStartRotationRef = useRef(0);
+    const rotateStartCanvasCenterRef = useRef<{x: number; y: number}>({x: 0, y: 0});
     const transformRef = useRef<ImageTransform>(designTransform || {nx: 0.5, ny: 0.5, s: 1, rotation: 0});
     const onTransformChangeRef = useRef(onTransformChange);
     onTransformChangeRef.current = onTransformChange;
+    const handleInteractionMoveRef = useRef<((cx: number, cy: number) => void) | null>(null);
+    const handleInteractionEndRef = useRef<(() => void) | null>(null);
+
+    const autoPanRafRef = useRef<number | null>(null);
+    const autoPanMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const autoPanActiveRef = useRef(false);
 
     const isMarqueeRef = useRef(false);
     const marqueeStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
     const marqueeEndRef = useRef<{x: number; y: number}>({x: 0, y: 0});
     const [marqueeRect, setMarqueeRect] = useState<{x: number; y: number; w: number; h: number} | null>(null);
+    const marqueeScreenStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const [marqueeScreenRect, setMarqueeScreenRect] = useState<{x: number; y: number; w: number; h: number} | null>(null);
 
     const isMultiDragRef = useRef(false);
     const multiDragStartRef = useRef<{x: number; y: number}>({x: 0, y: 0});
 
+    const isMultiResizeRef = useRef(false);
+    const isMultiRotateRef = useRef(false);
+    const multiResizeStartDistRef = useRef(0);
+    const multiResizeStartScreenCenterRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+    const multiRotateStartAngleRef = useRef(0);
+    const multiGroupCenterBufferRef = useRef<{x: number; y: number}>({x: 0, y: 0});
+
     const overlapCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const [bottomGlow, setBottomGlow] = useState(0);
+    const bottomGlowRef = useRef(0);
     const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const expandTimerStartRef = useRef<number>(0);
     const glowAnimRef = useRef<number | null>(null);
@@ -179,7 +401,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const tick = () => {
         if (!bottomGlowActiveRef.current) return;
         const elapsed = Date.now() - expandTimerStartRef.current;
-        setBottomGlow(Math.min(1, elapsed / 1900));
+        bottomGlowRef.current = Math.min(1, elapsed / 1900);
+        renderRef.current?.();
         glowAnimRef.current = requestAnimationFrame(tick);
       };
       glowAnimRef.current = requestAnimationFrame(tick);
@@ -199,7 +422,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         cancelAnimationFrame(glowAnimRef.current);
         glowAnimRef.current = null;
       }
-      setBottomGlow(0);
+      bottomGlowRef.current = 0;
+      renderRef.current?.();
     }, []);
     useEffect(() => () => stopBottomGlow(), [stopBottomGlow]);
 
@@ -212,6 +436,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     useEffect(() => {
       const onKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && selectionZoomActiveRef.current) {
+          setSelectionZoomActive(false);
+          isSelectionZoomDragging.current = false;
+          setSelZoomRect(null);
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
+          return;
+        }
         if (!isKeyboardScopeActiveRef.current) return;
         shiftKeyRef.current = e.shiftKey;
         altKeyRef.current = e.altKey;
@@ -227,6 +458,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         if (e.code === 'Space') {
           spaceDownRef.current = false;
           isPanningRef.current = false;
+          if (canvasAreaRef.current && !selectionZoomActiveRef.current) {
+            canvasAreaRef.current.style.cursor = getIdleCursor();
+          }
         }
       };
       window.addEventListener('keydown', onKeyDown);
@@ -265,7 +499,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const rect = getDesignRect();
       if (!rect) return false;
       const z = Math.max(0.25, zoomRef.current);
-      const inv = DPI_SCALE / z;
+      const inv = dpiScaleRef.current / z;
       const margin = Math.min(10 * inv, Math.min(rect.width, rect.height) * 0.25);
       const t = transformRef.current;
       const cx = rect.x + rect.width / 2;
@@ -307,7 +541,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const rect = getDesignRect();
       if (!rect) return null;
       const z = Math.max(0.25, zoomRef.current);
-      const inv = DPI_SCALE / z;
+      const inv = dpiScaleRef.current / z;
       const resizeR = 7 * inv;
       const rotateOuterR = 18 * inv;
 
@@ -341,6 +575,91 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       return null;
     }, [getHandlePositions, getDesignRect]);
+
+    // Group bounding box in canvas buffer space for multi-selection
+    const getMultiSelectionBBox = useCallback(() => {
+      const canvas = canvasRef.current;
+      if (!canvas || selectedDesignIds.size < 2) return null;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const d of designs) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const r = computeLayerRect(
+          d.imageInfo.image.width, d.imageInfo.image.height,
+          d.transform, canvas.width, canvas.height,
+          artboardWidth, artboardHeight, d.widthInches, d.heightInches,
+        );
+        const cx = r.x + r.width / 2;
+        const cy = r.y + r.height / 2;
+        const hw = r.width / 2;
+        const hh = r.height / 2;
+        const rad = (d.transform.rotation * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const corners = [
+          { lx: -hw, ly: -hh }, { lx: hw, ly: -hh },
+          { lx: hw, ly: hh }, { lx: -hw, ly: hh },
+        ];
+        for (const c of corners) {
+          const px = cx + c.lx * cos - c.ly * sin;
+          const py = cy + c.lx * sin + c.ly * cos;
+          minX = Math.min(minX, px);
+          minY = Math.min(minY, py);
+          maxX = Math.max(maxX, px);
+          maxY = Math.max(maxY, py);
+        }
+      }
+      if (!isFinite(minX)) return null;
+      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }, [designs, selectedDesignIds, artboardWidth, artboardHeight]);
+
+    const getMultiHandlePositions = useCallback(() => {
+      const bbox = getMultiSelectionBBox();
+      if (!bbox) return [];
+      return [
+        { x: bbox.x, y: bbox.y, id: 'tl' },
+        { x: bbox.x + bbox.width, y: bbox.y, id: 'tr' },
+        { x: bbox.x + bbox.width, y: bbox.y + bbox.height, id: 'br' },
+        { x: bbox.x, y: bbox.y + bbox.height, id: 'bl' },
+      ];
+    }, [getMultiSelectionBBox]);
+
+    const hitTestMultiHandles = useCallback((px: number, py: number): { type: 'resize' | 'rotate'; id: string } | null => {
+      const handles = getMultiHandlePositions();
+      if (handles.length === 0) return null;
+      const z = Math.max(0.25, zoomRef.current);
+      const inv = dpiScaleRef.current / z;
+      const resizeR = 9 * inv;
+      const rotateOuterR = 20 * inv;
+
+      // Rotation handle at top-center
+      const tl = handles.find(h => h.id === 'tl');
+      const tr = handles.find(h => h.id === 'tr');
+      if (tl && tr) {
+        const topMidX = (tl.x + tr.x) / 2;
+        const topMidY = (tl.y + tr.y) / 2;
+        const rotDist = 26 * inv;
+        const rotHandleX = topMidX;
+        const rotHandleY = topMidY - rotDist;
+        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < resizeR) {
+          return { type: 'rotate', id: 'rot-top' };
+        }
+      }
+
+      for (const h of handles) {
+        if (Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2) < resizeR) {
+          return { type: 'resize', id: h.id };
+        }
+      }
+
+      for (const h of handles) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        if (d >= resizeR && d < rotateOuterR) {
+          return { type: 'rotate', id: `rot-${h.id}` };
+        }
+      }
+
+      return null;
+    }, [getMultiHandlePositions]);
 
     const canvasToLocal = useCallback((clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -418,6 +737,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const overlappingDesignsRef = useRef(overlappingDesigns);
     overlappingDesignsRef.current = overlappingDesigns;
 
+    const overlapWorkerRef = useRef<Worker | null>(null);
+    useEffect(() => {
+      try {
+        overlapWorkerRef.current = new Worker(
+          new URL('../lib/overlap-worker.ts', import.meta.url),
+          { type: 'module' }
+        );
+      } catch { /* OffscreenCanvas not supported — fallback to main thread */ }
+      return () => { overlapWorkerRef.current?.terminate(); };
+    }, []);
+
     const checkPixelOverlap = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -433,7 +763,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const sw = Math.max(60, Math.round(canvas.width * scale));
       const sh = Math.max(30, Math.round(canvas.height * scale));
 
-      const designRects: Array<{id: string; left: number; top: number; right: number; bottom: number; design: DesignItem}> = [];
+      const designRects: Array<{id: string; left: number; top: number; right: number; bottom: number; design: DesignItem; rect: {x: number; y: number; width: number; height: number}}> = [];
       for (const d of designs) {
         const rect = computeLayerRect(
           d.imageInfo.image.width, d.imageInfo.image.height,
@@ -448,10 +778,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const sin = Math.abs(Math.sin(rad));
         const rotW = rect.width * cos + rect.height * sin;
         const rotH = rect.width * sin + rect.height * cos;
-        designRects.push({ id: d.id, left: cx - rotW / 2, top: cy - rotH / 2, right: cx + rotW / 2, bottom: cy + rotH / 2, design: d });
+        designRects.push({ id: d.id, left: cx - rotW / 2, top: cy - rotH / 2, right: cx + rotW / 2, bottom: cy + rotH / 2, design: d, rect });
       }
 
-      // Mark any design that extends outside the artboard bounds
       const outOfBounds = new Set<string>();
       for (const dr of designRects) {
         if (dr.left < -1 || dr.top < -1 || dr.right > sw + 1 || dr.bottom > sh + 1) {
@@ -467,7 +796,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         return;
       }
 
-      // Find AABB-overlapping pairs
       const aabbPairs: [number, number][] = [];
       for (let i = 0; i < designRects.length; i++) {
         for (let j = i + 1; j < designRects.length; j++) {
@@ -490,58 +818,106 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         return;
       }
 
-      // Only rasterize designs involved in AABB overlaps
       const neededSet = new Set<number>();
       for (const [i, j] of aabbPairs) { neededSet.add(i); neededSet.add(j); }
-      const needed = Array.from(neededSet);
 
-      const alphaBuffers = new Map<number, Uint8ClampedArray>();
-      for (const idx of needed) {
-        const d = designRects[idx].design;
-        const offscreen = document.createElement('canvas');
-        offscreen.width = sw;
-        offscreen.height = sh;
-        const octx = offscreen.getContext('2d');
-        if (!octx) continue;
-        const rect = computeLayerRect(
-          d.imageInfo.image.width, d.imageInfo.image.height,
-          d.transform, sw, sh,
-          artboardWidth, artboardHeight,
-          d.widthInches, d.heightInches,
-        );
-        const cx = rect.x + rect.width / 2;
-        const cy = rect.y + rect.height / 2;
-        octx.save();
-        octx.translate(cx, cy);
-        octx.rotate((d.transform.rotation * Math.PI) / 180);
-        octx.drawImage(d.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
-        octx.restore();
-        alphaBuffers.set(idx, octx.getImageData(0, 0, sw, sh).data);
+      const worker = overlapWorkerRef.current;
+      if (worker && typeof createImageBitmap !== 'undefined') {
+        const neededArr = Array.from(neededSet);
+        const bitmapPromises = neededArr.map(async (idx) => {
+          const d = designRects[idx].design;
+          const bmp = await createImageBitmap(d.imageInfo.image);
+          return { idx, bmp };
+        });
+        Promise.all(bitmapPromises).then(bitmaps => {
+          const bmpMap = new Map(bitmaps.map(b => [b.idx, b.bmp]));
+          const workerDesigns = designRects.map((dr, idx) => ({
+            id: dr.id,
+            left: dr.left, top: dr.top, right: dr.right, bottom: dr.bottom,
+            imgBitmap: bmpMap.get(idx) ?? (null as unknown as ImageBitmap),
+            drawX: dr.rect.x, drawY: dr.rect.y,
+            drawW: dr.rect.width, drawH: dr.rect.height,
+            rotation: dr.design.transform.rotation,
+            cx: dr.rect.x + dr.rect.width / 2,
+            cy: dr.rect.y + dr.rect.height / 2,
+          }));
+
+          const handler = (ev: MessageEvent) => {
+            if (ev.data.type === 'result') {
+              worker.removeEventListener('message', handler);
+              const workerOverlapping = new Set<string>(ev.data.overlapping as string[]);
+              for (const id of outOfBounds) workerOverlapping.add(id);
+              const prev = overlappingDesignsRef.current;
+              if (workerOverlapping.size !== prev.size || Array.from(workerOverlapping).some(id => !prev.has(id))) {
+                setOverlappingDesigns(workerOverlapping);
+              }
+            }
+          };
+          worker.addEventListener('message', handler);
+          const transferable = Array.from(bmpMap.values());
+          worker.postMessage({ type: 'check', designs: workerDesigns, sw, sh }, transferable as Transferable[]);
+        }).catch(() => {
+          runMainThreadOverlap();
+        });
+        return;
       }
 
-      const overlapping = new Set<string>(outOfBounds);
-      for (const [i, j] of aabbPairs) {
-        const a = alphaBuffers.get(i);
-        const b = alphaBuffers.get(j);
-        if (!a || !b) continue;
-        let found = false;
-        for (let p = 3; p < a.length; p += 16) {
-          if (a[p] > 20 && b[p] > 20) { found = true; break; }
+      runMainThreadOverlap();
+
+      function runMainThreadOverlap() {
+        try {
+        const needed = Array.from(neededSet);
+        const alphaBuffers = new Map<number, Uint8ClampedArray>();
+        for (const idx of needed) {
+          const d = designRects[idx].design;
+          const offscreen = document.createElement('canvas');
+          offscreen.width = sw;
+          offscreen.height = sh;
+          const octx = offscreen.getContext('2d');
+          if (!octx) continue;
+          const rect = computeLayerRect(
+            d.imageInfo.image.width, d.imageInfo.image.height,
+            d.transform, sw, sh,
+            artboardWidth, artboardHeight,
+            d.widthInches, d.heightInches,
+          );
+          const cx = rect.x + rect.width / 2;
+          const cy = rect.y + rect.height / 2;
+          octx.save();
+          octx.translate(cx, cy);
+          octx.rotate((d.transform.rotation * Math.PI) / 180);
+          try {
+            octx.drawImage(d.imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+            octx.restore();
+            alphaBuffers.set(idx, octx.getImageData(0, 0, sw, sh).data);
+          } catch { octx.restore(); continue; }
         }
-        if (!found) {
-          for (let p = 3; p < a.length; p += 4) {
+
+        const overlapping = new Set<string>(outOfBounds);
+        for (const [i, j] of aabbPairs) {
+          const a = alphaBuffers.get(i);
+          const b = alphaBuffers.get(j);
+          if (!a || !b) continue;
+          let found = false;
+          for (let p = 3; p < a.length; p += 16) {
             if (a[p] > 20 && b[p] > 20) { found = true; break; }
           }
+          if (!found) {
+            for (let p = 3; p < a.length; p += 4) {
+              if (a[p] > 20 && b[p] > 20) { found = true; break; }
+            }
+          }
+          if (found) {
+            overlapping.add(designRects[i].id);
+            overlapping.add(designRects[j].id);
+          }
         }
-        if (found) {
-          overlapping.add(designRects[i].id);
-          overlapping.add(designRects[j].id);
-        }
-      }
 
-      const prev = overlappingDesignsRef.current;
-      if (overlapping.size !== prev.size || Array.from(overlapping).some(id => !prev.has(id))) {
-        setOverlappingDesigns(overlapping);
+        const prev = overlappingDesignsRef.current;
+        if (overlapping.size !== prev.size || Array.from(overlapping).some(id => !prev.has(id))) {
+          setOverlappingDesigns(overlapping);
+        }
+        } catch (err) { console.warn('Main-thread overlap detection failed:', err); }
       }
     }, [designs, artboardWidth, artboardHeight]);
 
@@ -575,13 +951,73 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const canvas = canvasRef.current;
       if (!canvas) return;
 
+      // Group handles take priority when multiple designs are selected
+      if (selectedDesignIds.size > 1) {
+        const multiHit = hitTestMultiHandles(local.x, local.y);
+        if (multiHit) {
+          const bbox = getMultiSelectionBBox();
+          if (bbox && canvas) {
+            const gcx = bbox.x + bbox.width / 2;
+            const gcy = bbox.y + bbox.height / 2;
+            multiGroupCenterBufferRef.current = { x: gcx, y: gcy };
+            const canvasRect = canvas.getBoundingClientRect();
+            const screenGcx = canvasRect.left + (gcx / canvas.width) * canvasRect.width;
+            const screenGcy = canvasRect.top + (gcy / canvas.height) * canvasRect.height;
+
+            if (multiHit.type === 'resize') {
+              isMultiResizeRef.current = true;
+              resizeCommittedRef.current = false;
+              multiResizeStartScreenCenterRef.current = { x: screenGcx, y: screenGcy };
+              multiResizeStartDistRef.current = Math.sqrt((clientX - screenGcx) ** 2 + (clientY - screenGcy) ** 2);
+              activeResizeHandleRef.current = multiHit.id;
+              if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getResizeCursor(multiHit.id, 0);
+            } else {
+              isMultiRotateRef.current = true;
+              multiRotateStartAngleRef.current = Math.atan2(local.y - gcy, local.x - gcx);
+              if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = ROTATE_CURSOR;
+            }
+          }
+          return;
+        }
+
+        // Multi-drag: click on any selected design body
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId && selectedDesignIds.has(hitId)) {
+          isMultiDragRef.current = true;
+          multiDragStartRef.current = { x: clientX, y: clientY };
+          altDragDuplicatedRef.current = false;
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'move';
+          return;
+        }
+
+        // Click on unselected design or empty space — break multi-selection
+        if (hitId) {
+          onSelectDesign?.(hitId);
+          return;
+        }
+        onSelectDesign?.(null);
+        isMarqueeRef.current = true;
+        marqueeStartRef.current = { x: local.x, y: local.y };
+        marqueeEndRef.current = { x: local.x, y: local.y };
+        setMarqueeRect(null);
+        { const area = canvasAreaRef.current;
+          if (area) {
+            const ar = area.getBoundingClientRect();
+            marqueeScreenStartRef.current = { x: clientX - ar.left, y: clientY - ar.top };
+            area.style.cursor = 'crosshair';
+          }
+        }
+        setMarqueeScreenRect(null);
+        return;
+      }
+
       if (selectedDesignId && imageInfo && onTransformChange) {
         const handleHit = hitTestHandles(local.x, local.y);
 
         if (handleHit && handleHit.type === 'resize' && isClickInDesignInterior(local.x, local.y)) {
           isDraggingRef.current = true;
           altDragDuplicatedRef.current = false;
-          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'move';
           dragStartMouseRef.current = { x: clientX, y: clientY };
           dragStartTransformRef.current = { ...transformRef.current };
           return;
@@ -592,21 +1028,26 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             isResizingRef.current = true;
             resizeCommittedRef.current = false;
             activeResizeHandleRef.current = handleHit.id;
-            if (containerRef.current) containerRef.current.style.cursor = getResizeCursor(handleHit.id, transformRef.current.rotation);
+            if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getResizeCursor(handleHit.id, transformRef.current.rotation);
             const rect = getDesignRect();
-            if (rect) {
+            if (rect && canvas) {
               const cx = rect.x + rect.width / 2;
               const cy = rect.y + rect.height / 2;
-              resizeStartDistRef.current = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
+              const canvasRect = canvas.getBoundingClientRect();
+              const screenCx = canvasRect.left + (cx / canvas.width) * canvasRect.width;
+              const screenCy = canvasRect.top + (cy / canvas.height) * canvasRect.height;
+              resizeStartScreenCenterRef.current = { x: screenCx, y: screenCy };
+              resizeStartDistRef.current = Math.sqrt((clientX - screenCx) ** 2 + (clientY - screenCy) ** 2);
               resizeStartSRef.current = transformRef.current.s;
             }
           } else {
             isRotatingRef.current = true;
-            if (containerRef.current) containerRef.current.style.cursor = ROTATE_CURSOR;
+            if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = ROTATE_CURSOR;
             const rect = getDesignRect();
             if (rect) {
               const cx = rect.x + rect.width / 2;
               const cy = rect.y + rect.height / 2;
+              rotateStartCanvasCenterRef.current = { x: cx, y: cy };
               rotateStartAngleRef.current = Math.atan2(local.y - cy, local.x - cx);
               rotateStartRotationRef.current = transformRef.current.rotation;
             }
@@ -615,16 +1056,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
 
         if (hitTestDesign(local.x, local.y)) {
-          if (selectedDesignIds.size > 1 && selectedDesignIds.has(selectedDesignId)) {
-            isMultiDragRef.current = true;
-            multiDragStartRef.current = { x: clientX, y: clientY };
-            altDragDuplicatedRef.current = false;
-            if (containerRef.current) containerRef.current.style.cursor = 'move';
-            return;
-          }
           isDraggingRef.current = true;
           altDragDuplicatedRef.current = false;
-          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'move';
           dragStartMouseRef.current = { x: clientX, y: clientY };
           dragStartTransformRef.current = { ...transformRef.current };
           return;
@@ -633,21 +1067,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const hitId = findDesignAtPoint(local.x, local.y);
 
-      if (hitId && selectedDesignIds.size > 1 && selectedDesignIds.has(hitId)) {
-        isMultiDragRef.current = true;
-        multiDragStartRef.current = { x: clientX, y: clientY };
-        altDragDuplicatedRef.current = false;
-        if (containerRef.current) containerRef.current.style.cursor = 'move';
-        return;
-      }
-
       if (hitId) {
         if (hitId !== selectedDesignId) {
           onSelectDesign?.(hitId);
         } else {
           isDraggingRef.current = true;
           altDragDuplicatedRef.current = false;
-          if (containerRef.current) containerRef.current.style.cursor = 'move';
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'move';
           dragStartMouseRef.current = { x: clientX, y: clientY };
           dragStartTransformRef.current = { ...transformRef.current };
         }
@@ -659,7 +1085,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       marqueeStartRef.current = { x: local.x, y: local.y };
       marqueeEndRef.current = { x: local.x, y: local.y };
       setMarqueeRect(null);
-    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, isClickInDesignInterior, getDesignRect, selectedDesignId, selectedDesignIds, findDesignAtPoint, onSelectDesign]);
+      { const area = canvasAreaRef.current;
+        if (area) {
+          const ar = area.getBoundingClientRect();
+          marqueeScreenStartRef.current = { x: clientX - ar.left, y: clientY - ar.top };
+          area.style.cursor = 'crosshair';
+        }
+      }
+      setMarqueeScreenRect(null);
+    }, [imageInfo, onTransformChange, canvasToLocal, hitTestHandles, hitTestDesign, isClickInDesignInterior, getDesignRect, selectedDesignId, selectedDesignIds, findDesignAtPoint, onSelectDesign, hitTestMultiHandles, getMultiSelectionBBox]);
 
     const handleInteractionMove = useCallback((clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -676,6 +1110,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           w: Math.abs(local.x - sx),
           h: Math.abs(local.y - sy),
         });
+        const area = canvasAreaRef.current;
+        if (area) {
+          const ar = area.getBoundingClientRect();
+          const cx = clientX - ar.left;
+          const cy = clientY - ar.top;
+          const ssx = marqueeScreenStartRef.current.x;
+          const ssy = marqueeScreenStartRef.current.y;
+          setMarqueeScreenRect({
+            x: Math.min(ssx, cx),
+            y: Math.min(ssy, cy),
+            w: Math.abs(cx - ssx),
+            h: Math.abs(cy - ssy),
+          });
+        }
         return;
       }
 
@@ -691,6 +1139,52 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const dny = dy / canvasRect.height;
         multiDragStartRef.current = { x: clientX, y: clientY };
         onMultiDragDelta?.(dnx, dny);
+
+        // Bottom-edge expand detection for multi-drag
+        if (canvas && onExpandArtboard) {
+          const expandThreshold = 1 - 2 / artboardHeight;
+          let anyNearBottom = false;
+          for (const d of designs) {
+            if (!selectedDesignIds.has(d.id) && d.id !== selectedDesignId) continue;
+            const wi = d.widthInches * d.transform.s;
+            const hi = d.heightInches * d.transform.s;
+            const rad = (d.transform.rotation * Math.PI) / 180;
+            const rotH = wi * Math.abs(Math.sin(rad)) + hi * Math.abs(Math.cos(rad));
+            const bottomEdge = (d.transform.ny + dny) + (rotH / 2) / artboardHeight;
+            if (bottomEdge >= expandThreshold) { anyNearBottom = true; break; }
+          }
+          if (anyNearBottom) startBottomGlow(); else stopBottomGlow();
+        }
+
+        startAutoPan(clientX, clientY);
+        return;
+      }
+
+      if (isMultiResizeRef.current) {
+        const RESIZE_DAMPING = 30;
+        const scr = multiResizeStartScreenCenterRef.current;
+        const dist = Math.sqrt((clientX - scr.x) ** 2 + (clientY - scr.y) ** 2);
+        const ratio = (dist + RESIZE_DAMPING) / (multiResizeStartDistRef.current + RESIZE_DAMPING);
+        if (!resizeCommittedRef.current && Math.abs(ratio - 1) < 0.04) return;
+        resizeCommittedRef.current = true;
+        const gc = multiGroupCenterBufferRef.current;
+        const gcNx = gc.x / canvas.width;
+        const gcNy = gc.y / canvas.height;
+        onMultiResizeDelta?.(ratio, gcNx, gcNy);
+        return;
+      }
+
+      if (isMultiRotateRef.current) {
+        const local = canvasToLocal(clientX, clientY);
+        const gc = multiGroupCenterBufferRef.current;
+        const angle = Math.atan2(local.y - gc.y, local.x - gc.x);
+        let deltaDeg = ((angle - multiRotateStartAngleRef.current) * 180) / Math.PI;
+        if (shiftKeyRef.current) {
+          deltaDeg = Math.round(deltaDeg / 15) * 15;
+        }
+        const gcNx = gc.x / canvas.width;
+        const gcNy = gc.y / canvas.height;
+        onMultiRotateDelta?.(deltaDeg, gcNx, gcNy);
         return;
       }
 
@@ -760,7 +1254,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         onTransformChangeRef.current?.(newTransform);
 
         // Bottom-edge expand detection
-        if (canvas && artboardHeight < 24) {
+        if (canvas && onExpandArtboard) {
           const selDesign = designs.find(d => d.id === selectedDesignId);
           if (selDesign) {
             const wi = selDesign.widthInches * newTransform.s;
@@ -771,7 +1265,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             const rotH = wi * sinR + hi * cosR;
             const bottomEdge = newTransform.ny + (rotH / 2) / artboardHeight;
 
-            if (bottomEdge >= 0.92) {
+            const expandThreshold = 1 - 2 / artboardHeight;
+            if (bottomEdge >= expandThreshold) {
               startBottomGlow();
             } else {
               stopBottomGlow();
@@ -780,60 +1275,65 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         } else {
           stopBottomGlow();
         }
+        startAutoPan(clientX, clientY);
       } else if (isResizingRef.current) {
-        const local = canvasToLocal(clientX, clientY);
-        const rect = getDesignRect();
-        if (rect) {
-          const cx = rect.x + rect.width / 2;
-          const cy = rect.y + rect.height / 2;
-          const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
-          const ratio = dist / Math.max(resizeStartDistRef.current, 1);
-          if (!resizeCommittedRef.current && Math.abs(ratio - 1) < 0.04) return;
-          resizeCommittedRef.current = true;
-          const maxS = getMaxScaleForArtboard(transformRef.current);
-          const rawS = resizeStartSRef.current * ratio;
-          const newS = Math.max(0.1, Math.min(maxS, rawS));
-          if (rawS > maxS && Date.now() - resizeLimitToastRef.current > 3000) {
-            resizeLimitToastRef.current = Date.now();
-            toast({ title: "Design fills the sheet", description: "Try a larger gangsheet size to fit bigger designs." });
-          }
-          const unclamped = { ...transformRef.current, s: newS };
-          const newTransform = clampTransformToArtboard(unclamped, { clampScale: true });
-          transformRef.current = newTransform;
-          onTransformChangeRef.current?.(newTransform);
+        const RESIZE_DAMPING = 30;
+        const scr = resizeStartScreenCenterRef.current;
+        const dist = Math.sqrt((clientX - scr.x) ** 2 + (clientY - scr.y) ** 2);
+        const ratio = (dist + RESIZE_DAMPING) / (resizeStartDistRef.current + RESIZE_DAMPING);
+        if (!resizeCommittedRef.current && Math.abs(ratio - 1) < 0.04) return;
+        resizeCommittedRef.current = true;
+        const maxS = getMaxScaleForArtboard(transformRef.current);
+        const rawS = resizeStartSRef.current * ratio;
+        const newS = Math.max(0.1, Math.min(maxS, rawS));
+        if (rawS > maxS && Date.now() - resizeLimitToastRef.current > 3000) {
+          resizeLimitToastRef.current = Date.now();
+          toast({ title: "Design fills the sheet", description: "Try a larger gangsheet size to fit bigger designs." });
         }
+        const unclamped = { ...transformRef.current, s: newS };
+        const newTransform = clampTransformToArtboard(unclamped, { clampScale: true });
+        transformRef.current = newTransform;
+        onTransformChangeRef.current?.(newTransform);
       } else if (isRotatingRef.current) {
         const local = canvasToLocal(clientX, clientY);
-        const rect = getDesignRect();
-        if (rect) {
-          const cx = rect.x + rect.width / 2;
-          const cy = rect.y + rect.height / 2;
-          const angle = Math.atan2(local.y - cy, local.x - cx);
-          const delta = ((angle - rotateStartAngleRef.current) * 180) / Math.PI;
-          let newRot = rotateStartRotationRef.current + delta;
-          newRot = ((newRot % 360) + 360) % 360;
-          if (shiftKeyRef.current) {
-            newRot = Math.round(newRot / 15) * 15;
-          }
-          const rotated = { ...transformRef.current, rotation: Math.round(newRot) };
-          const newTransform = clampTransformToArtboard(rotated);
-          transformRef.current = newTransform;
-          onTransformChangeRef.current?.(newTransform);
+        const rc = rotateStartCanvasCenterRef.current;
+        const angle = Math.atan2(local.y - rc.y, local.x - rc.x);
+        const delta = ((angle - rotateStartAngleRef.current) * 180) / Math.PI;
+        let newRot = rotateStartRotationRef.current + delta;
+        newRot = ((newRot % 360) + 360) % 360;
+        if (shiftKeyRef.current) {
+          newRot = Math.round(newRot / 15) * 15;
         }
+        const rotated = { ...transformRef.current, rotation: Math.round(newRot) };
+        const newTransform = clampTransformToArtboard(rotated);
+        transformRef.current = newTransform;
+        onTransformChangeRef.current?.(newTransform);
       }
-    }, [onTransformChange, canvasToLocal, getDesignRect, clampTransformToArtboard, getMaxScaleForArtboard, toast, onMultiDragDelta, onDuplicateSelected, startBottomGlow, stopBottomGlow, designs, selectedDesignId, artboardHeight]);
+    }, [onTransformChange, canvasToLocal, clampTransformToArtboard, getMaxScaleForArtboard, toast, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, startBottomGlow, stopBottomGlow, startAutoPan, designs, selectedDesignId, artboardHeight]);
+    handleInteractionMoveRef.current = handleInteractionMove;
 
     useEffect(() => {
+      if (scrollDragRef.current || isPanningRef.current) return;
       if (overlapCheckTimerRef.current) clearTimeout(overlapCheckTimerRef.current);
-      overlapCheckTimerRef.current = setTimeout(() => { checkPixelOverlap(); }, 150);
+      overlapCheckTimerRef.current = setTimeout(() => {
+        if (scrollDragRef.current || isPanningRef.current) return;
+        checkPixelOverlap();
+      }, 150);
       return () => { if (overlapCheckTimerRef.current) clearTimeout(overlapCheckTimerRef.current); };
     }, [checkPixelOverlap]);
 
     const handleInteractionEnd = useCallback(() => {
+      stopAutoPan();
+
       if (isMarqueeRef.current) {
         isMarqueeRef.current = false;
-        const mr = marqueeRect;
+        // Compute final rect from refs (not state) to avoid stale-frame lag
+        const s = marqueeStartRef.current;
+        const e = marqueeEndRef.current;
+        const mr = { x: Math.min(s.x, e.x), y: Math.min(s.y, e.y), w: Math.abs(e.x - s.x), h: Math.abs(e.y - s.y) };
         setMarqueeRect(null);
+        setMarqueeScreenRect(null);
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'default';
         const cvs = canvasRef.current;
         if (mr && mr.w > 4 && mr.h > 4 && cvs) {
           const hitIds: string[] = [];
@@ -846,8 +1346,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             );
             const dcx = rect.x + rect.width / 2;
             const dcy = rect.y + rect.height / 2;
-            const dhw = rect.width / 2;
-            const dhh = rect.height / 2;
+            const rad = (d.transform.rotation * Math.PI) / 180;
+            const cosR = Math.abs(Math.cos(rad));
+            const sinR = Math.abs(Math.sin(rad));
+            const dhw = (rect.width * cosR + rect.height * sinR) / 2;
+            const dhh = (rect.width * sinR + rect.height * cosR) / 2;
             if (dcx + dhw > mr.x && dcx - dhw < mr.x + mr.w &&
                 dcy + dhh > mr.y && dcy - dhh < mr.y + mr.h) {
               hitIds.push(d.id);
@@ -860,12 +1363,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         return;
       }
 
-      if (isMultiDragRef.current) {
+      if (isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current) {
+        const wasGroupInteracting = isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current;
         isMultiDragRef.current = false;
+        isMultiResizeRef.current = false;
+        isMultiRotateRef.current = false;
+        resizeCommittedRef.current = false;
         altDragDuplicatedRef.current = false;
         stopBottomGlow();
-        if (containerRef.current) containerRef.current.style.cursor = 'default';
-        onInteractionEnd?.();
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
+        checkPixelOverlap();
+        if (wasGroupInteracting) onInteractionEnd?.();
         return;
       }
 
@@ -877,21 +1385,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       altDragDuplicatedRef.current = false;
       snapGuidesRef.current = [];
       stopBottomGlow();
-      if (containerRef.current) containerRef.current.style.cursor = 'default';
+      if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
       checkPixelOverlap();
       if (wasInteracting) onInteractionEnd?.();
-    }, [checkPixelOverlap, onInteractionEnd, marqueeRect, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow]);
+    }, [checkPixelOverlap, onInteractionEnd, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow, stopAutoPan]);
+    handleInteractionEndRef.current = handleInteractionEnd;
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
+      if (selectionZoomActiveRef.current) return;
+      if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
       if (e.button === 1 || (e.button === 0 && spaceDownRef.current)) {
         isPanningRef.current = true;
         panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
-        if (containerRef.current) containerRef.current.style.cursor = 'grabbing';
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'grabbing';
+        return;
+      }
+      // When artboard overflows horizontally and move mode is off, left-click pans
+      if (e.button === 0 && isHorizOverflow() && !moveModeRef.current) {
+        isPanningRef.current = true;
+        panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'grabbing';
         return;
       }
       handleInteractionStart(e.clientX, e.clientY);
-    }, [handleInteractionStart, panX, panY]);
+    }, [handleInteractionStart, panX, panY, isHorizOverflow]);
 
     const handleDoubleClick = useCallback((e: React.MouseEvent) => {
       if (!selectedDesignId || !onTransformChange) return;
@@ -905,6 +1423,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [selectedDesignId, onTransformChange, canvasToLocal, hitTestHandles]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
+      if (selectionZoomActiveRef.current) return;
       if (isPanningRef.current) {
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
@@ -915,41 +1434,57 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         setPanY(clamped.y);
         return;
       }
-      if (isMarqueeRef.current || isMultiDragRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
+      if (isMarqueeRef.current || isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
         handleInteractionMove(e.clientX, e.clientY);
         return;
       }
-      if (!containerRef.current) return;
+      if (!canvasAreaRef.current) return;
       if (spaceDownRef.current) {
-        containerRef.current.style.cursor = 'grab';
+        canvasAreaRef.current.style.cursor = 'grab';
+        return;
+      }
+      if (isHorizOverflow() && !moveModeRef.current) {
+        canvasAreaRef.current.style.cursor = 'grab';
         return;
       }
       const local = canvasToLocal(e.clientX, e.clientY);
+      // Group handle hover cursor
+      if (selectedDesignIds.size > 1) {
+        const multiHit = hitTestMultiHandles(local.x, local.y);
+        if (multiHit) {
+          canvasAreaRef.current.style.cursor = multiHit.type === 'resize'
+            ? getResizeCursor(multiHit.id, 0)
+            : ROTATE_CURSOR;
+          return;
+        }
+      }
       if (imageInfo && selectedDesignId) {
         const handleHit = hitTestHandles(local.x, local.y);
         if (handleHit) {
-          containerRef.current.style.cursor = handleHit.type === 'resize'
+          canvasAreaRef.current.style.cursor = handleHit.type === 'resize'
             ? getResizeCursor(handleHit.id, transformRef.current.rotation)
             : ROTATE_CURSOR;
           return;
         }
         if (hitTestDesign(local.x, local.y)) {
-          containerRef.current.style.cursor = 'move';
+          canvasAreaRef.current.style.cursor = 'move';
           return;
         }
       }
       const hitId = findDesignAtPoint(local.x, local.y);
-      containerRef.current.style.cursor = hitId ? 'pointer' : 'default';
-    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, hitTestHandles, hitTestDesign, findDesignAtPoint, zoom, clampPanValue]);
+      canvasAreaRef.current.style.cursor = hitId ? 'pointer' : 'default';
+    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, selectedDesignIds, hitTestHandles, hitTestMultiHandles, hitTestDesign, findDesignAtPoint, zoom, clampPanValue]);
 
     const handleMouseUp = useCallback(() => {
       if (isPanningRef.current) {
         isPanningRef.current = false;
-        if (containerRef.current) containerRef.current.style.cursor = spaceDownRef.current ? 'grab' : 'default';
+        if (canvasAreaRef.current) {
+          canvasAreaRef.current.style.cursor = spaceDownRef.current ? 'grab' : getIdleCursor();
+        }
         return;
       }
       handleInteractionEnd();
-    }, [handleInteractionEnd]);
+    }, [handleInteractionEnd, isHorizOverflow]);
 
     const handleMouseEnter = useCallback(() => {
       isKeyboardScopeActiveRef.current = true;
@@ -958,26 +1493,181 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const handleMouseLeave = useCallback(() => {
       isKeyboardScopeActiveRef.current = false;
       spaceDownRef.current = false;
+      const hasActiveInteraction = isPanningRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current || isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current || isMarqueeRef.current;
+      if (hasActiveInteraction) return;
+    }, []);
+
+    useEffect(() => {
+      const area = canvasAreaRef.current;
+      if (!area) return;
+      if (!selectionZoomActive) {
+        area.style.cursor = '';
+        return;
+      }
+      area.style.cursor = 'crosshair';
+
+      const onDown = (e: MouseEvent) => {
+        if (e.button !== 0) return;
+        if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        isSelectionZoomDragging.current = true;
+        const areaRect = area.getBoundingClientRect();
+        selZoomScreenStartRef.current = { x: e.clientX - areaRect.left, y: e.clientY - areaRect.top };
+        setSelZoomRect(null);
+      };
+
+      const onMove = (e: MouseEvent) => {
+        if (!isSelectionZoomDragging.current) return;
+        const areaRect = area.getBoundingClientRect();
+        const cx = e.clientX - areaRect.left;
+        const cy = e.clientY - areaRect.top;
+        const sx = selZoomScreenStartRef.current.x;
+        const sy = selZoomScreenStartRef.current.y;
+        setSelZoomRect({
+          x: Math.min(sx, cx),
+          y: Math.min(sy, cy),
+          w: Math.abs(cx - sx),
+          h: Math.abs(cy - sy),
+        });
+      };
+
+      const onUp = () => {
+        if (!isSelectionZoomDragging.current) return;
+        isSelectionZoomDragging.current = false;
+        const rect = selZoomRectRef.current;
+        setSelZoomRect(null);
+        setSelectionZoomActive(false);
+
+        if (!rect || rect.w < 8 || rect.h < 8) {
+          area.style.cursor = getIdleCursor();
+          return;
+        }
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        if (!canvas || !container) return;
+
+        const canvasRect = canvas.getBoundingClientRect();
+        const areaRect = area.getBoundingClientRect();
+
+        const selL = rect.x + areaRect.left;
+        const selT = rect.y + areaRect.top;
+        const selR = selL + rect.w;
+        const selB = selT + rect.h;
+        const clampedL = Math.max(selL, canvasRect.left);
+        const clampedT = Math.max(selT, canvasRect.top);
+        const clampedR = Math.min(selR, canvasRect.right);
+        const clampedB = Math.min(selB, canvasRect.bottom);
+        const clampedW = clampedR - clampedL;
+        const clampedH = clampedB - clampedT;
+        if (clampedW < 4 || clampedH < 4) return;
+
+        const screenCx = clampedL + clampedW / 2;
+        const screenCy = clampedT + clampedH / 2;
+        const localCx = ((screenCx - canvasRect.left) / canvasRect.width) * canvas.width;
+        const localCy = ((screenCy - canvasRect.top) / canvasRect.height) * canvas.height;
+        const selLocalW = (clampedW / canvasRect.width) * canvas.width;
+        const selLocalH = (clampedH / canvasRect.height) * canvas.height;
+
+        const dims = previewDimsRef.current;
+        const dpi = canvas.width / Math.max(1, dims.width);
+        const vw = area.clientWidth;
+        const vh = area.clientHeight;
+        const scaleX = (vw * dpi) / selLocalW;
+        const scaleY = (vh * dpi) / selLocalH;
+        const newZoom = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, Math.min(scaleX, scaleY)));
+        const selCenterCSS_X = localCx / dpi;
+        const selCenterCSS_Y = localCy / dpi;
+        const newPanX = dims.width / 2 - selCenterCSS_X;
+        const newPanY = dims.height / 2 - selCenterCSS_Y;
+        const clamped = clampPanValue(newPanX, newPanY, newZoom);
+        suppressTransitionRef.current = true;
+        setZoom(newZoom);
+        setPanX(clamped.x);
+        setPanY(clamped.y);
+        requestAnimationFrame(() => { suppressTransitionRef.current = false; });
+        area.style.cursor = (newZoom * previewDimsRef.current.width > area.clientWidth * 1.05 && !moveModeRef.current) ? 'grab' : 'default';
+      };
+
+      area.addEventListener('mousedown', onDown, true);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      return () => {
+        area.removeEventListener('mousedown', onDown, true);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        area.style.cursor = '';
+      };
+    }, [selectionZoomActive, clampPanValue]);
+
+
+    const pinchStartDistRef = useRef(0);
+    const pinchStartZoomRef = useRef(1);
+    const pinchStartPanRef = useRef({ x: 0, y: 0 });
+    const isPinchingRef = useRef(false);
+
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+      if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        isPinchingRef.current = true;
+        isPanningRef.current = false;
+        const dx = e.touches[1].clientX - e.touches[0].clientX;
+        const dy = e.touches[1].clientY - e.touches[0].clientY;
+        pinchStartDistRef.current = Math.sqrt(dx * dx + dy * dy);
+        pinchStartZoomRef.current = zoom;
+        pinchStartPanRef.current = { x: panX, y: panY };
+        return;
+      }
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      if (isHorizOverflow() && !moveModeRef.current) {
+        isPanningRef.current = true;
+        panStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, px: panX, py: panY };
+        return;
+      }
+      handleInteractionStart(e.touches[0].clientX, e.touches[0].clientY);
+    }, [handleInteractionStart, panX, panY, zoom, isHorizOverflow]);
+
+    const handleTouchMove = useCallback((e: React.TouchEvent) => {
+      if (isPinchingRef.current && e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[1].clientX - e.touches[0].clientX;
+        const dy = e.touches[1].clientY - e.touches[0].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const ratio = dist / Math.max(1, pinchStartDistRef.current);
+        const effectiveMin = minZoomRef.current;
+        const newZoom = Math.max(effectiveMin, Math.min(zoomMaxRef.current, pinchStartZoomRef.current * ratio));
+        const clamped = clampPanValue(pinchStartPanRef.current.x, pinchStartPanRef.current.y, newZoom);
+        setZoom(newZoom);
+        setPanX(clamped.x);
+        setPanY(clamped.y);
+        return;
+      }
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      if (isPanningRef.current) {
+        const dx = e.touches[0].clientX - panStartRef.current.x;
+        const dy = e.touches[0].clientY - panStartRef.current.y;
+        const rawPx = panStartRef.current.px + dx / zoom;
+        const rawPy = panStartRef.current.py + dy / zoom;
+        const clamped = clampPanValue(rawPx, rawPy, zoom);
+        setPanX(clamped.x);
+        setPanY(clamped.y);
+        return;
+      }
+      handleInteractionMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, [handleInteractionMove, zoom, clampPanValue]);
+
+    const handleTouchEnd = useCallback(() => {
+      if (isPinchingRef.current) {
+        isPinchingRef.current = false;
+        return;
+      }
       if (isPanningRef.current) {
         isPanningRef.current = false;
         return;
       }
-      handleInteractionEnd();
-    }, [handleInteractionEnd]);
-
-    const handleTouchStart = useCallback((e: React.TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      e.preventDefault();
-      handleInteractionStart(e.touches[0].clientX, e.touches[0].clientY);
-    }, [handleInteractionStart]);
-
-    const handleTouchMove = useCallback((e: React.TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      e.preventDefault();
-      handleInteractionMove(e.touches[0].clientX, e.touches[0].clientY);
-    }, [handleInteractionMove]);
-
-    const handleTouchEnd = useCallback(() => {
       handleInteractionEnd();
     }, [handleInteractionEnd]);
     
@@ -990,49 +1680,326 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const scaleX = containerWidth / previewDims.width;
       const scaleY = containerHeight / previewDims.height;
       const fitZoom = Math.min(scaleX, scaleY);
-      setZoom(Math.max(minZoomRef.current, Math.min(ZOOM_MAX, Math.round(fitZoom * 20) / 20)));
+      setZoom(Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, Math.round(fitZoom * 20) / 20)));
       setPanX(0);
       setPanY(0);
     }, [previewDims.height, previewDims.width]);
-    
-    // Reset view to default zoom and pan
-    const resetView = useCallback(() => {
-      setZoom(1);
+
+    // Fit Width: zoom so the full artboard width fills the viewport, pan to top
+    const fitWidth = useCallback(() => {
+      const el = canvasAreaRef.current;
+      if (!el) return;
+      const availW = el.clientWidth - 24;
+      const vh = el.clientHeight;
+      const widthZoom = availW / Math.max(1, previewDims.width);
+      const newZoom = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, Math.round(widthZoom * 20) / 20));
+      // Pan so artboard top aligns with viewport top:
+      // (-h/2 + panY) * zoom = -vh/2  →  panY = h/2 - vh/(2*zoom)
+      const topPanY = previewDims.height / 2 - vh / (2 * newZoom);
+      const maxPanY = Math.max(0, previewDims.height / 2 - vh / (2 * newZoom));
+      const clampedPanY = Math.max(-maxPanY, Math.min(maxPanY, topPanY));
+      setZoom(newZoom);
       setPanX(0);
-      setPanY(0);
-    }, []);
-    
+      setPanY(clampedPanY);
+    }, [previewDims.width, previewDims.height]);
+
+    // Reset view to fit the full gangsheet in view
+    const resetView = useCallback(() => {
+      fitToView();
+      if (canvasAreaRef.current && !selectionZoomActiveRef.current) {
+        requestAnimationFrame(() => {
+          if (canvasAreaRef.current) {
+            canvasAreaRef.current.style.cursor = getIdleCursor();
+          }
+        });
+      }
+    }, [fitToView, getIdleCursor]);
+
+    const zoomToSelected = useCallback(() => {
+      const el = canvasAreaRef.current;
+      if (!el || !selectedDesignId) return;
+      const design = designs.find(d => d.id === selectedDesignId);
+      if (!design) return;
+      const t = design.transform;
+      const wi = design.widthInches * t.s;
+      const hi = design.heightInches * t.s;
+      const rad = (t.rotation * Math.PI) / 180;
+      const cosR = Math.abs(Math.cos(rad));
+      const sinR = Math.abs(Math.sin(rad));
+      const rotW = wi * cosR + hi * sinR;
+      const rotH = wi * sinR + hi * cosR;
+
+      const dims = previewDimsRef.current;
+      const designCssW = (rotW / artboardWidth) * dims.width;
+      const designCssH = (rotH / artboardHeight) * dims.height;
+
+      const viewW = el.clientWidth - 60;
+      const viewH = el.clientHeight - 60;
+      const fitZoom = Math.min(viewW / Math.max(1, designCssW), viewH / Math.max(1, designCssH));
+      const newZoom = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, fitZoom));
+
+      const designCenterX = (t.nx - 0.5) * dims.width;
+      const designCenterY = (t.ny - 0.5) * dims.height;
+      const rawPx = -designCenterX;
+      const rawPy = -designCenterY;
+      const clamped = clampPanValue(rawPx, rawPy, newZoom);
+      setZoom(newZoom);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
+      setMoveMode(true);
+    }, [selectedDesignId, designs, artboardWidth, artboardHeight, clampPanValue]);
+
+    // Pointer-capture based scrollbar drag — self-contained, no global listeners needed.
+    const handleScrollbarPointerDown = useCallback((axis: 'x' | 'y', e: React.PointerEvent<HTMLDivElement>, isThumb: boolean) => {
+      if (selectionZoomActiveRef.current) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+
+      setActiveScrollAxis(axis);
+      document.body.style.cursor = 'default';
+
+      const { maxScroll, rawThumbFrac } = getScrollMetrics(axis, zoom);
+      const area = canvasAreaRef.current;
+      const trackEl = isThumb ? target.parentElement : target.querySelector('[style]');
+      let trackSize = trackEl ? (axis === 'x' ? trackEl.clientWidth : trackEl.clientHeight) : 0;
+      if (trackSize < 20 && area) {
+        const margin = 36;
+        trackSize = axis === 'x' ? Math.max(20, area.clientWidth - 4 - margin) : Math.max(20, area.clientHeight - 4 - margin);
+      }
+      const minThumbPx = 32;
+      const effectiveThumbFrac = Math.max(rawThumbFrac, minThumbPx / Math.max(1, trackSize));
+      const thumbPx = Math.max(minThumbPx, effectiveThumbFrac * trackSize);
+      const scrollable = Math.max(1, trackSize - thumbPx);
+
+      // Derive startScroll from current pan state
+      const startScroll = panToScroll(axis, axis === 'x' ? panXRef.current : panYRef.current, zoom);
+
+      // For track clicks (not thumb), jump to click position first
+      if (!isThumb && maxScroll > 0) {
+        const rect = (trackEl || target).getBoundingClientRect();
+        const pointerPos = axis === 'x' ? (e.clientX - rect.left) : (e.clientY - rect.top);
+        const edgeTol = 4;
+        const scrollRatio = maxScroll > 0 ? Math.max(0, Math.min(1, startScroll / maxScroll)) : 0;
+        const thumbStart = scrollRatio * scrollable;
+        const thumbEnd = thumbStart + thumbPx;
+        const isInsideThumb = pointerPos >= (thumbStart - edgeTol) && pointerPos <= (thumbEnd + edgeTol);
+        if (!isInsideThumb) {
+          const jumpScroll = Math.max(0, Math.min(maxScroll, ((pointerPos - thumbPx / 2) / scrollable) * maxScroll));
+          const mp = getMaxPan(axis, zoom);
+          const t = maxScroll > 0 ? Math.max(0, Math.min(1, jumpScroll / maxScroll)) : 0;
+          const jumpPan = mp > 0 ? mp * (1 - 2 * t) : 0;
+          if (axis === 'x') { panXRef.current = jumpPan; setPanX(jumpPan); }
+          else { panYRef.current = jumpPan; setPanY(jumpPan); }
+        }
+      }
+
+      const dragStartScroll = panToScroll(axis, axis === 'x' ? panXRef.current : panYRef.current, zoom);
+      const startMouse = axis === 'x' ? e.clientX : e.clientY;
+
+      scrollDragRef.current = { axis, startMouse, startScroll: dragStartScroll, maxScroll, scrollable };
+
+      const onPointerMove = (ev: PointerEvent) => {
+        const drag = scrollDragRef.current;
+        if (!drag) return;
+        const delta = (drag.axis === 'x' ? ev.clientX : ev.clientY) - drag.startMouse;
+        const raw = drag.startScroll + (delta / drag.scrollable) * drag.maxScroll;
+        const nextScroll = Math.max(0, Math.min(drag.maxScroll, raw));
+        const z = zoomRef.current;
+        const mp = getMaxPan(drag.axis, z);
+        const ms = drag.maxScroll;
+        let nextPan = 0;
+        if (mp > 0 && ms > 0) {
+          const t = Math.max(0, Math.min(1, nextScroll / ms));
+          nextPan = mp * (1 - 2 * t);
+        }
+        const nextX = drag.axis === 'x' ? nextPan : panXRef.current;
+        const nextY = drag.axis === 'y' ? nextPan : panYRef.current;
+        // Sync native scroll element
+        const el = nativeScrollRef.current;
+        if (el) {
+          syncingScrollRef.current = true;
+          if (drag.axis === 'x') el.scrollLeft = nextScroll;
+          else el.scrollTop = nextScroll;
+          syncingScrollRef.current = false;
+        }
+        queuePanStateCommit(nextX, nextY);
+      };
+
+      const onPointerUp = () => {
+        target.removeEventListener('pointermove', onPointerMove);
+        target.removeEventListener('pointerup', onPointerUp);
+        target.removeEventListener('lostpointercapture', onPointerUp);
+        suppressTransitionRef.current = true;
+        scrollDragRef.current = null;
+        setActiveScrollAxis(null);
+        document.body.style.cursor = '';
+        queuePanStateCommit(panXRef.current, panYRef.current);
+        setScrollbarHover(null);
+        requestAnimationFrame(() => { suppressTransitionRef.current = false; });
+      };
+
+      target.addEventListener('pointermove', onPointerMove);
+      target.addEventListener('pointerup', onPointerUp);
+      target.addEventListener('lostpointercapture', onPointerUp);
+    }, [zoom, getScrollMetrics, panToScroll, getMaxPan, queuePanStateCommit]);
+
+    // Keep native scroll element in sync with pan state
     useEffect(() => {
-      const el = containerRef.current;
+      const el = nativeScrollRef.current;
+      if (!el) return;
+      const z = zoomRef.current;
+      const sx = panToScroll('x', panXRef.current, z);
+      const sy = panToScroll('y', panYRef.current, z);
+      syncingScrollRef.current = true;
+      el.scrollLeft = sx;
+      el.scrollTop = sy;
+      requestAnimationFrame(() => { syncingScrollRef.current = false; });
+    }, [panToScroll]);
+
+    // Global listeners: continue design drag/resize/rotate if mouse leaves canvas area
+    useEffect(() => {
+      const onGlobalMove = (e: MouseEvent) => {
+        if (scrollDragRef.current) return;
+        const active = isPanningRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current || isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current || isMarqueeRef.current;
+        if (!active) return;
+        if (isPanningRef.current) {
+          const dx = e.clientX - panStartRef.current.x;
+          const dy = e.clientY - panStartRef.current.y;
+          const z = zoomRef.current;
+          const rawPx = panStartRef.current.px + dx / z;
+          const rawPy = panStartRef.current.py + dy / z;
+          const dims = previewDimsRef.current;
+          const el = canvasAreaRef.current;
+          const vw = el ? el.clientWidth : dims.width;
+          const vh = el ? el.clientHeight : dims.height;
+          const maxPanX = Math.max(0, dims.width / 2 - vw / (2 * z));
+          const maxPanY = Math.max(0, dims.height / 2 - vh / (2 * z));
+          setPanX(Math.max(-maxPanX, Math.min(maxPanX, rawPx)));
+          setPanY(Math.max(-maxPanY, Math.min(maxPanY, rawPy)));
+          return;
+        }
+        handleInteractionMoveRef.current?.(e.clientX, e.clientY);
+      };
+      const onGlobalUp = () => {
+        const active = isPanningRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current || isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current || isMarqueeRef.current;
+        if (!active) return;
+        if (isPanningRef.current) {
+          isPanningRef.current = false;
+          if (canvasAreaRef.current) {
+            canvasAreaRef.current.style.cursor = getIdleCursor();
+          }
+          return;
+        }
+        handleInteractionEndRef.current?.();
+      };
+      window.addEventListener('mousemove', onGlobalMove);
+      window.addEventListener('mouseup', onGlobalUp);
+      return () => {
+        window.removeEventListener('mousemove', onGlobalMove);
+        window.removeEventListener('mouseup', onGlobalUp);
+      };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Old handleScrollTrackClick/handleScrollThumbDown removed — replaced by handleScrollbarPointerDown above
+
+    useEffect(() => {
+      const el = nativeScrollRef.current;
+      if (!el) return;
+      const sx = panToScroll('x', panX, zoom);
+      const sy = panToScroll('y', panY, zoom);
+      syncingScrollRef.current = true;
+      el.scrollLeft = sx;
+      el.scrollTop = sy;
+      requestAnimationFrame(() => { syncingScrollRef.current = false; });
+    }, [panX, panY, zoom, panToScroll]);
+
+    useEffect(() => {
+      return () => {
+        if (panCommitRafRef.current != null) {
+          cancelAnimationFrame(panCommitRafRef.current);
+          panCommitRafRef.current = null;
+        }
+      };
+    }, []);
+
+    const prevArtboardHeightRef = useRef(artboardHeight);
+    useEffect(() => {
+      if (prevArtboardHeightRef.current !== artboardHeight) {
+        prevArtboardHeightRef.current = artboardHeight;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (artboardHeight > artboardWidth * 2) {
+            fitWidth();
+          } else {
+            fitToView();
+          }
+        }));
+      }
+    }, [artboardHeight, artboardWidth, fitToView, fitWidth]);
+
+    useEffect(() => {
+      const el = canvasAreaRef.current;
       if (!el) return;
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        isWheelZoomingRef.current = true;
-        if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
-        wheelTimeoutRef.current = setTimeout(() => { isWheelZoomingRef.current = false; }, 200);
 
-        const oldZoom = zoomRef.current;
-        const factor = e.deltaY > 0 ? 1 / ZOOM_WHEEL_FACTOR : ZOOM_WHEEL_FACTOR;
-        const effectiveMin = minZoomRef.current;
-        const newZoom = Math.max(effectiveMin, Math.min(ZOOM_MAX, oldZoom * factor));
-        if (newZoom === oldZoom) return;
+        // Ctrl/Cmd+wheel OR pinch-to-zoom (browsers set ctrlKey for pinch): ZOOM
+        if (e.ctrlKey || e.metaKey) {
+          isWheelZoomingRef.current = true;
+          if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+          wheelTimeoutRef.current = setTimeout(() => { isWheelZoomingRef.current = false; }, 200);
 
-        const rect = el.getBoundingClientRect();
-        const cursorX = e.clientX - (rect.left + rect.width / 2);
-        const cursorY = e.clientY - (rect.top + rect.height / 2);
+          const oldZoom = zoomRef.current;
+          const factor = e.deltaY > 0 ? 1 / ZOOM_WHEEL_FACTOR : ZOOM_WHEEL_FACTOR;
+          const effectiveMin = minZoomRef.current;
+          const newZoom = Math.max(effectiveMin, Math.min(zoomMaxRef.current, oldZoom * factor));
+          if (newZoom === oldZoom) return;
 
-        const ratio = newZoom / oldZoom;
-        const oldPx = panXRef.current;
-        const oldPy = panYRef.current;
-        const rawPanX = oldPx - (cursorX / oldZoom) * (ratio - 1);
-        const rawPanY = oldPy - (cursorY / oldZoom) * (ratio - 1);
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const rect = canvas.getBoundingClientRect();
+          const cursorX = e.clientX - (rect.left + rect.width / 2);
+          const cursorY = e.clientY - (rect.top + rect.height / 2);
+
+          const oldPx = panXRef.current;
+          const oldPy = panYRef.current;
+          const rawPanX = oldPx + cursorX * (1 / newZoom - 1 / oldZoom);
+          const rawPanY = oldPy + cursorY * (1 / newZoom - 1 / oldZoom);
+          const dims = previewDimsRef.current;
+          const vw = el.clientWidth;
+          const vh = el.clientHeight;
+          const maxPx = Math.max(0, dims.width / 2 - vw / (2 * newZoom));
+          const maxPy = Math.max(0, dims.height / 2 - vh / (2 * newZoom));
+          const clampedPanX = Math.max(-maxPx, Math.min(maxPx, rawPanX));
+          const clampedPanY = Math.max(-maxPy, Math.min(maxPy, rawPanY));
+
+          setZoom(newZoom);
+          setPanX(clampedPanX);
+          setPanY(clampedPanY);
+          if (!selectionZoomActiveRef.current && !isPanningRef.current) {
+            el.style.cursor = (newZoom * dims.width > el.clientWidth * 1.05 && !moveModeRef.current) ? 'grab' : 'default';
+          }
+          return;
+        }
+
+        // Plain wheel: scroll/pan (Shift+wheel → horizontal)
+        const z = zoomRef.current;
         const dims = previewDimsRef.current;
-        const maxPx = dims.width * 0.5 / newZoom;
-        const maxPy = dims.height * 0.5 / newZoom;
-        const clampedPanX = Math.max(-maxPx, Math.min(maxPx, rawPanX));
-        const clampedPanY = Math.max(-maxPy, Math.min(maxPy, rawPanY));
-
-        setZoom(newZoom);
+        const vw = el.clientWidth;
+        const vh = el.clientHeight;
+        const rawDx = e.shiftKey ? e.deltaY : e.deltaX;
+        const rawDy = e.shiftKey ? 0 : e.deltaY;
+        const newPanX = panXRef.current - rawDx / z;
+        const newPanY = panYRef.current - rawDy / z;
+        const maxPx = Math.max(0, dims.width / 2 - vw / (2 * z));
+        const maxPy = Math.max(0, dims.height / 2 - vh / (2 * z));
+        const clampedPanX = Math.max(-maxPx, Math.min(maxPx, newPanX));
+        const clampedPanY = Math.max(-maxPy, Math.min(maxPy, newPanY));
+        if (clampedPanX === panXRef.current && clampedPanY === panYRef.current) return;
+        panXRef.current = clampedPanX;
+        panYRef.current = clampedPanY;
         setPanX(clampedPanX);
         setPanY(clampedPanY);
       };
@@ -1043,34 +2010,26 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
     }, []);
     
-    // Reset zoom to 100% and pan to origin when a new image is loaded
-    const knownImageKeysRef = useRef<Set<string>>(new Set());
+    // Reset zoom only on the very first design (empty → 1 design transition)
+    const hasEverHadDesignRef = useRef(false);
     useEffect(() => {
       if (!imageInfo) {
         lastImageRef.current = null;
-        spotOverlayCacheRef.current = null;
-        croppedImageCacheRef.current = null;
-        holographicCacheRef.current = null;
         return;
       }
       
       const imageKey = `${imageInfo.image.src}-${imageInfo.image.width}-${imageInfo.image.height}`;
       if (lastImageRef.current === imageKey) return;
       lastImageRef.current = imageKey;
-      spotOverlayCacheRef.current = null;
-      croppedImageCacheRef.current = null;
-      holographicCacheRef.current = null;
 
-      if (!knownImageKeysRef.current.has(imageKey)) {
-        knownImageKeysRef.current.add(imageKey);
-        setZoom(1);
-        setPanX(0);
-        setPanY(0);
+      if (!hasEverHadDesignRef.current) {
+        hasEverHadDesignRef.current = true;
+        requestAnimationFrame(() => fitToView());
       }
-    }, [imageInfo]);
+    }, [imageInfo, fitToView]);
 
     useEffect(() => {
-      const wrapper = containerRef.current?.parentElement?.parentElement;
+      const wrapper = canvasAreaRef.current;
       if (!wrapper) return;
       const updateSize = () => {
         const availW = wrapper.clientWidth - 48;
@@ -1085,6 +2044,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           w = Math.round(Math.max(200, availW));
           h = Math.round(w / artboardAspect);
         }
+
+        const fitWidthZoom = availW / Math.max(1, w);
+        const baseDPI = fitWidthZoom > 1.5
+          ? Math.ceil(fitWidthZoom * 1.25)
+          : BASE_DPI_SCALE;
+        dpiScaleRef.current = Math.max(BASE_DPI_SCALE, baseDPI);
+
         setPreviewDims({ width: w, height: h });
         requestAnimationFrame(() => { minZoomRef.current = getMinZoom(); });
       };
@@ -1094,111 +2060,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return () => observer.disconnect();
     }, [artboardWidth, artboardHeight]);
     
-    // Check if image content extends close to the edges (minimal empty space)
-    const checkImageHasMinimalEmptySpace = (image: HTMLImageElement): boolean => {
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return false;
-        
-        canvas.width = image.width;
-        canvas.height = image.height;
-        ctx.drawImage(image, 0, 0);
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        // Check edges for content - if content is within 5% of any edge, it's "no empty space"
-        const margin = Math.max(5, Math.floor(Math.min(canvas.width, canvas.height) * 0.05));
-        
-        let hasContentNearTop = false;
-        let hasContentNearBottom = false;
-        let hasContentNearLeft = false;
-        let hasContentNearRight = false;
-        
-        // Sample pixels near edges (every 10th pixel for performance)
-        const step = 10;
-        
-        // Check top edge
-        for (let y = 0; y < margin && !hasContentNearTop; y++) {
-          for (let x = 0; x < canvas.width; x += step) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx + 3] > 128) { // Alpha > 128
-              hasContentNearTop = true;
-              break;
-            }
-          }
-        }
-        
-        // Check bottom edge
-        for (let y = canvas.height - margin; y < canvas.height && !hasContentNearBottom; y++) {
-          for (let x = 0; x < canvas.width; x += step) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx + 3] > 128) {
-              hasContentNearBottom = true;
-              break;
-            }
-          }
-        }
-        
-        // Check left edge
-        for (let x = 0; x < margin && !hasContentNearLeft; x++) {
-          for (let y = 0; y < canvas.height; y += step) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx + 3] > 128) {
-              hasContentNearLeft = true;
-              break;
-            }
-          }
-        }
-        
-        // Check right edge
-        for (let x = canvas.width - margin; x < canvas.width && !hasContentNearRight; x++) {
-          for (let y = 0; y < canvas.height; y += step) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx + 3] > 128) {
-              hasContentNearRight = true;
-              break;
-            }
-          }
-        }
-        
-        // If content is near 3+ edges, consider it "no empty space"
-        const edgesWithContent = [hasContentNearTop, hasContentNearBottom, hasContentNearLeft, hasContentNearRight].filter(Boolean).length;
-        return edgesWithContent >= 3;
-      } catch {
-        return false;
-      }
-    };
-    
-    const getColorName = (color: string) => {
-      const colorMap: Record<string, string> = {
-        "transparent": "Transparent",
-        "#ffffff": "White",
-        "#000000": "Black",
-        "#f3f4f6": "Light Gray",
-        "#1f2937": "Dark Gray",
-        "#3b82f6": "Blue",
-        "#ef4444": "Red",
-        "#10b981": "Green",
-      };
-      return colorMap[color] || color;
-    };
-
     useImperativeHandle(ref, () => {
       const canvas = canvasRef.current;
       if (!canvas) return null as any;
-      (canvas as any).getContourCanvasInfo = () => {
-        if (contourCacheRef.current?.canvas) {
-          return {
-            width: contourCacheRef.current.canvas.width,
-            height: contourCacheRef.current.canvas.height,
-            imageCanvasX: contourCacheRef.current.imageCanvasX,
-            imageCanvasY: contourCacheRef.current.imageCanvasY,
-            downsampleScale: contourCacheRef.current.downsampleScale,
-          };
-        }
-        return null;
+      (canvas as any).getViewportCenterNormalized = () => {
+        const dims = previewDimsRef.current;
+        const z = zoomRef.current;
+        const px = panXRef.current;
+        const py = panYRef.current;
+        const nx = 0.5 - px / Math.max(1, dims.width);
+        const ny = 0.5 - py / Math.max(1, dims.height);
+        return { nx: Math.max(0.05, Math.min(0.95, nx)), ny: Math.max(0.05, Math.min(0.95, ny)) };
       };
       return canvas;
     }, []);
@@ -1225,34 +2097,133 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       return pattern;
     };
 
-    const getCachedCroppedImage = (): HTMLCanvasElement | HTMLImageElement => {
-      if (!imageInfo) return document.createElement('canvas');
-      const src = imageInfo.image.src;
-      if (croppedImageCacheRef.current?.src === src) {
-        return croppedImageCacheRef.current.canvas;
-      }
-      const cropped = cropImageToContent(imageInfo.image);
-      const result = cropped || imageInfo.image;
-      croppedImageCacheRef.current = { src, canvas: result };
-      return result;
-    };
-
-    // Version bump forces cache invalidation when worker code changes
-    const CONTOUR_CACHE_VERSION = 18;
-    const generateContourCacheKey = useCallback(() => {
-      if (!imageInfo) return '';
-      const bboxKey = detectedShapeInfo ? `${detectedShapeInfo.boundingBox.x},${detectedShapeInfo.boundingBox.y},${detectedShapeInfo.boundingBox.width},${detectedShapeInfo.boundingBox.height}` : 'none';
-      return `v${CONTOUR_CACHE_VERSION}-${imageInfo.image.src}-${strokeSettings.width}-${strokeSettings.alphaThreshold}-${strokeSettings.backgroundColor}-${strokeSettings.useCustomBackground}-${strokeSettings.contourMode}-${strokeSettings.autoBridging}-${strokeSettings.autoBridgingThreshold}-${resizeSettings.widthInches}-${resizeSettings.heightInches}-shape:${detectedShapeType || 'none'}-bbox:${bboxKey}`;
-    }, [imageInfo, strokeSettings.width, strokeSettings.alphaThreshold, strokeSettings.backgroundColor, strokeSettings.useCustomBackground, strokeSettings.contourMode, strokeSettings.autoBridging, strokeSettings.autoBridgingThreshold, resizeSettings.widthInches, resizeSettings.heightInches, detectedShapeType, detectedShapeInfo]);
-
+    // Spot color preview overlay
     useEffect(() => {
-      if (contourDebounceRef.current) {
-        clearTimeout(contourDebounceRef.current);
-        contourDebounceRef.current = null;
+      if (!spotPreviewData?.enabled) {
+        spotPulseRef.current = 1;
+        if (spotAnimFrameRef.current !== null) {
+          cancelAnimationFrame(spotAnimFrameRef.current);
+          spotAnimFrameRef.current = null;
+        }
+        spotOverlayCacheRef.current = null;
+        if (renderRef.current) renderRef.current();
+        return;
       }
-      contourCacheRef.current = null;
-      contourTransformRef.current = null;
-    }, [imageInfo]);
+      const hasAny = spotPreviewData?.colors?.some(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange || c.spotWhite || c.spotGloss);
+      if (!hasAny) {
+        spotPulseRef.current = 1;
+        if (spotAnimFrameRef.current !== null) { cancelAnimationFrame(spotAnimFrameRef.current); spotAnimFrameRef.current = null; }
+        spotOverlayCacheRef.current = null;
+        if (renderRef.current) renderRef.current();
+        return;
+      }
+      let startTime: number | null = null;
+      let lastFrameTime = 0;
+      const FRAME_INTERVAL = 1000 / 30;
+      const animate = (timestamp: number) => {
+        if (startTime === null) startTime = timestamp;
+        if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
+          lastFrameTime = timestamp;
+          const elapsed = (timestamp - startTime) / 1000;
+          spotPulseRef.current = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * Math.PI * 1.5));
+          if (renderRef.current) renderRef.current();
+        }
+        spotAnimFrameRef.current = requestAnimationFrame(animate);
+      };
+      spotAnimFrameRef.current = requestAnimationFrame(animate);
+      return () => {
+        if (spotAnimFrameRef.current !== null) { cancelAnimationFrame(spotAnimFrameRef.current); spotAnimFrameRef.current = null; }
+        spotPulseRef.current = 1;
+      };
+    }, [spotPreviewData]);
+
+    const createSpotOverlayCanvas = useCallback((source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
+      if (!imageInfo || !spotPreviewData?.enabled) return null;
+      const allColors = spotPreviewData.colors;
+      if (!allColors || allColors.length === 0) return null;
+
+      const fluorY = allColors.filter(c => c.spotFluorY);
+      const fluorM = allColors.filter(c => c.spotFluorM);
+      const fluorG = allColors.filter(c => c.spotFluorG);
+      const fluorOr = allColors.filter(c => c.spotFluorOrange);
+      if (fluorY.length === 0 && fluorM.length === 0 && fluorG.length === 0 && fluorOr.length === 0) return null;
+
+      const img = source || imageInfo.image;
+      const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
+      const cacheKey = `${imgIdentity}-fy:${fluorY.map(c=>c.hex).join(',')}-fm:${fluorM.map(c=>c.hex).join(',')}-fg:${fluorG.map(c=>c.hex).join(',')}-fo:${fluorOr.map(c=>c.hex).join(',')}`;
+      if (spotOverlayCacheRef.current?.key === cacheKey) return spotOverlayCacheRef.current.canvas;
+
+      let ow = img.width, oh = img.height;
+
+      const srcCanvas = document.createElement('canvas');
+      srcCanvas.width = ow;
+      srcCanvas.height = oh;
+      const srcCtx = srcCanvas.getContext('2d');
+      if (!srcCtx) return null;
+      srcCtx.drawImage(img, 0, 0, ow, oh);
+      let srcData: ImageData;
+      try { srcData = srcCtx.getImageData(0, 0, ow, oh); } catch { return null; }
+
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = ow;
+      overlayCanvas.height = oh;
+      const overlayCtx = overlayCanvas.getContext('2d');
+      if (!overlayCtx) return null;
+      const overlayData = overlayCtx.createImageData(ow, oh);
+
+      const parseHex = (hex: string) => ({
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+      });
+
+      const allColorsParsed = allColors.map(c => ({
+        ...parseHex(c.hex),
+        hex: c.hex,
+      }));
+      const markedHexMap = new Map<string, { oR: number; oG: number; oB: number }>();
+      for (const c of fluorY) markedHexMap.set(c.hex, { oR: 223, oG: 255, oB: 0 });
+      for (const c of fluorM) markedHexMap.set(c.hex, { oR: 255, oG: 0, oB: 255 });
+      for (const c of fluorG) markedHexMap.set(c.hex, { oR: 57, oG: 255, oB: 20 });
+      for (const c of fluorOr) markedHexMap.set(c.hex, { oR: 255, oG: 102, oB: 0 });
+
+      const colorTolerance = 80;
+      const directTolerance = 100;
+      const alphaThreshold = 128;
+      const pixels = srcData.data;
+      const out = overlayData.data;
+
+      for (let idx = 0; idx < pixels.length; idx += 4) {
+        if (pixels[idx + 3] < alphaThreshold) continue;
+        const r = pixels[idx], g = pixels[idx + 1], b = pixels[idx + 2];
+
+        let closestHex = '';
+        let closestDist = Infinity;
+        for (const ac of allColorsParsed) {
+          const dr = r - ac.r, dg = g - ac.g, db = b - ac.b;
+          const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+          if (dist < closestDist) { closestDist = dist; closestHex = ac.hex; }
+        }
+
+        if (closestDist < colorTolerance && markedHexMap.has(closestHex)) {
+          const markedRgb = parseHex(closestHex);
+          const dr = r - markedRgb.r, dg = g - markedRgb.g, db = b - markedRgb.b;
+          if (Math.sqrt(dr * dr + dg * dg + db * db) < directTolerance) {
+            const overlay = markedHexMap.get(closestHex)!;
+            out[idx] = overlay.oR;
+            out[idx + 1] = overlay.oG;
+            out[idx + 2] = overlay.oB;
+            out[idx + 3] = 255;
+          }
+        }
+      }
+
+      overlayCtx.putImageData(overlayData, 0, 0);
+      spotOverlayCacheRef.current = { key: cacheKey, canvas: overlayCanvas };
+      return overlayCanvas;
+    }, [imageInfo, spotPreviewData]);
+
+    createSpotOverlayCanvasRef.current = createSpotOverlayCanvas;
 
     const drawSingleDesign = useCallback((ctx: CanvasRenderingContext2D, design: DesignItem, cw: number, ch: number) => {
       const rect = computeLayerRect(
@@ -1275,13 +2246,21 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!canvasRef.current || (!imageInfo && designs.length === 0)) return;
 
       const doRender = () => {
+      try {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const canvasWidth = Math.round(previewDims.width * DPI_SCALE);
-      const canvasHeight = Math.round(previewDims.height * DPI_SCALE);
+      const maxBufferArea = 8_000_000;
+      const effectiveDPI = Math.max(BASE_DPI_SCALE, dpiScaleRef.current * zoomDpiTier);
+      let canvasWidth = Math.round(previewDims.width * effectiveDPI);
+      let canvasHeight = Math.round(previewDims.height * effectiveDPI);
+      if (canvasWidth * canvasHeight > maxBufferArea) {
+        const scale = Math.sqrt(maxBufferArea / (canvasWidth * canvasHeight));
+        canvasWidth = Math.round(canvasWidth * scale);
+        canvasHeight = Math.round(canvasHeight * scale);
+      }
       if (lastCanvasDimsRef.current.width !== canvasWidth || lastCanvasDimsRef.current.height !== canvasHeight) {
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
@@ -1289,6 +2268,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       } else {
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
       }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       if (previewBgColor === 'transparent') {
         const pattern = getCheckerboardPattern(ctx, canvasWidth, canvasHeight);
@@ -1301,13 +2282,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.fillRect(0, 0, canvasWidth, canvasHeight);
       }
 
-      ctx.save();
-      ctx.strokeStyle = 'rgba(100, 116, 139, 0.6)';
-      ctx.lineWidth = Math.max(1, DPI_SCALE);
-      ctx.setLineDash([6 * DPI_SCALE, 4 * DPI_SCALE]);
-      ctx.strokeRect(0.5, 0.5, canvasWidth - 1, canvasHeight - 1);
-      ctx.setLineDash([]);
-      ctx.restore();
 
       for (const design of designs) {
         if (design.id === selectedDesignId) continue;
@@ -1334,8 +2308,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ];
           ctx.save();
           ctx.strokeStyle = '#ff0000';
-          ctx.lineWidth = 2 * DPI_SCALE;
-          ctx.setLineDash([6 * DPI_SCALE, 3 * DPI_SCALE]);
+          ctx.lineWidth = 2 * dpiScaleRef.current;
+          ctx.setLineDash([6 * dpiScaleRef.current, 3 * dpiScaleRef.current]);
           ctx.beginPath();
           ctx.moveTo(corners[0].x, corners[0].y);
           for (let ci = 1; ci < corners.length; ci++) ctx.lineTo(corners[ci].x, corners[ci].y);
@@ -1348,180 +2322,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       if (!imageInfo || !selectedDesignId) return;
 
-      const hasPdfCutContour = imageInfo.isPDF && imageInfo.pdfCutContourInfo?.hasCutContour;
-      const effectiveBackgroundColor = hasPdfCutContour 
-        ? strokeSettings.backgroundColor 
-        : backgroundColor;
-
-      // For PDFs with CutContour, we need special rendering to clip background to the cut path
-      if (hasPdfCutContour && imageInfo.pdfCutContourInfo) {
-        const cutContourInfo = imageInfo.pdfCutContourInfo;
-        const hasExtractedPaths = cutContourInfo.cutContourPoints && cutContourInfo.cutContourPoints.length > 0;
-        const viewPadding = Math.max(4, Math.round(Math.min(canvasWidth, canvasHeight) * 0.03));
-        const availableWidth = canvas.width - (viewPadding * 2);
-        const availableHeight = canvas.height - (viewPadding * 2);
-        
-        // Get actual content bounds of the rendered PDF (removes empty space and white background)
-        const contentBounds = getImageBounds(imageInfo.image);
-        
-        // Use content bounds for sizing, not full PDF page size
-        const contentWidth = contentBounds.width;
-        const contentHeight = contentBounds.height;
-        const scaleX = availableWidth / contentWidth;
-        const scaleY = availableHeight / contentHeight;
-        const scale = Math.min(scaleX, scaleY);
-        
-        const scaledWidth = contentWidth * scale;
-        const scaledHeight = contentHeight * scale;
-        const offsetX = viewPadding + (availableWidth - scaledWidth) / 2;
-        const offsetY = viewPadding + (availableHeight - scaledHeight) / 2;
-        
-        // Store content bounds offset for image drawing
-        const contentOffsetX = contentBounds.x;
-        const contentOffsetY = contentBounds.y;
-        
-        // Bleed disabled - no extra margin around the image
-        const bleedInches = 0;
-        const renderDPI = imageInfo.pdfCutContourInfo.pageWidth ? 
-          (imageInfo.image.naturalWidth / (imageInfo.pdfCutContourInfo.pageWidth / 72 * 72)) : 300;
-        const bleedPixelsAtRender = bleedInches * renderDPI;
-        const bleedPixels = bleedPixelsAtRender * scale;
-        
-        // Draw checkerboard background using cached pattern
-        const checkerPattern = getCheckerboardPattern(ctx, canvas.width, canvas.height);
-        if (checkerPattern) {
-          ctx.fillStyle = checkerPattern;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        
-        // Create clipping path - use extracted paths if available, otherwise use image bounds
-        ctx.save();
-        ctx.beginPath();
-        
-        if (hasExtractedPaths) {
-          // Use extracted CutContour paths with bleed expansion
-          for (const path of cutContourInfo.cutContourPoints) {
-            if (path.length < 2) continue;
-            
-            // Calculate centroid of path for offset direction
-            let cx = 0, cy = 0;
-            for (const pt of path) {
-              cx += offsetX + pt.x * scale;
-              cy += offsetY + pt.y * scale;
-            }
-            cx /= path.length;
-            cy /= path.length;
-            
-            // Draw path with bleed expansion (offset away from centroid)
-            const firstX = offsetX + path[0].x * scale;
-            const firstY = offsetY + path[0].y * scale;
-            const firstDist = Math.sqrt((firstX - cx) ** 2 + (firstY - cy) ** 2);
-            const firstExpandX = firstDist > 0 ? (firstX - cx) / firstDist * bleedPixels : 0;
-            const firstExpandY = firstDist > 0 ? (firstY - cy) / firstDist * bleedPixels : 0;
-            
-            ctx.moveTo(firstX + firstExpandX, firstY + firstExpandY);
-            
-            for (let i = 1; i < path.length; i++) {
-              const px = offsetX + path[i].x * scale;
-              const py = offsetY + path[i].y * scale;
-              const dist = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2);
-              const expandX = dist > 0 ? (px - cx) / dist * bleedPixels : 0;
-              const expandY = dist > 0 ? (py - cy) / dist * bleedPixels : 0;
-              ctx.lineTo(px + expandX, py + expandY);
-            }
-            ctx.closePath();
-          }
-        } else {
-          // Fallback: use image bounds with bleed for clipping
-          const clipX = offsetX - bleedPixels;
-          const clipY = offsetY - bleedPixels;
-          const clipW = scaledWidth + bleedPixels * 2;
-          const clipH = scaledHeight + bleedPixels * 2;
-          ctx.rect(clipX, clipY, clipW, clipH);
-          ctx.closePath();
-          
-          // Fill background color for the fallback rect area directly
-          if (effectiveBackgroundColor !== "transparent") {
-            if (effectiveBackgroundColor === "holographic") {
-              const gradient = ctx.createLinearGradient(clipX, clipY, clipX + clipW, clipY + clipH);
-              gradient.addColorStop(0, '#C8C8D0');
-              gradient.addColorStop(0.17, '#E8B8B8');
-              gradient.addColorStop(0.34, '#B8D8E8');
-              gradient.addColorStop(0.51, '#E8D0F0');
-              gradient.addColorStop(0.68, '#B0C8E0');
-              gradient.addColorStop(0.85, '#C0B0D8');
-              gradient.addColorStop(1, '#C8C8D0');
-              ctx.fillStyle = gradient;
-            } else {
-              ctx.fillStyle = effectiveBackgroundColor;
-            }
-            ctx.fillRect(clipX, clipY, clipW, clipH);
-          }
-          
-          // Clip and draw only the content portion of the image
-          ctx.clip();
-          ctx.drawImage(
-            imageInfo.image,
-            contentOffsetX, contentOffsetY, contentWidth, contentHeight,
-            offsetX, offsetY, scaledWidth, scaledHeight
-          );
-          ctx.restore();
-          
-          // Draw image bounds as cut indicator
-          ctx.save();
-          ctx.strokeStyle = '#FF00FF';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.strokeRect(offsetX, offsetY, scaledWidth, scaledHeight);
-          ctx.restore();
-          return; // Early return for fallback case
-        }
-        
-        // For extracted paths: fill the path, then clip for the image
-        if (effectiveBackgroundColor !== "transparent") {
-          if (effectiveBackgroundColor === "holographic") {
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#C8C8D0');
-            gradient.addColorStop(0.17, '#E8B8B8');
-            gradient.addColorStop(0.34, '#B8D8E8');
-            gradient.addColorStop(0.51, '#E8D0F0');
-            gradient.addColorStop(0.68, '#B0C8E0');
-            gradient.addColorStop(0.85, '#C0B0D8');
-            gradient.addColorStop(1, '#C8C8D0');
-            ctx.fillStyle = gradient;
-          } else {
-            ctx.fillStyle = effectiveBackgroundColor;
-          }
-          ctx.fill();
-        }
-        
-        ctx.clip();
-        
-        // Draw only the content portion of the image inside the clipped region
-        ctx.drawImage(
-          imageInfo.image,
-          contentOffsetX, contentOffsetY, contentWidth, contentHeight,
-          offsetX, offsetY, scaledWidth, scaledHeight
-        );
-        
-        ctx.restore();
-        
-        /* HIDDEN: CutContour magenta dashed line indicator disabled in preview */
-      } else {
-        if (shapeSettings.enabled) {
-          drawShapePreview(ctx, canvas.width, canvas.height);
-        } else {
-          drawImageWithResizePreview(ctx, canvas.width, canvas.height);
-        }
-
-      }
+      drawImageWithResizePreview(ctx, canvas.width, canvas.height);
 
       // Draw smart alignment guides
       if (snapGuidesRef.current.length > 0) {
         ctx.save();
         ctx.strokeStyle = '#f472b6';
-        ctx.lineWidth = 1 * DPI_SCALE;
-        ctx.setLineDash([4 * DPI_SCALE, 4 * DPI_SCALE]);
+        ctx.lineWidth = 1 * dpiScaleRef.current;
+        ctx.setLineDash([4 * dpiScaleRef.current, 4 * dpiScaleRef.current]);
         ctx.globalAlpha = 0.8;
         for (const guide of snapGuidesRef.current) {
           ctx.beginPath();
@@ -1542,21 +2350,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       
       
       
-      if (marqueeRect) {
-        ctx.save();
-        ctx.strokeStyle = '#22d3ee';
-        ctx.lineWidth = 1 * DPI_SCALE;
-        ctx.setLineDash([4 * DPI_SCALE, 4 * DPI_SCALE]);
-        ctx.fillStyle = 'rgba(34, 211, 238, 0.08)';
-        ctx.fillRect(marqueeRect.x, marqueeRect.y, marqueeRect.w, marqueeRect.h);
-        ctx.strokeRect(marqueeRect.x, marqueeRect.y, marqueeRect.w, marqueeRect.h);
-        ctx.setLineDash([]);
-        ctx.restore();
-      }
+      // Marquee selection is rendered as a DOM overlay for instant feedback
 
       if (selectedDesignIds.size > 1) {
         const z = Math.max(0.25, zoomRef.current);
-        const inv = DPI_SCALE / z;
+        const inv = dpiScaleRef.current / z;
         for (const d of designs) {
           if (!selectedDesignIds.has(d.id)) continue;
           const r = computeLayerRect(
@@ -1592,384 +2390,98 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.setLineDash([]);
           ctx.restore();
         }
+
+        // Draw group bounding box and handles
+        const groupBBox = getMultiSelectionBBox();
+        if (groupBBox) {
+          ctx.save();
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1.5 * inv;
+          ctx.setLineDash([5 * inv, 4 * inv]);
+          ctx.strokeRect(groupBBox.x, groupBBox.y, groupBBox.width, groupBBox.height);
+          ctx.setLineDash([]);
+          ctx.restore();
+
+          // Resize handles at corners
+          const handleR = 4.5 * inv;
+          const groupHandles = [
+            { x: groupBBox.x, y: groupBBox.y },
+            { x: groupBBox.x + groupBBox.width, y: groupBBox.y },
+            { x: groupBBox.x + groupBBox.width, y: groupBBox.y + groupBBox.height },
+            { x: groupBBox.x, y: groupBBox.y + groupBBox.height },
+          ];
+          for (const gh of groupHandles) {
+            ctx.save();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#22d3ee';
+            ctx.lineWidth = 1.5 * inv;
+            ctx.beginPath();
+            ctx.arc(gh.x, gh.y, handleR, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Rotation handle at top-center
+          const rotDist = 26 * inv;
+          const topMidX = groupBBox.x + groupBBox.width / 2;
+          const topMidY = groupBBox.y;
+          const rotHandleX = topMidX;
+          const rotHandleY = topMidY - rotDist;
+          ctx.save();
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1 * inv;
+          ctx.beginPath();
+          ctx.moveTo(topMidX, topMidY);
+          ctx.lineTo(rotHandleX, rotHandleY);
+          ctx.stroke();
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1.5 * inv;
+          ctx.beginPath();
+          ctx.arc(rotHandleX, rotHandleY, handleR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
-      // Draw bottom-edge glow when user is dragging near the bottom
-      if (bottomGlow > 0 && artboardHeight < 24) {
+      // Draw bottom-edge glow when user is dragging near the bottom (read from ref to avoid re-creating this effect)
+      const glowVal = bottomGlowRef.current;
+      if (glowVal > 0 && onExpandArtboard) {
         ctx.save();
         const glowH = canvasHeight * 0.18;
         const grad = ctx.createLinearGradient(0, canvasHeight - glowH, 0, canvasHeight);
-        const alpha = 0.15 + bottomGlow * 0.45;
+        const alpha = 0.15 + glowVal * 0.45;
         grad.addColorStop(0, 'rgba(6, 182, 212, 0)');
         grad.addColorStop(0.5, `rgba(6, 182, 212, ${(alpha * 0.5).toFixed(3)})`);
         grad.addColorStop(1, `rgba(6, 182, 212, ${alpha.toFixed(3)})`);
         ctx.fillStyle = grad;
         ctx.fillRect(0, canvasHeight - glowH, canvasWidth, glowH);
 
-        // Progress bar at the very bottom
-        const barH = 4 * DPI_SCALE;
-        ctx.fillStyle = `rgba(34, 211, 238, ${(0.6 + bottomGlow * 0.4).toFixed(2)})`;
-        ctx.fillRect(0, canvasHeight - barH, canvasWidth * bottomGlow, barH);
+        const barH = 4 * dpiScaleRef.current;
+        ctx.fillStyle = `rgba(34, 211, 238, ${(0.6 + glowVal * 0.4).toFixed(2)})`;
+        ctx.fillRect(0, canvasHeight - barH, canvasWidth * glowVal, barH);
 
-        // Text label
-        const fontSize = Math.max(11, 13 * DPI_SCALE);
+        const fontSize = Math.max(11, 13 * dpiScaleRef.current);
         ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillStyle = `rgba(255, 255, 255, ${(0.5 + bottomGlow * 0.5).toFixed(2)})`;
-        const seconds = Math.max(0, 2 - Math.round(bottomGlow * 2));
+        ctx.fillStyle = `rgba(255, 255, 255, ${(0.5 + glowVal * 0.5).toFixed(2)})`;
+        const seconds = Math.max(0, 2 - Math.round(glowVal * 2));
         ctx.fillText(
-          seconds > 0 ? `Expand to ${artboardHeight + 1}" in ${seconds}s…` : 'Expanding…',
+          seconds > 0 ? `Expand sheet in ${seconds}s…` : 'Expanding…',
           canvasWidth / 2,
-          canvasHeight - barH - 6 * DPI_SCALE,
+          canvasHeight - barH - 6 * dpiScaleRef.current,
         );
         ctx.restore();
       }
 
+      } catch (err) { console.warn('Render error:', err); }
       };
-      doRender();
       renderRef.current = doRender;
-    }, [imageInfo, strokeSettings, resizeSettings, shapeSettings, cadCutBounds, backgroundColor, isProcessing, spotPreviewData, previewDims.height, previewDims.width, lockedContour, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, selectedDesignIds, drawSingleDesign, overlappingDesigns, previewBgColor, marqueeRect, bottomGlow]);
-
-    useEffect(() => {
-      if (!spotPreviewData?.enabled) {
-        spotPulseRef.current = 1;
-        if (spotAnimFrameRef.current !== null) {
-          cancelAnimationFrame(spotAnimFrameRef.current);
-          spotAnimFrameRef.current = null;
-        }
-        return;
-      }
-      
-      const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
-      const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
-      const fluorYColors = spotPreviewData.colors.filter(c => c.spotFluorY);
-      const fluorMColors = spotPreviewData.colors.filter(c => c.spotFluorM);
-      const fluorGColors = spotPreviewData.colors.filter(c => c.spotFluorG);
-      const fluorOrangeColors = spotPreviewData.colors.filter(c => c.spotFluorOrange);
-      
-      if (whiteColors.length === 0 && glossColors.length === 0 && fluorYColors.length === 0 && fluorMColors.length === 0 && fluorGColors.length === 0 && fluorOrangeColors.length === 0) {
-        spotPulseRef.current = 1;
-        if (spotAnimFrameRef.current !== null) {
-          cancelAnimationFrame(spotAnimFrameRef.current);
-          spotAnimFrameRef.current = null;
-        }
-        return;
-      }
-      
-      let startTime: number | null = null;
-      let lastFrameTime = 0;
-      const FRAME_INTERVAL = 1000 / 30;
-      
-      const animate = (timestamp: number) => {
-        if (startTime === null) startTime = timestamp;
-        
-        if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
-          lastFrameTime = timestamp;
-          const elapsed = (timestamp - startTime) / 1000;
-          spotPulseRef.current = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * Math.PI * 1.5));
-          
-          if (renderRef.current) {
-            renderRef.current();
-          }
-        }
-        
-        spotAnimFrameRef.current = requestAnimationFrame(animate);
-      };
-      
-      spotAnimFrameRef.current = requestAnimationFrame(animate);
-      
-      return () => {
-        if (spotAnimFrameRef.current !== null) {
-          cancelAnimationFrame(spotAnimFrameRef.current);
-          spotAnimFrameRef.current = null;
-        }
-        spotPulseRef.current = 1;
-      };
-    }, [spotPreviewData]);
-
-    const createSpotOverlayCanvas = (source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
-      if (!imageInfo || !spotPreviewData?.enabled) return null;
-      
-      const whiteColors = spotPreviewData.colors.filter(c => c.spotWhite);
-      const glossColors = spotPreviewData.colors.filter(c => c.spotGloss);
-      const fluorYColors = spotPreviewData.colors.filter(c => c.spotFluorY);
-      const fluorMColors = spotPreviewData.colors.filter(c => c.spotFluorM);
-      const fluorGColors = spotPreviewData.colors.filter(c => c.spotFluorG);
-      const fluorOrangeColors = spotPreviewData.colors.filter(c => c.spotFluorOrange);
-      
-      const hasAny = whiteColors.length > 0 || glossColors.length > 0 || fluorYColors.length > 0 || fluorMColors.length > 0 || fluorGColors.length > 0 || fluorOrangeColors.length > 0;
-      if (!hasAny) return null;
-      
-      const img = source || imageInfo.image;
-      const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
-      const cacheKey = `${imgIdentity}-${img.width}x${img.height}-w:${whiteColors.map(c => c.hex).join(',')}-g:${glossColors.map(c => c.hex).join(',')}-fy:${fluorYColors.map(c => c.hex).join(',')}-fm:${fluorMColors.map(c => c.hex).join(',')}-fg:${fluorGColors.map(c => c.hex).join(',')}-fo:${fluorOrangeColors.map(c => c.hex).join(',')}`;
-      
-      if (spotOverlayCacheRef.current?.key === cacheKey) {
-        return spotOverlayCacheRef.current.canvas;
-      }
-      
-      const srcCanvas = document.createElement('canvas');
-      const srcCtx = srcCanvas.getContext('2d');
-      if (!srcCtx) return null;
-      
-      srcCanvas.width = img.width;
-      srcCanvas.height = img.height;
-      srcCtx.drawImage(img, 0, 0);
-      const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
-      
-      const overlayCanvas = document.createElement('canvas');
-      overlayCanvas.width = srcCanvas.width;
-      overlayCanvas.height = srcCanvas.height;
-      const overlayCtx = overlayCanvas.getContext('2d');
-      if (!overlayCtx) return null;
-      
-      const overlayData = overlayCtx.createImageData(srcCanvas.width, srcCanvas.height);
-      
-      const parseColors = (colors: typeof whiteColors) => colors.map(c => ({
-        r: parseInt(c.hex.slice(1, 3), 16),
-        g: parseInt(c.hex.slice(3, 5), 16),
-        b: parseInt(c.hex.slice(5, 7), 16),
-      }));
-      
-      const parsedWhite = parseColors(whiteColors);
-      const parsedGloss = parseColors(glossColors);
-      const parsedFluorY = parseColors(fluorYColors);
-      const parsedFluorM = parseColors(fluorMColors);
-      const parsedFluorG = parseColors(fluorGColors);
-      const parsedFluorOrange = parseColors(fluorOrangeColors);
-      
-      const colorGroups: { parsed: typeof parsedWhite; overlayR: number; overlayG: number; overlayB: number }[] = [
-        ...parsedWhite.length > 0 ? [{ parsed: parsedWhite, overlayR: 255, overlayG: 255, overlayB: 255 }] : [],
-        ...parsedGloss.length > 0 ? [{ parsed: parsedGloss, overlayR: 180, overlayG: 180, overlayB: 190 }] : [],
-        ...parsedFluorY.length > 0 ? [{ parsed: parsedFluorY, overlayR: 223, overlayG: 255, overlayB: 0 }] : [],
-        ...parsedFluorM.length > 0 ? [{ parsed: parsedFluorM, overlayR: 255, overlayG: 0, overlayB: 255 }] : [],
-        ...parsedFluorG.length > 0 ? [{ parsed: parsedFluorG, overlayR: 57, overlayG: 255, overlayB: 20 }] : [],
-        ...parsedFluorOrange.length > 0 ? [{ parsed: parsedFluorOrange, overlayR: 255, overlayG: 102, overlayB: 0 }] : [],
-      ];
-      
-      const tolerance = 30;
-      const pixels = srcData.data;
-      const out = overlayData.data;
-      const len = pixels.length;
-      
-      for (let idx = 0; idx < len; idx += 4) {
-        const a = pixels[idx + 3];
-        if (a < 128) continue;
-        
-        const r = pixels[idx];
-        const g = pixels[idx + 1];
-        const b = pixels[idx + 2];
-        
-        for (const group of colorGroups) {
-          let matched = false;
-          for (const t of group.parsed) {
-            if (Math.abs(r - t.r) <= tolerance && Math.abs(g - t.g) <= tolerance && Math.abs(b - t.b) <= tolerance) {
-              out[idx] = group.overlayR; out[idx + 1] = group.overlayG; out[idx + 2] = group.overlayB; out[idx + 3] = 255;
-              matched = true;
-              break;
-            }
-          }
-          if (matched) break;
-        }
-      }
-      
-      overlayCtx.putImageData(overlayData, 0, 0);
-      spotOverlayCacheRef.current = { key: cacheKey, canvas: overlayCanvas };
-      return overlayCanvas;
-    };
-
-    useEffect(() => {
-      if (!imageInfo) return;
-      const settingsKey = `${strokeSettings.enabled}-${strokeSettings.width}-${shapeSettings.enabled}-${shapeSettings.type}-${resizeSettings.widthInches}`;
-      if (lastSettingsRef.current && lastSettingsRef.current !== settingsKey) {
-        lastSettingsRef.current = settingsKey;
-        setShowHighlight(true);
-        const timer = setTimeout(() => setShowHighlight(false), 500);
-        return () => clearTimeout(timer);
-      }
-      lastSettingsRef.current = settingsKey;
-    }, [imageInfo, strokeSettings.enabled, strokeSettings.width, shapeSettings.enabled, shapeSettings.type, resizeSettings.widthInches]);
-
-    const drawShapePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
-      if (!imageInfo) return;
-
-      const shapeDims = calculateShapeDimensions(
-        resizeSettings.widthInches,
-        resizeSettings.heightInches,
-        shapeSettings.type,
-        shapeSettings.offset
-      );
-
-      const bleedInches = 0; // Bleed disabled
-      const padding = 0;
-      const availableWidth = canvasWidth;
-      const availableHeight = canvasHeight;
-      const shapeAspect = shapeDims.widthInches / shapeDims.heightInches;
-      
-      let shapeWidth, shapeHeight;
-      if (shapeAspect > (availableWidth / availableHeight)) {
-        shapeWidth = availableWidth;
-        shapeHeight = availableWidth / shapeAspect;
-      } else {
-        shapeHeight = availableHeight;
-        shapeWidth = availableHeight * shapeAspect;
-      }
-
-      const shapeX = (canvasWidth - shapeWidth) / 2;
-      const shapeY = (canvasHeight - shapeHeight) / 2;
-      
-      // Calculate bleed in pixels based on shape scale (only if bleed is enabled)
-      const shapePixelsPerInch = Math.min(shapeWidth / shapeDims.widthInches, shapeHeight / shapeDims.heightInches);
-      const bleedPixels = shapeSettings.bleedEnabled ? bleedInches * shapePixelsPerInch : 0;
-      
-      const cornerRadiusPixels = (shapeSettings.cornerRadius || 0.25) * shapePixelsPerInch;
-      
-      const sourceImage = getCachedCroppedImage();
-      
-      // Image dimensions within the shape
-      let imageWidth = resizeSettings.widthInches * shapePixelsPerInch;
-      let imageHeight = resizeSettings.heightInches * shapePixelsPerInch;
-      
-      // For circles and ovals, do NOT scale down the image - let it fill naturally
-      // The image will be clipped to the shape boundary below, so corners that extend
-      // beyond the circle/oval are simply cropped away, giving a tight fit
-      
-      const imageX = shapeX + (shapeWidth - imageWidth) / 2;
-      const imageY = shapeY + (shapeHeight - imageHeight) / 2;
-      
-      // Draw background with bleed or fill
-      if (shapeSettings.bleedEnabled) {
-        // Solid color bleed mode - draw bleed area with bleedColor first
-        ctx.fillStyle = shapeSettings.bleedColor || '#FFFFFF';
-        ctx.beginPath();
-        
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2 + bleedPixels;
-          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'oval') {
-          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2 + bleedPixels, shapeHeight / 2 + bleedPixels, 0, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.rect(shapeX + (shapeWidth - size) / 2 - bleedPixels, shapeY + (shapeHeight - size) / 2 - bleedPixels, size + bleedPixels * 2, size + bleedPixels * 2);
-        } else if (shapeSettings.type === 'rounded-square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.roundRect(shapeX + (shapeWidth - size) / 2 - bleedPixels, shapeY + (shapeHeight - size) / 2 - bleedPixels, size + bleedPixels * 2, size + bleedPixels * 2, cornerRadiusPixels);
-        } else if (shapeSettings.type === 'rounded-rectangle') {
-          ctx.roundRect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2, cornerRadiusPixels);
-        } else {
-          ctx.rect(shapeX - bleedPixels, shapeY - bleedPixels, shapeWidth + bleedPixels * 2, shapeHeight + bleedPixels * 2);
-        }
-        ctx.fill();
-        
-        // Then draw the fill color on top (within the cut line)
-        // Handle holographic fill with animated rainbow gradient for preview
-        if (shapeSettings.fillColor === 'holographic') {
-          const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
-          gradient.addColorStop(0, '#C8C8D0');
-          gradient.addColorStop(0.17, '#E8B8B8');
-          gradient.addColorStop(0.34, '#B8D8E8');
-          gradient.addColorStop(0.51, '#E8D0F0');
-          gradient.addColorStop(0.68, '#B0C8E0');
-          gradient.addColorStop(0.85, '#C0B0D8');
-          gradient.addColorStop(1, '#C8C8D0');
-          ctx.fillStyle = gradient;
-        } else {
-          ctx.fillStyle = shapeSettings.fillColor;
-        }
-        ctx.beginPath();
-        
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2;
-          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'oval') {
-          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
-        } else if (shapeSettings.type === 'rounded-square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
-        } else if (shapeSettings.type === 'rounded-rectangle') {
-          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-        } else {
-          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
-        }
-        ctx.fill();
-      } else {
-        // Solid fill mode
-        // Handle holographic fill with rainbow gradient for preview
-        if (shapeSettings.fillColor === 'holographic') {
-          const gradient = ctx.createLinearGradient(shapeX, shapeY, shapeX + shapeWidth, shapeY + shapeHeight);
-          gradient.addColorStop(0, '#C8C8D0');
-          gradient.addColorStop(0.17, '#E8B8B8');
-          gradient.addColorStop(0.34, '#B8D8E8');
-          gradient.addColorStop(0.51, '#E8D0F0');
-          gradient.addColorStop(0.68, '#B0C8E0');
-          gradient.addColorStop(0.85, '#C0B0D8');
-          gradient.addColorStop(1, '#C8C8D0');
-          ctx.fillStyle = gradient;
-        } else {
-          ctx.fillStyle = shapeSettings.fillColor;
-        }
-        ctx.beginPath();
-        
-        if (shapeSettings.type === 'circle') {
-          const radius = Math.min(shapeWidth, shapeHeight) / 2;
-          ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'oval') {
-          ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
-        } else if (shapeSettings.type === 'square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
-        } else if (shapeSettings.type === 'rounded-square') {
-          const size = Math.min(shapeWidth, shapeHeight);
-          ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
-        } else if (shapeSettings.type === 'rounded-rectangle') {
-          ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-        } else {
-          ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
-        }
-        
-        ctx.fill();
-      }
-      
-      /* HIDDEN: Shape mode CutContour magenta outline disabled in preview */
-
-      // Draw the original image on top (clipped to cut line)
-      ctx.save();
-      ctx.beginPath();
-      
-      if (shapeSettings.type === 'circle') {
-        const radius = Math.min(shapeWidth, shapeHeight) / 2;
-        ctx.arc(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, radius, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'oval') {
-        ctx.ellipse(shapeX + shapeWidth / 2, shapeY + shapeHeight / 2, shapeWidth / 2, shapeHeight / 2, 0, 0, Math.PI * 2);
-      } else if (shapeSettings.type === 'square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        ctx.rect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size);
-      } else if (shapeSettings.type === 'rounded-square') {
-        const size = Math.min(shapeWidth, shapeHeight);
-        ctx.roundRect(shapeX + (shapeWidth - size) / 2, shapeY + (shapeHeight - size) / 2, size, size, cornerRadiusPixels);
-      } else if (shapeSettings.type === 'rounded-rectangle') {
-        ctx.roundRect(shapeX, shapeY, shapeWidth, shapeHeight, cornerRadiusPixels);
-      } else {
-        ctx.rect(shapeX, shapeY, shapeWidth, shapeHeight);
-      }
-      
-      ctx.clip();
-      ctx.drawImage(sourceImage, imageX, imageY, imageWidth, imageHeight);
-      
-      const spotOverlay = createSpotOverlayCanvas(sourceImage);
-      if (spotOverlay) {
-        ctx.save();
-        ctx.globalAlpha = spotPulseRef.current;
-        ctx.drawImage(spotOverlay, imageX, imageY, imageWidth, imageHeight);
-        ctx.restore();
-      }
-      
-      ctx.restore();
-    };
+      doRender();
+    }, [imageInfo, resizeSettings, previewDims.height, previewDims.width, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, selectedDesignIds, drawSingleDesign, overlappingDesigns, previewBgColor, zoomDpiTier]);
 
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -1990,11 +2502,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.rotate((t.rotation * Math.PI) / 180);
       ctx.scale(t.flipX ? -1 : 1, t.flipY ? -1 : 1);
       ctx.drawImage(imageInfo.image, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
-
-      const spotOverlay = createSpotOverlayCanvas();
-      if (spotOverlay) {
-        ctx.globalAlpha = spotPulseRef.current;
-        ctx.drawImage(spotOverlay, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+      const overlayCanvas = createSpotOverlayCanvasRef.current?.(imageInfo.image) ?? null;
+      if (overlayCanvas) {
+        ctx.globalAlpha = spotPulseRef.current * 0.7;
+        ctx.drawImage(overlayCanvas, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -2015,7 +2526,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const sin = Math.sin(rad);
 
       const z = Math.max(0.25, zoomRef.current);
-      const inv = DPI_SCALE / z;
+      const inv = dpiScaleRef.current / z;
 
       const corners = [
         { lx: -hw, ly: -hh },
@@ -2137,50 +2648,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       ctx.restore();
     };
 
-    const getBackgroundStyle = () => {
-      // For PDFs with CutContour, use strokeSettings.backgroundColor
-      const hasPdfCutContour = imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour;
-      const effectiveBg = hasPdfCutContour ? strokeSettings.backgroundColor : backgroundColor;
-      if (effectiveBg === "transparent") {
-        return "checkerboard";
-      }
-      return "";
-    };
-
-    const getBackgroundColor = () => {
-      // For PDFs with CutContour, use strokeSettings.backgroundColor
-      const hasPdfCutContour = imageInfo?.isPDF && imageInfo?.pdfCutContourInfo?.hasCutContour;
-      const effectiveBg = hasPdfCutContour ? strokeSettings.backgroundColor : backgroundColor;
-      if (effectiveBg === "transparent") {
-        return "transparent";
-      }
-      return effectiveBg;
-    };
-
     return (
       <div className="h-full flex flex-col">
         {/* Canvas area - fills available height */}
-        <div className="flex-1 min-h-0 flex items-center justify-center bg-gray-950 p-3 relative">
-          <div className="relative" style={{ paddingBottom: 16, paddingRight: 14 }}>
+        <div
+          ref={canvasAreaRef}
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleDoubleClick}
+          onMouseMove={handleMouseMove}
+          onMouseEnter={handleMouseEnter}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="flex-1 min-h-0 flex items-center justify-center bg-gray-950 p-3 relative overflow-hidden cursor-default"
+          style={{ userSelect: 'none', touchAction: 'none' }}
+        >
+          <div className="relative" style={{ paddingBottom: Math.abs(zoom - 1) < 0.03 ? 16 : 0, paddingRight: Math.abs(zoom - 1) < 0.03 ? 14 : 0 }}>
             <div 
               ref={containerRef}
-              onMouseDown={handleMouseDown}
-              onDoubleClick={handleDoubleClick}
-              onMouseMove={handleMouseMove}
-              onMouseEnter={handleMouseEnter}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseLeave}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              className={`relative rounded-lg border border-gray-600 flex items-center justify-center cursor-default ${showHighlight ? 'ring-4 ring-cyan-400 ring-opacity-75' : ''}`}
+              className={`relative flex items-center justify-center ${Math.abs(zoom - 1) < 0.03 ? 'rounded-lg border border-gray-600' : ''}`}
               style={{ 
                 width: previewDims.width,
                 height: previewDims.height,
-                backgroundColor: previewBgColor === 'transparent' ? '#e0e0e0' : previewBgColor,
-                overflow: 'hidden',
-                userSelect: 'none',
-                touchAction: 'none'
+                backgroundColor: 'transparent',
               }}
             >
               <canvas 
@@ -2193,7 +2685,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   maxHeight: '100%',
                   transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
                   transformOrigin: 'center',
-                  transition: isWheelZoomingRef.current || isPanningRef.current ? 'none' : 'transform 0.15s ease-out'
+                  willChange: 'transform',
+                  transition: isWheelZoomingRef.current || isPanningRef.current || suppressTransitionRef.current || activeScrollAxis ? 'none' : 'transform 0.15s ease-out',
+                  pointerEvents: 'none',
                 }}
               />
               
@@ -2203,22 +2697,239 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 </div>
               )}
 
-              {isProcessing && imageInfo && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-20">
-                  <div className="text-center">
-                    <Loader2 className="w-8 h-8 text-white mx-auto mb-2 animate-spin" />
-                    <p className="text-white text-sm">Processing... {processingProgress}%</p>
-                  </div>
-                </div>
-              )}
+
             </div>
-            <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
-              <span className="text-[10px] text-gray-500 font-medium tracking-wide">{artboardWidth}"</span>
-            </div>
-            <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
-              <span className="text-[10px] text-gray-500 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
-            </div>
+            {Math.abs(zoom - 1) < 0.03 && (
+              <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
+                <span className="text-[10px] text-gray-500 font-medium tracking-wide">{artboardWidth}"</span>
+              </div>
+            )}
+            {Math.abs(zoom - 1) < 0.03 && (
+              <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
+                <span className="text-[10px] text-gray-500 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
+              </div>
+            )}
           </div>
+          {/* Horizontal scrollbar */}
+          {(() => {
+            const { rawThumbFrac } = getScrollMetrics('x', zoom);
+            if (rawThumbFrac >= 0.98) return null;
+            const isActive = activeScrollAxis === 'x';
+            const isHovered = scrollbarHover === 'x';
+            const trackH = isActive ? 20 : isHovered ? 16 : 12;
+            const hRight = (scrollbarHover === 'y' || activeScrollAxis === 'y') ? 38 : 34;
+            const vw = canvasAreaRef.current?.clientWidth || 500;
+            const trackWEst = vw - 4 - hRight;
+            const thumbFrac = Math.max(rawThumbFrac, 32 / Math.max(1, trackWEst));
+            const { maxScroll } = getScrollMetrics('x', zoom);
+            const scrollX = panToScroll('x', panX, zoom);
+            const t = maxScroll > 0 ? Math.max(0, Math.min(1, scrollX / maxScroll)) : 0.5;
+            const thumbLeft = t * (1 - thumbFrac);
+            return (
+              <div
+                data-scrollbar
+                className="absolute z-30"
+                style={{
+                  bottom: 0,
+                  left: 4,
+                  right: (scrollbarHover === 'y' || activeScrollAxis === 'y') ? 36 : 32,
+                  height: isActive ? 36 : 32,
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  paddingBottom: isActive ? 0 : 1,
+                  pointerEvents: 'auto',
+                  cursor: 'default',
+                }}
+                onPointerDown={(e) => handleScrollbarPointerDown('x', e, false)}
+                onMouseMove={(e) => e.stopPropagation()}
+                onMouseEnter={() => setScrollbarHover('x')}
+                onMouseLeave={() => { if (!activeScrollAxis) setScrollbarHover(null); }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    height: trackH,
+                    borderRadius: trackH / 2,
+                    backgroundColor: isActive ? 'rgba(56, 189, 248, 0.25)' : isHovered ? 'rgba(148, 163, 184, 0.22)' : 'rgba(100, 116, 139, 0.18)',
+                    boxShadow: isActive ? '0 0 0 1px rgba(56,189,248,0.55), 0 0 12px rgba(56,189,248,0.35)' : 'inset 0 0 0 1px rgba(148,163,184,0.22)',
+                    transition: 'height 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease',
+                  }}
+                >
+                  <div
+                    data-scrollbar
+                    data-scrollbar-thumb-x=""
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: `${thumbLeft * 100}%`,
+                      width: `${thumbFrac * 100}%`,
+                      height: '100%',
+                      borderRadius: trackH / 2,
+                      background: isActive
+                        ? 'linear-gradient(180deg, rgba(125,211,252,0.96), rgba(56,189,248,0.88))'
+                        : isHovered
+                          ? 'linear-gradient(180deg, rgba(226,232,240,0.88), rgba(148,163,184,0.82))'
+                          : 'linear-gradient(180deg, rgba(203,213,225,0.72), rgba(148,163,184,0.65))',
+                      boxShadow: isActive ? '0 0 0 1px rgba(186,230,253,0.6), 0 0 10px rgba(56,189,248,0.45)' : '0 0 0 1px rgba(148,163,184,0.35)',
+                      cursor: 'default',
+                      transform: isActive ? 'scaleY(1.08)' : 'scaleY(1)',
+                      transition: 'background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease',
+                      pointerEvents: 'auto',
+                    }}
+                    onPointerDown={(e) => handleScrollbarPointerDown('x', e, true)}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Vertical scrollbar */}
+          {(() => {
+            const { rawThumbFrac } = getScrollMetrics('y', zoom);
+            if (rawThumbFrac >= 0.98) return null;
+            const isActive = activeScrollAxis === 'y';
+            const isHovered = scrollbarHover === 'y';
+            const trackW = isActive ? 20 : isHovered ? 16 : 12;
+            const vBottom = (scrollbarHover === 'x' || activeScrollAxis === 'x') ? 38 : 34;
+            const vh = canvasAreaRef.current?.clientHeight || 400;
+            const trackHEst = vh - 4 - vBottom;
+            const thumbFrac = Math.max(rawThumbFrac, 32 / Math.max(1, trackHEst));
+            const { maxScroll } = getScrollMetrics('y', zoom);
+            const scrollY = panToScroll('y', panY, zoom);
+            const t = maxScroll > 0 ? Math.max(0, Math.min(1, scrollY / maxScroll)) : 0.5;
+            const thumbTop = t * (1 - thumbFrac);
+            return (
+              <div
+                data-scrollbar
+                className="absolute z-30"
+                style={{
+                  right: 0,
+                  top: 4,
+                  bottom: (scrollbarHover === 'x' || activeScrollAxis === 'x') ? 34 : 30,
+                  width: isActive ? 36 : 32,
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  paddingRight: isActive ? 0 : 1,
+                  pointerEvents: 'auto',
+                  cursor: 'default',
+                }}
+                onPointerDown={(e) => handleScrollbarPointerDown('y', e, false)}
+                onMouseMove={(e) => e.stopPropagation()}
+                onMouseEnter={() => setScrollbarHover('y')}
+                onMouseLeave={() => { if (!activeScrollAxis) setScrollbarHover(null); }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    width: trackW,
+                    height: '100%',
+                    borderRadius: trackW / 2,
+                    backgroundColor: isActive ? 'rgba(56, 189, 248, 0.25)' : isHovered ? 'rgba(148, 163, 184, 0.22)' : 'rgba(100, 116, 139, 0.18)',
+                    boxShadow: isActive ? '0 0 0 1px rgba(56,189,248,0.55), 0 0 12px rgba(56,189,248,0.35)' : 'inset 0 0 0 1px rgba(148,163,184,0.22)',
+                    transition: 'width 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease',
+                  }}
+                >
+                  <div
+                    data-scrollbar
+                    data-scrollbar-thumb-y=""
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: `${thumbTop * 100}%`,
+                      height: `${thumbFrac * 100}%`,
+                      width: '100%',
+                      borderRadius: trackW / 2,
+                      background: isActive
+                        ? 'linear-gradient(90deg, rgba(125,211,252,0.96), rgba(56,189,248,0.88))'
+                        : isHovered
+                          ? 'linear-gradient(90deg, rgba(226,232,240,0.88), rgba(148,163,184,0.82))'
+                          : 'linear-gradient(90deg, rgba(203,213,225,0.72), rgba(148,163,184,0.65))',
+                      boxShadow: isActive ? '0 0 0 1px rgba(186,230,253,0.6), 0 0 10px rgba(56,189,248,0.45)' : '0 0 0 1px rgba(148,163,184,0.35)',
+                      cursor: 'default',
+                      transform: isActive ? 'scaleX(1.08)' : 'scaleX(1)',
+                      transition: 'background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease',
+                      pointerEvents: 'auto',
+                    }}
+                    onPointerDown={(e) => handleScrollbarPointerDown('y', e, true)}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Native-like scroll source (hidden, drives pan/zoom viewport math) */}
+          <div
+            ref={nativeScrollRef}
+            aria-hidden
+            tabIndex={-1}
+            className="native-scroll-hidden"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              overflow: 'auto',
+              opacity: 0,
+              pointerEvents: 'none',
+              zIndex: -1,
+            }}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (syncingScrollRef.current || isPanningRef.current || scrollDragRef.current || selectionZoomActiveRef.current) return;
+              const z = zoomRef.current;
+              const nextX = scrollToPan('x', el.scrollLeft, z);
+              const nextY = scrollToPan('y', el.scrollTop, z);
+              queuePanStateCommit(nextX, nextY);
+            }}
+          >
+            <div style={{ width: Math.max(1, zoom * previewDims.width), height: Math.max(1, zoom * previewDims.height) }} />
+          </div>
+
+          {selZoomRect && (
+            <div
+              className="absolute pointer-events-none z-50"
+              style={{
+                left: selZoomRect.x,
+                top: selZoomRect.y,
+                width: selZoomRect.w,
+                height: selZoomRect.h,
+                border: '2px dashed #f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.10)',
+                borderRadius: 2,
+              }}
+            />
+          )}
+          {marqueeScreenRect && marqueeScreenRect.w > 2 && marqueeScreenRect.h > 2 && (
+            <div
+              className="absolute pointer-events-none z-40"
+              style={{
+                left: marqueeScreenRect.x,
+                top: marqueeScreenRect.y,
+                width: marqueeScreenRect.w,
+                height: marqueeScreenRect.h,
+                border: '1.5px solid #22d3ee',
+                backgroundColor: 'rgba(34, 211, 238, 0.10)',
+                boxShadow: '0 0 0 1px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(34,211,238,0.15)',
+                borderRadius: 2,
+              }}
+            />
+          )}
+          {showDragPerfDebug && dragPerfText && (
+            <div
+              className="absolute top-2 right-2 z-50 pointer-events-none"
+              style={{
+                fontSize: 11,
+                lineHeight: '14px',
+                color: '#bae6fd',
+                background: 'rgba(2, 6, 23, 0.78)',
+                border: '1px solid rgba(56, 189, 248, 0.45)',
+                borderRadius: 6,
+                padding: '4px 8px',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              }}
+            >
+              {dragPerfText}
+            </div>
+          )}
         </div>
 
         {/* Bottom toolbar */}
@@ -2267,7 +2978,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setZoom(prev => Math.max(prev / ZOOM_BUTTON_FACTOR, minZoomRef.current))}
+                    onClick={() => {
+                      const newZ = Math.max(zoom / ZOOM_BUTTON_FACTOR, minZoomRef.current);
+                      const clamped = clampPanValue(panX, panY, newZ);
+                      setZoom(newZ);
+                      queuePanStateCommit(clamped.x, clamped.y);
+                      if (canvasAreaRef.current) {
+                        const el = canvasAreaRef.current;
+                        el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
+                      }
+                    }}
                     className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
                     title="Zoom Out"
                   >
@@ -2279,7 +2999,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setZoom(prev => Math.min(prev * ZOOM_BUTTON_FACTOR, ZOOM_MAX))}
+                    onClick={() => {
+                      const newZ = Math.min(zoom * ZOOM_BUTTON_FACTOR, zoomMax);
+                      const clamped = clampPanValue(panX, panY, newZ);
+                      setZoom(newZ);
+                      queuePanStateCommit(clamped.x, clamped.y);
+                      if (canvasAreaRef.current) {
+                        const el = canvasAreaRef.current;
+                        el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
+                      }
+                    }}
                     className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
                     title="Zoom In"
                   >
@@ -2290,12 +3019,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 <Button 
                   variant="ghost"
                   size="sm"
-                  onClick={fitToView}
-                  className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
-                  title="Fit to View"
+                  onClick={() => setSelectionZoomActive(prev => !prev)}
+                  className={`h-6 px-1.5 hover:bg-gray-700 rounded text-[11px] ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-400'}`}
+                  title="Drag to select an area and zoom into it"
                 >
-                  <Maximize2 className="h-2.5 w-2.5 mr-0.5" />
-                  Fit
+                  <ScanSearch className="h-2.5 w-2.5 mr-0.5" />
+                  Select to Zoom
                 </Button>
                 <Button 
                   variant="ghost"
@@ -2307,6 +3036,36 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <RotateCcw className="h-2.5 w-2.5 mr-0.5" />
                   Reset
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMoveMode(prev => {
+                      const next = !prev;
+                      if (canvasAreaRef.current) {
+                        canvasAreaRef.current.style.cursor = (isHorizOverflow() && !next) ? 'grab' : 'default';
+                      }
+                      return next;
+                    });
+                  }}
+                  className={`h-6 px-1.5 hover:bg-gray-700 rounded text-[11px] ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-400'}`}
+                  title="Move mode — click to select and drag designs when zoomed in (Space+drag still pans)"
+                >
+                  <MousePointer2 className="h-2.5 w-2.5 mr-0.5" />
+                  Move
+                </Button>
+                {selectedDesignId && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={zoomToSelected}
+                    className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
+                    title="Zoom in closely on the selected design"
+                  >
+                    <Focus className="h-2.5 w-2.5 mr-0.5" />
+                    Focus
+                  </Button>
+                )}
               </div>
 
               <div className="flex items-center gap-1">
@@ -2339,7 +3098,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           {[
             ['Ctrl+Z', 'Undo'], ['Ctrl+C/V', 'Copy/Paste'],
             ['Alt+Drag', 'Duplicate'], ['Drag Empty', 'Select'],
-            ['Arrows', 'Nudge'], ['Scroll', 'Zoom'],
+            ['Arrows', 'Nudge'], ['Ctrl+Scroll', 'Zoom'], ['Space+Drag', 'Pan'],
           ].map(([key, label]) => (
             <span key={key} className="flex items-center gap-1">
               <kbd className="px-1 py-px rounded bg-gray-800/60 text-gray-500 font-mono">{key}</kbd>

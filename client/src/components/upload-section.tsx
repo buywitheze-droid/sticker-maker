@@ -14,13 +14,12 @@ const GRADIENT_COLORS = [
 
 interface UploadSectionProps {
   onImageUpload: (file: File, image: HTMLImageElement | null) => void;
-  showCutLineInfo?: boolean;
+  onBatchStart?: (fileCount: number) => void;
   imageInfo?: ImageInfo | null;
   resizeSettings?: ResizeSettings | null;
-  stickerSize?: number;
 }
 
-export default function UploadSection({ onImageUpload, showCutLineInfo = false, imageInfo, resizeSettings, stickerSize }: UploadSectionProps) {
+export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }: UploadSectionProps) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -94,11 +93,12 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      handleFileUpload(files[0]);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 1) onBatchStart?.(files.length);
+    for (const file of files) {
+      handleFileUpload(file);
     }
-  }, [handleFileUpload]);
+  }, [handleFileUpload, onBatchStart]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -106,10 +106,14 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
 
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      handleFileUpload(e.target.files[0]);
+      const files = Array.from(e.target.files);
+      if (files.length > 1) onBatchStart?.(files.length);
+      for (const file of files) {
+        handleFileUpload(file);
+      }
     }
     e.target.value = '';
-  }, [handleFileUpload]);
+  }, [handleFileUpload, onBatchStart]);
 
   const isEmptyState = !imageInfo;
 
@@ -172,13 +176,14 @@ export default function UploadSection({ onImageUpload, showCutLineInfo = false, 
           ref={fileInputRef}
           className="hidden" 
           accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf" 
+          multiple
           onChange={handleFileInputChange}
         />
       </div>
 
       {isEmptyState && (
         <p className="text-center mt-4 text-sm font-medium text-gray-400">
-          Fluorescent ink will glow under Black UV light!
+          Powered by <span className="text-white font-semibold">DTFMASTERS</span>
         </p>
       )}
     </div>

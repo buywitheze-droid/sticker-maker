@@ -1,11 +1,3 @@
-export interface PDFCutContourInfo {
-  hasCutContour: boolean;
-  cutContourPath: Path2D | null;
-  cutContourPoints: { x: number; y: number }[][];
-  pageWidth: number;
-  pageHeight: number;
-}
-
 export interface ImageInfo {
   file: File;
   image: HTMLImageElement;
@@ -13,26 +5,8 @@ export interface ImageInfo {
   originalHeight: number;
   dpi: number;
   isPDF?: boolean;
-  pdfCutContourInfo?: PDFCutContourInfo;
   originalPdfData?: ArrayBuffer;
 }
-
-export type ContourMode = 'smooth' | 'scattered';
-
-export interface StrokeSettings {
-  width: number;
-  color: string;
-  enabled: boolean;
-  alphaThreshold: number;
-  backgroundColor: string;
-  useCustomBackground: boolean;
-  cornerMode: 'rounded';
-  autoBridging: boolean;
-  autoBridgingThreshold: number;
-  contourMode?: ContourMode;
-}
-
-export type StrokeMode = 'none' | 'contour' | 'shape';
 
 export interface ResizeSettings {
   widthInches: number;
@@ -40,35 +14,6 @@ export interface ResizeSettings {
   maintainAspectRatio: boolean;
   outputDPI: number;
 }
-
-export interface ShapeSettings {
-  enabled: boolean;
-  type: 'square' | 'rectangle' | 'circle' | 'oval' | 'rounded-square' | 'rounded-rectangle';
-  offset: number;
-  fillColor: string;
-  strokeEnabled: boolean;
-  strokeWidth: number;
-  strokeColor: string;
-  cornerRadius?: number;
-  bleedEnabled?: boolean;
-  bleedColor?: string;
-}
-
-export type CutlineVisibility = 'thin' | 'normal' | 'bold';
-
-export type StickerSize = 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5 | 5.5 | 6;
-
-export const STICKER_SIZES: { value: StickerSize; label: string }[] = [
-  { value: 2, label: '2 inch' },
-  { value: 2.5, label: '2.5 inch' },
-  { value: 3, label: '3 inch' },
-  { value: 3.5, label: '3.5 inch' },
-  { value: 4, label: '4 inch' },
-  { value: 4.5, label: '4.5 inch' },
-  { value: 5, label: '5 inch' },
-  { value: 5.5, label: '5.5 inch' },
-  { value: 6, label: '6 inch' },
-];
 
 export interface ImageTransform {
   nx: number;
@@ -87,6 +32,7 @@ export interface DesignItem {
   heightInches: number;
   name: string;
   originalDPI: number;
+  alphaThresholded?: boolean;
 }
 
 export function computeLayerRect(
@@ -115,32 +61,4 @@ export function computeLayerRect(
     width: finalWidth,
     height: finalHeight,
   };
-}
-
-export interface SpotColorData {
-  hex: string;
-  rgb: { r: number; g: number; b: number };
-  spotWhite: boolean;
-  spotGloss: boolean;
-}
-
-export interface LockedContour {
-  label: string;
-  pathPoints: Array<{x: number; y: number}>;
-  previewPathPoints: Array<{x: number; y: number}>;
-  widthInches: number;
-  heightInches: number;
-  imageOffsetX: number;
-  imageOffsetY: number;
-  backgroundColor: string;
-  effectiveDPI: number;
-  minPathX: number;
-  minPathY: number;
-  bleedInches: number;
-  contourCanvasWidth: number;
-  contourCanvasHeight: number;
-  imageCanvasX: number;
-  imageCanvasY: number;
-  imageCanvasWidth: number;
-  imageCanvasHeight: number;
 }

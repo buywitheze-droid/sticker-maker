@@ -311,9 +311,13 @@ function processColors(
 }
 
 self.onmessage = function (e: MessageEvent) {
-  if (e.data.type === 'extract') {
-    const { pixelBuffer, width, height, maxColors, minPercentage } = e.data;
-    const colors = processColors(pixelBuffer, width, height, maxColors, minPercentage);
-    self.postMessage({ type: 'result', colors });
+  try {
+    if (e.data.type === 'extract') {
+      const { pixelBuffer, width, height, maxColors, minPercentage } = e.data;
+      const colors = processColors(pixelBuffer, width, height, maxColors, minPercentage);
+      self.postMessage({ type: 'result', colors });
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', error: String(err) });
   }
 };

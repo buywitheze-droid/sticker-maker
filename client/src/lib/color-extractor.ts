@@ -279,7 +279,12 @@ export function extractDominantColors(
   maxColors: number = 18,
   minPercentage: number = 0.1
 ): ExtractedColor[] {
-  const bgColor = detectBackgroundColor(imageData);
+  const totalPx = imageData.data.length / 4;
+  let _transparentCount = 0;
+  for (let i = 3; i < imageData.data.length; i += 4) {
+    if (imageData.data[i] < 250) _transparentCount++;
+  }
+  const bgColor = (_transparentCount / totalPx > 0.3) ? null : detectBackgroundColor(imageData);
   const bgColorTolerance = 30;
   
   const paletteCounts = new Map<string, { 
@@ -527,29 +532,32 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
 }
 
 export function extractColorsFromImage(image: HTMLImageElement, maxColors: number = 18): ExtractedColor[] {
-  if (!image.complete || image.width === 0 || image.height === 0) return [];
-  
-  const MAX_DIM = 512;
-  let w = image.width;
-  let h = image.height;
-  if (Math.max(w, h) > MAX_DIM) {
-    const ratio = MAX_DIM / Math.max(w, h);
-    w = Math.round(w * ratio);
-    h = Math.round(h * ratio);
-  }
+  try {
+    if (!image.complete || image.width === 0 || image.height === 0) return [];
+    
+    const MAX_DIM = 512;
+    let w = image.width;
+    let h = image.height;
+    if (Math.max(w, h) > MAX_DIM) {
+      const ratio = MAX_DIM / Math.max(w, h);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+    }
 
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = w;
-  tempCanvas.height = h;
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return [];
-  
-  tempCtx.drawImage(image, 0, 0, w, h);
-  const imageData = tempCtx.getImageData(0, 0, w, h);
-  
-  const colors = extractDominantColors(imageData, maxColors);
-  console.log('[ColorExtractor] Detected colors:', colors.map(c => ({ name: c.name, hex: c.hex, pct: c.percentage.toFixed(2) })));
-  return colors;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return [];
+    
+    tempCtx.drawImage(image, 0, 0, w, h);
+    const imageData = tempCtx.getImageData(0, 0, w, h);
+    
+    return extractDominantColors(imageData, maxColors);
+  } catch (e) {
+    console.warn('[ColorExtractor] extractColorsFromImage failed:', e);
+    return [];
+  }
 }
 
 import ColorExtractionWorker from './color-extraction-worker?worker';
@@ -565,37 +573,53 @@ function getColorWorker(): Worker | null {
 
 export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: number = 999): Promise<ExtractedColor[]> {
   return new Promise((resolve) => {
-    if (!image.complete || image.width === 0 || image.height === 0) { resolve([]); return; }
+    try {
+      if (!image.complete || image.width === 0 || image.height === 0) { resolve([]); return; }
 
-    const MAX_DIM = 512;
-    let w = image.width, h = image.height;
-    if (Math.max(w, h) > MAX_DIM) {
-      const ratio = MAX_DIM / Math.max(w, h);
-      w = Math.round(w * ratio); h = Math.round(h * ratio);
-    }
-    const tc = document.createElement('canvas');
-    tc.width = w; tc.height = h;
-    const ctx = tc.getContext('2d');
-    if (!ctx) { resolve(extractColorsFromImage(image, maxColors)); return; }
-    ctx.drawImage(image, 0, 0, w, h);
-    const imageData = ctx.getImageData(0, 0, w, h);
-
-    const worker = getColorWorker();
-    if (!worker) { resolve(extractDominantColors(imageData, maxColors)); return; }
-
-    const buffer = imageData.data.buffer.slice(0);
-    const timeout = setTimeout(() => {
-      resolve(extractDominantColors(ctx.getImageData(0, 0, w, h), maxColors));
-    }, 10000);
-
-    const handler = (e: MessageEvent) => {
-      if (e.data.type === 'result') {
-        clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
-        resolve(e.data.colors);
+      const MAX_DIM = 512;
+      let w = image.width, h = image.height;
+      if (Math.max(w, h) > MAX_DIM) {
+        const ratio = MAX_DIM / Math.max(w, h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
       }
-    };
-    worker.addEventListener('message', handler);
-    worker.postMessage({ type: 'extract', pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
+      const tc = document.createElement('canvas');
+      tc.width = w; tc.height = h;
+      const ctx = tc.getContext('2d');
+      if (!ctx) { resolve(extractColorsFromImage(image, maxColors)); return; }
+      ctx.drawImage(image, 0, 0, w, h);
+      let imageData: ImageData;
+      try {
+        imageData = ctx.getImageData(0, 0, w, h);
+      } catch (e) {
+        console.warn('[ColorExtractor] getImageData failed (possibly tainted canvas):', e);
+        resolve([]);
+        return;
+      }
+
+      const worker = getColorWorker();
+      if (!worker) { resolve(extractDominantColors(imageData, maxColors)); return; }
+
+      const buffer = imageData.data.buffer.slice(0);
+      const timeout = setTimeout(() => {
+        try {
+          resolve(extractDominantColors(ctx.getImageData(0, 0, w, h), maxColors));
+        } catch {
+          resolve(extractDominantColors(imageData, maxColors));
+        }
+      }, 10000);
+
+      const handler = (e: MessageEvent) => {
+        if (e.data.type === 'result') {
+          clearTimeout(timeout);
+          worker.removeEventListener('message', handler);
+          resolve(e.data.colors);
+        }
+      };
+      worker.addEventListener('message', handler);
+      worker.postMessage({ type: 'extract', pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
+    } catch (e) {
+      console.warn('[ColorExtractor] extractColorsFromImageAsync failed:', e);
+      resolve([]);
+    }
   });
 }

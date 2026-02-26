@@ -31,8 +31,9 @@ function detectEdgeBackground(data: Uint8ClampedArray, w: number, h: number): {r
  * Remove solid-color background from image data by making matching pixels transparent.
  * Uses a flood-fill from the edges so interior pixels of the same color are preserved.
  */
-function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r: number; g: number; b: number}, tol: number = 35): void {
-  const visited = new Uint8Array(w * h);
+function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r: number; g: number; b: number}, tol: number = 35): boolean {
+  const totalPixels = w * h;
+  const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
 
   const matches = (idx: number) => {
@@ -41,7 +42,6 @@ function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r:
     return Math.abs(data[i] - bg.r) < tol && Math.abs(data[i + 1] - bg.g) < tol && Math.abs(data[i + 2] - bg.b) < tol;
   };
 
-  // Seed edges
   for (let x = 0; x < w; x++) {
     if (matches(x)) { queue.push(x); visited[x] = 1; }
     const b = (h - 1) * w + x;
@@ -54,11 +54,10 @@ function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r:
     if (matches(r)) { queue.push(r); visited[r] = 1; }
   }
 
-  // BFS flood-fill
   let head = 0;
   while (head < queue.length) {
     const idx = queue[head++];
-    data[idx * 4 + 3] = 0; // make transparent
+    data[idx * 4 + 3] = 0;
     const x = idx % w, y = (idx - x) / w;
     const neighbors = [];
     if (x > 0) neighbors.push(idx - 1);
@@ -69,6 +68,41 @@ function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r:
       if (!visited[n] && matches(n)) { visited[n] = 1; queue.push(n); }
     }
   }
+
+  const removedCount = queue.length;
+  if (removedCount > totalPixels * 0.95) {
+    return false;
+  }
+
+  // Edge-feather pass: clean up JPEG compression artifact halos.
+  // Pixels adjacent to transparent areas that are close to the bg get faded.
+  const widerTol = tol + 25;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const i = idx * 4;
+      if (data[i + 3] === 0) continue;
+      let touchesTransparent = false;
+      if (x > 0 && data[((y) * w + (x - 1)) * 4 + 3] === 0) touchesTransparent = true;
+      else if (x < w - 1 && data[((y) * w + (x + 1)) * 4 + 3] === 0) touchesTransparent = true;
+      else if (y > 0 && data[((y - 1) * w + x) * 4 + 3] === 0) touchesTransparent = true;
+      else if (y < h - 1 && data[((y + 1) * w + x) * 4 + 3] === 0) touchesTransparent = true;
+      if (!touchesTransparent) continue;
+      const dr = Math.abs(data[i] - bg.r);
+      const dg = Math.abs(data[i + 1] - bg.g);
+      const db = Math.abs(data[i + 2] - bg.b);
+      if (dr < widerTol && dg < widerTol && db < widerTol) {
+        const maxDiff = Math.max(dr, dg, db);
+        if (maxDiff < tol) {
+          data[i + 3] = 0;
+        } else {
+          data[i + 3] = Math.round(((maxDiff - tol) / (widerTol - tol)) * data[i + 3]);
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 export function getImageBounds(image: HTMLImageElement): { x: number; y: number; width: number; height: number } {
@@ -132,11 +166,18 @@ export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement |
     const opaqueRatio = opaqueCount / totalSampled;
 
     const pixelCount = canvas.width * canvas.height;
+    let bgWasRemoved = false;
     if (opaqueRatio > 0.9 && pixelCount <= 25_000_000) {
       const bg = detectEdgeBackground(data, canvas.width, canvas.height);
       if (bg) {
-        removeBackground(data, canvas.width, canvas.height, bg);
-        ctx.putImageData(imageData, 0, 0);
+        const dataCopy = new Uint8ClampedArray(data);
+        const ok = removeBackground(data, canvas.width, canvas.height, bg);
+        if (!ok) {
+          data.set(dataCopy);
+        } else {
+          bgWasRemoved = true;
+          ctx.putImageData(imageData, 0, 0);
+        }
       }
     }
 
@@ -153,18 +194,21 @@ export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement |
     }
 
     if (minX > maxX || minY > maxY) {
-      return null;
+      return canvas;
     }
 
     const bw = maxX - minX + 1;
     const bh = maxY - minY + 1;
-    const edgePad = 2;
+    if (bw < canvas.width * 0.05 || bh < canvas.height * 0.05) {
+      return canvas;
+    }
+
     const out = document.createElement('canvas');
-    out.width = bw + edgePad * 2;
-    out.height = bh + edgePad * 2;
+    out.width = bw;
+    out.height = bh;
     const outCtx = out.getContext('2d');
     if (!outCtx) return null;
-    outCtx.drawImage(canvas, minX, minY, bw, bh, edgePad, edgePad, bw, bh);
+    outCtx.drawImage(canvas, minX, minY, bw, bh, 0, 0, bw, bh);
     return out;
   } catch (error) {
     console.error('Error cropping image:', error);
@@ -183,6 +227,8 @@ function getCropWorker(): Worker | null {
   return _cropWorker;
 }
 
+let _cropRequestCounter = 0;
+
 export function cropImageToContentAsync(image: HTMLImageElement): Promise<HTMLCanvasElement | null> {
   return new Promise((resolve) => {
     try {
@@ -198,11 +244,15 @@ export function cropImageToContentAsync(image: HTMLImageElement): Promise<HTMLCa
       const worker = getCropWorker();
       if (!worker) { resolve(cropImageToContent(image)); return; }
 
+      const requestId = ++_cropRequestCounter;
       const buffer = imageData.data.buffer.slice(0);
-      const timeout = setTimeout(() => { resolve(cropImageToContent(image)); }, 15000);
+      const timeout = setTimeout(() => {
+        worker.removeEventListener('message', handler);
+        resolve(cropImageToContent(image));
+      }, 15000);
 
       const handler = (e: MessageEvent) => {
-        if (e.data.type === 'result') {
+        if (e.data.type === 'result' && e.data.requestId === requestId) {
           clearTimeout(timeout);
           worker.removeEventListener('message', handler);
           const { processedBuffer, width, height, minX, minY, maxX, maxY, bgRemoved } = e.data;
@@ -216,18 +266,17 @@ export function cropImageToContentAsync(image: HTMLImageElement): Promise<HTMLCa
 
           const bw = maxX - minX + 1;
           const bh = maxY - minY + 1;
-          const edgePad = 2;
           const out = document.createElement('canvas');
-          out.width = bw + edgePad * 2;
-          out.height = bh + edgePad * 2;
+          out.width = bw;
+          out.height = bh;
           const outCtx = out.getContext('2d');
           if (!outCtx) { resolve(null); return; }
-          outCtx.drawImage(canvas, minX, minY, bw, bh, edgePad, edgePad, bw, bh);
+          outCtx.drawImage(canvas, minX, minY, bw, bh, 0, 0, bw, bh);
           resolve(out);
         }
       };
       worker.addEventListener('message', handler);
-      worker.postMessage({ type: 'crop', pixelBuffer: buffer, width: canvas.width, height: canvas.height }, [buffer]);
+      worker.postMessage({ type: 'crop', pixelBuffer: buffer, width: canvas.width, height: canvas.height, requestId }, [buffer]);
     } catch (error) {
       console.error('Error in async crop:', error);
       resolve(cropImageToContent(image));

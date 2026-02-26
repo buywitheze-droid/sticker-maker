@@ -1,28 +1,26 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
-import ControlsSection, { SpotPreviewData } from "./controls-section";
-import { calculateImageDimensions, downloadCanvas } from "@/lib/image-utils";
+import ControlsSection, { type SpotPreviewData } from "./controls-section";
 import { cropImageToContent, cropImageToContentAsync } from "@/lib/image-crop";
-import { checkCadCutBounds, type CadCutBounds } from "@/lib/cadcut-bounds";
-import type { CachedContourData, SpotColorInput } from "@/lib/contour-outline";
-import { getContourWorkerManager, type DetectedAlgorithm, type DetectedShapeInfo } from "@/lib/contour-worker-manager";
-import { calculateShapeDimensions, generateShapePathPointsInches } from "@/lib/shape-outline";
-import { useDebouncedValue } from "@/hooks/use-debounce";
-import { removeBackgroundFromImage } from "@/lib/background-removal";
 import { parsePDF, type ParsedPDFData } from "@/lib/pdf-parser";
-import { detectShape, mapDetectedShapeToType } from "@/lib/shape-detection";
 import { useToast } from "@/hooks/use-toast";
 import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
-import { Trash2, Copy, ChevronDown, ChevronUp, Info, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink } from "lucide-react";
 
-export type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform, DesignItem } from "@/lib/types";
-import type { ImageInfo, StrokeSettings, StrokeMode, ResizeSettings, ShapeSettings, StickerSize, LockedContour, ImageTransform, DesignItem } from "@/lib/types";
+export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
+import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
+import { type ProfileConfig, HOT_PEEL_PROFILE } from "@/lib/profiles";
 
-function SizeInput({ value, onCommit, title }: { value: number; onCommit: (v: number) => void; title: string }) {
+function SizeInput({ value, onCommit, title, min = 0.1, max = 999 }: { value: number; onCommit: (v: number) => void; title: string; min?: number; max?: number }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const display = value.toFixed(2);
+
+  const commit = (raw: string) => {
+    const v = parseFloat(raw);
+    if (!isNaN(v)) onCommit(Math.max(min, Math.min(v, max)));
+  };
 
   if (editing) {
     return (
@@ -33,19 +31,10 @@ function SizeInput({ value, onCommit, title }: { value: number; onCommit: (v: nu
         value={draft}
         autoFocus
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          const v = parseFloat(draft);
-          if (!isNaN(v) && v > 0) onCommit(v);
-          setEditing(false);
-        }}
+        onBlur={() => { commit(draft); setEditing(false); }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            const v = parseFloat(draft);
-            if (!isNaN(v) && v > 0) onCommit(v);
-            setEditing(false);
-          } else if (e.key === 'Escape') {
-            setEditing(false);
-          }
+          if (e.key === 'Enter') { commit(draft); setEditing(false); }
+          else if (e.key === 'Escape') setEditing(false);
         }}
         title={title}
       />
@@ -62,6 +51,98 @@ function SizeInput({ value, onCommit, title }: { value: number; onCommit: (v: nu
       title={title}
     />
   );
+}
+
+import ExportWorkerModule from '@/lib/export-worker?worker';
+import ArrangeWorkerModule from '@/lib/arrange-worker?worker';
+
+let _exportWorker: Worker | null = null;
+function getExportWorker(): Worker | null {
+  if (!_exportWorker) {
+    try { _exportWorker = new ExportWorkerModule(); }
+    catch { return null; }
+  }
+  return _exportWorker;
+}
+
+let _arrangeWorker: Worker | null = null;
+function getArrangeWorker(): Worker | null {
+  if (!_arrangeWorker) {
+    try { _arrangeWorker = new ArrangeWorkerModule(); }
+    catch { return null; }
+  }
+  return _arrangeWorker;
+}
+
+async function fetchImageDpi(file: File): Promise<number> {
+  try {
+    const form = new FormData();
+    form.append('image', file);
+    const res = await fetch('/api/image-info', { method: 'POST', body: form });
+    if (!res.ok) return 300;
+    const data = await res.json();
+    return data.density || 300;
+  } catch {
+    return 300;
+  }
+}
+
+let _exportReqCounter = 0;
+let _arrangeReqCounter = 0;
+
+function readU32(buf: Uint8Array, off: number): number {
+  return ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+}
+
+async function injectPngDpi(blob: Blob, dpi: number): Promise<Blob> {
+  const ppm = Math.round(dpi / 0.0254);
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf.length < 8) return blob;
+  const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+  for (let i = 0; i < sig.length; i++) if (buf[i] !== sig[i]) return blob;
+
+  const parts: Uint8Array[] = [];
+  parts.push(buf.slice(0, 8));
+
+  const ihdrDataLen = readU32(buf, 8);
+  const ihdrTotal = 12 + ihdrDataLen;
+  parts.push(buf.slice(8, 8 + ihdrTotal));
+  let offset = 8 + ihdrTotal;
+
+  const PHYS_DATA_LEN = 9;
+  const physChunk = new Uint8Array(4 + 4 + PHYS_DATA_LEN + 4);
+  const pv = new DataView(physChunk.buffer);
+  pv.setUint32(0, PHYS_DATA_LEN);
+  physChunk[4] = 0x70; physChunk[5] = 0x48; physChunk[6] = 0x59; physChunk[7] = 0x73;
+  pv.setUint32(8, ppm);
+  pv.setUint32(12, ppm);
+  physChunk[16] = 1;
+  pv.setUint32(17, crc32(physChunk.slice(4, 4 + 4 + PHYS_DATA_LEN)));
+  parts.push(physChunk);
+
+  while (offset + 12 <= buf.length) {
+    const dataLen = readU32(buf, offset);
+    const chunkTotal = 12 + dataLen;
+    const isPHYs = buf[offset + 4] === 0x70 && buf[offset + 5] === 0x48 &&
+                   buf[offset + 6] === 0x59 && buf[offset + 7] === 0x73;
+    if (!isPHYs) parts.push(buf.slice(offset, offset + chunkTotal));
+    offset += chunkTotal;
+  }
+
+  const totalLen = parts.reduce((sum, p) => sum + p.length, 0);
+  const out = new Uint8Array(totalLen);
+  let writePos = 0;
+  for (const part of parts) { out.set(part, writePos); writePos += part.length; }
+  return new Blob([out], { type: 'image/png' });
+}
+
+function crc32(data: Uint8Array): number {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) {
+    c ^= data[i];
+    for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xEDB88320 : 0);
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
 }
 
 function clampDesignToArtboard(
@@ -89,76 +170,37 @@ function clampDesignToArtboard(
   return { nx, ny };
 }
 
-export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: () => void } = {}) {
+export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFILE }: { onDesignUploaded?: () => void; profile?: ProfileConfig } = {}) {
   const { toast } = useToast();
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
-  const [cadCutBounds, setCadCutBounds] = useState<CadCutBounds | null>(null);
-  const [strokeSettings, setStrokeSettings] = useState<StrokeSettings>({
-    width: 0.14, // Default large offset
-    color: "#ffffff",
-    enabled: false,
-    alphaThreshold: 128, // Auto-detected from alpha channel
-    backgroundColor: "#ffffff", // Default white background for contour
-    useCustomBackground: true, // Default to solid background color
-    cornerMode: 'rounded',
-    autoBridging: true, // Auto-bridge narrow gaps in contour
-    autoBridgingThreshold: 0.02, // Gap threshold in inches
-    contourMode: undefined,
-  });
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
     heightInches: 3.8,
     maintainAspectRatio: true,
     outputDPI: 300,
   });
-  const [shapeSettings, setShapeSettings] = useState<ShapeSettings>({
-    enabled: false,
-    type: 'square',
-    offset: 0.25, // Default "Big" offset around design
-    fillColor: '#FFFFFF',
-    strokeEnabled: false,
-    strokeWidth: 2,
-    strokeColor: '#000000',
-    cornerRadius: 0.25, // Default corner radius for rounded shapes (in inches)
-    bleedEnabled: false, // Color bleed outside the shape
-    bleedColor: '#FFFFFF', // Default bleed color
-  });
-  const [strokeMode, setStrokeMode] = useState<StrokeMode>('none');
-  const [stickerSize, setStickerSize] = useState<StickerSize>(4); // Default 4 inch max dimension
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isRemovingBackground, setIsRemovingBackground] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
-  const [detectedAlgorithm, setDetectedAlgorithm] = useState<DetectedAlgorithm | undefined>(undefined);
-  const [detectedShapeType, setDetectedShapeType] = useState<'circle' | 'oval' | 'square' | 'rectangle' | null>(null);
-  const [detectedShapeInfo, setDetectedShapeInfo] = useState<DetectedShapeInfo | null>(null);
-  const [cutContourLabel, setCutContourLabel] = useState<'CutContour' | 'PerfCutContour' | 'KissCut'>('CutContour');
-  const [showCutLabelDropdown, setShowCutLabelDropdown] = useState(false);
-  const cutLabelRef = useRef<HTMLDivElement>(null);
-  const [lockedContour, setLockedContour] = useState<LockedContour | null>(null);
-  const [artboardWidth, setArtboardWidth] = useState(24.5);
-  const [artboardHeight, setArtboardHeight] = useState(12);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [artboardWidth, setArtboardWidth] = useState(profile.artboardWidth);
+  const [artboardHeight, setArtboardHeight] = useState(profile.gangsheetHeights[0] ?? 12);
+  const [designGap, setDesignGap] = useState<number | undefined>(0.125);
   const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
-  const [showApplyAddDropdown, setShowApplyAddDropdown] = useState(false);
-  const applyAddRef = useRef<HTMLDivElement>(null);
   const [designs, setDesigns] = useState<DesignItem[]>([]);
   const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
   const [selectedDesignIds, setSelectedDesignIds] = useState<Set<string>>(new Set());
   const [showDesignInfo, setShowDesignInfo] = useState(false);
   const clipboardRef = useRef<DesignItem[]>([]);
-  const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
   const [proportionalLock, setProportionalLock] = useState(true);
   const designInfoRef = useRef<HTMLDivElement>(null);
   const sidebarFileRef = useRef<HTMLInputElement>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const [downloadContainer, setDownloadContainer] = useState<HTMLDivElement | null>(null);
+  const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
+  const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
+  const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
 
-  // Debounced settings for heavy processing
-  const debouncedStrokeSettings = useDebouncedValue(strokeSettings, 100);
-  const debouncedResizeSettings = useDebouncedValue(resizeSettings, 250);
-  const debouncedShapeSettings = useDebouncedValue(shapeSettings, 100);
 
   // Undo/Redo history
   const { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo } = useHistory();
@@ -167,6 +209,9 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const nudgeSnapshotSavedRef = useRef(false);
   const nudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thumbnailCacheRef = useRef<Map<string, string>>(new Map());
+  const multiDragAccumRef = useRef<{ totalDnx: number; totalDny: number; starts: Map<string, {nx: number; ny: number}> } | null>(null);
+  const multiResizeStartRef = useRef<Map<string, { nx: number; ny: number; s: number }> | null>(null);
+  const multiRotateStartRef = useRef<Map<string, { nx: number; ny: number; rotation: number }> | null>(null);
 
   const snapshotCacheRef = useRef<{designs: DesignItem[]; json: string; infoMap: Map<string, ImageInfo>} | null>(null);
   const getSnapshot = useCallback((): HistorySnapshot => {
@@ -181,8 +226,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       infoMap = new Map(designs.map(d => [d.id, d.imageInfo]));
       snapshotCacheRef.current = { designs, json, infoMap };
     }
-    return { designsJson: json, selectedDesignId, imageInfoMap: infoMap };
-  }, [designs, selectedDesignId]);
+    return { designsJson: json, selectedDesignId, imageInfoMap: infoMap, artboardWidth, artboardHeight };
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight]);
 
   const saveSnapshot = useCallback(() => {
     pushSnapshot(getSnapshot());
@@ -214,7 +259,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     if (snap.selectedDesignId) {
       const sel = parsed.find(p => p.id === snap.selectedDesignId);
       if (sel) setDesignTransform(sel.transform);
+    } else {
+      setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
     }
+    if (snap.artboardWidth !== undefined) setArtboardWidth(snap.artboardWidth);
+    if (snap.artboardHeight !== undefined) setArtboardHeight(snap.artboardHeight);
+    setSelectedDesignIds(new Set());
     clearIsUndoRedo();
   }, [clearIsUndoRedo]);
 
@@ -230,33 +280,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
   // Called when a drag/resize/rotate interaction ends on the canvas
   const handleInteractionEnd = useCallback(() => {
+    multiDragAccumRef.current = null;
+    multiResizeStartRef.current = null;
+    multiRotateStartRef.current = null;
     saveSnapshot();
   }, [saveSnapshot]);
 
-  // Function to update CadCut bounds checking - accepts shape settings to avoid stale closure
-  const updateCadCutBounds = useCallback((
-    shapeWidthInches: number, 
-    shapeHeightInches: number,
-    currentShapeSettings: ShapeSettings
-  ) => {
-    if (!imageInfo) {
-      setCadCutBounds(null);
-      return;
-    }
-
-    // Convert inches to pixels for bounds checking
-    const shapeWidthPixels = shapeWidthInches * imageInfo.dpi;
-    const shapeHeightPixels = shapeHeightInches * imageInfo.dpi;
-
-    const bounds = checkCadCutBounds(
-      imageInfo.image,
-      currentShapeSettings,
-      shapeWidthPixels,
-      shapeHeightPixels
-    );
-
-    setCadCutBounds(bounds);
-  }, [imageInfo]);
 
   const selectedDesign = useMemo(() => designs.find(d => d.id === selectedDesignId) || null, [designs, selectedDesignId]);
   const activeImageInfo = useMemo(() => selectedDesign?.imageInfo ?? imageInfo, [selectedDesign, imageInfo]);
@@ -269,6 +298,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     heightInches: activeHeightInches,
   }), [resizeSettings, activeWidthInches, activeHeightInches]);
 
+  const effectiveDPI = useMemo(() => {
+    if (!activeImageInfo) return 300;
+    return activeImageInfo.dpi;
+  }, [activeImageInfo]);
+
   useEffect(() => {
     if (activeImageInfo && onDesignUploaded) {
       onDesignUploaded();
@@ -277,21 +311,15 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (cutLabelRef.current && !cutLabelRef.current.contains(e.target as Node)) {
-        setShowCutLabelDropdown(false);
-      }
-      if (applyAddRef.current && !applyAddRef.current.contains(e.target as Node)) {
-        setShowApplyAddDropdown(false);
-      }
       if (designInfoRef.current && !designInfoRef.current.contains(e.target as Node)) {
         setShowDesignInfo(false);
       }
     };
-    if (showCutLabelDropdown || showApplyAddDropdown || showDesignInfo) {
+    if (showDesignInfo) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showCutLabelDropdown, showApplyAddDropdown, showDesignInfo]);
+  }, [showDesignInfo]);
 
   const handleSelectDesign = useCallback((id: string | null) => {
     setSelectedDesignId(id);
@@ -310,25 +338,30 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   }, []);
 
   const getLayerThumbnail = useCallback((design: DesignItem): string => {
-    const cache = thumbnailCacheRef.current;
-    const key = design.imageInfo.image.src;
-    if (cache.has(key)) return cache.get(key)!;
-    const THUMB_SIZE = 48;
-    const img = design.imageInfo.image;
-    const aspect = img.width / img.height;
-    const tw = aspect >= 1 ? THUMB_SIZE : Math.round(THUMB_SIZE * aspect);
-    const th = aspect >= 1 ? Math.round(THUMB_SIZE / aspect) : THUMB_SIZE;
-    const c = document.createElement('canvas');
-    c.width = tw;
-    c.height = th;
-    const ctx = c.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(img, 0, 0, tw, th);
-      const dataUrl = c.toDataURL('image/png');
-      cache.set(key, dataUrl);
-      return dataUrl;
+    try {
+      const cache = thumbnailCacheRef.current;
+      const key = design.imageInfo?.image?.src ?? design.id;
+      if (cache.has(key)) return cache.get(key)!;
+      const THUMB_SIZE = 48;
+      const img = design.imageInfo.image;
+      if (!img || !img.width || !img.height) return '';
+      const aspect = img.width / img.height;
+      const tw = Math.max(1, aspect >= 1 ? THUMB_SIZE : Math.round(THUMB_SIZE * aspect));
+      const th = Math.max(1, aspect >= 1 ? Math.round(THUMB_SIZE / aspect) : THUMB_SIZE);
+      const c = document.createElement('canvas');
+      c.width = tw;
+      c.height = th;
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, tw, th);
+        const dataUrl = c.toDataURL('image/png');
+        cache.set(key, dataUrl);
+        return dataUrl;
+      }
+      return key;
+    } catch {
+      return '';
     }
-    return key;
   }, []);
 
   const handleDesignTransformChange = useCallback((transform: ImageTransform) => {
@@ -339,78 +372,382 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   }, [selectedDesignId]);
 
   const handleMultiDragDelta = useCallback((dnx: number, dny: number) => {
-    setDesigns(prev => prev.map(d => {
-      if (!selectedDesignIds.has(d.id)) return d;
-      const tentative = { ...d.transform, nx: d.transform.nx + dnx, ny: d.transform.ny + dny };
-      const { nx, ny } = clampDesignToArtboard({ ...d, transform: tentative }, artboardWidth, artboardHeight);
-      return { ...d, transform: { ...tentative, nx, ny } };
-    }));
+    setDesigns(prev => {
+      // On first call of a drag, capture starting positions
+      if (!multiDragAccumRef.current) {
+        multiDragAccumRef.current = {
+          totalDnx: 0,
+          totalDny: 0,
+          starts: new Map(
+            prev.filter(d => selectedDesignIds.has(d.id))
+              .map(d => [d.id, { nx: d.transform.nx, ny: d.transform.ny }])
+          ),
+        };
+      }
+
+      const accum = multiDragAccumRef.current;
+      accum.totalDnx += dnx;
+      accum.totalDny += dny;
+
+      // Find the max allowed cumulative delta so no selected design exits the artboard.
+      // Using original positions ensures perfect mouse tracking when reversing direction.
+      let allowedDnx = accum.totalDnx;
+      let allowedDny = accum.totalDny;
+
+      for (const d of prev) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const start = accum.starts.get(d.id);
+        if (!start) continue;
+        const t = d.transform;
+        const rad = (t.rotation * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * t.s * cos + d.heightInches * t.s * sin) / 2;
+        const halfH = (d.widthInches * t.s * sin + d.heightInches * t.s * cos) / 2;
+        const minNx = halfW / artboardWidth;
+        const maxNx = 1 - halfW / artboardWidth;
+        const minNy = halfH / artboardHeight;
+        const maxNy = 1 - halfH / artboardHeight;
+
+        if (minNx <= maxNx) {
+          allowedDnx = Math.max(minNx - start.nx, Math.min(maxNx - start.nx, allowedDnx));
+        }
+        if (minNy <= maxNy) {
+          allowedDny = Math.max(minNy - start.ny, Math.min(maxNy - start.ny, allowedDny));
+        }
+      }
+
+      return prev.map(d => {
+        if (!selectedDesignIds.has(d.id)) return d;
+        const start = accum.starts.get(d.id);
+        if (!start) return d;
+        return {
+          ...d,
+          transform: {
+            ...d.transform,
+            nx: start.nx + allowedDnx,
+            ny: start.ny + allowedDny,
+          },
+        };
+      });
+    });
+  }, [selectedDesignIds, artboardWidth, artboardHeight]);
+
+  const handleMultiResizeDelta = useCallback((scaleRatio: number, centerNx: number, centerNy: number) => {
+    setDesigns(prev => {
+      if (!multiResizeStartRef.current) {
+        multiResizeStartRef.current = new Map(
+          prev.filter(d => selectedDesignIds.has(d.id))
+            .map(d => [d.id, { nx: d.transform.nx, ny: d.transform.ny, s: d.transform.s }])
+        );
+      }
+      const starts = multiResizeStartRef.current;
+      const centerX = centerNx * artboardWidth;
+      const centerY = centerNy * artboardHeight;
+
+      const unclamped = new Map<string, { nx: number; ny: number; s: number }>();
+      for (const d of prev) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const start = starts.get(d.id);
+        if (!start) continue;
+        const newS = Math.max(0.05, start.s * scaleRatio);
+        const px = start.nx * artboardWidth - centerX;
+        const py = start.ny * artboardHeight - centerY;
+        unclamped.set(d.id, {
+          nx: (centerX + px * scaleRatio) / artboardWidth,
+          ny: (centerY + py * scaleRatio) / artboardHeight,
+          s: newS,
+        });
+      }
+
+      let shiftR = 0, shiftL = 0, shiftD = 0, shiftU = 0;
+      for (const d of prev) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const u = unclamped.get(d.id);
+        if (!u) continue;
+        const rad = (d.transform.rotation * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * u.s * cos + d.heightInches * u.s * sin) / 2;
+        const halfH = (d.widthInches * u.s * sin + d.heightInches * u.s * cos) / 2;
+        const minNx = halfW / artboardWidth;
+        const maxNx = 1 - halfW / artboardWidth;
+        const minNy = halfH / artboardHeight;
+        const maxNy = 1 - halfH / artboardHeight;
+        if (minNx <= maxNx) {
+          if (u.nx < minNx) shiftR = Math.max(shiftR, minNx - u.nx);
+          if (u.nx > maxNx) shiftL = Math.max(shiftL, u.nx - maxNx);
+        }
+        if (minNy <= maxNy) {
+          if (u.ny < minNy) shiftD = Math.max(shiftD, minNy - u.ny);
+          if (u.ny > maxNy) shiftU = Math.max(shiftU, u.ny - maxNy);
+        }
+      }
+      const groupDnx = shiftR - shiftL;
+      const groupDny = shiftD - shiftU;
+
+      return prev.map(d => {
+        if (!selectedDesignIds.has(d.id)) return d;
+        const u = unclamped.get(d.id);
+        if (!u) return d;
+        const rad = (d.transform.rotation * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * u.s * cos + d.heightInches * u.s * sin) / 2;
+        const halfH = (d.widthInches * u.s * sin + d.heightInches * u.s * cos) / 2;
+        const adjNx = u.nx + groupDnx;
+        const adjNy = u.ny + groupDny;
+        const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, adjNx));
+        const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, adjNy));
+        return {
+          ...d,
+          transform: { ...d.transform, s: u.s, nx: clampedNx, ny: clampedNy },
+        };
+      });
+    });
+  }, [selectedDesignIds, artboardWidth, artboardHeight]);
+
+  const handleMultiRotateDelta = useCallback((angleDeg: number, centerNx: number, centerNy: number) => {
+    setDesigns(prev => {
+      if (!multiRotateStartRef.current) {
+        multiRotateStartRef.current = new Map(
+          prev.filter(d => selectedDesignIds.has(d.id))
+            .map(d => [d.id, { nx: d.transform.nx, ny: d.transform.ny, rotation: d.transform.rotation }])
+        );
+      }
+      const starts = multiRotateStartRef.current;
+      const radDelta = (angleDeg * Math.PI) / 180;
+      const cosD = Math.cos(radDelta);
+      const sinD = Math.sin(radDelta);
+      const centerX = centerNx * artboardWidth;
+      const centerY = centerNy * artboardHeight;
+
+      const unclamped = new Map<string, { nx: number; ny: number; rotation: number }>();
+      for (const d of prev) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const start = starts.get(d.id);
+        if (!start) continue;
+        const px = start.nx * artboardWidth - centerX;
+        const py = start.ny * artboardHeight - centerY;
+        const rotPx = px * cosD - py * sinD;
+        const rotPy = px * sinD + py * cosD;
+        let newRot = start.rotation + angleDeg;
+        newRot = ((newRot % 360) + 360) % 360;
+        unclamped.set(d.id, {
+          nx: (centerX + rotPx) / artboardWidth,
+          ny: (centerY + rotPy) / artboardHeight,
+          rotation: newRot,
+        });
+      }
+
+      let shiftR = 0, shiftL = 0, shiftD = 0, shiftU = 0;
+      for (const d of prev) {
+        if (!selectedDesignIds.has(d.id)) continue;
+        const u = unclamped.get(d.id);
+        if (!u) continue;
+        const rad = (u.rotation * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * d.transform.s * cos + d.heightInches * d.transform.s * sin) / 2;
+        const halfH = (d.widthInches * d.transform.s * sin + d.heightInches * d.transform.s * cos) / 2;
+        const minNx = halfW / artboardWidth;
+        const maxNx = 1 - halfW / artboardWidth;
+        const minNy = halfH / artboardHeight;
+        const maxNy = 1 - halfH / artboardHeight;
+        if (minNx <= maxNx) {
+          if (u.nx < minNx) shiftR = Math.max(shiftR, minNx - u.nx);
+          if (u.nx > maxNx) shiftL = Math.max(shiftL, u.nx - maxNx);
+        }
+        if (minNy <= maxNy) {
+          if (u.ny < minNy) shiftD = Math.max(shiftD, minNy - u.ny);
+          if (u.ny > maxNy) shiftU = Math.max(shiftU, u.ny - maxNy);
+        }
+      }
+      const groupDnx = shiftR - shiftL;
+      const groupDny = shiftD - shiftU;
+
+      return prev.map(d => {
+        if (!selectedDesignIds.has(d.id)) return d;
+        const u = unclamped.get(d.id);
+        if (!u) return d;
+        const rad = (u.rotation * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * d.transform.s * cos + d.heightInches * d.transform.s * sin) / 2;
+        const halfH = (d.widthInches * d.transform.s * sin + d.heightInches * d.transform.s * cos) / 2;
+        const adjNx = u.nx + groupDnx;
+        const adjNy = u.ny + groupDny;
+        const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, adjNx));
+        const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, adjNy));
+        return {
+          ...d,
+          transform: { ...d.transform, rotation: Math.round(u.rotation), nx: clampedNx, ny: clampedNy },
+        };
+      });
+    });
   }, [selectedDesignIds, artboardWidth, artboardHeight]);
 
   const handleEffectiveSizeChange = useCallback((axis: 'width' | 'height', value: number) => {
     if (!selectedDesignId || value <= 0) return;
     const design = designs.find(d => d.id === selectedDesignId);
     if (!design) return;
-    saveSnapshot();
     const currentS = design.transform.s;
     const currentW = design.widthInches;
     const currentH = design.heightInches;
+    if (currentW <= 0 || currentH <= 0 || currentS <= 0) return;
+    saveSnapshot();
+
+    const rad = (design.transform.rotation * Math.PI) / 180;
+    const cosR = Math.abs(Math.cos(rad));
+    const sinR = Math.abs(Math.sin(rad));
+    const maxEffW = artboardWidth / Math.max(0.001, cosR + (currentH / currentW) * sinR);
+    const maxEffH = artboardHeight / Math.max(0.001, sinR * (currentW / currentH) + cosR);
+    const clampedValue = axis === 'width'
+      ? Math.min(value, maxEffW)
+      : Math.min(value, maxEffH);
 
     if (proportionalLock) {
-      const newS = axis === 'width' ? value / currentW : value / currentH;
-      const newTransform = { ...design.transform, s: newS };
+      const newS = axis === 'width' ? clampedValue / currentW : clampedValue / currentH;
+      const updated = { ...design, transform: { ...design.transform, s: newS } };
+      const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+      const newTransform = { ...design.transform, s: newS, nx, ny };
       setDesignTransform(newTransform);
       setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, transform: newTransform } : d));
     } else {
       if (axis === 'width') {
-        const newW = value / currentS;
+        const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / currentS));
+        const updated = { ...design, widthInches: newW };
+        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, widthInches: newW }));
-        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, widthInches: newW } : d));
+        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } } : d));
       } else {
-        const newH = value / currentS;
+        const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / currentS));
+        const updated = { ...design, heightInches: newH };
+        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, heightInches: newH }));
-        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, heightInches: newH } : d));
+        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } } : d));
       }
     }
-  }, [selectedDesignId, designs, proportionalLock, saveSnapshot]);
+  }, [selectedDesignId, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight]);
+
+  const isArtboardFull = useCallback((extraDesigns?: DesignItem[]) => {
+    if (designs.length === 0) return false;
+    const allDesigns = extraDesigns ? [...designs, ...extraDesigns] : designs;
+    const usableW = artboardWidth;
+    const usableH = artboardHeight;
+
+    type Seg = { x: number; y: number; w: number };
+    let sky: Seg[] = [{ x: 0, y: 0, w: usableW }];
+
+    const placeSeg = (segs: Seg[], px: number, iw: number, ih: number): Seg[] => {
+      let topY = 0;
+      for (const s of segs) {
+        if (s.x < px + iw && s.x + s.w > px) topY = Math.max(topY, s.y);
+      }
+      const next: Seg[] = [];
+      for (const s of segs) {
+        const sR = s.x + s.w, iR = px + iw;
+        if (sR <= px || s.x >= iR) { next.push(s); continue; }
+        if (s.x < px) next.push({ x: s.x, y: s.y, w: px - s.x });
+        if (sR > iR) next.push({ x: iR, y: s.y, w: sR - iR });
+      }
+      next.push({ x: px, y: topY + ih, w: iw });
+      next.sort((a, b) => a.x - b.x);
+      const merged: Seg[] = [next[0]];
+      for (let k = 1; k < next.length; k++) {
+        const prev = merged[merged.length - 1];
+        if (Math.abs(prev.y - next[k].y) < 0.001 && Math.abs((prev.x + prev.w) - next[k].x) < 0.001) {
+          prev.w += next[k].w;
+        } else {
+          merged.push(next[k]);
+        }
+      }
+      return merged;
+    };
+
+    const sorted = [...allDesigns].sort((a, b) => {
+      const aw = a.widthInches * a.transform.s;
+      const ah = a.heightInches * a.transform.s;
+      const bw = b.widthInches * b.transform.s;
+      const bh = b.heightInches * b.transform.s;
+      return Math.max(bw, bh) - Math.max(aw, ah);
+    });
+
+    for (const d of sorted) {
+      const w = d.widthInches * d.transform.s;
+      const h = d.heightInches * d.transform.s;
+
+      const tryFit = (iw: number, ih: number): boolean => {
+        for (let i = 0; i < sky.length; i++) {
+          let spanW = 0, maxY = 0, j = i;
+          while (j < sky.length && spanW < iw) {
+            maxY = Math.max(maxY, sky[j].y);
+            spanW += sky[j].w;
+            j++;
+          }
+          if (spanW >= iw - 0.001 && maxY + ih <= usableH + 0.001) {
+            sky = placeSeg(sky, sky[i].x, iw, ih);
+            return true;
+          }
+        }
+        return false;
+      };
+
+      if (!tryFit(w, h) && !tryFit(h, w)) {
+        return true;
+      }
+    }
+    return false;
+  }, [designs, artboardWidth, artboardHeight]);
 
   const handleDuplicateDesign = useCallback(() => {
     if (!selectedDesignId) return;
     const design = designs.find(d => d.id === selectedDesignId);
     if (!design) return;
-    saveSnapshot();
     const newId = crypto.randomUUID();
     const baseName = design.name.replace(/ copy \d+$/, '');
-    const copyCount = designs.filter(d => d.name === baseName || d.name.match(new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} copy \\d+$`))).length;
+    const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${escaped} copy (\\d+)$`);
+    const maxNum = designs.reduce((mx, d) => { const m = d.name.match(re); return m ? Math.max(mx, parseInt(m[1])) : mx; }, 0);
     const newDesign: DesignItem = {
       ...design,
       id: newId,
-      name: `${baseName} copy ${copyCount}`,
-      transform: { ...design.transform, nx: Math.min(design.transform.nx + 0.05, 0.95), ny: Math.min(design.transform.ny + 0.05, 0.95) },
+      name: `${baseName} copy ${maxNum + 1}`,
+      transform: { ...design.transform },
     };
-    copySpotSelectionsRef.current?.(selectedDesignId, [newId]);
+    if (isArtboardFull([newDesign])) {
+      toast({ title: "Sheet is full", description: "Expand the gangsheet size to add more designs.", variant: "destructive" });
+      return;
+    }
+    saveSnapshot();
     setDesigns(prev => [...prev, newDesign]);
-    setSelectedDesignId(newId);
-    setSelectedDesignIds(new Set([newId]));
-  }, [selectedDesignId, designs, saveSnapshot]);
+    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+  }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight, isArtboardFull, toast]);
 
   const handleDuplicateSelected = useCallback((): string[] => {
     const toDup = designs.filter(d => selectedDesignIds.has(d.id));
     if (toDup.length === 0) return [];
-    saveSnapshot();
     const newIds: string[] = [];
     const newDesigns: DesignItem[] = toDup.map(d => {
       const newId = crypto.randomUUID();
       newIds.push(newId);
-      copySpotSelectionsRef.current?.(d.id, [newId]);
-      return { ...d, id: newId, name: d.name + ' copy', transform: { ...d.transform } };
+      const base = d.name.replace(/ copy( \d+)?$/, '');
+      return { ...d, id: newId, name: `${base} copy`, transform: { ...d.transform } };
     });
+    if (isArtboardFull(newDesigns)) {
+      toast({ title: "Sheet is full", description: "Expand the gangsheet size to add more designs.", variant: "destructive" });
+      return [];
+    }
+    multiDragAccumRef.current = null;
+    multiResizeStartRef.current = null;
+    multiRotateStartRef.current = null;
+    saveSnapshot();
     setDesigns(prev => [...prev, ...newDesigns]);
     setSelectedDesignIds(new Set(newIds));
     if (newIds.length === 1) setSelectedDesignId(newIds[0]);
     else setSelectedDesignId(newIds[newIds.length - 1]);
     return newIds;
-  }, [designs, selectedDesignIds, saveSnapshot]);
+  }, [designs, selectedDesignIds, saveSnapshot, artboardWidth, artboardHeight, isArtboardFull, toast]);
 
   const handleCopySelected = useCallback(() => {
     const toCopy = designs.filter(d => selectedDesignIds.has(d.id));
@@ -426,36 +763,58 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     const pasted: DesignItem[] = clipboardRef.current.map(d => {
       const newId = crypto.randomUUID();
       newIds.push(newId);
-      copySpotSelectionsRef.current?.(d.id, [newId]);
+      const offsetT = { ...d.transform, nx: d.transform.nx + 0.03, ny: d.transform.ny + 0.03 };
+      const { nx, ny } = clampDesignToArtboard({ ...d, transform: offsetT }, artboardWidth, artboardHeight);
       return {
         ...d,
         id: newId,
         name: d.name.replace(/ copy$/, '') + ' copy',
-        transform: { ...d.transform, nx: Math.min(d.transform.nx + 0.03, 0.95), ny: Math.min(d.transform.ny + 0.03, 0.95) },
+        transform: { ...d.transform, nx, ny },
       };
     });
     setDesigns(prev => [...prev, ...pasted]);
     setSelectedDesignIds(new Set(newIds));
     setSelectedDesignId(newIds[newIds.length - 1]);
-  }, [saveSnapshot]);
+  }, [saveSnapshot, artboardWidth, artboardHeight]);
 
   const handleDeleteDesign = useCallback((id: string) => {
     saveSnapshot();
+    const toDelete = designsRef.current.find(d => d.id === id);
     const remaining = designsRef.current.filter(d => d.id !== id);
-    setDesigns(remaining);
-    if (selectedDesignId === id) {
-      if (remaining.length > 0) {
-        setSelectedDesignId(remaining[remaining.length - 1].id);
-      } else {
-        setSelectedDesignId(null);
-        setImageInfo(null);
+    if (toDelete) {
+      const srcStillUsed = remaining.some(d => d.imageInfo.image.src === toDelete.imageInfo.image.src);
+      if (!srcStillUsed) {
+        thumbnailCacheRef.current.delete(toDelete.imageInfo.image.src);
+        contentFillCacheRef.current.delete(toDelete.imageInfo.image.src);
       }
+    }
+    setDesigns(remaining);
+    setSelectedDesignIds(prev => {
+      if (prev.has(id)) {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      }
+      return prev;
+    });
+    if (remaining.length === 0) {
+      setSelectedDesignId(null);
+      setImageInfo(null);
+    } else if (selectedDesignId === id) {
+      setSelectedDesignId(remaining[remaining.length - 1].id);
     }
   }, [selectedDesignId, saveSnapshot]);
 
   const handleDeleteMulti = useCallback((ids: Set<string>) => {
     saveSnapshot();
     const remaining = designsRef.current.filter(d => !ids.has(d.id));
+    const remainingSrcs = new Set(remaining.map(d => d.imageInfo.image.src));
+    for (const d of designsRef.current) {
+      if (ids.has(d.id) && !remainingSrcs.has(d.imageInfo.image.src)) {
+        thumbnailCacheRef.current.delete(d.imageInfo.image.src);
+        contentFillCacheRef.current.delete(d.imageInfo.image.src);
+      }
+    }
     setDesigns(remaining);
     setSelectedDesignIds(new Set());
     if (remaining.length > 0) {
@@ -469,18 +828,75 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   const handleRotate90 = useCallback(() => {
     if (!selectedDesignId) return;
     saveSnapshot();
-    setDesigns(prev => prev.map(d => {
-      if (d.id !== selectedDesignId) return d;
-      const newRot = ((d.transform.rotation + 90) % 360);
-      const rotated = { ...d, transform: { ...d.transform, rotation: newRot } };
-      const { nx, ny } = clampDesignToArtboard(rotated, artboardWidth, artboardHeight);
-      return { ...rotated, transform: { ...rotated.transform, nx, ny } };
-    }));
+    const idsToRotate = selectedDesignIds.size > 1 ? selectedDesignIds : new Set([selectedDesignId]);
+
+    if (idsToRotate.size <= 1) {
+      setDesigns(prev => prev.map(d => {
+        if (!idsToRotate.has(d.id)) return d;
+        const newRot = ((d.transform.rotation + 90) % 360);
+        const rotated = { ...d, transform: { ...d.transform, rotation: newRot } };
+        const { nx, ny } = clampDesignToArtboard(rotated, artboardWidth, artboardHeight);
+        return { ...rotated, transform: { ...rotated.transform, nx, ny } };
+      }));
+    } else {
+      setDesigns(prev => {
+        const rotatedMap = new Map<string, { nx: number; ny: number; rotation: number }>();
+        for (const d of prev) {
+          if (!idsToRotate.has(d.id)) continue;
+          rotatedMap.set(d.id, {
+            nx: d.transform.nx,
+            ny: d.transform.ny,
+            rotation: (d.transform.rotation + 90) % 360,
+          });
+        }
+
+        let shiftR = 0, shiftL = 0, shiftD = 0, shiftU = 0;
+        for (const d of prev) {
+          const u = rotatedMap.get(d.id);
+          if (!u) continue;
+          const rad = (u.rotation * Math.PI) / 180;
+          const cos = Math.abs(Math.cos(rad));
+          const sin = Math.abs(Math.sin(rad));
+          const halfW = (d.widthInches * d.transform.s * cos + d.heightInches * d.transform.s * sin) / 2;
+          const halfH = (d.widthInches * d.transform.s * sin + d.heightInches * d.transform.s * cos) / 2;
+          const minNx = halfW / artboardWidth;
+          const maxNx = 1 - halfW / artboardWidth;
+          const minNy = halfH / artboardHeight;
+          const maxNy = 1 - halfH / artboardHeight;
+          if (minNx <= maxNx) {
+            if (u.nx < minNx) shiftR = Math.max(shiftR, minNx - u.nx);
+            if (u.nx > maxNx) shiftL = Math.max(shiftL, u.nx - maxNx);
+          }
+          if (minNy <= maxNy) {
+            if (u.ny < minNy) shiftD = Math.max(shiftD, minNy - u.ny);
+            if (u.ny > maxNy) shiftU = Math.max(shiftU, u.ny - maxNy);
+          }
+        }
+        const groupDnx = shiftR - shiftL;
+        const groupDny = shiftD - shiftU;
+
+        return prev.map(d => {
+          const u = rotatedMap.get(d.id);
+          if (!u) return d;
+          const rad = (u.rotation * Math.PI) / 180;
+          const cos = Math.abs(Math.cos(rad));
+          const sin = Math.abs(Math.sin(rad));
+          const halfW = (d.widthInches * d.transform.s * cos + d.heightInches * d.transform.s * sin) / 2;
+          const halfH = (d.widthInches * d.transform.s * sin + d.heightInches * d.transform.s * cos) / 2;
+          const adjNx = u.nx + groupDnx;
+          const adjNy = u.ny + groupDny;
+          const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, adjNx));
+          const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, adjNy));
+          return { ...d, transform: { ...d.transform, rotation: u.rotation, nx: clampedNx, ny: clampedNy } };
+        });
+      });
+    }
+
     setDesignTransform(prev => {
       const newRot = ((prev.rotation + 90) % 360);
       return { ...prev, rotation: newRot };
     });
-  }, [selectedDesignId, saveSnapshot, artboardWidth, artboardHeight]);
+  }, [selectedDesignId, selectedDesignIds, saveSnapshot, artboardWidth, artboardHeight]);
 
   const getAlignNxNy = useCallback((corner: 'tl' | 'tr' | 'bl' | 'br') => {
     const design = designsRef.current.find(d => d.id === selectedDesignId);
@@ -515,148 +931,196 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     setDesignTransform(prev => ({ ...prev, nx: pos.nx, ny: pos.ny }));
   }, [selectedDesignId, saveSnapshot, getAlignNxNy]);
 
-  const handleAutoArrange = useCallback(() => {
+  const lastArrangeTimeRef = useRef(0);
+  const contentFillCacheRef = useRef<Map<string, number>>(new Map());
+
+  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean }) => {
     if (designs.length === 0) return;
-    saveSnapshot();
+    if (!opts?.skipSnapshot) saveSnapshot();
 
-    const GAP = 0.25;
-    const marginX = 0.2;
-    const marginY = 0.2;
-    const usableW = artboardWidth - marginX * 2;
-    const usableH = artboardHeight - marginY * 2;
+    const now = Date.now();
+    const isAggressive = (now - lastArrangeTimeRef.current) < 2000;
+    lastArrangeTimeRef.current = now;
 
-    const rotatedBBox = (d: DesignItem) => {
-      const rad = (d.transform.rotation * Math.PI) / 180;
-      const cos = Math.abs(Math.cos(rad));
-      const sin = Math.abs(Math.sin(rad));
-      const rw = d.widthInches * d.transform.s;
-      const rh = d.heightInches * d.transform.s;
-      return { w: rw * cos + rh * sin, h: rw * sin + rh * cos };
-    };
-    const sorted = [...designs].sort((a, b) => {
-      const bboxA = rotatedBBox(a);
-      const bboxB = rotatedBBox(b);
-      if (Math.abs(bboxB.h - bboxA.h) > 0.01) return bboxB.h - bboxA.h;
-      return (bboxB.w * bboxB.h) - (bboxA.w * bboxA.h);
-    });
+    const usableW = artboardWidth;
+    const usableH = artboardHeight;
 
-    // Skyline packing: track top-edge profile as segments [{x, y, w}]
-    let skyline: Array<{x: number; y: number; w: number}> = [{ x: 0, y: 0, w: usableW }];
-
-    const findBestPosition = (itemW: number, itemH: number): {x: number; y: number} | null => {
-      let bestX = -1, bestY = Infinity, bestIdx = -1;
-
-      for (let i = 0; i < skyline.length; i++) {
-        // Check if item fits starting at skyline[i]
-        let spanW = 0;
-        let maxY = 0;
-        let j = i;
-        while (j < skyline.length && spanW < itemW) {
-          maxY = Math.max(maxY, skyline[j].y);
-          spanW += skyline[j].w;
-          j++;
-        }
-        if (spanW < itemW - 0.001) continue; // doesn't fit horizontally
-        if (maxY + itemH > usableH + 0.001) continue; // doesn't fit vertically
-
-        if (maxY < bestY || (Math.abs(maxY - bestY) < 0.001 && skyline[i].x < bestX)) {
-          bestY = maxY;
-          bestX = skyline[i].x;
-          bestIdx = i;
-        }
+    if (designs.length === 1) {
+      const d = designs[0];
+      setDesigns([{ ...d, transform: { ...d.transform, nx: 0.5, ny: 0.5 } }]);
+      if (!opts?.preserveSelection) {
+        setSelectedDesignId(null);
+        setSelectedDesignIds(new Set());
       }
-
-      if (bestIdx < 0) return null;
-      return { x: bestX, y: bestY };
-    };
-
-    const placeSkyline = (px: number, itemW: number, itemH: number) => {
-      const newSeg: typeof skyline[0] = { x: px, y: 0, w: itemW };
-      // Compute new top for this segment
-      let topY = 0;
-      for (const s of skyline) {
-        const sRight = s.x + s.w;
-        const iRight = px + itemW;
-        if (s.x < iRight && sRight > px) {
-          topY = Math.max(topY, s.y);
-        }
-      }
-      newSeg.y = topY + itemH;
-
-      // Rebuild skyline: trim/split segments overlapping with placed item
-      const next: typeof skyline = [];
-      for (const s of skyline) {
-        const sRight = s.x + s.w;
-        const iRight = px + itemW;
-        if (sRight <= px || s.x >= iRight) {
-          next.push(s); // no overlap
-        } else {
-          if (s.x < px) next.push({ x: s.x, y: s.y, w: px - s.x });
-          if (sRight > iRight) next.push({ x: iRight, y: s.y, w: sRight - iRight });
-        }
-      }
-      next.push(newSeg);
-      next.sort((a, b) => a.x - b.x);
-
-      // Merge adjacent segments at the same height
-      const merged: typeof skyline = [next[0]];
-      for (let k = 1; k < next.length; k++) {
-        const prev = merged[merged.length - 1];
-        if (Math.abs(prev.y - next[k].y) < 0.001 && Math.abs((prev.x + prev.w) - next[k].x) < 0.001) {
-          prev.w += next[k].w;
-        } else {
-          merged.push(next[k]);
-        }
-      }
-      skyline = merged;
-    };
-
-    const placed: Array<{id: string; nx: number; ny: number; overflows: boolean}> = [];
-
-    for (const d of sorted) {
-      const rad = (d.transform.rotation * Math.PI) / 180;
-      const cosR = Math.abs(Math.cos(rad));
-      const sinR = Math.abs(Math.sin(rad));
-      const rawW = d.widthInches * d.transform.s;
-      const rawH = d.heightInches * d.transform.s;
-      const w = rawW * cosR + rawH * sinR;
-      const h = rawW * sinR + rawH * cosR;
-      const paddedW = w + GAP;
-      const paddedH = h + GAP;
-
-      const pos = findBestPosition(paddedW, paddedH) ?? findBestPosition(w, h);
-
-      if (pos) {
-        placeSkyline(pos.x, paddedW, paddedH);
-        const absX = marginX + pos.x + w / 2;
-        const absY = marginY + pos.y + h / 2;
-        const nx = Math.max(w / 2 / artboardWidth, Math.min((artboardWidth - w / 2) / artboardWidth, absX / artboardWidth));
-        const ny = Math.max(h / 2 / artboardHeight, Math.min((artboardHeight - h / 2) / artboardHeight, absY / artboardHeight));
-        placed.push({ id: d.id, nx, ny, overflows: false });
-      } else {
-        const absX = marginX + w / 2;
-        const skylineMax = skyline.length > 0 ? Math.max(...skyline.map(s => s.y)) : 0;
-        const absY = skylineMax + marginY + h / 2;
-        const nx = Math.max(w / 2 / artboardWidth, Math.min((artboardWidth - w / 2) / artboardWidth, absX / artboardWidth));
-        const ny = Math.max(h / 2 / artboardHeight, Math.min((artboardHeight - h / 2) / artboardHeight, absY / artboardHeight));
-        placed.push({ id: d.id, nx, ny, overflows: true });
-      }
+      return;
     }
 
-    const hasOverflow = placed.some(p => p.overflows);
-    if (hasOverflow) {
-      toast({ title: "Artboard overflow", description: "Some designs don't fit. Consider using a larger gangsheet size.", variant: "destructive" });
-    }
+    const fillCache = contentFillCacheRef.current;
+    const getContentFill = (d: DesignItem): number => {
+      const key = d.imageInfo.image.src;
+      const cached = fillCache.get(key);
+      if (cached !== undefined) return cached;
+      const img = d.imageInfo.image;
+      let fill = 1.0;
+      try {
+        const sampleSize = 64;
+        const c = document.createElement('canvas');
+        c.width = sampleSize;
+        c.height = sampleSize;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, sampleSize, sampleSize);
+          const data = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
+          let opaque = 0;
+          for (let i = 3; i < data.length; i += 4) {
+            if (data[i] > 20) opaque++;
+          }
+          fill = opaque / (sampleSize * sampleSize);
+        }
+      } catch { /* keep default 1.0 */ }
+      fillCache.set(key, fill);
+      return fill;
+    };
 
-    setDesigns(prev => prev.map(d => {
-      const p = placed.find(p => p.id === d.id);
-      if (!p) return d;
-      return { ...d, transform: { ...d.transform, nx: p.nx, ny: p.ny, rotation: 0 } };
+    const items = designs.map(d => ({
+      id: d.id,
+      w: d.widthInches * d.transform.s,
+      h: d.heightInches * d.transform.s,
+      fill: getContentFill(d),
     }));
-    setSelectedDesignId(null);
-  }, [designs, artboardWidth, artboardHeight, saveSnapshot, toast]);
+
+    type PlacedItem = { id: string; nx: number; ny: number; rotation: number; overflows: boolean };
+
+    const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean) => {
+      if (hasOverflow) {
+        toast({ title: "Artboard overflow", description: "Some designs don't fit. Consider using a larger gangsheet size.", variant: "destructive" });
+      } else if (isAggressive && anyRotated) {
+        toast({ title: "Tight pack applied", description: "Designs rotated for optimal fit." });
+      } else if (isAggressive) {
+        toast({ title: "Tight pack applied", description: "Best packing strategy selected." });
+      }
+      setDesigns(prev => prev.map(d => {
+        const p = bestResult.find(r => r.id === d.id);
+        if (!p) return d;
+        return { ...d, transform: { ...d.transform, nx: p.nx, ny: p.ny, rotation: p.rotation } };
+      }));
+      if (!opts?.preserveSelection) {
+        setSelectedDesignId(null);
+        setSelectedDesignIds(new Set());
+      }
+    };
+
+    const worker = getArrangeWorker();
+    if (worker) {
+      const requestId = ++_arrangeReqCounter;
+      let settled = false;
+      const cleanup = () => { worker.removeEventListener('message', handler); clearTimeout(timer); };
+      const handler = (e: MessageEvent) => {
+        if (e.data.requestId !== requestId) return;
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (e.data.type === 'error') { console.warn('Arrange worker error:', e.data.error); return; }
+        const bestResult: PlacedItem[] = e.data.result;
+        const anyRotated = bestResult.some(p => p.rotation !== 0);
+        const hasOverflow = bestResult.some(p => p.overflows);
+        applyResult(bestResult, anyRotated, hasOverflow);
+      };
+      const timer = setTimeout(() => { if (!settled) { settled = true; cleanup(); } }, 30_000);
+      worker.addEventListener('message', handler);
+      worker.postMessage({
+        type: 'arrange',
+        requestId,
+        items,
+        usableW,
+        usableH,
+        artboardWidth,
+        artboardHeight,
+        isAggressive,
+        customGap: designGap,
+      });
+    } else {
+      // Fallback: synchronous on main thread (same logic lives in arrange-worker.ts)
+      // This path only triggers if the worker fails to load
+      const hasCustomGap = designGap !== undefined && designGap >= 0;
+      const GAP = hasCustomGap ? designGap : (isAggressive ? 0.25 : 0.5);
+      const getItemGapVal = (_fill: number) => GAP;
+
+      type SkylineSeg = { x: number; y: number; w: number };
+      type PackItem = { id: string; w: number; h: number; rotation: number; gap: number };
+
+      const findBestPos = (sky: SkylineSeg[], itemW: number, itemH: number): { x: number; y: number; waste: number } | null => {
+        let bestX = -1, bestY = Infinity, bestWaste = Infinity, found = false;
+        for (let i = 0; i < sky.length; i++) {
+          let spanW = 0, maxY = 0, j = i;
+          while (j < sky.length && spanW < itemW) { maxY = Math.max(maxY, sky[j].y); spanW += sky[j].w; j++; }
+          if (spanW < itemW - 0.001) continue;
+          if (maxY + itemH > usableH + 0.001) continue;
+          let waste = 0;
+          const rb = sky[i].x + itemW;
+          for (let k = i; k < j; k++) { waste += (maxY - sky[k].y) * Math.max(0, Math.min(sky[k].x + sky[k].w, rb) - Math.max(sky[k].x, sky[i].x)); }
+          if (maxY < bestY - 0.001 || (Math.abs(maxY - bestY) < 0.001 && sky[i].x < bestX - 0.001) || (Math.abs(maxY - bestY) < 0.001 && Math.abs(sky[i].x - bestX) < 0.001 && waste < bestWaste)) {
+            bestY = maxY; bestX = sky[i].x; bestWaste = waste; found = true;
+          }
+        }
+        return found ? { x: bestX, y: bestY, waste: bestWaste } : null;
+      };
+      const placeSeg = (sky: SkylineSeg[], px: number, iw: number, ih: number): SkylineSeg[] => {
+        let topY = 0;
+        for (const s of sky) { if (s.x < px + iw && s.x + s.w > px) topY = Math.max(topY, s.y); }
+        const next: SkylineSeg[] = [];
+        for (const s of sky) { const sR = s.x + s.w, iR = px + iw; if (sR <= px || s.x >= iR) { next.push(s); continue; } if (s.x < px) next.push({ x: s.x, y: s.y, w: px - s.x }); if (sR > iR) next.push({ x: iR, y: s.y, w: sR - iR }); }
+        next.push({ x: px, y: topY + ih, w: iw }); next.sort((a, b) => a.x - b.x);
+        const merged: SkylineSeg[] = [next[0]];
+        for (let k = 1; k < next.length; k++) { const p = merged[merged.length - 1]; if (Math.abs(p.y - next[k].y) < 0.001 && Math.abs((p.x + p.w) - next[k].x) < 0.001) p.w += next[k].w; else merged.push(next[k]); }
+        return merged;
+      };
+      const toNxNy = (ax: number, ay: number, w: number, h: number) => ({
+        nx: Math.max(w / 2 / artboardWidth, Math.min((artboardWidth - w / 2) / artboardWidth, ax / artboardWidth)),
+        ny: Math.max(h / 2 / artboardHeight, Math.min((artboardHeight - h / 2) / artboardHeight, ay / artboardHeight)),
+      });
+      const skylinePack = (pi: PackItem[]) => {
+        let sky: SkylineSeg[] = [{ x: 0, y: 0, w: usableW }]; const res: PlacedItem[] = []; let tw = 0;
+        for (const it of pi) {
+          const g = it.gap, hg = g / 2;
+          let pos = findBestPos(sky, it.w + g, it.h + g); let rw = it.w + g, rh = it.h + g;
+          if (!pos) { pos = findBestPos(sky, it.w + hg, it.h + hg); if (pos) { rw = it.w + hg; rh = it.h + hg; } }
+          if (pos) { tw += pos.waste; sky = placeSeg(sky, pos.x, rw, rh); const p = toNxNy(pos.x + it.w / 2, pos.y + it.h / 2, it.w, it.h); res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: it.rotation, overflows: false }); }
+          else { const sm = sky.length > 0 ? Math.max(...sky.map(s => s.y)) : 0; sky = placeSeg(sky, 0, Math.min(it.w + hg, usableW), it.h + hg); const p = toNxNy(it.w / 2, sm + it.h / 2, it.w, it.h); res.push({ id: it.id, nx: p.nx, ny: p.ny, rotation: it.rotation, overflows: true }); }
+        }
+        return { result: res, maxHeight: sky.length > 0 ? Math.max(...sky.map(s => s.y)) : 0, wastedArea: tw };
+      };
+      const mkPi = (order: typeof items, orient: string, go?: number): PackItem[] => order.map(d => {
+        const g = go !== undefined ? go : getItemGapVal(d.fill); let w = d.w, h = d.h, rot = 0;
+        if (orient === 'landscape' && h > w) { const t = w; w = h; h = t; rot = 90; }
+        if (orient === 'portrait' && w > h) { const t = w; w = h; h = t; rot = 90; }
+        return { id: d.id, w, h, rotation: rot, gap: g };
+      });
+      const ev = (p: { result: PlacedItem[]; maxHeight: number; wastedArea: number }) => ({ ...p, overflows: p.result.filter(r => r.overflows).length });
+      const sorts = [
+        [...items].sort((a, b) => b.w - a.w || b.h - a.h),
+        [...items].sort((a, b) => Math.max(b.h, b.w) - Math.max(a.h, a.w)),
+        [...items].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        [...items].sort((a, b) => (b.w + b.h) - (a.w + a.h)),
+        [...items].sort((a, b) => a.fill - b.fill || (b.w * b.h) - (a.w * a.h)),
+      ];
+      type Candidate = { result: PlacedItem[]; maxHeight: number; wastedArea: number; overflows: number };
+      const cands: Candidate[] = [];
+      for (const go of hasCustomGap ? [undefined] : [undefined, 0.125, 0.0625]) {
+        for (const s of sorts) {
+          cands.push(ev(skylinePack(mkPi(s, 'normal', go))));
+          if (isAggressive) { cands.push(ev(skylinePack(mkPi(s, 'landscape', go)))); cands.push(ev(skylinePack(mkPi(s, 'portrait', go)))); }
+        }
+      }
+      cands.sort((a, b) => { if (a.overflows !== b.overflows) return a.overflows - b.overflows; if (Math.abs(a.maxHeight - b.maxHeight) > 0.01) return a.maxHeight - b.maxHeight; return a.wastedArea - b.wastedArea; });
+      const best = cands[0].result;
+      applyResult(best, best.some(p => p.rotation !== 0), best.some(p => p.overflows));
+    }
+  }, [designs, artboardWidth, artboardHeight, saveSnapshot, toast, designGap]);
 
   const handleArtboardResize = useCallback((newWidth: number, newHeight: number) => {
+    if (newWidth <= 0 || newHeight <= 0) return;
+
     if (designs.length === 0) {
       setArtboardWidth(newWidth);
       setArtboardHeight(newHeight);
@@ -667,8 +1131,6 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     const oldW = artboardWidth;
     const oldH = artboardHeight;
 
-    // Preserve absolute positions — never clamp or shift.
-    // Designs that end up outside the new bounds will be highlighted red.
     setDesigns(prev => prev.map(d => {
       const absCx = d.transform.nx * oldW;
       const absCy = d.transform.ny * oldH;
@@ -682,10 +1144,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     setArtboardHeight(newHeight);
   }, [designs, artboardWidth, artboardHeight, saveSnapshot]);
 
-  const MAX_ARTBOARD_HEIGHT = 24;
+  const GANGSHEET_HEIGHTS = profile.gangsheetHeights;
+  const MAX_ARTBOARD_HEIGHT = GANGSHEET_HEIGHTS[GANGSHEET_HEIGHTS.length - 1];
   const handleExpandArtboard = useCallback(() => {
     if (artboardHeight >= MAX_ARTBOARD_HEIGHT) return;
-    const nextHeight = Math.min(artboardHeight + 1, MAX_ARTBOARD_HEIGHT);
+    const nextHeight = GANGSHEET_HEIGHTS.find(h => h > artboardHeight) ?? MAX_ARTBOARD_HEIGHT;
     handleArtboardResize(artboardWidth, nextHeight);
   }, [artboardHeight, artboardWidth, handleArtboardResize]);
 
@@ -694,12 +1157,16 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
   handleUndoRef.current = handleUndo;
   const handleRedoRef = useRef(handleRedo);
   handleRedoRef.current = handleRedo;
+  const handleAutoArrangeRef = useRef(handleAutoArrange);
+  handleAutoArrangeRef.current = handleAutoArrange;
   const handleDuplicateDesignRef = useRef(handleDuplicateDesign);
   handleDuplicateDesignRef.current = handleDuplicateDesign;
   const handleDeleteDesignRef = useRef(handleDeleteDesign);
   handleDeleteDesignRef.current = handleDeleteDesign;
   const handleDeleteMultiRef = useRef(handleDeleteMulti);
   handleDeleteMultiRef.current = handleDeleteMulti;
+  const handleDuplicateSelectedRef = useRef(handleDuplicateSelected);
+  handleDuplicateSelectedRef.current = handleDuplicateSelected;
   const handleCopySelectedRef = useRef(handleCopySelected);
   handleCopySelectedRef.current = handleCopySelected;
   const handlePasteRef = useRef(handlePaste);
@@ -748,9 +1215,25 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         handlePasteRef.current();
         return;
       }
+      if (ctrl && e.key === 'a') {
+        e.preventDefault();
+        const allIds = designsRef.current.map(d => d.id);
+        if (allIds.length > 0) {
+          setSelectedDesignIds(new Set(allIds));
+          setSelectedDesignId(allIds[allIds.length - 1]);
+        }
+        return;
+      }
       if (ctrl && e.key === 'd') {
         e.preventDefault();
-        handleDuplicateDesignRef.current();
+        if (selectedDesignIdsRef.current.size > 1) {
+          const newIds = handleDuplicateSelectedRef.current();
+          if (newIds.length > 0) {
+            setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+          }
+        } else {
+          handleDuplicateDesignRef.current();
+        }
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selId) {
@@ -773,21 +1256,47 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         if (nudgeTimeoutRef.current) clearTimeout(nudgeTimeoutRef.current);
         nudgeTimeoutRef.current = setTimeout(() => { nudgeSnapshotSavedRef.current = false; }, 500);
         const step = e.shiftKey ? 0.02 : 0.005;
-        const current = designsRef.current.find(d => d.id === selId);
-        if (!current) return;
-        let { nx, ny } = current.transform;
-        if (e.key === 'ArrowUp') ny -= step;
-        if (e.key === 'ArrowDown') ny += step;
-        if (e.key === 'ArrowLeft') nx -= step;
-        if (e.key === 'ArrowRight') nx += step;
-        const tentative = { ...current.transform, nx, ny };
-        const { nx: clNx, ny: clNy } = clampDesignToArtboard(
-          { ...current, transform: tentative },
-          artboardWidthRef.current, artboardHeightRef.current,
-        );
-        const newTransform = { ...tentative, nx: clNx, ny: clNy };
-        setDesignTransform(newTransform);
-        setDesigns(prev => prev.map(d => d.id === selId ? { ...d, transform: newTransform } : d));
+        let dnx = 0, dny = 0;
+        if (e.key === 'ArrowUp') dny = -step;
+        if (e.key === 'ArrowDown') dny = step;
+        if (e.key === 'ArrowLeft') dnx = -step;
+        if (e.key === 'ArrowRight') dnx = step;
+
+        const multiIds = selectedDesignIdsRef.current;
+        if (multiIds.size > 1) {
+          // Nudge all selected designs with uniform group clamping
+          const abW = artboardWidthRef.current;
+          const abH = artboardHeightRef.current;
+          let allowedDnx = dnx, allowedDny = dny;
+          for (const d of designsRef.current) {
+            if (!multiIds.has(d.id)) continue;
+            const t = d.transform;
+            const rad = (t.rotation * Math.PI) / 180;
+            const cos = Math.abs(Math.cos(rad));
+            const sin = Math.abs(Math.sin(rad));
+            const halfW = (d.widthInches * t.s * cos + d.heightInches * t.s * sin) / 2;
+            const halfH = (d.widthInches * t.s * sin + d.heightInches * t.s * cos) / 2;
+            const minNx = halfW / abW, maxNx = 1 - halfW / abW;
+            const minNy = halfH / abH, maxNy = 1 - halfH / abH;
+            if (minNx <= maxNx) allowedDnx = Math.max(minNx - t.nx, Math.min(maxNx - t.nx, allowedDnx));
+            if (minNy <= maxNy) allowedDny = Math.max(minNy - t.ny, Math.min(maxNy - t.ny, allowedDny));
+          }
+          setDesigns(prev => prev.map(d => {
+            if (!multiIds.has(d.id)) return d;
+            return { ...d, transform: { ...d.transform, nx: d.transform.nx + allowedDnx, ny: d.transform.ny + allowedDny } };
+          }));
+        } else {
+          const current = designsRef.current.find(d => d.id === selId);
+          if (!current) return;
+          const tentative = { ...current.transform, nx: current.transform.nx + dnx, ny: current.transform.ny + dny };
+          const { nx: clNx, ny: clNy } = clampDesignToArtboard(
+            { ...current, transform: tentative },
+            artboardWidthRef.current, artboardHeightRef.current,
+          );
+          const newTransform = { ...tentative, nx: clNx, ny: clNy };
+          setDesignTransform(newTransform);
+          setDesigns(prev => prev.map(d => d.id === selId ? { ...d, transform: newTransform } : d));
+        }
       }
 
       if (e.key === 'Escape') {
@@ -808,166 +1317,85 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     };
   }, []);
 
-  const handleApplyAndAdd = useCallback((newLabel: 'CutContour' | 'PerfCutContour' | 'KissCut') => {
-    const workerManager = getContourWorkerManager();
-    const contourData = workerManager.getCachedContourData();
-
-    if (contourData && contourData.pathPoints && contourData.pathPoints.length >= 3) {
-      const previewCanvas = canvasRef.current as any;
-      const contourCanvasInfo = previewCanvas?.getContourCanvasInfo?.();
-      const cw = contourCanvasInfo?.width ?? 1;
-      const ch = contourCanvasInfo?.height ?? 1;
-      const icx = contourCanvasInfo?.imageCanvasX ?? 0;
-      const icy = contourCanvasInfo?.imageCanvasY ?? 0;
-      const ds = contourCanvasInfo?.downsampleScale ?? 1;
-      const currentImg = selectedDesign?.imageInfo || imageInfo;
-      const icw = currentImg ? Math.round(currentImg.image.width * ds) : cw;
-      const ich = currentImg ? Math.round(currentImg.image.height * ds) : ch;
-
-      setLockedContour({
-        label: cutContourLabel,
-        pathPoints: [...contourData.pathPoints],
-        previewPathPoints: [...contourData.previewPathPoints],
-        widthInches: contourData.widthInches,
-        heightInches: contourData.heightInches,
-        imageOffsetX: contourData.imageOffsetX,
-        imageOffsetY: contourData.imageOffsetY,
-        backgroundColor: contourData.backgroundColor,
-        effectiveDPI: contourData.effectiveDPI,
-        minPathX: contourData.minPathX,
-        minPathY: contourData.minPathY,
-        bleedInches: contourData.bleedInches,
-        contourCanvasWidth: cw,
-        contourCanvasHeight: ch,
-        imageCanvasX: icx,
-        imageCanvasY: icy,
-        imageCanvasWidth: icw,
-        imageCanvasHeight: ich,
-      });
-    } else if (shapeSettings.enabled) {
-      const shapeData = generateShapePathPointsInches(shapeSettings, resizeSettings);
-      setLockedContour({
-        label: cutContourLabel,
-        pathPoints: shapeData.pathPoints,
-        previewPathPoints: shapeData.pathPoints,
-        widthInches: shapeData.widthInches,
-        heightInches: shapeData.heightInches,
-        imageOffsetX: shapeData.imageOffsetX,
-        imageOffsetY: shapeData.imageOffsetY,
-        backgroundColor: '#ffffff',
-        effectiveDPI: 300,
-        minPathX: 0,
-        minPathY: 0,
-        bleedInches: shapeData.bleedInches,
-        contourCanvasWidth: 1,
-        contourCanvasHeight: 1,
-        imageCanvasX: 0,
-        imageCanvasY: 0,
-        imageCanvasWidth: 1,
-        imageCanvasHeight: 1,
-      });
-    } else {
-      console.warn('[AddContour] No contour data available');
-      toast({
-        title: "No contour available",
-        description: "Please wait for the contour to finish generating before adding another.",
-        variant: "destructive",
-      });
-      setShowApplyAddDropdown(false);
-      return;
-    }
-
-    setCutContourLabel(newLabel);
-    setShowApplyAddDropdown(false);
-  }, [cutContourLabel, toast, imageInfo, selectedDesign, shapeSettings, resizeSettings]);
 
   const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number) => {
     saveSnapshot();
-    const isFirstDesign = designs.length === 0;
-    const offset = designs.length * 0.05;
-    const maxSx = artboardWidth / widthInches;
-    const maxSy = artboardHeight / heightInches;
-    const initialS = Math.min(1, maxSx, maxSy);
-    const newTransform = { nx: Math.min(0.5 + offset, 0.85), ny: Math.min(0.5 + offset, 0.85), s: initialS, rotation: 0 };
+    const currentDesignCount = designsRef.current.length;
+    const isFirstDesign = currentDesignCount === 0;
+    const offset = currentDesignCount * 0.05;
 
-    if (isFirstDesign) {
-      setImageInfo(newImageInfo);
-
-      const SHAPE_CONFIDENCE_THRESHOLD = 0.88;
-      const detectionResult = detectShape(newImageInfo.image);
-      const detectedShapeType = mapDetectedShapeToType(detectionResult.shape);
-      const shouldAutoApplyShape = detectedShapeType !== null && detectionResult.confidence >= SHAPE_CONFIDENCE_THRESHOLD;
-
-      setStrokeSettings({
-        width: 0.14,
-        color: "#ffffff",
-        enabled: !shouldAutoApplyShape,
-        alphaThreshold: 128,
-        backgroundColor: "#ffffff",
-        useCustomBackground: true,
-        cornerMode: 'rounded',
-        autoBridging: true,
-        autoBridgingThreshold: 0.02,
-        contourMode: undefined,
-      });
-      setDetectedAlgorithm(undefined);
-
-      const autoType = detectedShapeType || 'square';
-      const isCircularType = autoType === 'circle' || autoType === 'oval';
-      const newShapeSettings: ShapeSettings = {
-        enabled: shouldAutoApplyShape,
-        type: autoType,
-        offset: isCircularType ? 0.05 : 0.25,
-        fillColor: '#FFFFFF',
-        strokeEnabled: false,
-        strokeWidth: 2,
-        strokeColor: '#000000',
-        cornerRadius: 0.25,
-      };
-      setShapeSettings(newShapeSettings);
-
-      setDetectedShapeType(detectedShapeType);
-      setDetectedShapeInfo(detectedShapeType ? {
-        type: detectedShapeType,
-        boundingBox: detectionResult.boundingBox
-      } : null);
-
-      if (shouldAutoApplyShape) {
-        setStrokeMode('shape');
-      } else {
-        setStrokeMode('contour');
+    const currentAbH = artboardHeightRef.current;
+    const currentAbW = artboardWidthRef.current;
+    let effectiveAbH = currentAbH;
+    const widthScale = Math.min(1, currentAbW / widthInches);
+    const fittedHeight = heightInches * widthScale;
+    if (fittedHeight > currentAbH) {
+      const bestHeight = GANGSHEET_HEIGHTS.find(h => h >= fittedHeight);
+      if (bestHeight && bestHeight > currentAbH) {
+        effectiveAbH = bestHeight;
+        if (currentDesignCount > 0) {
+          setDesigns(prev => prev.map(d => ({
+            ...d,
+            transform: { ...d.transform, ny: (d.transform.ny * currentAbH) / bestHeight },
+          })));
+        }
+        setArtboardHeight(bestHeight);
+        toast({
+          title: "Gangsheet expanded",
+          description: `Sheet size auto-expanded to ${currentAbW}" × ${bestHeight}" to fit your design.`,
+        });
+      } else if (!bestHeight) {
+        const maxH = GANGSHEET_HEIGHTS[GANGSHEET_HEIGHTS.length - 1];
+        if (maxH > currentAbH) {
+          effectiveAbH = maxH;
+          if (currentDesignCount > 0) {
+            setDesigns(prev => prev.map(d => ({
+              ...d,
+              transform: { ...d.transform, ny: (d.transform.ny * currentAbH) / maxH },
+            })));
+          }
+          setArtboardHeight(maxH);
+          toast({
+            title: "Gangsheet expanded to maximum",
+            description: `Sheet expanded to ${currentAbW}" × ${maxH}". Design will be scaled to fit.`,
+          });
+        }
       }
-      setCadCutBounds(null);
-      setLockedContour(null);
-      setDesignTransform(newTransform);
-
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches,
-        heightInches,
-      }));
-
-      const maxDim = Math.max(widthInches, heightInches);
-      const validSizes: StickerSize[] = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5];
-      const fittingSize = validSizes.find(size => size >= maxDim) || 5.5;
-      setStickerSize(fittingSize as StickerSize);
-
-      const shapeDims = calculateShapeDimensions(
-        widthInches,
-        heightInches,
-        newShapeSettings.type,
-        newShapeSettings.offset
-      );
-      updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, newShapeSettings);
-    } else {
-      setImageInfo(newImageInfo);
-      setDesignTransform(newTransform);
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches,
-        heightInches,
-      }));
     }
+
+    const maxSx = currentAbW / widthInches;
+    const maxSy = effectiveAbH / heightInches;
+    const initialS = Math.min(1, maxSx, maxSy);
+
+    if (initialS < 1) {
+      const origW = widthInches.toFixed(1);
+      const origH = heightInches.toFixed(1);
+      const fitW = (widthInches * initialS).toFixed(1);
+      const fitH = (heightInches * initialS).toFixed(1);
+      toast({
+        title: "Image resized to fit",
+        description: `Your image (${origW}" × ${origH}") was too large for the gangsheet and has been scaled down to ${fitW}" × ${fitH}".`,
+        variant: "destructive",
+      });
+    }
+
+    let baseNx = 0.5;
+    let baseNy = 0.5;
+    const previewCanvas = canvasRef.current as any;
+    if (!isFirstDesign && previewCanvas?.getViewportCenterNormalized) {
+      const vc = previewCanvas.getViewportCenterNormalized();
+      baseNx = vc.nx;
+      baseNy = vc.ny;
+    }
+    const newTransform = { nx: Math.min(baseNx + offset, 0.95), ny: Math.min(baseNy + offset, 0.95), s: initialS, rotation: 0 };
+
+    setImageInfo(newImageInfo);
+    setDesignTransform(newTransform);
+    setResizeSettings(prev => ({
+      ...prev,
+      widthInches,
+      heightInches,
+    }));
 
     const newDesignId = crypto.randomUUID();
     const newDesignItem: DesignItem = {
@@ -981,12 +1409,13 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     };
     setDesigns(prev => [...prev, newDesignItem]);
     setSelectedDesignId(newDesignId);
-  }, [updateCadCutBounds, designs.length, saveSnapshot, artboardWidth, artboardHeight]);
+  }, [saveSnapshot, toast]);
 
-  const handleFallbackImage = useCallback((file: File, image: HTMLImageElement) => {
-    const dpi = 300;
+  const handleFallbackImage = useCallback(async (file: File, image: HTMLImageElement) => {
+    const dpi = await fetchImageDpi(file).catch(() => 300);
     
-    const croppedCanvas = cropImageToContent(image);
+    let croppedCanvas: HTMLCanvasElement | null = null;
+    try { croppedCanvas = cropImageToContent(image); } catch { /* use original */ }
 
     const processImage = (finalImage: HTMLImageElement) => {
       if (document.activeElement instanceof HTMLElement) {
@@ -994,8 +1423,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       }
       setIsUploading(false);
       
-      const widthInches = parseFloat((finalImage.width / dpi).toFixed(2));
-      const heightInches = parseFloat((finalImage.height / dpi).toFixed(2));
+      const widthInches = Math.max(0.01, parseFloat((finalImage.width / dpi).toFixed(2)));
+      const heightInches = Math.max(0.01, parseFloat((finalImage.height / dpi).toFixed(2)));
 
       const newImageInfo: ImageInfo = {
         file,
@@ -1040,94 +1469,117 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       }
       
       setIsUploading(true);
+      setUploadProgress(10);
       
+      await new Promise(r => setTimeout(r, 0));
+      setUploadProgress(25);
+      
+      const dpiPromise = fetchImageDpi(file);
+
       const croppedCanvas = await cropImageToContentAsync(image);
       if (!croppedCanvas) {
         console.error('Failed to crop image, using original');
-        handleFallbackImage(file, image);
+        await handleFallbackImage(file, image);
         return;
       }
       
-      const dpi = 300;
+      setUploadProgress(60);
+      const dpi = await dpiPromise;
       const MAX_STORED_DIMENSION = 4000;
 
-      const processCropped = (croppedImg: HTMLImageElement) => {
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
+      const loadImageFromBlob = (blob: Blob): Promise<HTMLImageElement> =>
+        new Promise((res, rej) => {
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); res(img); };
+          img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Image load failed')); };
+          img.src = url;
+        });
+
+      const canvasToBlob = (cvs: HTMLCanvasElement): Promise<Blob | null> =>
+        new Promise(res => cvs.toBlob(res, 'image/png'));
+
+      const blob = await canvasToBlob(croppedCanvas);
+      setUploadProgress(70);
+      if (!blob) { await handleFallbackImage(file, image); return; }
+
+      let croppedImg: HTMLImageElement;
+      try {
+        croppedImg = await loadImageFromBlob(blob);
+      } catch {
+        await handleFallbackImage(file, image); return;
+      }
+
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+
+      const physicalWidth = croppedImg.width;
+      const physicalHeight = croppedImg.height;
+      let storedWidth = croppedImg.width;
+      let storedHeight = croppedImg.height;
+      const maxDim = Math.max(physicalWidth, physicalHeight);
+
+      if (maxDim > MAX_STORED_DIMENSION) {
+        setUploadProgress(75);
+        const scale = MAX_STORED_DIMENSION / maxDim;
+        storedWidth = Math.round(physicalWidth * scale);
+        storedHeight = Math.round(physicalHeight * scale);
+        const downsampleCanvas = document.createElement('canvas');
+        downsampleCanvas.width = storedWidth;
+        downsampleCanvas.height = storedHeight;
+        const dsCtx = downsampleCanvas.getContext('2d');
+        if (!dsCtx) throw new Error('Could not create canvas context for downsampling');
+        dsCtx.imageSmoothingEnabled = true;
+        dsCtx.imageSmoothingQuality = 'high';
+        dsCtx.drawImage(croppedImg, 0, 0, storedWidth, storedHeight);
+        const dsBlob = await canvasToBlob(downsampleCanvas);
+        setUploadProgress(85);
+        if (dsBlob) {
+          try {
+            croppedImg = await loadImageFromBlob(dsBlob);
+          } catch { /* keep original croppedImg */ }
         }
+      } else {
+        setUploadProgress(85);
+      }
 
-        let finalWidth = croppedImg.width;
-        let finalHeight = croppedImg.height;
-        const maxDim = Math.max(croppedImg.width, croppedImg.height);
+      setUploadProgress(95);
+      const widthInches = Math.max(0.01, parseFloat((physicalWidth / dpi).toFixed(2)));
+      const heightInches = Math.max(0.01, parseFloat((physicalHeight / dpi).toFixed(2)));
+      const newImageInfo: ImageInfo = { file, image: croppedImg, originalWidth: physicalWidth, originalHeight: physicalHeight, dpi };
+      applyImageDirectly(newImageInfo, widthInches, heightInches);
+      setUploadProgress(100);
+      setTimeout(() => { setIsUploading(false); setUploadProgress(0); }, 300);
 
-        const finalize = (img: HTMLImageElement, w: number, h: number) => {
-          const newImageInfo: ImageInfo = { file, image: img, originalWidth: w, originalHeight: h, dpi };
-          const widthInches = parseFloat((w / dpi).toFixed(2));
-          const heightInches = parseFloat((h / dpi).toFixed(2));
-          applyImageDirectly(newImageInfo, widthInches, heightInches);
-          setIsUploading(false);
-          const effectiveDPI = Math.min(w / widthInches, h / heightInches);
-          if (effectiveDPI < 278) {
-            toast({
-              title: "Low Resolution Warning",
-              description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
-              variant: "destructive",
-            });
-          }
-        };
-
-        if (maxDim > MAX_STORED_DIMENSION) {
-          const scale = MAX_STORED_DIMENSION / maxDim;
-          finalWidth = Math.round(croppedImg.width * scale);
-          finalHeight = Math.round(croppedImg.height * scale);
-          const downsampleCanvas = document.createElement('canvas');
-          downsampleCanvas.width = finalWidth;
-          downsampleCanvas.height = finalHeight;
-          const dsCtx = downsampleCanvas.getContext('2d')!;
-          dsCtx.imageSmoothingEnabled = true;
-          dsCtx.imageSmoothingQuality = 'high';
-          dsCtx.drawImage(croppedImg, 0, 0, finalWidth, finalHeight);
-          const fw = finalWidth, fh = finalHeight;
-          downsampleCanvas.toBlob((blob) => {
-            if (!blob) { finalize(croppedImg, fw, fh); return; }
-            const url = URL.createObjectURL(blob);
-            const dsImg = new Image();
-            dsImg.onload = () => { URL.revokeObjectURL(url); finalize(dsImg, fw, fh); };
-            dsImg.onerror = () => { URL.revokeObjectURL(url); finalize(croppedImg, fw, fh); };
-            dsImg.src = url;
-          }, 'image/png');
-        } else {
-          finalize(croppedImg, finalWidth, finalHeight);
-        }
-      };
-
-      croppedCanvas.toBlob((blob) => {
-        if (!blob) { handleFallbackImage(file, image); return; }
-        const url = URL.createObjectURL(blob);
-        const croppedImage = new Image();
-        croppedImage.onerror = () => {
-          URL.revokeObjectURL(url);
-          handleFallbackImage(file, image);
-        };
-        croppedImage.onload = () => { URL.revokeObjectURL(url); processCropped(croppedImage); };
-        croppedImage.src = url;
-      }, 'image/png');
+      const effectiveDPI = Math.min(physicalWidth / widthInches, physicalHeight / heightInches);
+      if (effectiveDPI < 278) {
+        toast({
+          title: "Low Resolution Warning",
+          description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       console.error('Error processing uploaded image:', error);
       setIsUploading(false);
-      handleFallbackImage(file, image);
+      setUploadProgress(0);
+      try {
+        await handleFallbackImage(file, image);
+      } catch (fallbackErr) {
+        console.error('Fallback image processing also failed:', fallbackErr);
+        toast({ title: "Upload failed", description: "Could not process this image. Try a different file or format.", variant: "destructive" });
+      }
     }
   }, [applyImageDirectly, toast, handleFallbackImage]);
 
   const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
-    // Close any open dropdowns
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
     
-    const { image, cutContourInfo, originalPdfData, dpi } = pdfData;
+    const { image, originalPdfData, dpi } = pdfData;
     
-    // Create image info with PDF-specific data
     const newImageInfo: ImageInfo = {
       file,
       image,
@@ -1135,74 +1587,22 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       originalHeight: image.height,
       dpi,
       isPDF: true,
-      pdfCutContourInfo: cutContourInfo,
       originalPdfData,
     };
     
-    setImageInfo(newImageInfo);
-    
-    setStrokeSettings({
-      width: 0.14,
-      color: "#ffffff",
-      enabled: false,
-      alphaThreshold: 128,
-      backgroundColor: "#ffffff",
-      useCustomBackground: true,
-      cornerMode: 'rounded',
-      autoBridging: true,
-      autoBridgingThreshold: 0.02,
-      contourMode: undefined,
-    });
-    setDetectedAlgorithm(undefined);
-    setShapeSettings({
-      enabled: false,
-      type: 'square',
-      offset: 0.25,
-      fillColor: '#FFFFFF',
-      strokeEnabled: false,
-      strokeWidth: 2,
-      strokeColor: '#000000',
-      cornerRadius: 0.25,
-    });
-    
-    setStrokeMode('none');
-    
-    setCadCutBounds(null);
-    setStickerSize(4);
-    
-    // Calculate dimensions
-    let { widthInches, heightInches } = calculateImageDimensions(image.width, image.height, dpi);
-    const maxDimension = Math.max(widthInches, heightInches);
-    if (maxDimension > 4) {
-      const scale = 4 / maxDimension;
-      widthInches = parseFloat((widthInches * scale).toFixed(2));
-      heightInches = parseFloat((heightInches * scale).toFixed(2));
+    const widthInches = Math.max(0.01, parseFloat((image.width / dpi).toFixed(2)));
+    const heightInches = Math.max(0.01, parseFloat((image.height / dpi).toFixed(2)));
+
+    applyImageDirectly(newImageInfo, widthInches, heightInches);
+  }, [applyImageDirectly]);
+
+  const handleBatchStart = useCallback((fileCount: number) => {
+    const targetHeight = Math.min(48, profile.gangsheetHeights[profile.gangsheetHeights.length - 1]);
+    const validHeight = profile.gangsheetHeights.reduce((best, h) => h <= targetHeight && h > best ? h : best, profile.gangsheetHeights[0]);
+    if (fileCount > 1 && artboardHeightRef.current < validHeight) {
+      setArtboardHeight(validHeight);
     }
-    
-    setResizeSettings(prev => ({
-      ...prev,
-      widthInches,
-      heightInches,
-    }));
-
-    const newTransform = { nx: 0.5, ny: 0.5, s: 1, rotation: 0 };
-    setDesignTransform(newTransform);
-    setLockedContour(null);
-
-    const newDesignId = crypto.randomUUID();
-    const newDesignItem: DesignItem = {
-      id: newDesignId,
-      imageInfo: newImageInfo,
-      transform: newTransform,
-      widthInches,
-      heightInches,
-      name: file.name,
-      originalDPI: dpi,
-    };
-    saveSnapshot();
-    setDesigns(prev => [...prev, newDesignItem]);
-    setSelectedDesignId(newDesignId);
-  }, [saveSnapshot]);
+  }, [profile.gangsheetHeights]);
 
   const handleFileUploadUnified = useCallback(async (file: File, image: HTMLImageElement | null) => {
     const ext = file.name.toLowerCase();
@@ -1223,282 +1623,152 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     if (image) handleImageUpload(file, image);
   }, [handleImageUpload, handlePDFUpload, toast]);
 
-  const handleSidebarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const processSidebarFile = useCallback((file: File): Promise<void> => {
     const ext = file.name.toLowerCase();
     const isPdf = file.type === 'application/pdf' || ext.endsWith('.pdf');
     const isImage = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || ['.png', '.jpg', '.jpeg', '.webp'].some(x => ext.endsWith(x));
     if (!isImage && !isPdf) {
       toast({ title: "Unsupported format", description: "PNG, JPEG, WebP, or PDF only.", variant: "destructive" });
-      return;
+      return Promise.resolve();
     }
     if (isPdf) {
-      try {
-        setIsUploading(true);
-        const pdfData = await parsePDF(file);
-        handlePDFUpload(file, pdfData);
-      } catch (err) {
-        console.error('PDF parse error:', err);
-        toast({ title: "Failed to parse PDF", description: "Could not read this file.", variant: "destructive" });
-      } finally {
-        setIsUploading(false);
-      }
-      return;
+      return (async () => {
+        try {
+          setIsUploading(true);
+          const pdfData = await parsePDF(file);
+          handlePDFUpload(file, pdfData);
+        } catch (err) {
+          console.error('PDF parse error:', err);
+          toast({ title: "Failed to parse PDF", description: "Could not read this file.", variant: "destructive" });
+        } finally {
+          setIsUploading(false);
+        }
+      })();
     }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const isPng = file.type === 'image/png' || ext.endsWith('.png');
-      if (!isPng) {
-        const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-        const ctx = c.getContext('2d');
-        if (!ctx) { handleImageUpload(file, img); return; }
-        ctx.drawImage(img, 0, 0);
-        c.toBlob(blob => {
-          if (!blob) { handleImageUpload(file, img); return; }
-          const pf = new File([blob], file.name.replace(/\.\w+$/, '.png'), { type: 'image/png' });
-          const pi = new Image();
-          const u2 = URL.createObjectURL(blob);
-          pi.onload = () => { URL.revokeObjectURL(u2); handleImageUpload(pf, pi); };
-          pi.onerror = () => { URL.revokeObjectURL(u2); handleImageUpload(file, img); };
-          pi.src = u2;
-        }, 'image/png');
-      } else {
-        handleImageUpload(file, img);
-      }
-    };
-    img.onerror = () => URL.revokeObjectURL(url);
-    img.src = url;
-  }, [handleImageUpload, handlePDFUpload, toast]);
-
-  const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
-    setResizeSettings(prev => {
-      const updated = { ...prev, ...newSettings };
-      const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
-      
-      if (updated.maintainAspectRatio && currentImageInfo && newSettings.widthInches !== undefined) {
-        const aspectRatio = currentImageInfo.originalHeight / currentImageInfo.originalWidth;
-        updated.heightInches = parseFloat((newSettings.widthInches * aspectRatio).toFixed(1));
-      } else if (updated.maintainAspectRatio && currentImageInfo && newSettings.heightInches !== undefined) {
-        const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
-        updated.widthInches = parseFloat((newSettings.heightInches * aspectRatio).toFixed(1));
-      }
-      
-      if (shapeSettings.enabled) {
-        const shapeDims = calculateShapeDimensions(
-          updated.widthInches,
-          updated.heightInches,
-          shapeSettings.type,
-          shapeSettings.offset
-        );
-        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
-      }
-
-      if (selectedDesignId) {
-        setDesigns(prevDesigns => prevDesigns.map(d => d.id === selectedDesignId ? { ...d, widthInches: updated.widthInches, heightInches: updated.heightInches } : d));
-      }
-      
-      return updated;
-    });
-  }, [imageInfo, selectedDesign, selectedDesignId, shapeSettings, updateCadCutBounds]);
-
-  const handleStickerSizeChange = useCallback((newSize: StickerSize) => {
-    setStickerSize(newSize);
-    
-    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
-    if (currentImageInfo) {
-      const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
-      let newWidth: number;
-      let newHeight: number;
-      
-      if (aspectRatio >= 1) {
-        // Wider than tall - width is the constraining dimension
-        newWidth = newSize;
-        newHeight = parseFloat((newSize / aspectRatio).toFixed(2));
-      } else {
-        // Taller than wide - height is the constraining dimension
-        newHeight = newSize;
-        newWidth = parseFloat((newSize * aspectRatio).toFixed(2));
-      }
-      
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches: newWidth,
-        heightInches: newHeight,
-      }));
-      
-      if (selectedDesignId) {
-        setDesigns(prevDesigns => prevDesigns.map(d => d.id === selectedDesignId ? { ...d, widthInches: newWidth, heightInches: newHeight } : d));
-      }
-      
-      if (shapeSettings.enabled) {
-        const shapeDims = calculateShapeDimensions(
-          newWidth,
-          newHeight,
-          shapeSettings.type,
-          shapeSettings.offset
-        );
-        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, shapeSettings);
-      }
-    }
-  }, [imageInfo, selectedDesign, selectedDesignId, shapeSettings, updateCadCutBounds]);
-
-  const handleRemoveBackground = useCallback(async (threshold: number) => {
-    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
-    if (!currentImageInfo) return;
-    
-    setIsRemovingBackground(true);
-    try {
-      const bgRemovedImage = await removeBackgroundFromImage(currentImageInfo.image, threshold);
-      
-      const croppedCanvas = await cropImageToContentAsync(bgRemovedImage);
-      if (!croppedCanvas) {
-        console.error('Failed to crop image after background removal');
-        setIsRemovingBackground(false);
-        return;
-      }
-      
-      const finalImage = await new Promise<HTMLImageElement>((resolve, reject) => {
-        croppedCanvas.toBlob((blob) => {
-          if (!blob) { reject(new Error('toBlob failed')); return; }
-          const url = URL.createObjectURL(blob);
-          const img = new Image();
-          img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-          img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
-          img.src = url;
-        }, 'image/png');
-      });
-      
-      const newWidth = finalImage.naturalWidth || finalImage.width;
-      const newHeight = finalImage.naturalHeight || finalImage.height;
-      
-      const newImageInfo: ImageInfo = {
-        ...currentImageInfo,
-        image: finalImage,
-        originalWidth: newWidth,
-        originalHeight: newHeight,
-      };
-      
-      const dpi = currentImageInfo.dpi || 300;
-      let { widthInches, heightInches } = calculateImageDimensions(newWidth, newHeight, dpi);
-      
-      const maxDimension = Math.max(widthInches, heightInches);
-      if (maxDimension > stickerSize) {
-        const scale = stickerSize / maxDimension;
-        widthInches = parseFloat((widthInches * scale).toFixed(2));
-        heightInches = parseFloat((heightInches * scale).toFixed(2));
-      }
-      
-      setResizeSettings(prev => ({
-        ...prev,
-        widthInches,
-        heightInches,
-      }));
-      
-      const workerManager = getContourWorkerManager();
-      workerManager.clearCache();
-      setCadCutBounds(null);
-      
-      console.log(`[BackgroundRemoval] Complete! Original: ${currentImageInfo.originalWidth}x${currentImageInfo.originalHeight}, New: ${newWidth}x${newHeight}`);
-      
-      setImageInfo(newImageInfo);
-      
-      if (selectedDesignId) {
-        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, imageInfo: newImageInfo, widthInches, heightInches } : d));
-      }
-      
-      toast({
-        title: "Background Removed",
-        description: "White background removed from edges. Select Contour to see the new outline.",
-      });
-    } catch (error) {
-      console.error('Error removing background:', error);
-      toast({
-        title: "Error",
-        description: "Failed to remove background. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsRemovingBackground(false);
-    }
-  }, [imageInfo, selectedDesign, selectedDesignId, stickerSize, toast]);
-
-  const handleThresholdAlpha = useCallback(() => {
-    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
-    if (!currentImageInfo) return;
-    const src = currentImageInfo.image;
-    const w = src.naturalWidth || src.width;
-    const h = src.naturalHeight || src.height;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(src, 0, 0);
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const data = imgData.data;
-    for (let i = 3; i < data.length; i += 4) {
-      data[i] = data[i] >= 128 ? 255 : 0;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    canvas.toBlob(blob => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
+    return new Promise<void>((resolve) => {
+      const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(url);
-        const newInfo: ImageInfo = { ...currentImageInfo, image: img };
-        saveSnapshot();
-        setImageInfo(newInfo);
-        if (selectedDesignId) {
-          setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, imageInfo: newInfo } : d));
+        const isPng = file.type === 'image/png' || ext.endsWith('.png');
+        if (!isPng) {
+          const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+          const ctx = c.getContext('2d');
+          if (!ctx) { handleImageUpload(file, img).finally(resolve); return; }
+          ctx.drawImage(img, 0, 0);
+          c.toBlob(blob => {
+            if (!blob) { handleImageUpload(file, img).finally(resolve); return; }
+            const pf = new File([blob], file.name.replace(/\.\w+$/, '.png'), { type: 'image/png' });
+            const pi = new Image();
+            const u2 = URL.createObjectURL(blob);
+            pi.onload = () => { URL.revokeObjectURL(u2); handleImageUpload(pf, pi).finally(resolve); };
+            pi.onerror = () => { URL.revokeObjectURL(u2); handleImageUpload(file, img).finally(resolve); };
+            pi.src = u2;
+          }, 'image/png');
+        } else {
+          handleImageUpload(file, img).finally(resolve);
         }
-        toast({ title: "Alpha threshold applied", description: "Semi-transparent pixels removed." });
       };
-      img.onerror = () => URL.revokeObjectURL(url);
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        toast({ title: "Failed to load image", description: `Could not load ${file.name}.`, variant: "destructive" });
+        resolve();
+      };
       img.src = url;
-    }, 'image/png');
-  }, [imageInfo, selectedDesign, selectedDesignId, saveSnapshot, toast]);
+    });
+  }, [handleImageUpload, handlePDFUpload, toast]);
 
-  const handleStrokeChange = useCallback((newSettings: Partial<StrokeSettings>) => {
-    if (newSettings.enabled === true) {
-      setShapeSettings(prev => ({ ...prev, enabled: false }));
+  const handleSidebarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = '';
+    if (files.length > 1 && artboardHeightRef.current < 48) {
+      setArtboardHeight(48);
     }
-    setStrokeSettings(prev => ({ ...prev, ...newSettings }));
-  }, []);
+    for (const file of files) {
+      await processSidebarFile(file);
+    }
+  }, [processSidebarFile]);
 
-  const handleShapeChange = useCallback((newSettings: Partial<ShapeSettings>) => {
-    if (newSettings.enabled === true) {
-      setStrokeSettings(prev => ({ ...prev, enabled: false }));
-    }
-    setShapeSettings(prev => {
-      let updated = { ...prev, ...newSettings };
-      if (newSettings.type !== undefined && newSettings.type !== prev.type) {
-        const wasCircular = prev.type === 'circle' || prev.type === 'oval';
-        const isCircular = newSettings.type === 'circle' || newSettings.type === 'oval';
-        if (wasCircular !== isCircular) {
-          updated.offset = isCircular ? 0.05 : 0.125;
-        }
+  const handleResizeChange = useCallback((newSettings: Partial<ResizeSettings>) => {
+    const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
+    const hasSizeChange = newSettings.widthInches !== undefined || newSettings.heightInches !== undefined;
+    if (hasSizeChange && selectedDesignId) saveSnapshot();
+
+    setResizeSettings(prev => {
+      const updated = { ...prev, ...newSettings };
+      
+      if (updated.maintainAspectRatio && currentImageInfo && newSettings.widthInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalHeight / currentImageInfo.originalWidth;
+        updated.heightInches = Math.max(0.01, parseFloat((newSettings.widthInches * aspectRatio).toFixed(1)));
+      } else if (updated.maintainAspectRatio && currentImageInfo && newSettings.heightInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
+        updated.widthInches = Math.max(0.01, parseFloat((newSettings.heightInches * aspectRatio).toFixed(1)));
       }
-      if (updated.enabled && imageInfo) {
-        const shapeDims = calculateShapeDimensions(
-          resizeSettings.widthInches,
-          resizeSettings.heightInches,
-          updated.type,
-          updated.offset
-        );
-        updateCadCutBounds(shapeDims.widthInches, shapeDims.heightInches, updated);
-      }
+
       return updated;
     });
-  }, [imageInfo, resizeSettings, updateCadCutBounds]);
+
+    if (hasSizeChange && selectedDesignId) {
+      const finalSettings = { ...resizeSettings, ...newSettings };
+      if (resizeSettings.maintainAspectRatio && currentImageInfo && newSettings.widthInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalHeight / currentImageInfo.originalWidth;
+        finalSettings.heightInches = Math.max(0.01, parseFloat((newSettings.widthInches * aspectRatio).toFixed(1)));
+      } else if (resizeSettings.maintainAspectRatio && currentImageInfo && newSettings.heightInches !== undefined) {
+        const aspectRatio = currentImageInfo.originalWidth / currentImageInfo.originalHeight;
+        finalSettings.widthInches = Math.max(0.01, parseFloat((newSettings.heightInches * aspectRatio).toFixed(1)));
+      }
+      setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, widthInches: finalSettings.widthInches, heightInches: finalSettings.heightInches } : d));
+    }
+  }, [imageInfo, selectedDesign, selectedDesignId, saveSnapshot, resizeSettings]);
+
+
+  const handleThresholdAlpha = useCallback(() => {
+    try {
+      const currentImageInfo = selectedDesign?.imageInfo || imageInfo;
+      if (!currentImageInfo) return;
+      const src = currentImageInfo.image;
+      const w = src.naturalWidth || src.width;
+      const h = src.naturalHeight || src.height;
+      if (!w || !h) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(src, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+      for (let i = 3; i < data.length; i += 4) {
+        data[i] = data[i] >= 128 ? 255 : 0;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          const newInfo: ImageInfo = { ...currentImageInfo, image: img };
+          saveSnapshot();
+          setImageInfo(newInfo);
+          if (selectedDesignId) {
+            setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d));
+          }
+          toast({ title: "Alpha threshold applied", description: "Semi-transparent pixels removed." });
+        };
+        img.onerror = () => URL.revokeObjectURL(url);
+        img.src = url;
+      }, 'image/png');
+    } catch (err) {
+      console.error('Alpha threshold failed:', err);
+      toast({ title: "Alpha threshold failed", description: "Could not process the image.", variant: "destructive" });
+    }
+  }, [imageInfo, selectedDesign, selectedDesignId, saveSnapshot, toast]);
 
 
 
-  const handleDownload = useCallback(async (downloadType: 'standard' | 'highres' | 'vector' | 'cutcontour' | 'design-only' | 'download-package' = 'standard', format: string = 'pdf', spotColorsByDesign?: Record<string, SpotColorInput[]>) => {
+
+  const handleDownload = useCallback(async (downloadType: string = 'standard', format: string = 'png', spotColorsByDesign?: Record<string, any[]>) => {
     if (designs.length === 0) {
       toast({ title: "No designs on artboard", description: "Upload an image first.", variant: "destructive" });
       return;
@@ -1508,106 +1778,202 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
 
     try {
       const firstName = (designs[0]?.name || imageInfo?.file.name || 'gangsheet').replace(/\.[^/.]+$/, '');
-      const filename = `${firstName}.pdf`;
-      const pdfLib = await import('pdf-lib');
-      const { PDFDocument } = pdfLib;
-      const degrees = pdfLib.degrees;
 
       await new Promise(r => setTimeout(r, 50));
 
-      const pdfDoc = await PDFDocument.create();
-      const widthPts = artboardWidth * 72;
-      const heightPts = artboardHeight * 72;
-      const page = pdfDoc.addPage([widthPts, heightPts]);
+      if (format === 'pdf') {
+        const { PDFDocument, degrees } = await import('pdf-lib');
+        const { addSpotColorVectorsToPDF } = await import('@/lib/spot-color-vectors');
 
-      const MAX = 4000;
-      for (const design of designs) {
-        const img = design.imageInfo.image;
-        const dw = design.widthInches * design.transform.s;
-        const dh = design.heightInches * design.transform.s;
-        const cx = design.transform.nx * artboardWidth;
-        const cy = design.transform.ny * artboardHeight;
+        const exportDpi = 300;
+        const pageWidthPt = artboardWidth * 72;
+        const pageHeightPt = artboardHeight * 72;
+        const pdfDoc = await PDFDocument.create();
+        const page = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
 
-        let cw = img.width, ch = img.height;
-        if (Math.max(cw, ch) > MAX) {
-          const sc = MAX / Math.max(cw, ch);
-          cw = Math.round(cw * sc); ch = Math.round(ch * sc);
+        for (const design of designs) {
+          const img = design.imageInfo.image;
+          const cvs = document.createElement('canvas');
+          const drawW = Math.round(design.widthInches * design.transform.s * exportDpi);
+          const drawH = Math.round(design.heightInches * design.transform.s * exportDpi);
+          cvs.width = drawW;
+          cvs.height = drawH;
+          const cctx = cvs.getContext('2d');
+          if (!cctx) continue;
+          if (design.transform.flipX || design.transform.flipY) {
+            cctx.save();
+            cctx.translate(design.transform.flipX ? drawW : 0, design.transform.flipY ? drawH : 0);
+            cctx.scale(design.transform.flipX ? -1 : 1, design.transform.flipY ? -1 : 1);
+            cctx.drawImage(img, 0, 0, drawW, drawH);
+            cctx.restore();
+          } else {
+            cctx.drawImage(img, 0, 0, drawW, drawH);
+          }
+          const pngDataUrl = cvs.toDataURL('image/png');
+          const pngBytes = Uint8Array.from(atob(pngDataUrl.split(',')[1]), c => c.charCodeAt(0));
+          const pdfImage = await pdfDoc.embedPng(pngBytes);
+
+          const designWidthPt = design.widthInches * design.transform.s * 72;
+          const designHeightPt = design.heightInches * design.transform.s * 72;
+          const centerXPt = design.transform.nx * pageWidthPt;
+          const centerYPt = pageHeightPt - design.transform.ny * pageHeightPt;
+          const rotDeg = design.transform.rotation ?? 0;
+
+          page.drawImage(pdfImage, {
+            x: centerXPt - designWidthPt / 2,
+            y: centerYPt - designHeightPt / 2,
+            width: designWidthPt,
+            height: designHeightPt,
+            rotate: degrees(-rotDeg),
+          });
+
+          if (spotColorsByDesign) {
+            const designSpotColors = spotColorsByDesign[design.id];
+            if (designSpotColors && designSpotColors.length > 0) {
+              const hasFluor = designSpotColors.some((c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange);
+              if (hasFluor) {
+                const offsetXInches = design.transform.nx * artboardWidth - (design.widthInches * design.transform.s) / 2;
+                const offsetYInches = design.transform.ny * artboardHeight - (design.heightInches * design.transform.s) / 2;
+                await addSpotColorVectorsToPDF(
+                  pdfDoc, page, img, designSpotColors,
+                  design.widthInches * design.transform.s,
+                  design.heightInches * design.transform.s,
+                  artboardHeight,
+                  offsetXInches,
+                  offsetYInches,
+                  design.transform.rotation ?? 0,
+                );
+              }
+            }
+          }
+          cvs.width = 0;
+          cvs.height = 0;
         }
-        const tc = document.createElement('canvas');
-        tc.width = cw; tc.height = ch;
-        const tctx = tc.getContext('2d')!;
-        tctx.drawImage(img, 0, 0, cw, ch);
-        const blob: Blob = await new Promise((res, rej) =>
-          tc.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'));
-        const pngBytes = new Uint8Array(await blob.arrayBuffer());
-        const pngImage = await pdfDoc.embedPng(pngBytes);
 
-        const wPts = dw * 72;
-        const hPts = dh * 72;
-        const cxPts = cx * 72;
-        const cyPts = (artboardHeight - cy) * 72;
+        const pdfBytes = await pdfDoc.save();
+        const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${firstName}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } else {
+        const filename = `${firstName}.png`;
 
-        if (design.transform.rotation) {
-          // pdf-lib rotates around the draw origin (bottom-left of image).
-          // To rotate around center, solve for draw-origin so that after
-          // rotation the image center lands at (cxPts, cyPts).
-          const rad = (-design.transform.rotation * Math.PI) / 180;
-          const cosR = Math.cos(rad);
-          const sinR = Math.sin(rad);
-          const drawX = cxPts - (wPts / 2) * cosR + (hPts / 2) * sinR;
-          const drawY = cyPts - (wPts / 2) * sinR - (hPts / 2) * cosR;
-          page.drawImage(pngImage, {
-            x: drawX, y: drawY, width: wPts, height: hPts,
-            rotate: degrees(-design.transform.rotation),
+        const TARGET_DPI = 300;
+        const MAX_EXPORT_PIXELS = 80_000_000;
+        const MAX_EXPORT_DIM = 12_000;
+        const dpiByArea = Math.sqrt(MAX_EXPORT_PIXELS / Math.max(1e-6, artboardWidth * artboardHeight));
+        const dpiByDim = Math.min(MAX_EXPORT_DIM / artboardWidth, MAX_EXPORT_DIM / artboardHeight);
+        const exportDpi = Math.min(TARGET_DPI, dpiByArea, dpiByDim);
+        if (exportDpi < TARGET_DPI) {
+          toast({
+            title: "Large sheet detected",
+            description: `Exporting at ${Math.floor(exportDpi)} DPI to keep download stable.`,
+          });
+        }
+
+        const outW = Math.max(1, Math.round(artboardWidth * exportDpi));
+        const outH = Math.max(1, Math.round(artboardHeight * exportDpi));
+
+        const worker = getExportWorker();
+        let pngBlob: Blob;
+
+        if (worker && typeof OffscreenCanvas !== 'undefined') {
+          const bitmaps = await Promise.all(
+            designs.map(d => createImageBitmap(d.imageInfo.image))
+          );
+          const exportDesigns = designs.map((d, i) => ({
+            widthInches: d.widthInches,
+            heightInches: d.heightInches,
+            nx: d.transform.nx,
+            ny: d.transform.ny,
+            s: d.transform.s,
+            rotation: d.transform.rotation,
+            flipX: d.transform.flipX,
+            flipY: d.transform.flipY,
+            bitmap: bitmaps[i],
+            alphaThresholded: d.alphaThresholded,
+          }));
+          const requestId = ++_exportReqCounter;
+          pngBlob = await new Promise<Blob>((resolve, reject) => {
+            const EXPORT_TIMEOUT_MS = 120_000;
+            let settled = false;
+            const cleanup = () => {
+              worker.removeEventListener('message', handler);
+              worker.removeEventListener('error', errorHandler);
+              clearTimeout(timer);
+            };
+            const handler = (e: MessageEvent) => {
+              if (e.data.requestId !== requestId) return;
+              settled = true;
+              cleanup();
+              if (e.data.type === 'error') reject(new Error(e.data.error));
+              else resolve(e.data.blob);
+            };
+            const errorHandler = (ev: ErrorEvent) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error(ev.message || 'Export worker crashed'));
+            };
+            const timer = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error('Export timed out — the gangsheet may be too large. Try a smaller size.'));
+            }, EXPORT_TIMEOUT_MS);
+            worker.addEventListener('message', handler);
+            worker.addEventListener('error', errorHandler);
+            worker.postMessage(
+              { type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi },
+              bitmaps,
+            );
           });
         } else {
-          page.drawImage(pngImage, {
-            x: cxPts - wPts / 2, y: cyPts - hPts / 2,
-            width: wPts, height: hPts,
-          });
-        }
-      }
-
-      if (spotColorsByDesign && Object.keys(spotColorsByDesign).length > 0) {
-        try {
-          const { addSpotColorVectorsToPDF } = await import('@/lib/spot-color-vectors');
+          const exportCanvas = document.createElement('canvas');
+          exportCanvas.width = outW;
+          exportCanvas.height = outH;
+          const ctx = exportCanvas.getContext('2d');
+          if (!ctx) throw new Error('Failed to prepare export canvas');
+          ctx.clearRect(0, 0, outW, outH);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           for (const design of designs) {
-            const designSpotColors = spotColorsByDesign[design.id];
-            if (!designSpotColors || designSpotColors.length === 0) continue;
-            const hasFluor = designSpotColors.some(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange);
-            const hasWhiteGloss = designSpotColors.some(c => c.spotWhite || c.spotGloss);
-            if (!hasFluor && !hasWhiteGloss) continue;
-
             const img = design.imageInfo.image;
-            const dw = design.widthInches * design.transform.s;
-            const dh = design.heightInches * design.transform.s;
-            const cx = design.transform.nx * artboardWidth;
-            const cy = design.transform.ny * artboardHeight;
-            const offX = cx - dw / 2;
-            const offY = cy - dh / 2;
-
-            await addSpotColorVectorsToPDF(
-              pdfDoc, page, img, designSpotColors,
-              dw, dh, artboardHeight, offX, offY,
-              design.transform.rotation || 0,
-            );
+            const drawW = Math.max(1, Math.round(design.widthInches * design.transform.s * exportDpi));
+            const drawH = Math.max(1, Math.round(design.heightInches * design.transform.s * exportDpi));
+            const centerX = design.transform.nx * outW;
+            const centerY = design.transform.ny * outH;
+            if (design.alphaThresholded) ctx.imageSmoothingEnabled = false;
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate((design.transform.rotation * Math.PI) / 180);
+            ctx.scale(design.transform.flipX ? -1 : 1, design.transform.flipY ? -1 : 1);
+            ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+            ctx.restore();
+            if (design.alphaThresholded) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; }
           }
-        } catch (spotErr) {
-          console.warn('Spot color layers skipped:', spotErr);
+          const rawBlob: Blob = await new Promise((res, rej) =>
+            exportCanvas.toBlob((b) => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'));
+          exportCanvas.width = 0;
+          exportCanvas.height = 0;
+          pngBlob = await injectPngDpi(rawBlob, exportDpi);
         }
-      }
 
-      pdfDoc.setTitle('Gangsheet PDF');
-      const pdfBytes = await pdfDoc.save();
-      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+        const url = URL.createObjectURL(pngBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        const revokeMs = Math.max(5000, Math.round(pngBlob.size / 100000));
+        setTimeout(() => URL.revokeObjectURL(url), revokeMs);
+      }
     } catch (error) {
       console.error("Download failed:", error);
       toast({ title: "Download failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
@@ -1620,13 +1986,32 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
     return (
       <div className="h-full flex items-center justify-center bg-black">
         <div className="w-full max-w-xl mx-auto transition-all duration-300 px-4">
-          <UploadSection 
-            onImageUpload={handleFileUploadUnified}
-            showCutLineInfo={false}
-            imageInfo={null}
-            resizeSettings={resizeSettings}
-            stickerSize={stickerSize}
-          />
+          {isUploading ? (
+            <div className="flex flex-col items-center gap-6 py-12">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
+                <Loader2 className="w-8 h-8 text-white animate-spin" />
+              </div>
+              <div className="text-center">
+                <p className="text-white text-lg font-semibold mb-1">Processing your design</p>
+                <p className="text-gray-400 text-sm">Optimizing for the best print quality...</p>
+              </div>
+              <div className="w-full max-w-xs">
+                <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+                <p className="text-center text-xs text-gray-500 mt-2">{uploadProgress}%</p>
+              </div>
+            </div>
+          ) : (
+            <UploadSection 
+              onImageUpload={handleFileUploadUnified}
+              onBatchStart={handleBatchStart}
+              imageInfo={null}
+            />
+          )}
         </div>
       </div>
     );
@@ -1638,6 +2023,29 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
       {/* Left sidebar - Layers + Settings */}
       <div className="flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-800 bg-gray-950 overflow-y-auto overflow-x-hidden">
         <div className="p-2.5 space-y-2">
+          <ControlsSection
+            resizeSettings={activeResizeSettings}
+            onResizeChange={handleResizeChange}
+            onDownload={handleDownload}
+            isProcessing={isProcessing}
+            imageInfo={activeImageInfo}
+            artboardWidth={artboardWidth}
+            artboardHeight={artboardHeight}
+            onArtboardHeightChange={(h) => handleArtboardResize(artboardWidth, h)}
+            downloadContainer={downloadContainer}
+            designCount={designs.length}
+            gangsheetHeights={GANGSHEET_HEIGHTS}
+            downloadFormat={profile.downloadFormat}
+            enableFluorescent={profile.enableFluorescent}
+            selectedDesignId={selectedDesignId}
+            onSpotPreviewChange={setSpotPreviewData}
+            fluorPanelContainer={fluorPanelContainer}
+            copySpotSelectionsRef={copySpotSelectionsRef}
+          />
+
+          {/* Fluorescent panel portal target */}
+          {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
+
           {/* Layers Panel */}
           {designs.length > 0 && (
             <div ref={designInfoRef} className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
@@ -1664,16 +2072,45 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                   type="file"
                   className="hidden"
                   accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf"
+                  multiple
                   onChange={handleSidebarFileChange}
                 />
               </div>
               {showDesignInfo && (
                 <div className="border-t border-gray-800 max-h-[180px] overflow-y-auto">
-                  {designs.map((d) => (
+                  {designs.map((d) => {
+                    const isSelected = d.id === selectedDesignId || selectedDesignIds.has(d.id);
+                    return (
                     <div
                       key={d.id}
-                      className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer transition-colors ${d.id === selectedDesignId ? 'bg-cyan-500/10 border-l-2 border-cyan-400' : 'hover:bg-gray-800/70 border-l-2 border-transparent'}`}
-                      onClick={() => handleSelectDesign(d.id)}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-500/10 border-l-2 border-cyan-400' : 'hover:bg-gray-800/70 border-l-2 border-transparent'}`}
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey) {
+                          setSelectedDesignIds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(d.id)) {
+                              next.delete(d.id);
+                              if (next.size === 1) {
+                                const remaining = next.values().next().value;
+                                setSelectedDesignId(remaining!);
+                                return next;
+                              }
+                              if (selectedDesignId === d.id) {
+                                setSelectedDesignId(next.size > 0 ? Array.from(next)[next.size - 1] : null);
+                              }
+                            } else {
+                              next.add(d.id);
+                              if (next.size > 1) {
+                                if (!next.has(selectedDesignId!)) next.add(selectedDesignId!);
+                              }
+                              setSelectedDesignId(d.id);
+                            }
+                            return next;
+                          });
+                        } else {
+                          handleSelectDesign(d.id);
+                        }
+                      }}
                     >
                       <div className="w-7 h-7 rounded bg-gray-800 border border-gray-700 flex-shrink-0 overflow-hidden flex items-center justify-center">
                         <img
@@ -1697,39 +2134,11 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
-                  ))}
+                  ); })}
                 </div>
               )}
             </div>
           )}
-
-          <ControlsSection
-            strokeSettings={strokeSettings}
-            resizeSettings={activeResizeSettings}
-            shapeSettings={shapeSettings}
-            stickerSize={stickerSize}
-            onStrokeChange={handleStrokeChange}
-            onResizeChange={handleResizeChange}
-            onShapeChange={handleShapeChange}
-            onStickerSizeChange={handleStickerSizeChange}
-            onDownload={handleDownload}
-            isProcessing={isProcessing}
-            imageInfo={activeImageInfo}
-            canvasRef={canvasRef}
-            onStepChange={() => {}}
-            onSpotPreviewChange={setSpotPreviewData}
-            artboardWidth={artboardWidth}
-            artboardHeight={artboardHeight}
-            onArtboardHeightChange={(h) => handleArtboardResize(artboardWidth, h)}
-            fluorPanelContainer={fluorPanelContainer}
-            downloadContainer={downloadContainer}
-            designCount={designs.length}
-            selectedDesignId={selectedDesignId}
-            copySpotSelectionsRef={copySpotSelectionsRef}
-          />
-
-          {/* Fluorescent panel portal target - in left sidebar */}
-          <div ref={setFluorPanelContainer} />
         </div>
       </div>
 
@@ -1739,10 +2148,8 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
         <div className="flex-shrink-0 flex items-center gap-2 bg-gray-900 border-b border-gray-800 px-3 py-1.5">
           <UploadSection 
             onImageUpload={handleFileUploadUnified}
-            showCutLineInfo={false}
+            onBatchStart={handleBatchStart}
             imageInfo={activeImageInfo}
-            resizeSettings={activeResizeSettings}
-            stickerSize={stickerSize}
           />
           {isUploading && (
             <div className="flex items-center gap-1.5 text-cyan-400">
@@ -1765,6 +2172,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                     value={activeResizeSettings.widthInches * activeDesignTransform.s}
                     onCommit={(v) => handleEffectiveSizeChange('width', v)}
                     title="Width (inches)"
+                    max={artboardWidth}
                   />
                   <span className="text-[10px] text-gray-500">"</span>
                   <button
@@ -1779,28 +2187,65 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
                     value={activeResizeSettings.heightInches * activeDesignTransform.s}
                     onCommit={(v) => handleEffectiveSizeChange('height', v)}
                     title="Height (inches)"
+                    max={artboardHeight}
                   />
                   <span className="text-[10px] text-gray-500">"</span>
                 </div>
-                <span className="text-[9px] text-gray-400 bg-gray-800 px-1 py-0.5 rounded flex-shrink-0">{activeResizeSettings.outputDPI} DPI</span>
+                <span
+                  className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    effectiveDPI < 73
+                      ? 'text-red-300 bg-red-900/60 border border-red-500/60 animate-dpi-alarm'
+                      : effectiveDPI < 198
+                        ? 'text-red-400 bg-red-900/40 border border-red-500/40'
+                        : effectiveDPI < 277
+                          ? 'text-orange-400 bg-orange-900/30 border border-orange-500/30'
+                          : 'text-emerald-400 bg-emerald-900/30 border border-emerald-500/30'
+                  }`}
+                  title={`Effective resolution: ${effectiveDPI} DPI`}
+                >{effectiveDPI} DPI</span>
               </div>
             </>
           )}
-          {designs.length >= 2 && (
-            <>
-              <div className="w-px h-5 bg-gray-700" />
-              <button
-                onClick={handleAutoArrange}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-cyan-500/50 text-gray-400 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap"
-                title="Auto-arrange all designs on gangsheet"
+          <div
+            className={`flex items-center gap-1.5 flex-shrink-0 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}
+            aria-hidden={designs.length < 2}
+          >
+            <div className="w-px h-5 bg-gray-700" />
+            <button
+              onClick={() => handleAutoArrange()}
+              disabled={designs.length < 2}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-cyan-500/50 text-gray-400 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap disabled:pointer-events-none"
+              title="Auto-arrange all designs on gangsheet"
+            >
+              <LayoutGrid className="w-3 h-3" />
+              Auto-Arrange
+            </button>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-500">Margin:</span>
+              <select
+                value={designGap === undefined ? 'auto' : String(designGap)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const newGap = v === 'auto' ? undefined : parseFloat(v);
+                  setDesignGap(newGap);
+                  if (designs.length >= 2) {
+                    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: false, preserveSelection: true }), 0);
+                  }
+                }}
+                className="h-5 px-1 bg-gray-800 border border-gray-700 rounded text-[10px] text-gray-300 outline-none cursor-pointer hover:border-gray-500 focus:border-cyan-500 transition-colors"
+                title="Gap between designs (inches)"
               >
-                <LayoutGrid className="w-3 h-3" />
-                Auto-Arrange
-              </button>
-            </>
-          )}
-          {/* Action buttons */}
-          <div className="ml-auto flex items-center gap-0.5">
+                <option value="auto">Auto</option>
+                <option value="0.0625">1/16″</option>
+                <option value="0.125">1/8″</option>
+                <option value="0.25">1/4″</option>
+                <option value="0.5">1/2″</option>
+                <option value="1">1″</option>
+              </select>
+            </div>
+          </div>
+          {/* Action buttons — always rendered to keep layout stable */}
+          <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
             <button
               onClick={handleUndo}
               disabled={!canUndo()}
@@ -1817,70 +2262,84 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             >
               <Redo2 className="w-3.5 h-3.5" />
             </button>
-            {selectedDesignId && (
-              <>
-                <div className="w-px h-4 bg-gray-700 mx-0.5" />
-                <button
-                  onClick={handleRotate90}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Rotate 90° (Shift+R)"
-                >
-                  <RotateCw className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleAlignCorner('tl')}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Align Top Left"
-                >
-                  <ArrowUpLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleAlignCorner('tr')}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Align Top Right"
-                >
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleAlignCorner('bl')}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Align Bottom Left"
-                >
-                  <ArrowDownLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleAlignCorner('br')}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Align Bottom Right"
-                >
-                  <ArrowDownRight className="w-3.5 h-3.5" />
-                </button>
-                <div className="w-px h-4 bg-gray-700 mx-0.5" />
-                <button
-                  onClick={handleDuplicateDesign}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors"
-                  title="Duplicate (Ctrl+D)"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleDeleteDesign(selectedDesignId)}
-                  className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-red-400 transition-colors"
-                  title="Delete (Del)"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <div className="w-px h-4 bg-gray-700 mx-0.5" />
-                <button
-                  onClick={handleThresholdAlpha}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30 transition-all whitespace-nowrap"
-                  title="Remove Semi Transparencies (best for Sharp edges)"
-                >
-                  <Droplets className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-medium">Clean Alpha</span>
-                </button>
-              </>
-            )}
+            <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            <button
+              onClick={handleRotate90}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Rotate 90° (Shift+R)"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleAlignCorner('tl')}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Align Top Left"
+            >
+              <ArrowUpLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleAlignCorner('tr')}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Align Top Right"
+            >
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleAlignCorner('bl')}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Align Bottom Left"
+            >
+              <ArrowDownLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleAlignCorner('br')}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Align Bottom Right"
+            >
+              <ArrowDownRight className="w-3.5 h-3.5" />
+            </button>
+            <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            <button
+              onClick={handleDuplicateDesign}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Duplicate (Ctrl+D)"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => {
+                if (selectedDesignIds.size > 1) {
+                  handleDeleteMulti(selectedDesignIds);
+                } else if (selectedDesignId) {
+                  handleDeleteDesign(selectedDesignId);
+                }
+              }}
+              disabled={!selectedDesignId}
+              className="p-1.5 rounded-md hover:bg-gray-700/80 text-gray-400 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Delete (Del)"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            <button
+              onClick={handleThresholdAlpha}
+              disabled={!selectedDesignId}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all whitespace-nowrap ${
+                selectedDesignId
+                  ? 'bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
+                  : 'bg-gray-800 text-gray-600 opacity-30 pointer-events-none'
+              }`}
+              title="Remove Semi Transparencies (best for Sharp edges)"
+            >
+              <Droplets className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-medium">Clean Alpha</span>
+            </button>
           </div>
         </div>
 
@@ -1889,16 +2348,7 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
           <PreviewSection
             ref={canvasRef}
             imageInfo={activeImageInfo}
-            strokeSettings={debouncedStrokeSettings}
             resizeSettings={activeResizeSettings}
-            shapeSettings={debouncedShapeSettings}
-            cadCutBounds={cadCutBounds}
-            spotPreviewData={spotPreviewData}
-            showCutLineInfo={false}
-            detectedShapeType={detectedShapeType}
-            detectedShapeInfo={detectedShapeInfo}
-            onStrokeChange={handleStrokeChange}
-            lockedContour={lockedContour}
             artboardWidth={artboardWidth}
             artboardHeight={artboardHeight}
             designTransform={activeDesignTransform}
@@ -1909,9 +2359,12 @@ export default function ImageEditor({ onDesignUploaded }: { onDesignUploaded?: (
             onSelectDesign={handleSelectDesign}
             onMultiSelect={handleMultiSelect}
             onMultiDragDelta={handleMultiDragDelta}
+            onMultiResizeDelta={handleMultiResizeDelta}
+            onMultiRotateDelta={handleMultiRotateDelta}
             onDuplicateSelected={handleDuplicateSelected}
             onInteractionEnd={handleInteractionEnd}
-            onExpandArtboard={handleExpandArtboard}
+            onExpandArtboard={artboardHeight < MAX_ARTBOARD_HEIGHT ? handleExpandArtboard : undefined}
+            spotPreviewData={profile.enableFluorescent ? spotPreviewData : undefined}
           />
         </div>
       </div>

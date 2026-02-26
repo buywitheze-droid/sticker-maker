@@ -72,3 +72,22 @@
   background-image: url('data:image/svg+xml,<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="10" height="10" fill="%23f3f4f6"/><rect x="10" y="10" width="10" height="10" fill="%23f3f4f6"/></svg>');
   background-size: 20px 20px;
 }
+
+/* Hide native helper scrollbars used for internal pan mapping */
+.native-scroll-hidden {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/old Edge */
+}
+.native-scroll-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chrome/Safari */
+}
+
+@keyframes dpiAlarm {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px 1px rgba(239, 68, 68, 0.5); }
+  50% { opacity: 0.55; box-shadow: 0 0 10px 3px rgba(239, 68, 68, 0.8); }
+}
+.animate-dpi-alarm {
+  animation: dpiAlarm 1s ease-in-out infinite;
+}

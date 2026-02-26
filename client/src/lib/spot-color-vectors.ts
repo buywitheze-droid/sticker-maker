@@ -1,5 +1,5 @@
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFPage, PDFHexString } from 'pdf-lib';
-import { type SpotColorInput } from './contour-outline';
+import { type SpotColorInput } from './spot-color-types';
 import SpotColorWorker from './spot-color-worker?worker';
 
 interface Point {

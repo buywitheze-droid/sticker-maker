@@ -34,8 +34,9 @@ function detectEdgeBg(data: Uint8ClampedArray, w: number, h: number): { r: numbe
   return { r: Math.round(best.r / best.n), g: Math.round(best.g / best.n), b: Math.round(best.b / best.n) };
 }
 
-function removeBg(data: Uint8ClampedArray, w: number, h: number, bg: { r: number; g: number; b: number }, tol: number = 35): void {
-  const visited = new Uint8Array(w * h);
+function removeBg(data: Uint8ClampedArray, w: number, h: number, bg: { r: number; g: number; b: number }, tol: number = 35): boolean {
+  const totalPixels = w * h;
+  const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
   const matches = (idx: number) => {
     const i = idx * 4;
@@ -63,6 +64,38 @@ function removeBg(data: Uint8ClampedArray, w: number, h: number, bg: { r: number
     if (y > 0 && !visited[idx - w] && matches(idx - w)) { visited[idx - w] = 1; queue.push(idx - w); }
     if (y < h - 1 && !visited[idx + w] && matches(idx + w)) { visited[idx + w] = 1; queue.push(idx + w); }
   }
+
+  if (queue.length > totalPixels * 0.95) {
+    return false;
+  }
+
+  const widerTol = tol + 25;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const i = idx * 4;
+      if (data[i + 3] === 0) continue;
+      let adj = false;
+      if (x > 0 && data[((y) * w + (x - 1)) * 4 + 3] === 0) adj = true;
+      else if (x < w - 1 && data[((y) * w + (x + 1)) * 4 + 3] === 0) adj = true;
+      else if (y > 0 && data[((y - 1) * w + x) * 4 + 3] === 0) adj = true;
+      else if (y < h - 1 && data[((y + 1) * w + x) * 4 + 3] === 0) adj = true;
+      if (!adj) continue;
+      const dr = Math.abs(data[i] - bg.r);
+      const dg = Math.abs(data[i + 1] - bg.g);
+      const db = Math.abs(data[i + 2] - bg.b);
+      if (dr < widerTol && dg < widerTol && db < widerTol) {
+        const maxDiff = Math.max(dr, dg, db);
+        if (maxDiff < tol) {
+          data[i + 3] = 0;
+        } else {
+          data[i + 3] = Math.round(((maxDiff - tol) / (widerTol - tol)) * data[i + 3]);
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 function processCrop(pixelBuffer: ArrayBuffer, w: number, h: number): CropResult {
@@ -80,8 +113,13 @@ function processCrop(pixelBuffer: ArrayBuffer, w: number, h: number): CropResult
   if (opaqueRatio > 0.9 && w * h <= 25_000_000) {
     const bg = detectEdgeBg(data, w, h);
     if (bg) {
-      removeBg(data, w, h, bg);
-      bgRemoved = true;
+      const backup = new Uint8ClampedArray(data);
+      const ok = removeBg(data, w, h, bg);
+      if (!ok) {
+        data.set(backup);
+      } else {
+        bgRemoved = true;
+      }
     }
   }
 
@@ -97,19 +135,42 @@ function processCrop(pixelBuffer: ArrayBuffer, w: number, h: number): CropResult
     }
   }
 
+  if (minX > maxX || minY > maxY) {
+    return {
+      processedBuffer: data.buffer,
+      width: w, height: h,
+      minX: 0, minY: 0, maxX: w - 1, maxY: h - 1,
+      bgRemoved: false,
+    };
+  }
+
+  const bw = maxX - minX + 1;
+  const bh = maxY - minY + 1;
+  if (bw < w * 0.05 || bh < h * 0.05) {
+    return {
+      processedBuffer: data.buffer,
+      width: w, height: h,
+      minX: 0, minY: 0, maxX: w - 1, maxY: h - 1,
+      bgRemoved: false,
+    };
+  }
+
   return {
     processedBuffer: data.buffer,
-    width: w,
-    height: h,
+    width: w, height: h,
     minX, minY, maxX, maxY,
     bgRemoved,
   };
 }
 
 self.onmessage = function (e: MessageEvent) {
-  if (e.data.type === 'crop') {
-    const { pixelBuffer, width, height } = e.data;
-    const result = processCrop(pixelBuffer, width, height);
-    self.postMessage({ type: 'result', ...result }, [result.processedBuffer] as any);
+  try {
+    if (e.data.type === 'crop') {
+      const { pixelBuffer, width, height, requestId } = e.data;
+      const result = processCrop(pixelBuffer, width, height);
+      self.postMessage({ type: 'result', requestId, ...result }, [result.processedBuffer] as any);
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', requestId: e.data?.requestId, error: String(err) });
   }
 };
