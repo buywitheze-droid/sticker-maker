@@ -81,6 +81,14 @@ const PROFILE_GLOWS: Record<string, string> = {
   "specialty-dtf": "hover:shadow-slate-300/30",
 };
 
+const PROFILE_CTA_STYLES: Record<string, React.CSSProperties> = {
+  "specialty-dtf": {
+    background: "linear-gradient(120deg, #b0b0b0 0%, #d8d8d8 30%, #e8e8e8 50%, #d0d0d0 70%, #b0b0b0 100%)",
+    color: "#B8860B",
+    textShadow: "0 1px 2px rgba(0,0,0,0.12)",
+  },
+};
+
 function ProfileCard({ profile }: { profile: ProfileConfig }) {
   const [, setLocation] = useLocation();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -151,9 +159,10 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
 
       {/* CTA Button - consistent 44-48px height */}
       <div
-        className={`w-full h-12 rounded-xl bg-gradient-to-r ${gradient} flex items-center justify-center text-base font-semibold text-white opacity-90 group-hover:opacity-100 transition-opacity shadow-sm`}
+        className={`w-full h-12 rounded-xl flex items-center justify-center text-base font-semibold opacity-90 group-hover:opacity-100 transition-opacity shadow-sm ${PROFILE_CTA_STYLES[profile.id] ? '' : `bg-gradient-to-r ${gradient} text-white`}`}
+        style={PROFILE_CTA_STYLES[profile.id] || undefined}
       >
-        {profile.comingSoon ? content.ctaLabel : content.ctaLabel}
+        {content.ctaLabel}
       </div>
     </div>
   );
