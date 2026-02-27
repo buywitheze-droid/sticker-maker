@@ -229,7 +229,7 @@ export default function ControlsSection({
   }, [selectedDesignId, extractedColors, buildSpotColorsForDesign]);
 
   const isPdf = downloadFormat === 'pdf';
-  const dlLabel = isPdf ? 'Download PDF' : 'Download PNG (300 DPI)';
+  const dlLabel = 'Download Gangsheet';
   const dlTitle = !canDownload ? 'Upload an image first' : isProcessing ? 'Processing...' : dlLabel;
 
   const handleDownloadClick = useCallback(() => {
@@ -244,17 +244,17 @@ export default function ControlsSection({
   return (
     <div className="space-y-4">
       {/* Gangsheet Size */}
-      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5">
           <div className="w-6 h-6 rounded-md bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <Layers className="w-3.5 h-3.5 text-cyan-600" />
           </div>
-          <span className="text-xs font-medium text-gray-200 flex-shrink-0">Gangsheet Size</span>
+          <span className="text-xs font-medium text-gray-900 flex-shrink-0">Gangsheet Size</span>
           <div className="flex items-center gap-1.5 ml-auto">
-            <span className="text-xs font-semibold text-gray-300">{artboardWidth}"</span>
-            <span className="text-gray-500 text-xs">×</span>
+            <span className="text-xs font-semibold text-gray-700">{artboardWidth}"</span>
+            <span className="text-gray-600 text-xs">×</span>
             <Select value={String(artboardHeight)} onValueChange={(v) => onArtboardHeightChange?.(parseInt(v))}>
-              <SelectTrigger className="w-[68px] h-7 text-xs font-semibold text-gray-200 bg-gray-800 border-gray-700">
+              <SelectTrigger className="w-[68px] h-7 text-xs font-semibold text-gray-900 bg-gray-100 border-gray-200">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -269,16 +269,16 @@ export default function ControlsSection({
 
       {/* Fluorescent Colors Panel (only for fluorescent profile) */}
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
-        <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <button
             onClick={() => setShowSpotColors(!showSpotColors)}
-            className={`flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-800/60 transition-colors ${showSpotColors ? 'bg-purple-500/10' : ''}`}
+            className={`flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors ${showSpotColors ? 'bg-purple-50' : ''}`}
           >
             <div className="flex items-center gap-2">
               <Palette className="w-3.5 h-3.5 text-purple-400" />
-              <span className="text-xs font-medium text-gray-200">Fluorescent Colors</span>
+              <span className="text-xs font-medium text-gray-900">Fluorescent Colors</span>
               {extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length > 0 && (
-                <span className="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded-full">
+                <span className="text-[9px] bg-purple-500/20 text-purple-500 px-1.5 py-0.5 rounded-full">
                   {extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length} assigned
                 </span>
               )}
@@ -289,20 +289,20 @@ export default function ControlsSection({
                 className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
                   spotPreviewEnabled
                     ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                    : 'bg-gray-800 text-gray-500 border border-gray-700 hover:bg-gray-700'
+                    : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
                 }`}
                 title={spotPreviewEnabled ? 'Hide spot overlay' : 'Show spot overlay'}
               >
                 {spotPreviewEnabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
               </button>
-              <ChevronDown className={`w-3.5 h-3.5 text-gray-500 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-3.5 h-3.5 text-gray-600 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
             </div>
           </button>
 
           {showSpotColors && (
             <div className="px-3 pb-2.5 space-y-2">
               {extractedColors.length === 0 ? (
-                <div className="text-xs text-gray-500 italic py-1">No colors detected in image</div>
+                <div className="text-xs text-gray-600 italic py-1">No colors detected in image</div>
               ) : (
                 <div className="flex flex-col gap-0.5 max-h-[240px] overflow-y-auto">
                   {sortedColorIndices
@@ -313,15 +313,15 @@ export default function ControlsSection({
                     return (
                       <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
                         isAssigned
-                          ? 'bg-purple-500/10 border border-purple-500/20'
-                          : 'bg-gray-800/40 border border-transparent hover:border-gray-700'
+                          ? 'bg-purple-50 border border-purple-500/20'
+                          : 'bg-gray-100/80 border border-transparent hover:border-gray-300'
                       }`}>
                         <div
-                          className="w-3.5 h-3.5 rounded flex-shrink-0 border border-gray-600"
+                          className="w-3.5 h-3.5 rounded flex-shrink-0 border border-gray-300"
                           style={{ backgroundColor: color.hex }}
                           title={color.hex}
                         />
-                        <span className="text-[10px] text-gray-300 truncate min-w-0 flex-1">{color.name || color.hex}</span>
+                        <span className="text-[10px] text-gray-700 truncate min-w-0 flex-1">{color.name || color.hex}</span>
                         <div className="flex gap-1 flex-shrink-0">
                           {([
                             { field: 'spotFluorY' as const, label: 'Y', bg: '#DFFF00' },
@@ -334,7 +334,7 @@ export default function ControlsSection({
                               onClick={() => updateSpotColor(idx, field, !color[field])}
                               className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${
                                 color[field]
-                                  ? 'ring-1 ring-offset-1 ring-offset-gray-900 scale-110'
+                                  ? 'ring-1 ring-offset-1 ring-offset-white scale-110'
                                   : 'opacity-40 hover:opacity-80'
                               }`}
                         style={{
@@ -363,22 +363,22 @@ export default function ControlsSection({
 
       {/* Fluorescent Info Panel */}
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
-        <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden mt-2">
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mt-2">
           <button
             onClick={() => setShowFluorInfo(prev => !prev)}
-            className="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-800/60 transition-colors"
+            className="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors"
           >
             <div className="flex items-center gap-2">
-              <Info className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-xs font-medium text-gray-300">How Fluorescent Colors Work</span>
+              <Info className="w-3.5 h-3.5 text-cyan-600" />
+              <span className="text-xs font-medium text-gray-700">How Fluorescent Colors Work</span>
             </div>
-            <ChevronDown className={`w-3.5 h-3.5 text-gray-500 transition-transform ${showFluorInfo ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`w-3.5 h-3.5 text-gray-600 transition-transform ${showFluorInfo ? 'rotate-180' : ''}`} />
           </button>
 
           {showFluorInfo && (
             <div className="px-3 pb-3">
               <div className="mb-3">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Available Inks</p>
+                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Available Inks</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {[
                     { name: 'Yellow', color: '#DFFF00' },
@@ -386,33 +386,33 @@ export default function ControlsSection({
                     { name: 'Orange', color: '#FF6600' },
                     { name: 'Green', color: '#39FF14' },
                   ].map(ink => (
-                    <div key={ink.name} className="flex items-center gap-1.5 bg-gray-800/60 rounded px-2 py-1">
+                    <div key={ink.name} className="flex items-center gap-1.5 bg-gray-200/60 rounded px-2 py-1">
                       <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: ink.color }} />
-                      <span className="text-[10px] font-medium text-gray-300">Fluorescent {ink.name}</span>
+                      <span className="text-[10px] font-medium text-gray-700">Fluorescent {ink.name}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="mb-3">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">How It Works</p>
-                <div className="space-y-1.5 text-[10px] text-gray-400 leading-relaxed">
+                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">How It Works</p>
+                <div className="space-y-1.5 text-[10px] text-gray-600 leading-relaxed">
                   <div className="flex gap-2">
-                    <span className="text-cyan-400 font-bold flex-shrink-0">1.</span>
+                    <span className="text-cyan-600 font-bold flex-shrink-0">1.</span>
                     <span>Select a design to see all its detected colors above.</span>
                   </div>
                   <div className="flex gap-2">
-                    <span className="text-cyan-400 font-bold flex-shrink-0">2.</span>
+                    <span className="text-cyan-600 font-bold flex-shrink-0">2.</span>
                     <span>Choose which fluorescent ink to assign to each color using the Y, M, G, Or buttons.</span>
                   </div>
                   <div className="flex gap-2">
-                    <span className="text-cyan-400 font-bold flex-shrink-0">3.</span>
+                    <span className="text-cyan-600 font-bold flex-shrink-0">3.</span>
                     <span>The chosen fluorescent ink replaces that color in your printed transfer.</span>
                   </div>
                 </div>
               </div>
 
-              <p className="text-[10px] text-gray-500 leading-relaxed mb-2">
+              <p className="text-[10px] text-gray-600 leading-relaxed mb-2">
                 These are regular DTF transfers (hot peel) - the fluorescent colors glow under black light.
               </p>
             </div>
@@ -423,9 +423,9 @@ export default function ControlsSection({
 
       {/* Download bar - portaled to bottom of app */}
       {downloadContainer && createPortal(
-        <div className="flex items-center gap-3 bg-gray-950 border-t border-gray-800 px-4 py-2">
-          <div className="flex items-center gap-2 text-xs text-gray-400 flex-shrink-0">
-            <FileCheck className="w-3.5 h-3.5 text-gray-500" />
+        <div className="flex items-center gap-3 bg-white border-t border-gray-200 px-4 py-2">
+          <div className="flex items-center gap-2 text-xs text-gray-600 flex-shrink-0">
+            <FileCheck className="w-3.5 h-3.5 text-gray-600" />
             <span className="tabular-nums">{designCount} design{designCount !== 1 ? 's' : ''}</span>
             <span className="text-gray-600">·</span>
             <span className="tabular-nums">{artboardWidth}" × {artboardHeight}"</span>

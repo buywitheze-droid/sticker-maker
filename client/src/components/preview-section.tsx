@@ -43,11 +43,12 @@ interface PreviewSectionProps {
   onDuplicateSelected?: () => string[];
   onInteractionEnd?: () => void;
   onExpandArtboard?: () => void;
+  onDesignContextMenu?: (x: number, y: number, designId: string | null) => void;
   spotPreviewData?: { enabled: boolean; colors: Array<{ hex: string; rgb: { r: number; g: number; b: number }; spotWhite?: boolean; spotGloss?: boolean; spotFluorY?: boolean; spotFluorM?: boolean; spotFluorG?: boolean; spotFluorOrange?: boolean }> };
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, spotPreviewData }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData }, ref) => {
     const { toast } = useToast();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -1407,6 +1408,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [checkPixelOverlap, onInteractionEnd, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow, stopAutoPan]);
     handleInteractionEndRef.current = handleInteractionEnd;
 
+    const handleContextMenu = useCallback((e: React.MouseEvent) => {
+      e.preventDefault();
+      if (!onDesignContextMenu) return;
+      const local = canvasToLocal(e.clientX, e.clientY);
+      const hitId = findDesignAtPoint(local.x, local.y);
+      onDesignContextMenu(e.clientX, e.clientY, hitId);
+    }, [canvasToLocal, findDesignAtPoint, onDesignContextMenu]);
+
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
       if (selectionZoomActiveRef.current) return;
@@ -2670,6 +2679,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         <div
           ref={canvasAreaRef}
           onMouseDown={handleMouseDown}
+          onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
           onMouseMove={handleMouseMove}
           onMouseEnter={handleMouseEnter}
@@ -2678,13 +2688,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="flex-1 min-h-0 flex items-center justify-center bg-gray-950 p-3 relative overflow-hidden cursor-default"
+          className="flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden cursor-default"
           style={{ userSelect: 'none', touchAction: 'none' }}
         >
           <div className="relative" style={{ paddingBottom: Math.abs(zoom - 1) < 0.03 ? 16 : 0, paddingRight: Math.abs(zoom - 1) < 0.03 ? 14 : 0 }}>
             <div 
               ref={containerRef}
-              className={`relative flex items-center justify-center ${Math.abs(zoom - 1) < 0.03 ? 'rounded-lg border border-gray-600' : ''}`}
+              className={`relative flex items-center justify-center ${Math.abs(zoom - 1) < 0.03 ? 'rounded-lg border border-gray-300' : ''}`}
               style={{ 
                 width: previewDims.width,
                 height: previewDims.height,
@@ -2717,12 +2727,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
-                <span className="text-[10px] text-gray-500 font-medium tracking-wide">{artboardWidth}"</span>
+                <span className="text-[10px] text-gray-600 font-medium tracking-wide">{artboardWidth}"</span>
               </div>
             )}
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
-                <span className="text-[10px] text-gray-500 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
+                <span className="text-[10px] text-gray-600 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
               </div>
             )}
           </div>
@@ -2949,18 +2959,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-900 border-t border-gray-800 px-3 py-1.5">
+        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-100 border-t border-gray-200 px-3 py-1.5">
               <div className="flex items-center gap-1.5">
                 {selectedDesignId && designTransform && (
                   <>
-                    <span className="text-[11px] text-gray-400 font-medium tabular-nums">
+                    <span className="text-[11px] text-gray-600 font-medium tabular-nums">
                       {(resizeSettings.widthInches * (designTransform.s || 1)).toFixed(2)}" × {(resizeSettings.heightInches * (designTransform.s || 1)).toFixed(2)}"
                     </span>
-                    <div className="w-px h-3.5 bg-gray-600" />
+                    <div className="w-px h-3.5 bg-gray-300" />
                     {editingRotation ? (
                       <input
                         type="number"
-                        className="w-12 h-5 bg-gray-700 text-[11px] text-gray-200 text-center rounded border border-gray-600 outline-none"
+                        className="w-12 h-5 bg-gray-100 text-[11px] text-gray-900 text-center rounded border border-gray-300 outline-none"
                         value={rotationInput}
                         autoFocus
                         onChange={(e) => setRotationInput(e.target.value)}
@@ -2977,7 +2987,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       />
                     ) : (
                       <span
-                        className="text-[11px] text-gray-400 font-medium cursor-pointer hover:text-gray-200 tabular-nums"
+                        className="text-[11px] text-gray-600 font-medium cursor-pointer hover:text-gray-900 tabular-nums"
                         title="Click to edit rotation"
                         onClick={() => {
                           setRotationInput(String(Math.round(designTransform.rotation || 0)));
@@ -2987,7 +2997,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         {Math.round(designTransform.rotation || 0)}°
                       </span>
                     )}
-                    <div className="w-px h-3.5 bg-gray-600" />
+                    <div className="w-px h-3.5 bg-gray-300" />
                   </>
                 )}
                 <div className="flex items-center gap-0.5">
@@ -3004,12 +3014,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
                     }}
-                    className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
+                    className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
                     title="Zoom Out"
                   >
-                    <ZoomOut className="h-3 w-3 text-gray-400" />
+                    <ZoomOut className="h-3 w-3 text-gray-600" />
                   </Button>
-                  <span className="text-[11px] text-gray-400 min-w-[36px] text-center font-medium tabular-nums">
+                  <span className="text-[11px] text-gray-600 min-w-[36px] text-center font-medium tabular-nums">
                     {Math.round(zoom * 100)}%
                   </span>
                   <Button
@@ -3025,18 +3035,18 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
                     }}
-                    className="h-6 w-6 p-0 hover:bg-gray-700 rounded"
+                    className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
                     title="Zoom In"
                   >
-                    <ZoomIn className="h-3 w-3 text-gray-400" />
+                    <ZoomIn className="h-3 w-3 text-gray-600" />
                   </Button>
                 </div>
-                <div className="w-px h-3.5 bg-gray-600" />
+                <div className="w-px h-3.5 bg-gray-300" />
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={() => setSelectionZoomActive(prev => !prev)}
-                  className={`h-6 px-1.5 hover:bg-gray-700 rounded text-[11px] ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-400'}`}
+                  className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
                   title="Drag to select an area and zoom into it"
                 >
                   <ScanSearch className="h-2.5 w-2.5 mr-0.5" />
@@ -3046,7 +3056,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
+                  className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
                   title="Reset View"
                 >
                   <RotateCcw className="h-2.5 w-2.5 mr-0.5" />
@@ -3064,7 +3074,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       return next;
                     });
                   }}
-                  className={`h-6 px-1.5 hover:bg-gray-700 rounded text-[11px] ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-400'}`}
+                  className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
                   title="Move mode — click to select and drag designs when zoomed in (Space+drag still pans)"
                 >
                   <MousePointer2 className="h-2.5 w-2.5 mr-0.5" />
@@ -3075,7 +3085,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={zoomToSelected}
-                    className="h-6 px-1.5 hover:bg-gray-700 rounded text-gray-400 text-[11px]"
+                    className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
                     title="Zoom in closely on the selected design"
                   >
                     <Focus className="h-2.5 w-2.5 mr-0.5" />
@@ -3095,7 +3105,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <button
                     key={color}
                     onClick={() => setPreviewBgColor(color)}
-                    className={`w-4.5 h-4.5 rounded-full border-2 transition-all ${previewBgColor === color ? 'border-cyan-400 scale-110' : 'border-gray-600 hover:border-gray-400'}`}
+                    className={`w-4.5 h-4.5 rounded-full border-2 transition-all ${previewBgColor === color ? 'border-cyan-400 scale-110' : 'border-gray-300 hover:border-gray-500'}`}
                     title={label}
                     style={{
                       width: 18,
@@ -3110,14 +3120,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
 
         {/* Keyboard shortcut hints */}
-        <div className="hidden lg:flex flex-shrink-0 items-center justify-center gap-4 bg-gray-950/80 border-t border-gray-800/50 px-3 py-0.5 text-[9px] text-gray-600">
+        <div className="hidden lg:flex flex-shrink-0 items-center justify-center gap-4 bg-gray-100/90 border-t border-gray-200/80 px-3 py-0.5 text-[9px] text-gray-600">
           {[
             ['Ctrl+Z', 'Undo'], ['Ctrl+C/V', 'Copy/Paste'],
             ['Alt+Drag', 'Duplicate'], ['Drag Empty', 'Select'],
             ['Arrows', 'Nudge'], ['Ctrl+Scroll', 'Zoom'], ['Space+Drag', 'Pan'],
           ].map(([key, label]) => (
             <span key={key} className="flex items-center gap-1">
-              <kbd className="px-1 py-px rounded bg-gray-800/60 text-gray-500 font-mono">{key}</kbd>
+              <kbd className="px-1 py-px rounded bg-gray-200/60 text-gray-600 font-mono">{key}</kbd>
               <span>{label}</span>
             </span>
           ))}

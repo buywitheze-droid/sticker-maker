@@ -3,6 +3,13 @@ type PackItem = { id: string; w: number; h: number; rotation: number; gap: numbe
 type PlacedItem = { id: string; nx: number; ny: number; rotation: number; overflows: boolean };
 type Candidate = { result: PlacedItem[]; maxHeight: number; wastedArea: number; overflows: number };
 
+interface FixedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface ArrangeInput {
   type: 'arrange';
   requestId: number;
@@ -13,6 +20,7 @@ interface ArrangeInput {
   artboardHeight: number;
   isAggressive: boolean;
   customGap?: number;
+  fixedRects?: FixedRect[];
 }
 
 function findBestPos(sky: SkylineSeg[], itemW: number, itemH: number, usableH: number): { x: number; y: number; waste: number } | null {
@@ -241,6 +249,56 @@ function mixedOrientPack(
 
 type FreeRect = { x: number; y: number; w: number; h: number };
 
+function subtractRect(from: FreeRect, placed: { x: number; y: number; w: number; h: number }): FreeRect[] {
+  if (placed.x >= from.x + from.w - 0.001 || placed.x + placed.w <= from.x + 0.001 ||
+      placed.y >= from.y + from.h - 0.001 || placed.y + placed.h <= from.y + 0.001) {
+    return [from];
+  }
+  const newFree: FreeRect[] = [];
+  if (placed.x > from.x + 0.001)
+    newFree.push({ x: from.x, y: from.y, w: placed.x - from.x, h: from.h });
+  if (placed.x + placed.w < from.x + from.w - 0.001)
+    newFree.push({ x: placed.x + placed.w, y: from.y, w: from.x + from.w - placed.x - placed.w, h: from.h });
+  if (placed.y > from.y + 0.001)
+    newFree.push({ x: from.x, y: from.y, w: from.w, h: placed.y - from.y });
+  if (placed.y + placed.h < from.y + from.h - 0.001)
+    newFree.push({ x: from.x, y: placed.y + placed.h, w: from.w, h: from.y + from.h - placed.y - placed.h });
+  return newFree;
+}
+
+function removeContainedRects(rects: FreeRect[]): FreeRect[] {
+  const result: FreeRect[] = [];
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (r.w < 0.01 || r.h < 0.01) continue;
+    let contained = false;
+    for (let j = 0; j < rects.length; j++) {
+      if (i === j) continue;
+      const o = rects[j];
+      if (r.x >= o.x - 0.001 && r.y >= o.y - 0.001 &&
+          r.x + r.w <= o.x + o.w + 0.001 && r.y + r.h <= o.y + o.h + 0.001) {
+        contained = true;
+        break;
+      }
+    }
+    if (!contained) result.push(r);
+  }
+  return result;
+}
+
+function applyObstacles(initial: FreeRect[], obstacles: FixedRect[], gap: number): FreeRect[] {
+  let freeRects = [...initial];
+  for (const obs of obstacles) {
+    const placed = { x: obs.x, y: obs.y, w: obs.w + gap, h: obs.h + gap };
+    const next: FreeRect[] = [];
+    for (const fr of freeRects) {
+      next.push(...subtractRect(fr, placed));
+    }
+    freeRects = removeContainedRects(next);
+  }
+  return freeRects;
+}
+
 function maxRectsPack(
   items: PackItem[],
   usableW: number,
@@ -248,8 +306,14 @@ function maxRectsPack(
   abW: number,
   abH: number,
   heuristic: 'bssf' | 'baf',
+  initialObstacles?: FixedRect[],
+  gap?: number,
 ): { result: PlacedItem[]; maxHeight: number; wastedArea: number } {
+  const GAP = gap ?? 0.25;
   let freeRects: FreeRect[] = [{ x: 0, y: 0, w: usableW, h: usableH }];
+  if (initialObstacles && initialObstacles.length > 0) {
+    freeRects = applyObstacles(freeRects, initialObstacles, GAP);
+  }
   const result: PlacedItem[] = [];
   let maxHeight = 0;
   let totalItemArea = 0;
@@ -369,7 +433,7 @@ function shelfPack(
 }
 
 function runArrange(input: ArrangeInput) {
-  const { items, usableW, usableH, artboardWidth, artboardHeight, isAggressive, customGap } = input;
+  const { items, usableW, usableH, artboardWidth, artboardHeight, isAggressive, customGap, fixedRects } = input;
   const hasCustomGap = customGap !== undefined && customGap >= 0;
   const GAP = hasCustomGap ? customGap : 0.25;
 
@@ -407,6 +471,19 @@ function runArrange(input: ArrangeInput) {
 
   const sortOrders = [byWidth, byHeight, byArea, byPerimeter, byEmptySpace, byAspectRatio, byLongestSide, alternating, byAreaAsc];
 
+  const runCandidatesWithObstacles = (gapOverride?: number): Candidate[] => {
+    const cands: Candidate[] = [];
+    const g = gapOverride !== undefined ? gapOverride : GAP;
+    for (const order of sortOrders) {
+      const normalPi = makePackItems(order, 'normal', gapOverride);
+      cands.push(evaluate(maxRectsPack(normalPi, usableW, usableH, artboardWidth, artboardHeight, 'bssf', fixedRects, g)));
+      cands.push(evaluate(maxRectsPack(normalPi, usableW, usableH, artboardWidth, artboardHeight, 'baf', fixedRects, g)));
+      cands.push(evaluate(maxRectsPack(makePackItems(order, 'landscape', gapOverride), usableW, usableH, artboardWidth, artboardHeight, 'bssf', fixedRects, g)));
+      cands.push(evaluate(maxRectsPack(makePackItems(order, 'portrait', gapOverride), usableW, usableH, artboardWidth, artboardHeight, 'bssf', fixedRects, g)));
+    }
+    return cands;
+  };
+
   const runCandidates = (gapOverride?: number): Candidate[] => {
     const cands: Candidate[] = [];
     const g = gapOverride !== undefined ? gapOverride : GAP;
@@ -437,13 +514,15 @@ function runArrange(input: ArrangeInput) {
     return cands;
   };
 
-  const candidates: Candidate[] = hasCustomGap
-    ? [...runCandidates()]
-    : [
-        ...runCandidates(),
-        ...runCandidates(0.125),
-        ...runCandidates(0.0625),
-      ];
+  const candidates: Candidate[] = fixedRects && fixedRects.length > 0
+    ? (hasCustomGap ? runCandidatesWithObstacles() : [...runCandidatesWithObstacles(), ...runCandidatesWithObstacles(0.125), ...runCandidatesWithObstacles(0.0625)])
+    : (hasCustomGap
+      ? [...runCandidates()]
+      : [
+          ...runCandidates(),
+          ...runCandidates(0.125),
+          ...runCandidates(0.0625),
+        ]);
 
   candidates.sort((a, b) => {
     if (a.overflows !== b.overflows) return a.overflows - b.overflows;

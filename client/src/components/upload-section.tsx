@@ -167,7 +167,7 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
           )}
           {!isEmptyState && (
             <p className="font-medium text-white text-[11px] whitespace-nowrap">
-              Add
+              Add Designs
             </p>
           )}
         </div>
@@ -182,8 +182,8 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
       </div>
 
       {isEmptyState && (
-        <p className="text-center mt-4 text-sm font-medium text-gray-400">
-          Powered by <span className="text-white font-semibold">DTFMASTERS</span>
+        <p className="text-center mt-4 text-sm font-medium text-gray-600">
+          Powered by <span className="text-cyan-600 font-semibold">DTFMASTERS</span>
         </p>
       )}
     </div>
