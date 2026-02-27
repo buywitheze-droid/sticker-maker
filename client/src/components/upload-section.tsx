@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import { Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useLanguage } from "@/lib/i18n";
 import type { ImageInfo, ResizeSettings } from "./image-editor";
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
@@ -21,6 +22,7 @@ interface UploadSectionProps {
 
 export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }: UploadSectionProps) {
   const { toast } = useToast();
+  const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = useCallback(async (file: File) => {
@@ -29,7 +31,7 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
     const isImage = ACCEPTED_TYPES.includes(file.type) || ACCEPTED_EXTENSIONS.some(e => ext.endsWith(e));
 
     if (!isImage && !isPdf) {
-      toast({ title: "Unsupported format", description: "Please upload a PNG, JPEG, WebP, or PDF file.", variant: "destructive" });
+      toast({ title: t("toast.unsupportedFormat"), description: t("toast.unsupportedFormatDesc"), variant: "destructive" });
       return;
     }
 
@@ -56,8 +58,8 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
         }
         if (!hasTransparency) {
           toast({
-            title: "Solid background detected",
-            description: "This image has no transparent background. For best print results, remove the background first.",
+            title: t("toast.solidBg"),
+            description: t("toast.solidBgDesc"),
             variant: "destructive",
           });
         }
@@ -86,10 +88,10 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
     };
     img.onerror = () => {
       URL.revokeObjectURL(originalUrl);
-      toast({ title: "Failed to load image", description: "Please try another file.", variant: "destructive" });
+      toast({ title: t("toast.failedLoad"), description: t("toast.failedLoadDesc"), variant: "destructive" });
     };
     img.src = originalUrl;
-  }, [onImageUpload, toast]);
+  }, [onImageUpload, toast, t]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -155,10 +157,10 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
                 <Upload className="w-10 h-10 text-white drop-shadow-lg" />
               </div>
               <p className="font-bold text-white text-2xl mb-1 drop-shadow-sm tracking-wide">
-                Make a Gangsheet
+                {t("upload.makeGangsheet")}
               </p>
               <p className="text-sm text-white/80 mb-4">
-                Preferred format&nbsp;:&nbsp; <span className="font-semibold text-white">PNG</span> with Transparent background
+                {t("upload.preferredFormat")}&nbsp;:&nbsp; <span className="font-semibold text-white">{t("upload.pngTransparent")}</span>
               </p>
             </>
           )}
@@ -167,7 +169,7 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
           )}
           {!isEmptyState && (
             <p className="font-medium text-white text-[11px] whitespace-nowrap">
-              Add Designs
+              {t("editor.addDesigns")}
             </p>
           )}
         </div>
@@ -183,7 +185,7 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
 
       {isEmptyState && (
         <p className="text-center mt-4 text-sm font-medium text-gray-600">
-          Powered by <span className="text-cyan-600 font-semibold">DTFMASTERS</span>
+          {t("upload.poweredBy")} <span className="text-cyan-600 font-semibold">DTFMASTERS</span>
         </p>
       )}
     </div>

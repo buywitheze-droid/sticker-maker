@@ -1,6 +1,7 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
 import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, MousePointer2, Focus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useLanguage } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { ImageInfo, ResizeSettings, type ImageTransform, type DesignItem } from "./image-editor";
 import { computeLayerRect } from "@/lib/types";
@@ -50,6 +51,7 @@ interface PreviewSectionProps {
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
   ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData }, ref) => {
     const { toast } = useToast();
+    const { t } = useLanguage();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const resizeLimitToastRef = useRef(0);
@@ -2988,7 +2990,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     ) : (
                       <span
                         className="text-[11px] text-gray-600 font-medium cursor-pointer hover:text-gray-900 tabular-nums"
-                        title="Click to edit rotation"
+                        title={t("preview.editRotation")}
                         onClick={() => {
                           setRotationInput(String(Math.round(designTransform.rotation || 0)));
                           setEditingRotation(true);
@@ -3015,7 +3017,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       }
                     }}
                     className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
-                    title="Zoom Out"
+                    title={t("preview.zoomOut")}
                   >
                     <ZoomOut className="h-3 w-3 text-gray-600" />
                   </Button>
@@ -3036,7 +3038,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       }
                     }}
                     className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
-                    title="Zoom In"
+                    title={t("preview.zoomIn")}
                   >
                     <ZoomIn className="h-3 w-3 text-gray-600" />
                   </Button>
@@ -3047,20 +3049,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   size="sm"
                   onClick={() => setSelectionZoomActive(prev => !prev)}
                   className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
-                  title="Drag to select an area and zoom into it"
+                  title={t("preview.selectionZoom")}
                 >
                   <ScanSearch className="h-2.5 w-2.5 mr-0.5" />
-                  Select to Zoom
+                  {t("preview.selectToZoom")}
                 </Button>
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
                   className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
-                  title="Reset View"
+                  title={t("preview.resetView")}
                 >
                   <RotateCcw className="h-2.5 w-2.5 mr-0.5" />
-                  Reset
+                  {t("preview.reset")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -3075,10 +3077,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     });
                   }}
                   className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
-                  title="Move mode — click to select and drag designs when zoomed in (Space+drag still pans)"
+                  title={t("preview.moveMode")}
                 >
                   <MousePointer2 className="h-2.5 w-2.5 mr-0.5" />
-                  Move
+                  {t("preview.move")}
                 </Button>
                 {selectedDesignId && (
                   <Button
@@ -3086,10 +3088,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     size="sm"
                     onClick={zoomToSelected}
                     className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
-                    title="Zoom in closely on the selected design"
+                    title={t("preview.focusTitle")}
                   >
                     <Focus className="h-2.5 w-2.5 mr-0.5" />
-                    Focus
+                    {t("preview.focus")}
                   </Button>
                 )}
               </div>

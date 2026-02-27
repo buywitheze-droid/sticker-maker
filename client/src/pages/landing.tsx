@@ -2,54 +2,29 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { ALL_PROFILES, type ProfileConfig } from "@/lib/profiles";
 import { IconHotPeel, IconFluorescent, IconUvDtf, IconSpecialtyColdPeel } from "@/components/profile-icons";
+import { useLanguage } from "@/lib/i18n";
+import LanguageToggle from "@/components/language-toggle";
 
-type CardContent = {
-  subline: string;
-  bullets: string[];
-  pressSettings: string;
-  ctaLabel: string;
-};
-
-const CARD_CONTENT: Record<string, CardContent> = {
+const CARD_KEYS: Record<string, { subline: string; bullets: string[]; press: string }> = {
   "hot-peel": {
-    subline: "Fast-peel transfers with bold color and strong stretch.",
-    bullets: [
-      "Works great on light + dark garments",
-      "Smooth feel, high detail",
-      "Ideal for quick production",
-    ],
-    pressSettings: "275°F • 15s • peel hot or warm • repress 5–10s",
-    ctaLabel: "Open Builder",
+    subline: "landing.hotPeel.subline",
+    bullets: ["landing.hotPeel.bullet1", "landing.hotPeel.bullet2", "landing.hotPeel.bullet3"],
+    press: "landing.hotPeel.press",
   },
   fluorescent: {
-    subline: "UV-reactive prints that glow under blacklight.",
-    bullets: [
-      "Select the color(s) in your art to print as fluorescent",
-      "Perfect for events, nightlife, promos",
-      "High pop under UV light",
-    ],
-    pressSettings: "Coming soon — get notified at launch",
-    ctaLabel: "Open Builder",
+    subline: "landing.fluorescent.subline",
+    bullets: ["landing.fluorescent.bullet1", "landing.fluorescent.bullet2", "landing.fluorescent.bullet3"],
+    press: "landing.fluorescent.press",
   },
   "uv-dtf": {
-    subline: "Durable decals for hard surfaces — no heat press needed.",
-    bullets: [
-      "Applies to acrylic, plastic, glass, metal",
-      "Strong adhesive + sharp detail",
-      "Not dishwasher safe",
-    ],
-    pressSettings: "Press firmly; best hold after 24 hours",
-    ctaLabel: "Open Builder",
+    subline: "landing.uvDtf.subline",
+    bullets: ["landing.uvDtf.bullet1", "landing.uvDtf.bullet2", "landing.uvDtf.bullet3"],
+    press: "landing.uvDtf.press",
   },
   "specialty-dtf": {
-    subline: "Specialty finish that requires a true cold peel.",
-    bullets: [
-      "Use parchment/Teflon cover sheet",
-      "Best on cotton/poly blends",
-      "Not recommended for canvas",
-    ],
-    pressSettings: "325°F • 15s • peel completely cold",
-    ctaLabel: "Open Builder",
+    subline: "landing.specialty.subline",
+    bullets: ["landing.specialty.bullet1", "landing.specialty.bullet2", "landing.specialty.bullet3"],
+    press: "landing.specialty.press",
   },
 };
 
@@ -93,14 +68,9 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
   const [, setLocation] = useLocation();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
+  const { t } = useLanguage();
 
-  const content = CARD_CONTENT[profile.id] ?? {
-    subline: profile.description,
-    bullets: [],
-    pressSettings: "",
-    ctaLabel: "Open Builder",
-  };
-
+  const keys = CARD_KEYS[profile.id] ?? { subline: "", bullets: [], press: "" };
   const gradient = PROFILE_GRADIENTS[profile.id] ?? "from-gray-500 to-gray-600";
   const glow = PROFILE_GLOWS[profile.id] ?? "";
   const icon = PROFILE_ICONS[profile.id];
@@ -127,42 +97,36 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
     >
       {profile.comingSoon && (
         <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 text-[10px] font-semibold uppercase tracking-wide">
-          Coming soon
+          {t("landing.comingSoon")}
         </div>
       )}
 
-      {/* Icon container: unified tint formula */}
       <div
         className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${PROFILE_ICON_TILES[profile.id] ?? "bg-gray-500/10 border border-gray-500/20 text-gray-600"}`}
       >
         {icon}
       </div>
 
-      {/* Title */}
       <h2 className="text-xl font-semibold text-gray-900 mb-2 tracking-wide">{profile.name}</h2>
 
-      {/* Subline */}
-      <p className="text-[15px] font-medium text-gray-800 mb-3 leading-snug">{content.subline}</p>
+      <p className="text-[15px] font-medium text-gray-800 mb-3 leading-snug">{t(keys.subline)}</p>
 
-      {/* Bullets */}
       <ul className="space-y-1.5 mb-3">
-        {content.bullets.map((b, i) => (
+        {keys.bullets.map((bKey, i) => (
           <li key={i} className="text-[13px] text-gray-600 leading-relaxed flex gap-2">
             <span className="text-gray-400 mt-0.5">•</span>
-            <span>{b}</span>
+            <span>{t(bKey)}</span>
           </li>
         ))}
       </ul>
 
-      {/* Press settings line - small, muted */}
-      <p className="text-[12px] text-gray-500 opacity-80 mb-5 flex-1">{content.pressSettings}</p>
+      <p className="text-[12px] text-gray-500 opacity-80 mb-5 flex-1">{t(keys.press)}</p>
 
-      {/* CTA Button - consistent 44-48px height */}
       <div
         className={`w-full h-12 rounded-xl flex items-center justify-center text-base font-semibold opacity-90 group-hover:opacity-100 transition-opacity shadow-sm ${PROFILE_CTA_STYLES[profile.id] ? '' : `bg-gradient-to-r ${gradient} text-white`}`}
         style={PROFILE_CTA_STYLES[profile.id] || undefined}
       >
-        {content.ctaLabel}
+        {t("landing.openBuilder")}
       </div>
     </div>
   );
@@ -179,10 +143,10 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
             className="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-gray-700 mb-4">This product is not yet available type password to proceed</p>
+            <p className="text-gray-700 mb-4">{t("landing.passwordPrompt")}</p>
             <input
               type="password"
-              placeholder="Enter password"
+              placeholder={t("landing.enterPassword")}
               value={passwordInput}
               onChange={(e) => setPasswordInput(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-center font-mono text-lg mb-4 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
@@ -192,14 +156,14 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
                 onClick={() => setShowPasswordModal(false)}
                 className="flex-1 py-2 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
               >
-                Cancel
+                {t("landing.cancel")}
               </button>
               <button
                 onClick={handleProceed}
                 disabled={passwordInput.trim() === ""}
                 className="flex-1 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Proceed
+                {t("landing.proceed")}
               </button>
             </div>
           </div>
@@ -210,6 +174,8 @@ function ProfileCard({ profile }: { profile: ProfileConfig }) {
 }
 
 export default function Landing() {
+  const { t } = useLanguage();
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="border-b border-gray-200 px-6 py-4">
@@ -226,13 +192,13 @@ export default function Landing() {
             filter: "drop-shadow(0 0 8px rgba(6,182,212,0.5))",
           }}
         >
-          GANGSHEET BUILDER PRO
+          {t("landing.title")}
         </h1>
       </header>
 
       <main className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-6xl">
-          <p className="text-center text-gray-700 mb-10 text-base font-semibold">Click on your desired product and start loading up your designs!</p>
+          <p className="text-center text-gray-700 mb-10 text-base font-semibold">{t("landing.subtitle")}</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {ALL_PROFILES.map((profile) => (
               <ProfileCard key={profile.id} profile={profile} />
@@ -241,13 +207,14 @@ export default function Landing() {
         </div>
       </main>
 
-      <footer className="border-t border-gray-200 px-6 py-3 text-center">
+      <footer className="border-t border-gray-200 px-6 py-3 flex items-center justify-center gap-4">
         <span className="text-[11px] text-gray-600">
-          Have tips and app improvement suggestions? Send it over!{" "}
+          {t("landing.footer")}{" "}
           <a href="mailto:Sales@dtfmasters.com" className="text-cyan-600 hover:text-cyan-700 font-semibold">
             Sales@dtfmasters.com
           </a>
         </span>
+        <LanguageToggle />
       </footer>
     </div>
   );

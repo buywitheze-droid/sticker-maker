@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
 import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, Info } from "lucide-react";
+import { useLanguage } from "@/lib/i18n";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -62,9 +63,9 @@ export default function ControlsSection({
   fluorPanelContainer,
   copySpotSelectionsRef,
 }: ControlsSectionProps) {
+  const { t } = useLanguage();
   const canDownload = !!imageInfo || designCount > 0;
 
-  // --- Fluorescent spot color state ---
   const [showSpotColors, setShowSpotColors] = useState(false);
   const [showFluorInfo, setShowFluorInfo] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
@@ -77,7 +78,6 @@ export default function ControlsSection({
   const spotSelectionsRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const prevDesignIdRef = useRef<string | null | undefined>(null);
 
-  // Color extraction
   useEffect(() => {
     if (!enableFluorescent) return;
 
@@ -138,7 +138,6 @@ export default function ControlsSection({
     return () => { cancelled = true; };
   }, [imageInfo, selectedDesignId, enableFluorescent]);
 
-  // Copy spot selections for design duplication
   useEffect(() => {
     if (!enableFluorescent || !copySpotSelectionsRef) return;
     copySpotSelectionsRef.current = (fromId: string, toIds: string[]) => {
@@ -154,7 +153,6 @@ export default function ControlsSection({
     return () => { if (copySpotSelectionsRef) copySpotSelectionsRef.current = null; };
   }, [copySpotSelectionsRef, selectedDesignId, extractedColors, enableFluorescent]);
 
-  // Notify parent of spot preview changes
   useEffect(() => {
     if (!enableFluorescent) return;
     onSpotPreviewChange?.({ enabled: spotPreviewEnabled, colors: extractedColors });
@@ -229,8 +227,8 @@ export default function ControlsSection({
   }, [selectedDesignId, extractedColors, buildSpotColorsForDesign]);
 
   const isPdf = downloadFormat === 'pdf';
-  const dlLabel = 'Download Gangsheet';
-  const dlTitle = !canDownload ? 'Upload an image first' : isProcessing ? 'Processing...' : dlLabel;
+  const dlLabel = t("controls.downloadGangsheet");
+  const dlTitle = !canDownload ? t("controls.uploadFirst") : isProcessing ? t("editor.processing") : dlLabel;
 
   const handleDownloadClick = useCallback(() => {
     if (isPdf && enableFluorescent) {
@@ -241,15 +239,23 @@ export default function ControlsSection({
     }
   }, [isPdf, enableFluorescent, getAllDesignSpotColors, onDownload]);
 
+  const assignedCount = extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length;
+
+  const INK_NAMES: Record<string, string> = {
+    Yellow: t("controls.fluorYellow"),
+    Magenta: t("controls.fluorMagenta"),
+    Orange: t("controls.fluorOrange"),
+    Green: t("controls.fluorGreen"),
+  };
+
   return (
     <div className="space-y-4">
-      {/* Gangsheet Size */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5">
           <div className="w-6 h-6 rounded-md bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
             <Layers className="w-3.5 h-3.5 text-cyan-600" />
           </div>
-          <span className="text-xs font-medium text-gray-900 flex-shrink-0">Gangsheet Size</span>
+          <span className="text-xs font-medium text-gray-900 flex-shrink-0">{t("controls.gangsheetSize")}</span>
           <div className="flex items-center gap-1.5 ml-auto">
             <span className="text-xs font-semibold text-gray-700">{artboardWidth}"</span>
             <span className="text-gray-600 text-xs">×</span>
@@ -267,7 +273,6 @@ export default function ControlsSection({
         </div>
       </div>
 
-      {/* Fluorescent Colors Panel (only for fluorescent profile) */}
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <button
@@ -276,10 +281,10 @@ export default function ControlsSection({
           >
             <div className="flex items-center gap-2">
               <Palette className="w-3.5 h-3.5 text-purple-400" />
-              <span className="text-xs font-medium text-gray-900">Fluorescent Colors</span>
-              {extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length > 0 && (
+              <span className="text-xs font-medium text-gray-900">{t("controls.fluorColors")}</span>
+              {assignedCount > 0 && (
                 <span className="text-[9px] bg-purple-500/20 text-purple-500 px-1.5 py-0.5 rounded-full">
-                  {extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length} assigned
+                  {t("controls.assigned", { count: assignedCount })}
                 </span>
               )}
             </div>
@@ -291,7 +296,7 @@ export default function ControlsSection({
                     ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
                     : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
                 }`}
-                title={spotPreviewEnabled ? 'Hide spot overlay' : 'Show spot overlay'}
+                title={spotPreviewEnabled ? t("controls.hideOverlay") : t("controls.showOverlay")}
               >
                 {spotPreviewEnabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
               </button>
@@ -302,7 +307,7 @@ export default function ControlsSection({
           {showSpotColors && (
             <div className="px-3 pb-2.5 space-y-2">
               {extractedColors.length === 0 ? (
-                <div className="text-xs text-gray-600 italic py-1">No colors detected in image</div>
+                <div className="text-xs text-gray-600 italic py-1">{t("controls.noColors")}</div>
               ) : (
                 <div className="flex flex-col gap-0.5 max-h-[240px] overflow-y-auto">
                   {sortedColorIndices
@@ -361,7 +366,6 @@ export default function ControlsSection({
         fluorPanelContainer
       )}
 
-      {/* Fluorescent Info Panel */}
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mt-2">
           <button
@@ -370,7 +374,7 @@ export default function ControlsSection({
           >
             <div className="flex items-center gap-2">
               <Info className="w-3.5 h-3.5 text-cyan-600" />
-              <span className="text-xs font-medium text-gray-700">How Fluorescent Colors Work</span>
+              <span className="text-xs font-medium text-gray-700">{t("controls.howFluorWorks")}</span>
             </div>
             <ChevronDown className={`w-3.5 h-3.5 text-gray-600 transition-transform ${showFluorInfo ? 'rotate-180' : ''}`} />
           </button>
@@ -378,7 +382,7 @@ export default function ControlsSection({
           {showFluorInfo && (
             <div className="px-3 pb-3">
               <div className="mb-3">
-                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Available Inks</p>
+                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">{t("controls.availableInks")}</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {[
                     { name: 'Yellow', color: '#DFFF00' },
@@ -388,32 +392,32 @@ export default function ControlsSection({
                   ].map(ink => (
                     <div key={ink.name} className="flex items-center gap-1.5 bg-gray-200/60 rounded px-2 py-1">
                       <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: ink.color }} />
-                      <span className="text-[10px] font-medium text-gray-700">Fluorescent {ink.name}</span>
+                      <span className="text-[10px] font-medium text-gray-700">{INK_NAMES[ink.name]}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="mb-3">
-                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">How It Works</p>
+                <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">{t("controls.howItWorks")}</p>
                 <div className="space-y-1.5 text-[10px] text-gray-600 leading-relaxed">
                   <div className="flex gap-2">
                     <span className="text-cyan-600 font-bold flex-shrink-0">1.</span>
-                    <span>Select a design to see all its detected colors above.</span>
+                    <span>{t("controls.fluorStep1")}</span>
                   </div>
                   <div className="flex gap-2">
                     <span className="text-cyan-600 font-bold flex-shrink-0">2.</span>
-                    <span>Choose which fluorescent ink to assign to each color using the Y, M, G, Or buttons.</span>
+                    <span>{t("controls.fluorStep2")}</span>
                   </div>
                   <div className="flex gap-2">
                     <span className="text-cyan-600 font-bold flex-shrink-0">3.</span>
-                    <span>The chosen fluorescent ink replaces that color in your printed transfer.</span>
+                    <span>{t("controls.fluorStep3")}</span>
                   </div>
                 </div>
               </div>
 
               <p className="text-[10px] text-gray-600 leading-relaxed mb-2">
-                These are regular DTF transfers (hot peel) - the fluorescent colors glow under black light.
+                {t("controls.fluorNote")}
               </p>
             </div>
           )}
@@ -421,12 +425,11 @@ export default function ControlsSection({
         fluorPanelContainer
       )}
 
-      {/* Download bar - portaled to bottom of app */}
       {downloadContainer && createPortal(
         <div className="flex items-center gap-3 bg-white border-t border-gray-200 px-4 py-2">
           <div className="flex items-center gap-2 text-xs text-gray-600 flex-shrink-0">
             <FileCheck className="w-3.5 h-3.5 text-gray-600" />
-            <span className="tabular-nums">{designCount} design{designCount !== 1 ? 's' : ''}</span>
+            <span className="tabular-nums">{designCount !== 1 ? t("controls.designsPlural", { count: designCount }) : t("controls.designs", { count: designCount })}</span>
             <span className="text-gray-600">·</span>
             <span className="tabular-nums">{artboardWidth}" × {artboardHeight}"</span>
           </div>
@@ -439,7 +442,7 @@ export default function ControlsSection({
             {isProcessing ? (
               <>
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                Processing...
+                {t("editor.processing")}
               </>
             ) : (
               <>

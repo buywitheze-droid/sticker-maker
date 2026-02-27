@@ -6,6 +6,7 @@ import { cropImageToContent, cropImageToContentAsync } from "@/lib/image-crop";
 import { parsePDF, type ParsedPDFData } from "@/lib/pdf-parser";
 import { useToast } from "@/hooks/use-toast";
 import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
+import { useLanguage } from "@/lib/i18n";
 import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle } from "lucide-react";
 
 export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
@@ -172,6 +173,7 @@ function clampDesignToArtboard(
 
 export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFILE }: { onDesignUploaded?: () => void; profile?: ProfileConfig } = {}) {
   const { toast } = useToast();
+  const { t } = useLanguage();
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -787,7 +789,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const toCopy = designs.filter(d => selectedDesignIds.has(d.id));
     if (toCopy.length === 0) return;
     clipboardRef.current = toCopy.map(d => ({ ...d }));
-    toast({ title: `Copied ${toCopy.length} design${toCopy.length > 1 ? 's' : ''}` });
+    toast({ title: toCopy.length > 1 ? t("toast.copiedPlural", { count: toCopy.length }) : t("toast.copied", { count: toCopy.length }) });
   }, [designs, selectedDesignIds, toast]);
 
   const handlePaste = useCallback(() => {
@@ -1080,11 +1082,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean) => {
       if (hasOverflow) {
-        toast({ title: "No space to arrange", description: "New duplicate placed next to selected. Expand gangsheet or move designs to fit.", variant: "destructive" });
+        toast({ title: t("toast.noSpace"), description: t("toast.noSpaceDesc"), variant: "destructive" });
         return;
       }
       if (anyRotated) {
-        toast({ title: "Auto-arranged", description: "Designs rotated for optimal fit." });
+        toast({ title: t("toast.autoArranged"), description: t("toast.autoArrangedDesc") });
       }
       setDesigns(prev => prev.map(d => {
         const p = bestResult.find(r => r.id === d.id);
@@ -1099,7 +1101,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
     const worker = getArrangeWorker();
     if (fixedRects && fixedRects.length > 0 && !worker) {
-      toast({ title: "Arranging selection unavailable", description: "Please refresh the page and try again.", variant: "destructive" });
+      toast({ title: t("toast.arrangeUnavailable"), description: t("toast.arrangeUnavailableDesc"), variant: "destructive" });
       return;
     }
     if (worker) {
@@ -1559,8 +1561,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         }
         setArtboardHeight(bestHeight);
         toast({
-          title: "Gangsheet expanded",
-          description: `Sheet size auto-expanded to ${currentAbW}" × ${bestHeight}" to fit your design.`,
+          title: t("toast.gangsheetExpanded"),
+          description: t("toast.gangsheetExpandedDesc", { width: currentAbW, height: bestHeight }),
         });
       } else if (!bestHeight) {
         const maxH = GANGSHEET_HEIGHTS[GANGSHEET_HEIGHTS.length - 1];
@@ -1574,8 +1576,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           }
           setArtboardHeight(maxH);
           toast({
-            title: "Gangsheet expanded to maximum",
-            description: `Sheet expanded to ${currentAbW}" × ${maxH}". Design will be scaled to fit.`,
+            title: t("toast.gangsheetMax"),
+            description: t("toast.gangsheetMaxDesc", { width: currentAbW, height: maxH }),
           });
         }
       }
@@ -1591,8 +1593,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const fitW = (widthInches * initialS).toFixed(1);
       const fitH = (heightInches * initialS).toFixed(1);
       toast({
-        title: "Image resized to fit",
-        description: `Your image (${origW}" × ${origH}") was too large for the gangsheet and has been scaled down to ${fitW}" × ${fitH}".`,
+        title: t("toast.imageResized"),
+        description: t("toast.imageResizedDesc", { origW, origH, fitW, fitH }),
         variant: "destructive",
       });
     }
@@ -1657,8 +1659,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const effectiveDPI = Math.min(finalImage.width / widthInches, finalImage.height / heightInches);
       if (effectiveDPI < 278) {
         toast({
-          title: "Low Resolution Warning",
-          description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
+          title: t("toast.lowRes"),
+          description: t("toast.lowResDesc", { dpi: Math.round(effectiveDPI) }),
           variant: "destructive",
         });
       }
@@ -1677,12 +1679,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const handleImageUpload = useCallback(async (file: File, image: HTMLImageElement) => {
     try {
       if (image.width * image.height > 1000000000) {
-        toast({ title: "Image too large", description: "Please upload an image smaller than 1000 megapixels.", variant: "destructive" });
+        toast({ title: t("toast.imageTooLarge"), description: t("toast.imageTooLargeDesc"), variant: "destructive" });
         return;
       }
       
       if (image.width <= 0 || image.height <= 0) {
-        toast({ title: "Invalid image", description: "The image has invalid dimensions.", variant: "destructive" });
+        toast({ title: t("toast.invalidImage"), description: t("toast.invalidImageDesc"), variant: "destructive" });
         return;
       }
       
@@ -1773,8 +1775,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const effectiveDPI = Math.min(physicalWidth / widthInches, physicalHeight / heightInches);
       if (effectiveDPI < 278) {
         toast({
-          title: "Low Resolution Warning",
-          description: `This image is approximately ${Math.round(effectiveDPI)} DPI at the current size. For best print quality, we recommend at least 300 DPI. The image might come out low resolution.`,
+          title: t("toast.lowRes"),
+          description: t("toast.lowResDesc", { dpi: Math.round(effectiveDPI) }),
           variant: "destructive",
         });
       }
@@ -1786,7 +1788,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         await handleFallbackImage(file, image);
       } catch (fallbackErr) {
         console.error('Fallback image processing also failed:', fallbackErr);
-        toast({ title: "Upload failed", description: "Could not process this image. Try a different file or format.", variant: "destructive" });
+        toast({ title: t("toast.uploadFailed"), description: t("toast.uploadFailedDesc"), variant: "destructive" });
       }
     }
   }, [applyImageDirectly, toast, handleFallbackImage]);
@@ -1832,7 +1834,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         handlePDFUpload(file, pdfData);
       } catch (err) {
         console.error('PDF parse error:', err);
-        toast({ title: "Failed to parse PDF", description: "The file could not be read. Please try a different PDF.", variant: "destructive" });
+        toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedDesc"), variant: "destructive" });
       } finally {
         setIsUploading(false);
       }
@@ -1846,7 +1848,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const isPdf = file.type === 'application/pdf' || ext.endsWith('.pdf');
     const isImage = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || ['.png', '.jpg', '.jpeg', '.webp'].some(x => ext.endsWith(x));
     if (!isImage && !isPdf) {
-      toast({ title: "Unsupported format", description: "PNG, JPEG, WebP, or PDF only.", variant: "destructive" });
+      toast({ title: t("toast.unsupportedFormat"), description: t("toast.formatOnly"), variant: "destructive" });
       return Promise.resolve();
     }
     if (isPdf) {
@@ -1857,7 +1859,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           handlePDFUpload(file, pdfData);
         } catch (err) {
           console.error('PDF parse error:', err);
-          toast({ title: "Failed to parse PDF", description: "Could not read this file.", variant: "destructive" });
+          toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedShort"), variant: "destructive" });
         } finally {
           setIsUploading(false);
         }
@@ -1889,7 +1891,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        toast({ title: "Failed to load image", description: `Could not load ${file.name}.`, variant: "destructive" });
+        toast({ title: t("toast.failedLoad"), description: t("toast.failedLoadFile", { name: file.name }), variant: "destructive" });
         resolve();
       };
       img.src = url;
@@ -1979,16 +1981,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const results = await Promise.all(targetDesigns.map(d => thresholdAlphaForDesign(d.imageInfo)));
       const updates = new Map<string, ImageInfo>();
       targetDesigns.forEach((d, i) => { if (results[i]) updates.set(d.id, results[i]!); });
-      if (updates.size === 0) { toast({ title: "Alpha threshold failed", description: "Could not process the image(s).", variant: "destructive" }); return; }
+      if (updates.size === 0) { toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedDesc"), variant: "destructive" }); return; }
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
         return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
-      toast({ title: "Alpha threshold applied", description: `Semi-transparent pixels removed from ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
+      toast({ title: t("toast.alphaApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });
     } catch (err) {
       console.error('Alpha threshold failed:', err);
-      toast({ title: "Alpha threshold failed", description: "Could not process the image(s).", variant: "destructive" });
+      toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedDesc"), variant: "destructive" });
     }
   }, [designs, selectedDesignId, selectedDesignIds, saveSnapshot, toast, thresholdAlphaForDesign]);
 
@@ -1999,16 +2001,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const results = await Promise.all(designs.map(d => thresholdAlphaForDesign(d.imageInfo)));
       const updates = new Map<string, ImageInfo>();
       designs.forEach((d, i) => { if (results[i]) updates.set(d.id, results[i]!); });
-      if (updates.size === 0) { toast({ title: "Alpha threshold failed", description: "Could not process the images.", variant: "destructive" }); return; }
+      if (updates.size === 0) { toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedAllDesc"), variant: "destructive" }); return; }
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
         return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
-      toast({ title: "Alpha threshold applied to all", description: `Semi-transparent pixels removed from ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
+      toast({ title: t("toast.alphaAllApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });
     } catch (err) {
       console.error('Alpha threshold all failed:', err);
-      toast({ title: "Alpha threshold failed", description: "Could not process the images.", variant: "destructive" });
+      toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedAllDesc"), variant: "destructive" });
     }
   }, [designs, selectedDesignId, saveSnapshot, toast, thresholdAlphaForDesign]);
 
@@ -2017,7 +2019,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const handleDownload = useCallback(async (downloadType: string = 'standard', format: string = 'png', spotColorsByDesign?: Record<string, any[]>) => {
     if (designs.length === 0) {
-      toast({ title: "No designs on artboard", description: "Upload an image first.", variant: "destructive" });
+      toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
       return;
     }
 
@@ -2124,8 +2126,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           exportDpi = Math.min(300, dpiByArea, dpiByDim);
           if (exportDpi < 300) {
             toast({
-              title: "Large sheet detected",
-              description: `Exporting at ${Math.floor(exportDpi)} DPI (upgrade browser for full 300 DPI).`,
+              title: t("toast.largeSheet"),
+              description: t("toast.largeSheetDesc", { dpi: Math.floor(exportDpi) }),
             });
           }
         }
@@ -2229,7 +2231,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       }
     } catch (error) {
       console.error("Download failed:", error);
-      toast({ title: "Download failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+      toast({ title: t("toast.downloadFailed"), description: error instanceof Error ? error.message : t("toast.downloadFailedDesc"), variant: "destructive" });
     } finally {
       setIsProcessing(false);
     }
@@ -2245,8 +2247,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <Loader2 className="w-8 h-8 text-white animate-spin" />
               </div>
               <div className="text-center">
-                <p className="text-gray-900 text-lg font-semibold mb-1">Processing your design</p>
-                <p className="text-gray-600 text-sm">Optimizing for the best print quality...</p>
+                <p className="text-gray-900 text-lg font-semibold mb-1">{t("editor.processingDesign")}</p>
+                <p className="text-gray-600 text-sm">{t("editor.optimizing")}</p>
               </div>
               <div className="w-full max-w-xs">
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -2308,17 +2310,17 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   className="flex items-center gap-2 flex-1 min-w-0 text-sm text-gray-700 hover:text-gray-900 transition-colors"
                 >
                   <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                  <span className="font-medium text-xs">Layers</span>
+                  <span className="font-medium text-xs">{t("editor.layers")}</span>
                   <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded-full">{designs.length}</span>
                   {showDesignInfo ? <ChevronUp className="w-3 h-3 text-gray-600" /> : <ChevronDown className="w-3 h-3 text-gray-600" />}
                 </button>
                 <button
                   onClick={() => sidebarFileRef.current?.click()}
                   className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 text-[11px] font-medium transition-colors"
-                  title="Add another image"
+                  title={t("editor.addDesignTitle")}
                 >
                   <Plus className="w-3 h-3" />
-                  <span>Add Designs</span>
+                  <span>{t("editor.addDesigns")}</span>
                 </button>
                 <input
                   ref={sidebarFileRef}
@@ -2393,7 +2395,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       <div className="min-w-0 flex-1">
                         <p className="text-[11px] text-gray-900 truncate">
                           {d.name}
-                          {isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">(resized)</span>}
+                          {isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">{t("editor.resized")}</span>}
                         </p>
                         <p className="text-[10px] text-gray-600">
                           {(d.widthInches * d.transform.s).toFixed(1)}" × {(d.heightInches * d.transform.s).toFixed(1)}"
@@ -2404,7 +2406,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           <button
                             onClick={(e) => { e.stopPropagation(); handleRemoveOneCopy(baseName); }}
                             className="p-0 rounded hover:bg-gray-200 text-gray-600 hover:text-gray-700 transition-colors"
-                            title="Remove one copy"
+                            title={t("editor.removeOne")}
                           >
                             <ChevronDown className="w-3 h-3" />
                           </button>
@@ -2412,7 +2414,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDuplicateById(d.id); }}
                             className="p-0 rounded hover:bg-gray-200 text-gray-600 hover:text-gray-700 transition-colors"
-                            title="Add one more copy"
+                            title={t("editor.addOneMore")}
                           >
                             <ChevronUp className="w-3 h-3" />
                           </button>
@@ -2445,7 +2447,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           {isUploading && (
             <div className="flex items-center gap-1.5 text-cyan-400">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span className="text-[11px]">Processing...</span>
+              <span className="text-[11px]">{t("editor.processing")}</span>
             </div>
           )}
           {activeImageInfo && (
@@ -2462,7 +2464,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <SizeInput
                     value={activeResizeSettings.widthInches * activeDesignTransform.s}
                     onCommit={(v) => handleEffectiveSizeChange('width', v)}
-                    title="Width (inches)"
+                    title={t("editor.widthTitle")}
                     max={artboardWidth}
                   />
                   <span className="text-[10px] text-gray-600">"</span>
@@ -2477,7 +2479,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <SizeInput
                     value={activeResizeSettings.heightInches * activeDesignTransform.s}
                     onCommit={(v) => handleEffectiveSizeChange('height', v)}
-                    title="Height (inches)"
+                    title={t("editor.heightTitle")}
                     max={artboardHeight}
                   />
                   <span className="text-[10px] text-gray-600">"</span>
@@ -2490,7 +2492,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         ? 'text-amber-600 bg-amber-100 border border-amber-400'
                         : 'text-emerald-600 bg-emerald-100 border border-emerald-700'
                   }`}
-                  title={`Effective resolution: ${effectiveDPI} DPI`}
+                  title={t("editor.effectiveRes", { dpi: effectiveDPI })}
                 >
                   <span>{effectiveDPI} DPI</span>
                   <span className="text-[8px] font-medium opacity-90">
@@ -2509,13 +2511,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
               disabled={designs.length < 2 && selectedDesignIds.size < 2}
               className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 hover:border-cyan-500/50 text-gray-600 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap disabled:pointer-events-none"
-              title={selectedDesignIds.size >= 2 ? "Arrange selected designs only" : "Auto-arrange all designs on gangsheet"}
+              title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
             >
               <LayoutGrid className="w-3 h-3" />
-              Auto-Arrange
+              {t("editor.autoArrange")}
             </button>
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-600">Margin:</span>
+              <span className="text-[10px] text-gray-600">{t("editor.margin")}</span>
               <select
                 value={designGap === undefined ? 'auto' : String(designGap)}
                 onChange={(e) => {
@@ -2527,9 +2529,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   }
                 }}
                 className="h-5 px-1 bg-gray-100 border border-gray-300 rounded text-[10px] text-gray-700 outline-none cursor-pointer hover:border-gray-400 focus:border-cyan-500 transition-colors"
-                title="Gap between designs (inches)"
+                title={t("editor.marginGap")}
               >
-                <option value="auto">Auto</option>
+                <option value="auto">{t("editor.marginAuto")}</option>
                 <option value="0.0625">1/16″</option>
                 <option value="0.125">1/8″</option>
                 <option value="0.25">1/4″</option>
@@ -2544,7 +2546,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={handleUndo}
               disabled={!canUndo()}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Undo (Ctrl+Z)"
+              title={t("editor.undo")}
             >
               <Undo2 className="w-3.5 h-3.5" />
             </button>
@@ -2552,7 +2554,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={handleRedo}
               disabled={!canRedo()}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Redo (Ctrl+Y)"
+              title={t("editor.redo")}
             >
               <Redo2 className="w-3.5 h-3.5" />
             </button>
@@ -2561,7 +2563,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={handleRotate90}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Rotate 90° (Shift+R)"
+              title={t("editor.rotate")}
             >
               <RotateCw className="w-3.5 h-3.5" />
             </button>
@@ -2569,7 +2571,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={() => handleAlignCorner('tl')}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Align Top Left"
+              title={t("editor.alignTL")}
             >
               <ArrowUpLeft className="w-3.5 h-3.5" />
             </button>
@@ -2577,7 +2579,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={() => handleAlignCorner('tr')}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Align Top Right"
+              title={t("editor.alignTR")}
             >
               <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
@@ -2585,7 +2587,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={() => handleAlignCorner('bl')}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Align Bottom Left"
+              title={t("editor.alignBL")}
             >
               <ArrowDownLeft className="w-3.5 h-3.5" />
             </button>
@@ -2593,7 +2595,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={() => handleAlignCorner('br')}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Align Bottom Right"
+              title={t("editor.alignBR")}
             >
               <ArrowDownRight className="w-3.5 h-3.5" />
             </button>
@@ -2602,7 +2604,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               onClick={handleDuplicateDesign}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Duplicate (Ctrl+D)"
+              title={t("editor.duplicate")}
             >
               <Copy className="w-3.5 h-3.5" />
             </button>
@@ -2616,7 +2618,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               }}
               disabled={!selectedDesignId}
               className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Delete (Del)"
+              title={t("editor.delete")}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -2629,10 +2631,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   ? 'bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
                   : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
               }`}
-              title="Remove Semi Transparencies from selected design(s)"
+              title={t("editor.cleanAlphaTitle")}
             >
               <Droplets className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-medium">Clean Alpha</span>
+              <span className="text-[10px] font-medium">{t("editor.cleanAlpha")}</span>
             </button>
             <button
               onClick={handleThresholdAlphaAll}
@@ -2642,10 +2644,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   ? 'bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
                   : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
               }`}
-              title="Remove Semi Transparencies from ALL designs on the gangsheet"
+              title={t("editor.cleanAlphaAllTitle")}
             >
               <Droplets className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-medium">Clean Alpha All</span>
+              <span className="text-[10px] font-medium">{t("editor.cleanAlphaAll")}</span>
             </button>
           </div>
         </div>
@@ -2689,17 +2691,17 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           onClick={(e) => e.stopPropagation()}
         >
           {([
-            { icon: Copy, label: 'Duplicate', shortcut: 'Ctrl+D', action: () => { handleDuplicateDesign(); setContextMenu(null); }, disabled: false },
-            { icon: Trash2, label: 'Delete', shortcut: 'Del', action: () => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else handleDeleteDesign(contextMenu.designId); setContextMenu(null); }, disabled: false },
+            { icon: Copy, label: t("editor.duplicate").replace(/ \(.*/, ''), shortcut: 'Ctrl+D', action: () => { handleDuplicateDesign(); setContextMenu(null); }, disabled: false },
+            { icon: Trash2, label: t("editor.delete").replace(/ \(.*/, ''), shortcut: 'Del', action: () => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else handleDeleteDesign(contextMenu.designId); setContextMenu(null); }, disabled: false },
             null,
-            { icon: RotateCw, label: 'Rotate 90°', shortcut: 'R', action: () => { handleRotate90(); setContextMenu(null); }, disabled: false },
-            { icon: FlipHorizontal2, label: 'Flip Horizontal', shortcut: '', action: () => { handleFlipX(); setContextMenu(null); }, disabled: false },
-            { icon: FlipVertical2, label: 'Flip Vertical', shortcut: '', action: () => { handleFlipY(); setContextMenu(null); }, disabled: false },
+            { icon: RotateCw, label: t("editor.rotate").replace(/ \(.*/, ''), shortcut: 'R', action: () => { handleRotate90(); setContextMenu(null); }, disabled: false },
+            { icon: FlipHorizontal2, label: t("editor.flipH"), shortcut: '', action: () => { handleFlipX(); setContextMenu(null); }, disabled: false },
+            { icon: FlipVertical2, label: t("editor.flipV"), shortcut: '', action: () => { handleFlipY(); setContextMenu(null); }, disabled: false },
             null,
-            { icon: Droplets, label: 'Clean Alpha', shortcut: '', action: () => { handleThresholdAlpha(); setContextMenu(null); }, disabled: false },
+            { icon: Droplets, label: t("editor.cleanAlpha"), shortcut: '', action: () => { handleThresholdAlpha(); setContextMenu(null); }, disabled: false },
             null,
-            { icon: LayoutGrid, label: 'Select All', shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
-            { icon: XCircle, label: 'Deselect', shortcut: 'Esc', action: () => { handleSelectDesign(null); setContextMenu(null); }, disabled: false },
+            { icon: LayoutGrid, label: t("editor.selectAll"), shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
+            { icon: XCircle, label: t("editor.deselect"), shortcut: 'Esc', action: () => { handleSelectDesign(null); setContextMenu(null); }, disabled: false },
           ] as Array<{ icon: React.ComponentType<any>; label: string; shortcut: string; action: () => void; disabled: boolean } | null>).map((item, i) =>
             item === null ? (
               <div key={`sep-${i}`} className="h-px bg-gray-100 my-1" />
@@ -2725,7 +2727,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-sm mx-4">
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-5 w-5 border-2 border-cyan-500 border-t-transparent"></div>
-              <span className="text-white">Processing...</span>
+              <span className="text-white">{t("editor.processing")}</span>
             </div>
           </div>
         </div>
