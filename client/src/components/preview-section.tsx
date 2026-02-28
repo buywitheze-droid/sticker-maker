@@ -2751,12 +2751,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
-                <span className="text-[10px] text-gray-600 font-medium tracking-wide">{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
+                <span className={`text-gray-600 font-medium tracking-wide ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`}>{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
               </div>
             )}
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
-                <span className="text-[10px] text-gray-600 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{formatLength(artboardHeight, lang)}{lang === "en" ? '"' : ""}</span>
+                <span className={`text-gray-600 font-medium tracking-wide ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`} style={{ writingMode: 'vertical-rl' }}>{formatLength(artboardHeight, lang)}{lang === "en" ? '"' : ""}</span>
               </div>
             )}
           </div>
@@ -2987,7 +2987,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto overflow-y-hidden flex-1 [scrollbar-width:thin]">
                 {selectedDesignId && designTransform && (
                   <>
-                    <span className="text-[11px] text-gray-600 font-medium tabular-nums">
+                    <span className={`font-medium tabular-nums text-gray-600 ${lang !== 'en' ? 'text-[10px] max-w-[110px] truncate sm:max-w-none' : 'text-[11px]'}`}>
                       {formatDimensions(
                         resizeSettings.widthInches * (designTransform.s || 1),
                         resizeSettings.heightInches * (designTransform.s || 1),

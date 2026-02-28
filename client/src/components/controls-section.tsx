@@ -262,17 +262,17 @@ export default function ControlsSection({
           </div>
           <span className="text-xs font-medium text-gray-900 flex-shrink-0">{t("controls.gangsheetSize")}</span>
           <div className="flex items-center gap-1.5 ml-auto">
-            <span className="text-xs font-semibold text-gray-700">{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
-            <span className="text-gray-600 text-xs">×</span>
+            <span className={`font-semibold text-gray-700 ${lang === 'en' ? 'text-xs' : 'text-[10px]'}`}>{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
+            <span className={`text-gray-600 ${lang === 'en' ? 'text-xs' : 'text-[10px]'}`}>×</span>
             <Select value={String(artboardHeight)} onValueChange={(v) => onArtboardHeightChange?.(parseInt(v))}>
-              <SelectTrigger className="w-[68px] h-7 text-xs font-semibold text-gray-900 bg-gray-100 border-gray-200">
+              <SelectTrigger className={`h-7 font-semibold text-gray-900 bg-gray-100 border-gray-200 ${lang === 'en' ? 'w-[68px] text-xs' : 'w-[80px] text-[10px]'}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {gangsheetHeights.map((h) => (
                   <SelectItem key={h} value={String(h)}>
                     <span className="flex items-center justify-between gap-3 w-full">
-                      <span>{formatLength(h, lang)}{lang === "en" ? '"' : ""}</span>
+                      <span className={lang !== 'en' ? 'text-[10px]' : ''}>{formatLength(h, lang)}{lang === "en" ? '"' : ""}</span>
                       {recommendedArtboardHeight === h && (
                         <span className="text-[10px] text-blue-600 font-medium">
                           {t("controls.currentBounds")}
@@ -450,7 +450,7 @@ export default function ControlsSection({
             <FileCheck className="w-3.5 h-3.5 text-gray-600" />
             <span className="tabular-nums">{designCount !== 1 ? t("controls.designsPlural", { count: designCount }) : t("controls.designs", { count: designCount })}</span>
             <span className="text-gray-600">·</span>
-            <span className="tabular-nums">{artboardWidth}" × {artboardHeight}"</span>
+            <span className={`tabular-nums ${lang !== 'en' ? 'text-[10px]' : ''}`}>{formatLength(artboardWidth, lang)}{lang === 'en' ? '"' : ''} × {formatLength(artboardHeight, lang)}{lang === 'en' ? '"' : ''}</span>
           </div>
           <Button
             onClick={handleDownloadClick}

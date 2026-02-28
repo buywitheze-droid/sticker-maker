@@ -21,7 +21,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Crop } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle } from "lucide-react";
 
 export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
@@ -69,7 +69,7 @@ function SizeInput({
       <input
         type="text"
         inputMode="decimal"
-        className="w-14 h-5 bg-gray-100 border border-cyan-500 rounded text-[11px] font-semibold text-gray-900 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className={`h-5 bg-gray-100 border border-cyan-500 rounded font-semibold text-gray-900 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
         value={draft}
         autoFocus
         onChange={(e) => setDraft(e.target.value)}
@@ -92,7 +92,7 @@ function SizeInput({
     <input
       type="text"
       readOnly
-      className="w-14 h-5 bg-gray-100 border border-gray-300 rounded text-[11px] font-semibold text-gray-900 text-center outline-none cursor-pointer hover:border-gray-400 transition-colors"
+      className={`h-5 bg-gray-100 border border-gray-300 rounded font-semibold text-gray-900 text-center outline-none cursor-pointer hover:border-gray-400 transition-colors ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
       value={display}
       onFocus={() => {
         setDraft(display);
@@ -2541,8 +2541,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           {d.name}
                           {isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">{t("editor.resized")}</span>}
                         </p>
-                        <p className="text-[10px] text-gray-600">
-                          {(d.widthInches * d.transform.s).toFixed(1)}" × {(d.heightInches * d.transform.s).toFixed(1)}"
+                        <p className={`text-gray-600 ${useMetric(lang) ? 'text-[9px]' : 'text-[10px]'}`}>
+                          {formatDimensions(d.widthInches * d.transform.s, d.heightInches * d.transform.s, lang)}
                         </p>
                       </div>
                       {groupCount > 1 && (
@@ -2672,7 +2672,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       max={artboardWidth}
                       lang={lang}
                     />
-                    <span className="text-[10px] text-gray-600">{getUnitSuffix(activeResizeSettings.widthInches * activeDesignTransform.s, lang)}</span>
+                    <span className={`text-gray-600 ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`}>{getUnitSuffix(activeResizeSettings.widthInches * activeDesignTransform.s, lang)}</span>
                     <button
                       onClick={() => setProportionalLock(prev => !prev)}
                       className={`p-0.5 rounded transition-colors ${proportionalLock ? 'text-cyan-400 hover:text-cyan-300' : 'text-gray-600 hover:text-gray-700'}`}
@@ -2688,7 +2688,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       max={artboardHeight}
                       lang={lang}
                     />
-                    <span className="text-[10px] text-gray-600">{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>
+                    <span className={`text-gray-600 ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`}>{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>
                   </div>
                   <span
                     className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
@@ -2860,7 +2860,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             { icon: FlipVertical2, label: t("editor.flipV"), shortcut: '', action: () => { handleFlipY(); setContextMenu(null); }, disabled: false },
             null,
             { icon: Droplets, label: t("editor.cleanAlpha"), shortcut: '', action: () => { handleThresholdAlpha(); setContextMenu(null); }, disabled: false },
-            { icon: Crop, label: t("editor.crop"), shortcut: '', action: () => { handleCropDesign(); }, disabled: false },
             null,
             { icon: LayoutGrid, label: t("editor.selectAll"), shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
             { icon: XCircle, label: t("editor.deselect"), shortcut: 'Esc', action: () => { handleSelectDesign(null); setContextMenu(null); }, disabled: false },
