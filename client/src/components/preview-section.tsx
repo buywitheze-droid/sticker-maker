@@ -2,6 +2,8 @@ import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallba
 import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, MousePointer2, Focus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { formatLength, formatDimensions } from "@/lib/format-length";
 import { Button } from "@/components/ui/button";
 import { ImageInfo, ResizeSettings, type ImageTransform, type DesignItem } from "./image-editor";
 import { computeLayerRect } from "@/lib/types";
@@ -51,7 +53,8 @@ interface PreviewSectionProps {
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
   ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData }, ref) => {
     const { toast } = useToast();
-    const { t } = useLanguage();
+    const { t, lang } = useLanguage();
+    const isMobile = useIsMobile();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const resizeLimitToastRef = useRef(0);
@@ -562,22 +565,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
+      const brResizeR = isMobile ? resizeR * 2 : resizeR;
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
-        if (d < resizeR) {
+        const r = h.id === 'br' ? brResizeR : resizeR;
+        if (d < r) {
           return { type: 'resize', id: h.id };
         }
       }
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
-        if (d >= resizeR && d < rotateOuterR) {
+        const r = h.id === 'br' ? brResizeR : resizeR;
+        if (d >= r && d < rotateOuterR) {
           return { type: 'rotate', id: `rot-${h.id}` };
         }
       }
 
       return null;
-    }, [getHandlePositions, getDesignRect]);
+    }, [getHandlePositions, getDesignRect, isMobile]);
 
     // Group bounding box in canvas buffer space for multi-selection
     const getMultiSelectionBBox = useCallback(() => {
@@ -648,21 +654,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
+      const brResizeR = isMobile ? resizeR * 2 : resizeR;
       for (const h of handles) {
-        if (Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2) < resizeR) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        const r = h.id === 'br' ? brResizeR : resizeR;
+        if (d < r) {
           return { type: 'resize', id: h.id };
         }
       }
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
-        if (d >= resizeR && d < rotateOuterR) {
+        const r = h.id === 'br' ? brResizeR : resizeR;
+        if (d >= r && d < rotateOuterR) {
           return { type: 'rotate', id: `rot-${h.id}` };
         }
       }
 
       return null;
-    }, [getMultiHandlePositions]);
+    }, [getMultiHandlePositions, isMobile]);
 
     const canvasToLocal = useCallback((clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -2262,6 +2272,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
       ctx.save();
+      if (design.alphaThresholded) ctx.imageSmoothingEnabled = false;
       ctx.translate(cx, cy);
       ctx.rotate((design.transform.rotation * Math.PI) / 180);
       ctx.scale(design.transform.flipX ? -1 : 1, design.transform.flipY ? -1 : 1);
@@ -2429,21 +2440,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.setLineDash([]);
           ctx.restore();
 
-          // Resize handles at corners
+          // Resize handles at corners (br is 2x on mobile for easier touch)
           const handleR = 4.5 * inv;
+          const brHandleR = isMobile ? handleR * 2 : handleR;
           const groupHandles = [
             { x: groupBBox.x, y: groupBBox.y },
             { x: groupBBox.x + groupBBox.width, y: groupBBox.y },
             { x: groupBBox.x + groupBBox.width, y: groupBBox.y + groupBBox.height },
             { x: groupBBox.x, y: groupBBox.y + groupBBox.height },
           ];
-          for (const gh of groupHandles) {
+          for (let i = 0; i < groupHandles.length; i++) {
+            const gh = groupHandles[i];
+            const r = i === 2 ? brHandleR : handleR;
             ctx.save();
             ctx.fillStyle = '#ffffff';
             ctx.strokeStyle = '#22d3ee';
             ctx.lineWidth = 1.5 * inv;
             ctx.beginPath();
-            ctx.arc(gh.x, gh.y, handleR, 0, Math.PI * 2);
+            ctx.arc(gh.x, gh.y, r, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
             ctx.restore();
@@ -2508,7 +2522,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
       renderRef.current = doRender;
       doRender();
-    }, [imageInfo, resizeSettings, previewDims.height, previewDims.width, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, selectedDesignIds, drawSingleDesign, overlappingDesigns, previewBgColor, zoomDpiTier]);
+    }, [imageInfo, resizeSettings, previewDims.height, previewDims.width, artboardWidth, artboardHeight, designTransform, designs, selectedDesignId, selectedDesignIds, drawSingleDesign, overlappingDesigns, previewBgColor, zoomDpiTier, isMobile]);
 
     const drawImageWithResizePreview = (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number) => {
       if (!imageInfo) return;
@@ -2522,7 +2536,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         resizeSettings.widthInches, resizeSettings.heightInches,
       );
 
+      const selDesign = selectedDesignId ? designs.find(d => d.id === selectedDesignId) : null;
       ctx.save();
+      if (selDesign?.alphaThresholded) ctx.imageSmoothingEnabled = false;
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
       ctx.translate(cx, cy);
@@ -2599,7 +2615,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const handleSize = 5 * inv;
       const handleR = 1.5 * inv;
       const borderW = 1.5 * inv;
-      for (const p of pts) {
+      const brHandleSize = isMobile ? handleSize * 2 : handleSize;
+      const brHandleR = isMobile ? handleR * 2 : handleR;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const isBr = i === 2;
+        const sz = isBr ? brHandleSize : handleSize;
+        const r = isBr ? brHandleR : handleR;
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(rad);
@@ -2607,7 +2629,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.shadowBlur = 3 * inv;
         ctx.shadowOffsetY = 1 * inv;
         ctx.beginPath();
-        ctx.roundRect(-handleSize, -handleSize, handleSize * 2, handleSize * 2, handleR);
+        ctx.roundRect(-sz, -sz, sz * 2, sz * 2, r);
         ctx.fillStyle = '#ffffff';
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -2729,12 +2751,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             </div>
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute bottom-0 left-0 right-3.5 flex justify-center pointer-events-none">
-                <span className="text-[10px] text-gray-600 font-medium tracking-wide">{artboardWidth}"</span>
+                <span className="text-[10px] text-gray-600 font-medium tracking-wide">{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
               </div>
             )}
             {Math.abs(zoom - 1) < 0.03 && (
               <div className="absolute right-0 top-0 bottom-4 flex items-center pointer-events-none">
-                <span className="text-[10px] text-gray-600 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{artboardHeight}"</span>
+                <span className="text-[10px] text-gray-600 font-medium tracking-wide" style={{ writingMode: 'vertical-rl' }}>{formatLength(artboardHeight, lang)}{lang === "en" ? '"' : ""}</span>
               </div>
             )}
           </div>
@@ -2961,12 +2983,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-100 border-t border-gray-200 px-3 py-1.5">
-              <div className="flex items-center gap-1.5">
+        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-100 border-t border-gray-200 px-2 py-1.5 lg:px-3 lg:py-1.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto overflow-y-hidden flex-1 [scrollbar-width:thin]">
                 {selectedDesignId && designTransform && (
                   <>
                     <span className="text-[11px] text-gray-600 font-medium tabular-nums">
-                      {(resizeSettings.widthInches * (designTransform.s || 1)).toFixed(2)}" × {(resizeSettings.heightInches * (designTransform.s || 1)).toFixed(2)}"
+                      {formatDimensions(
+                        resizeSettings.widthInches * (designTransform.s || 1),
+                        resizeSettings.heightInches * (designTransform.s || 1),
+                        lang
+                      )}
                     </span>
                     <div className="w-px h-3.5 bg-gray-300" />
                     {editingRotation ? (
@@ -3002,10 +3028,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     <div className="w-px h-3.5 bg-gray-300" />
                   </>
                 )}
-                <div className="flex items-center gap-0.5">
+                <div className="flex items-center gap-0.5 flex-shrink-0 items-center">
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-6 sm:w-6 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       const newZ = Math.max(zoom / ZOOM_BUTTON_FACTOR, minZoomRef.current);
                       const clamped = clampPanValue(panX, panY, newZ);
@@ -3016,7 +3043,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
                     }}
-                    className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
                     title={t("preview.zoomOut")}
                   >
                     <ZoomOut className="h-3 w-3 text-gray-600" />
@@ -3027,6 +3053,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-6 sm:w-6 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       const newZ = Math.min(zoom * ZOOM_BUTTON_FACTOR, zoomMax);
                       const clamped = clampPanValue(panX, panY, newZ);
@@ -3037,7 +3064,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
                     }}
-                    className="h-6 w-6 p-0 hover:bg-gray-200 rounded"
                     title={t("preview.zoomIn")}
                   >
                     <ZoomIn className="h-3 w-3 text-gray-600" />
@@ -3096,7 +3122,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                 )}
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-shrink-0">
                 {[
                   { color: 'transparent', label: 'Transparent' },
                   { color: '#ffffff', label: 'White' },

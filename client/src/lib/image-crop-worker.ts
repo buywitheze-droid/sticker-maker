@@ -9,6 +9,27 @@ interface CropResult {
   bgRemoved: boolean;
 }
 
+function hasCleanAlpha(data: Uint8ClampedArray, w: number, h: number): boolean {
+  let transparentCount = 0;
+  let transparentClean = 0;
+  let opaqueCount = 0;
+  let opaqueClean = 0;
+  const sampleStep = Math.max(1, Math.floor((w * h) / 10000));
+  for (let i = 0; i < w * h; i += sampleStep) {
+    const alpha = data[i * 4 + 3];
+    if (alpha < 50) {
+      transparentCount++;
+      if (alpha === 0) transparentClean++;
+    } else if (alpha > 200) {
+      opaqueCount++;
+      if (alpha === 255) opaqueClean++;
+    }
+  }
+  const transparentOk = transparentCount === 0 || transparentClean / transparentCount >= 0.95;
+  const opaqueOk = opaqueCount === 0 || opaqueClean / opaqueCount >= 0.95;
+  return transparentCount > 0 && opaqueCount > 0 && transparentOk && opaqueOk;
+}
+
 function detectEdgeBg(data: Uint8ClampedArray, w: number, h: number): { r: number; g: number; b: number } | null {
   const samples: Array<{ r: number; g: number; b: number }> = [];
   const step = Math.max(1, Math.floor(Math.max(w, h) / 200));
@@ -36,6 +57,7 @@ function detectEdgeBg(data: Uint8ClampedArray, w: number, h: number): { r: numbe
 
 function removeBg(data: Uint8ClampedArray, w: number, h: number, bg: { r: number; g: number; b: number }, tol: number = 35): boolean {
   const totalPixels = w * h;
+  const hadCleanAlpha = hasCleanAlpha(data, w, h);
   const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
   const matches = (idx: number) => {
@@ -102,15 +124,20 @@ function processCrop(pixelBuffer: ArrayBuffer, w: number, h: number): CropResult
   const data = new Uint8ClampedArray(pixelBuffer);
 
   let opaqueCount = 0;
+  let transparentCount = 0;
   const sampleStep = Math.max(1, Math.floor(data.length / 4 / 10000));
   for (let i = 3; i < data.length; i += sampleStep * 4) {
-    if (data[i] > 240) opaqueCount++;
+    const alpha = data[i];
+    if (alpha > 240) opaqueCount++;
+    else if (alpha < 50) transparentCount++;
   }
   const totalSampled = Math.ceil(data.length / 4 / sampleStep);
   const opaqueRatio = opaqueCount / totalSampled;
+  const transparentRatio = transparentCount / totalSampled;
 
   let bgRemoved = false;
-  if (opaqueRatio > 0.9 && w * h <= 25_000_000) {
+  const hasSignificantTransparency = transparentRatio > 0.05;
+  if (!hasSignificantTransparency && opaqueRatio > 0.9 && w * h <= 25_000_000) {
     const bg = detectEdgeBg(data, w, h);
     if (bg) {
       const backup = new Uint8ClampedArray(data);

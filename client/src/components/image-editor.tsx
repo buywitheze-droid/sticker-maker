@@ -2,25 +2,66 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
 import ControlsSection, { type SpotPreviewData } from "./controls-section";
-import { cropImageToContent, cropImageToContentAsync } from "@/lib/image-crop";
+import CropModal from "./crop-modal";
+import { cropImageToContent, cropImageToContentAsync, hasCleanAlpha } from "@/lib/image-crop";
+
+function imageHasCleanAlpha(img: HTMLImageElement): boolean {
+  const c = document.createElement('canvas');
+  c.width = img.width;
+  c.height = img.height;
+  const ctx = c.getContext('2d');
+  if (!ctx) return false;
+  ctx.drawImage(img, 0, 0);
+  const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height);
+  return hasCleanAlpha(data, width, height);
+}
 import { parsePDF, type ParsedPDFData } from "@/lib/pdf-parser";
 import { useToast } from "@/hooks/use-toast";
 import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle } from "lucide-react";
+import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Crop } from "lucide-react";
 
 export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import { type ProfileConfig, HOT_PEEL_PROFILE } from "@/lib/profiles";
 
-function SizeInput({ value, onCommit, title, min = 0.1, max = 999 }: { value: number; onCommit: (v: number) => void; title: string; min?: number; max?: number }) {
+function SizeInput({
+  value,
+  onCommit,
+  title,
+  min = 0.1,
+  max = 999,
+  lang,
+}: {
+  value: number;
+  onCommit: (v: number) => void;
+  title: string;
+  min?: number;
+  max?: number;
+  lang: "en" | "es" | "fr";
+}) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const display = value.toFixed(2);
+  const [draft, setDraft] = useState("");
+  const metric = useMetric(lang);
+  const cm = value * 2.54;
+  const useM = metric && cm >= 100;
+  const display = metric
+    ? useM
+      ? (cm / 100).toFixed(2)
+      : cm.toFixed(2)
+    : value.toFixed(2);
 
   const commit = (raw: string) => {
     const v = parseFloat(raw);
-    if (!isNaN(v)) onCommit(Math.max(min, Math.min(v, max)));
+    if (isNaN(v)) return;
+    const inches = metric
+      ? useM
+        ? cmToInches(v * 100)
+        : cmToInches(v)
+      : v;
+    onCommit(Math.max(min, Math.min(inches, max)));
   };
 
   if (editing) {
@@ -32,10 +73,15 @@ function SizeInput({ value, onCommit, title, min = 0.1, max = 999 }: { value: nu
         value={draft}
         autoFocus
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => { commit(draft); setEditing(false); }}
+        onBlur={() => {
+          commit(draft);
+          setEditing(false);
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') { commit(draft); setEditing(false); }
-          else if (e.key === 'Escape') setEditing(false);
+          if (e.key === "Enter") {
+            commit(draft);
+            setEditing(false);
+          } else if (e.key === "Escape") setEditing(false);
         }}
         title={title}
       />
@@ -48,7 +94,10 @@ function SizeInput({ value, onCommit, title, min = 0.1, max = 999 }: { value: nu
       readOnly
       className="w-14 h-5 bg-gray-100 border border-gray-300 rounded text-[11px] font-semibold text-gray-900 text-center outline-none cursor-pointer hover:border-gray-400 transition-colors"
       value={display}
-      onFocus={() => { setDraft(display); setEditing(true); }}
+      onFocus={() => {
+        setDraft(display);
+        setEditing(true);
+      }}
       title={title}
     />
   );
@@ -173,7 +222,8 @@ function clampDesignToArtboard(
 
 export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFILE }: { onDesignUploaded?: () => void; profile?: ProfileConfig } = {}) {
   const { toast } = useToast();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isMobile = useIsMobile();
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [resizeSettings, setResizeSettings] = useState<ResizeSettings>({
     widthInches: 5.0,
@@ -203,7 +253,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
-
+  const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
   // Undo/Redo history
   const { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo } = useHistory();
@@ -249,8 +299,18 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const lookup = new Map(prev.map(d => [d.id, d]));
       const restored = parsed.map(p => {
         const existing = lookup.get(p.id);
-        if (existing) return { ...existing, transform: p.transform, widthInches: p.widthInches, heightInches: p.heightInches, name: p.name };
         const savedInfo = infoMap.get(p.id) as ImageInfo | undefined;
+        if (existing) {
+          return {
+            ...existing,
+            imageInfo: savedInfo ?? existing.imageInfo,
+            transform: p.transform,
+            widthInches: p.widthInches,
+            heightInches: p.heightInches,
+            name: p.name,
+            ...(savedInfo ? { alphaThresholded: undefined } : {}),
+          };
+        }
         if (savedInfo) {
           return { id: p.id, imageInfo: savedInfo, transform: p.transform, widthInches: p.widthInches, heightInches: p.heightInches, name: p.name, originalDPI: savedInfo.dpi } as DesignItem;
         }
@@ -1071,7 +1131,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           const t = d.transform;
           let w = d.widthInches * t.s;
           let h = d.heightInches * t.s;
-          if (t.rotation === 90 || t.rotation === -270) { const tmp = w; w = h; h = tmp; }
+          if (t.rotation === 90 || t.rotation === -270 || t.rotation === 270 || t.rotation === -90) { const tmp = w; w = h; h = tmp; }
           const cx = t.nx * artboardWidth;
           const cy = t.ny * artboardHeight;
           return { x: cx - w / 2, y: cy - h / 2, w, h };
@@ -1366,6 +1426,20 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const GANGSHEET_HEIGHTS = profile.gangsheetHeights;
   const MAX_ARTBOARD_HEIGHT = GANGSHEET_HEIGHTS[GANGSHEET_HEIGHTS.length - 1];
+  const recommendedArtboardHeight = useMemo(() => {
+    if (designs.length === 0) return null;
+    let minY = Infinity, maxY = -Infinity;
+    for (const d of designs) {
+      const rad = ((d.transform.rotation ?? 0) * Math.PI) / 180;
+      const cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
+      const halfH = (d.widthInches * d.transform.s * sin + d.heightInches * d.transform.s * cos) / 2;
+      const cy = d.transform.ny * artboardHeight;
+      minY = Math.min(minY, cy - halfH);
+      maxY = Math.max(maxY, cy + halfH);
+    }
+    const requiredH = maxY - minY + (designGap ?? 0.25) * 2;
+    return GANGSHEET_HEIGHTS.find(h => h >= requiredH) ?? null;
+  }, [designs, artboardHeight, designGap, GANGSHEET_HEIGHTS]);
   const handleExpandArtboard = useCallback(() => {
     if (artboardHeight >= MAX_ARTBOARD_HEIGHT) return;
     const nextHeight = GANGSHEET_HEIGHTS.find(h => h > artboardHeight) ?? MAX_ARTBOARD_HEIGHT;
@@ -1538,7 +1612,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, []);
 
 
-  const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number) => {
+  const applyImageDirectly = useCallback((newImageInfo: ImageInfo, widthInches: number, heightInches: number, alphaThresholded?: boolean) => {
     saveSnapshot();
     const currentDesignCount = designsRef.current.length;
     const isFirstDesign = currentDesignCount === 0;
@@ -1562,7 +1636,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         setArtboardHeight(bestHeight);
         toast({
           title: t("toast.gangsheetExpanded"),
-          description: t("toast.gangsheetExpandedDesc", { width: currentAbW, height: bestHeight }),
+          description: t("toast.gangsheetExpandedDesc", { dimensions: formatDimensions(currentAbW, bestHeight, lang) }),
         });
       } else if (!bestHeight) {
         const maxH = GANGSHEET_HEIGHTS[GANGSHEET_HEIGHTS.length - 1];
@@ -1577,7 +1651,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           setArtboardHeight(maxH);
           toast({
             title: t("toast.gangsheetMax"),
-            description: t("toast.gangsheetMaxDesc", { width: currentAbW, height: maxH }),
+            description: t("toast.gangsheetMaxDesc", { dimensions: formatDimensions(currentAbW, maxH, lang) }),
           });
         }
       }
@@ -1588,13 +1662,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const initialS = Math.min(1, maxSx, maxSy);
 
     if (initialS < 1) {
-      const origW = widthInches.toFixed(1);
-      const origH = heightInches.toFixed(1);
-      const fitW = (widthInches * initialS).toFixed(1);
-      const fitH = (heightInches * initialS).toFixed(1);
+      const origDims = formatDimensions(widthInches, heightInches, lang);
+      const fitDims = formatDimensions(widthInches * initialS, heightInches * initialS, lang);
       toast({
         title: t("toast.imageResized"),
-        description: t("toast.imageResizedDesc", { origW, origH, fitW, fitH }),
+        description: t("toast.imageResizedDesc", { origDims, fitDims }),
         variant: "destructive",
       });
     }
@@ -1626,16 +1698,33 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       heightInches,
       name: newImageInfo.file.name,
       originalDPI: newImageInfo.dpi,
+      ...(alphaThresholded ? { alphaThresholded: true } : {}),
     };
     setDesigns(prev => [...prev, newDesignItem]);
     setSelectedDesignId(newDesignId);
   }, [saveSnapshot, toast]);
 
-  const handleFallbackImage = useCallback(async (file: File, image: HTMLImageElement) => {
-    const dpi = await fetchImageDpi(file).catch(() => 300);
+  const handleFallbackImage = useCallback(async (
+    file: File,
+    image: HTMLImageElement,
+    opts?: { dpi?: number; skipCrop?: boolean }
+  ) => {
+    const dpi = opts?.dpi ?? (await fetchImageDpi(file).catch(() => 300));
     
     let croppedCanvas: HTMLCanvasElement | null = null;
-    try { croppedCanvas = cropImageToContent(image); } catch { /* use original */ }
+    if (opts?.skipCrop) {
+      const fullCanvas = document.createElement("canvas");
+      fullCanvas.width = image.width;
+      fullCanvas.height = image.height;
+      const ctx = fullCanvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(image, 0, 0);
+        croppedCanvas = fullCanvas;
+      }
+    }
+    if (!croppedCanvas) {
+      try { croppedCanvas = cropImageToContent(image); } catch { /* use original */ }
+    }
 
     const processImage = (finalImage: HTMLImageElement) => {
       if (document.activeElement instanceof HTMLElement) {
@@ -1654,7 +1743,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         dpi,
       };
 
-      applyImageDirectly(newImageInfo, widthInches, heightInches);
+      applyImageDirectly(newImageInfo, widthInches, heightInches, imageHasCleanAlpha(finalImage));
 
       const effectiveDPI = Math.min(finalImage.width / widthInches, finalImage.height / heightInches);
       if (effectiveDPI < 278) {
@@ -1694,17 +1783,35 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       await new Promise(r => setTimeout(r, 0));
       setUploadProgress(25);
       
-      const dpiPromise = fetchImageDpi(file);
+      const dpi = await fetchImageDpi(file).catch(() => 300);
+      const imgWidthInches = image.width / dpi;
+      const imgHeightInches = image.height / dpi;
+      const ARTBOARD_MATCH_TOLERANCE = 0.05;
+      const matchesArtboard =
+        Math.abs(imgWidthInches - artboardWidth) / Math.max(artboardWidth, 0.1) <= ARTBOARD_MATCH_TOLERANCE &&
+        Math.abs(imgHeightInches - artboardHeight) / Math.max(artboardHeight, 0.1) <= ARTBOARD_MATCH_TOLERANCE;
 
-      const croppedCanvas = await cropImageToContentAsync(image);
+      let croppedCanvas: HTMLCanvasElement | null = null;
+      if (matchesArtboard) {
+        const fullCanvas = document.createElement("canvas");
+        fullCanvas.width = image.width;
+        fullCanvas.height = image.height;
+        const ctx = fullCanvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(image, 0, 0);
+          croppedCanvas = fullCanvas;
+        }
+      }
       if (!croppedCanvas) {
-        console.error('Failed to crop image, using original');
-        await handleFallbackImage(file, image);
+        croppedCanvas = await cropImageToContentAsync(image);
+      }
+      if (!croppedCanvas) {
+        console.error("Failed to crop image, using original");
+        await handleFallbackImage(file, image, { dpi, skipCrop: matchesArtboard });
         return;
       }
       
       setUploadProgress(60);
-      const dpi = await dpiPromise;
       const MAX_STORED_DIMENSION = 4000;
 
       const loadImageFromBlob = (blob: Blob): Promise<HTMLImageElement> =>
@@ -1721,13 +1828,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
       const blob = await canvasToBlob(croppedCanvas);
       setUploadProgress(70);
-      if (!blob) { await handleFallbackImage(file, image); return; }
+      if (!blob) { await handleFallbackImage(file, image, { dpi, skipCrop: matchesArtboard }); return; }
 
       let croppedImg: HTMLImageElement;
       try {
         croppedImg = await loadImageFromBlob(blob);
       } catch {
-        await handleFallbackImage(file, image); return;
+        await handleFallbackImage(file, image, { dpi, skipCrop: matchesArtboard }); return;
       }
 
       if (document.activeElement instanceof HTMLElement) {
@@ -1750,8 +1857,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         downsampleCanvas.height = storedHeight;
         const dsCtx = downsampleCanvas.getContext('2d');
         if (!dsCtx) throw new Error('Could not create canvas context for downsampling');
-        dsCtx.imageSmoothingEnabled = true;
-        dsCtx.imageSmoothingQuality = 'high';
+        const preserveCleanAlpha = imageHasCleanAlpha(croppedImg);
+        dsCtx.imageSmoothingEnabled = !preserveCleanAlpha;
+        if (!preserveCleanAlpha) dsCtx.imageSmoothingQuality = 'high';
         dsCtx.drawImage(croppedImg, 0, 0, storedWidth, storedHeight);
         const dsBlob = await canvasToBlob(downsampleCanvas);
         setUploadProgress(85);
@@ -1768,7 +1876,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const widthInches = Math.max(0.01, parseFloat((physicalWidth / dpi).toFixed(2)));
       const heightInches = Math.max(0.01, parseFloat((physicalHeight / dpi).toFixed(2)));
       const newImageInfo: ImageInfo = { file, image: croppedImg, originalWidth: physicalWidth, originalHeight: physicalHeight, dpi };
-      applyImageDirectly(newImageInfo, widthInches, heightInches);
+      applyImageDirectly(newImageInfo, widthInches, heightInches, imageHasCleanAlpha(croppedImg));
+      if (matchesArtboard) {
+        toast({ title: t("toast.gangsheetDetected"), description: t("toast.gangsheetDetectedDesc") });
+      }
       setUploadProgress(100);
       setTimeout(() => { setIsUploading(false); setUploadProgress(0); }, 300);
 
@@ -1780,18 +1891,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           variant: "destructive",
         });
       }
-    } catch (error) {
-      console.error('Error processing uploaded image:', error);
-      setIsUploading(false);
-      setUploadProgress(0);
-      try {
-        await handleFallbackImage(file, image);
-      } catch (fallbackErr) {
+      } catch (error) {
+        console.error('Error processing uploaded image:', error);
+        setIsUploading(false);
+        setUploadProgress(0);
+        try {
+          const dpiFallback = await fetchImageDpi(file).catch(() => 300);
+          const wIn = image.width / dpiFallback;
+          const hIn = image.height / dpiFallback;
+          const match = Math.abs(wIn - artboardWidth) / Math.max(artboardWidth, 0.1) <= 0.05 &&
+            Math.abs(hIn - artboardHeight) / Math.max(artboardHeight, 0.1) <= 0.05;
+          await handleFallbackImage(file, image, { dpi: dpiFallback, skipCrop: match });
+        } catch (fallbackErr) {
         console.error('Fallback image processing also failed:', fallbackErr);
         toast({ title: t("toast.uploadFailed"), description: t("toast.uploadFailedDesc"), variant: "destructive" });
       }
     }
-  }, [applyImageDirectly, toast, handleFallbackImage]);
+  }, [applyImageDirectly, toast, handleFallbackImage, artboardWidth, artboardHeight]);
 
   const handlePDFUpload = useCallback((file: File, pdfData: ParsedPDFData) => {
     if (document.activeElement instanceof HTMLElement) {
@@ -2014,8 +2130,35 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }
   }, [designs, selectedDesignId, saveSnapshot, toast, thresholdAlphaForDesign]);
 
+  const handleCropDesign = useCallback(() => {
+    const id = contextMenu?.designId ?? selectedDesignId;
+    if (id) {
+      setCropModalDesignId(id);
+      setContextMenu(null);
+    }
+  }, [contextMenu, selectedDesignId]);
 
-
+  const handleCropApply = useCallback((designId: string, newImageInfo: ImageInfo) => {
+    saveSnapshot();
+    const design = designs.find(d => d.id === designId);
+    if (!design) return;
+    const aspect = design.widthInches / design.heightInches;
+    const newAspect = newImageInfo.image.naturalWidth / newImageInfo.image.naturalHeight;
+    let widthInches = design.widthInches;
+    let heightInches = design.heightInches;
+    if (Math.abs(newAspect - aspect) > 0.01) {
+      heightInches = widthInches / newAspect;
+    }
+    setDesigns(prev => prev.map(d =>
+      d.id === designId
+        ? { ...d, imageInfo: newImageInfo, widthInches, heightInches }
+        : d
+    ));
+    if (selectedDesignId === designId) setImageInfo(newImageInfo);
+    setResizeSettings(prev => ({ ...prev, widthInches, heightInches }));
+    setCropModalDesignId(null);
+    toast({ title: t("toast.cropApplied"), description: t("toast.cropAppliedDesc") });
+  }, [designs, selectedDesignId, saveSnapshot, toast, setImageInfo]);
 
   const handleDownload = useCallback(async (downloadType: string = 'standard', format: string = 'png', spotColorsByDesign?: Record<string, any[]>) => {
     if (designs.length === 0) {
@@ -2273,7 +2416,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className={`h-full flex flex-col ${isMobile ? "pb-16" : ""}`}>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
       {/* Left sidebar - Layers + Settings */}
       <div className="flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-y-auto overflow-x-hidden">
@@ -2290,6 +2433,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             downloadContainer={downloadContainer}
             designCount={designs.length}
             gangsheetHeights={GANGSHEET_HEIGHTS}
+            recommendedArtboardHeight={recommendedArtboardHeight}
             downloadFormat={profile.downloadFormat}
             enableFluorescent={profile.enableFluorescent}
             selectedDesignId={selectedDesignId}
@@ -2437,218 +2581,235 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
       {/* Right area - Canvas workspace */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
-        {/* Top bar: Add Design, Image Info, Auto-Arrange */}
-        <div className="flex-shrink-0 flex items-center gap-2 bg-white border-b border-gray-200 px-3 py-1.5">
-          <UploadSection 
-            onImageUpload={handleFileUploadUnified}
-            onBatchStart={handleBatchStart}
-            imageInfo={activeImageInfo}
-          />
-          {isUploading && (
-            <div className="flex items-center gap-1.5 text-cyan-400">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span className="text-[11px]">{t("editor.processing")}</span>
-            </div>
-          )}
-          {activeImageInfo && (
-            <>
-              <div className="w-px h-5 bg-gray-100 flex-shrink-0" />
-              <div className="flex items-center gap-1.5 min-w-0 overflow-hidden flex-shrink-0">
-                {activeImageInfo?.file?.name && (
-                  <p className="text-[11px] text-gray-600 truncate max-w-[100px] hidden sm:block" title={activeImageInfo.file.name}>
-                    {activeImageInfo.file.name}
-                  </p>
-                )}
-                <div className="flex items-center gap-0.5 flex-shrink-0">
-                  <span className="text-[10px] text-gray-600">W</span>
-                  <SizeInput
-                    value={activeResizeSettings.widthInches * activeDesignTransform.s}
-                    onCommit={(v) => handleEffectiveSizeChange('width', v)}
-                    title={t("editor.widthTitle")}
-                    max={artboardWidth}
-                  />
-                  <span className="text-[10px] text-gray-600">"</span>
-                  <button
-                    onClick={() => setProportionalLock(prev => !prev)}
-                    className={`p-0.5 rounded transition-colors ${proportionalLock ? 'text-cyan-400 hover:text-cyan-300' : 'text-gray-600 hover:text-gray-700'}`}
-                    title={proportionalLock ? 'Proportions locked – click to unlock' : 'Proportions unlocked – click to lock'}
-                  >
-                    {proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
-                  </button>
-                  <span className="text-[10px] text-gray-600">H</span>
-                  <SizeInput
-                    value={activeResizeSettings.heightInches * activeDesignTransform.s}
-                    onCommit={(v) => handleEffectiveSizeChange('height', v)}
-                    title={t("editor.heightTitle")}
-                    max={artboardHeight}
-                  />
-                  <span className="text-[10px] text-gray-600">"</span>
-                </div>
-                <span
-                  className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
-                    effectiveDPI < 198
-                      ? 'text-red-600 bg-red-100 border border-red-400 animate-dpi-alarm'
-                      : effectiveDPI < 277
-                        ? 'text-amber-600 bg-amber-100 border border-amber-400'
-                        : 'text-emerald-600 bg-emerald-100 border border-emerald-700'
-                  }`}
-                  title={t("editor.effectiveRes", { dpi: effectiveDPI })}
-                >
-                  <span>{effectiveDPI} DPI</span>
-                  <span className="text-[8px] font-medium opacity-90">
-                    {effectiveDPI < 198 ? 'Bad' : effectiveDPI < 277 ? 'Okay to print' : 'Excellent'}
-                  </span>
-                </span>
+        {/* Top bar: three rows on mobile, single row on desktop */}
+        <div className="flex-shrink-0 flex flex-col lg:flex-row lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
+          {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
+          <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap lg:flex-nowrap">
+            <UploadSection 
+              onImageUpload={handleFileUploadUnified}
+              onBatchStart={handleBatchStart}
+              imageInfo={activeImageInfo}
+            />
+            {isUploading && (
+              <div className="flex items-center gap-1.5 text-cyan-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-[11px]">{t("editor.processing")}</span>
               </div>
-            </>
-          )}
-          <div
-            className={`flex items-center gap-1.5 flex-shrink-0 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}
-            aria-hidden={designs.length < 2}
-          >
-            <div className="w-px h-5 bg-gray-100" />
-            <button
-              onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
-              disabled={designs.length < 2 && selectedDesignIds.size < 2}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 hover:border-cyan-500/50 text-gray-600 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap disabled:pointer-events-none"
-              title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
+            )}
+            {activeImageInfo?.file?.name && (
+              <p className="text-[11px] text-gray-600 truncate max-w-[100px] hidden sm:block" title={activeImageInfo.file.name}>
+                {activeImageInfo.file.name}
+              </p>
+            )}
+            <div
+              className={`flex items-center gap-1.5 flex-shrink-0 ml-auto lg:ml-0 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}
+              aria-hidden={designs.length < 2}
             >
-              <LayoutGrid className="w-3 h-3" />
-              {t("editor.autoArrange")}
-            </button>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-600">{t("editor.margin")}</span>
-              <select
-                value={designGap === undefined ? 'auto' : String(designGap)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const newGap = v === 'auto' ? undefined : parseFloat(v);
-                  setDesignGap(newGap);
-                  if (designs.length >= 2) {
-                    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: false, preserveSelection: true }), 0);
+              <button
+                onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
+                disabled={designs.length < 2 && selectedDesignIds.size < 2}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 hover:border-cyan-500/50 text-gray-600 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap disabled:pointer-events-none"
+                title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
+              >
+                <LayoutGrid className="w-3 h-3" />
+                {t("editor.autoArrange")}
+              </button>
+            </div>
+            <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap lg:flex-nowrap">
+              <button
+                onClick={handleUndo}
+                disabled={!canUndo()}
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                title={t("editor.undo")}
+              >
+                <Undo2 className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+              </button>
+              <button
+                onClick={handleRedo}
+                disabled={!canRedo()}
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                title={t("editor.redo")}
+              >
+                <Redo2 className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+              </button>
+              <div className="w-px h-4 bg-gray-100 mx-0.5" />
+              <button
+                onClick={handleDuplicateDesign}
+                disabled={!selectedDesignId}
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                title={t("editor.duplicate")}
+              >
+                <Copy className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedDesignIds.size > 1) {
+                    handleDeleteMulti(selectedDesignIds);
+                  } else if (selectedDesignId) {
+                    handleDeleteDesign(selectedDesignId);
                   }
                 }}
-                className="h-5 px-1 bg-gray-100 border border-gray-300 rounded text-[10px] text-gray-700 outline-none cursor-pointer hover:border-gray-400 focus:border-cyan-500 transition-colors"
-                title={t("editor.marginGap")}
+                disabled={!selectedDesignId}
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                title={t("editor.delete")}
               >
-                <option value="auto">{t("editor.marginAuto")}</option>
-                <option value="0.0625">1/16″</option>
-                <option value="0.125">1/8″</option>
-                <option value="0.25">1/4″</option>
-                <option value="0.5">1/2″</option>
-                <option value="1">1″</option>
-              </select>
+                <Trash2 className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+              </button>
             </div>
           </div>
-          {/* Action buttons — always rendered to keep layout stable */}
-          <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
-            <button
-              onClick={handleUndo}
-              disabled={!canUndo()}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.undo")}
+          {/* Row 2: Size, DPI, Margin, Rotate, Align, Clean Alpha */}
+          <div className="flex items-center gap-1.5 lg:gap-2 flex-wrap lg:flex-nowrap lg:flex-1 lg:justify-end">
+            {activeImageInfo && (
+              <>
+                <div className="w-px h-5 bg-gray-100 flex-shrink-0 hidden lg:block" />
+                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden flex-shrink-0">
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <span className="text-[10px] text-gray-600">W</span>
+                    <SizeInput
+                      value={activeResizeSettings.widthInches * activeDesignTransform.s}
+                      onCommit={(v) => handleEffectiveSizeChange("width", v)}
+                      title={useMetric(lang) ? t("editor.widthTitleCm") : t("editor.widthTitle")}
+                      max={artboardWidth}
+                      lang={lang}
+                    />
+                    <span className="text-[10px] text-gray-600">{getUnitSuffix(activeResizeSettings.widthInches * activeDesignTransform.s, lang)}</span>
+                    <button
+                      onClick={() => setProportionalLock(prev => !prev)}
+                      className={`p-0.5 rounded transition-colors ${proportionalLock ? 'text-cyan-400 hover:text-cyan-300' : 'text-gray-600 hover:text-gray-700'}`}
+                      title={proportionalLock ? 'Proportions locked – click to unlock' : 'Proportions unlocked – click to lock'}
+                    >
+                      {proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
+                    </button>
+                    <span className="text-[10px] text-gray-600">H</span>
+                    <SizeInput
+                      value={activeResizeSettings.heightInches * activeDesignTransform.s}
+                      onCommit={(v) => handleEffectiveSizeChange("height", v)}
+                      title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")}
+                      max={artboardHeight}
+                      lang={lang}
+                    />
+                    <span className="text-[10px] text-gray-600">{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>
+                  </div>
+                  <span
+                    className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
+                      effectiveDPI < 198
+                        ? 'text-red-600 bg-red-100 border border-red-400 animate-dpi-alarm'
+                        : effectiveDPI < 277
+                          ? 'text-amber-600 bg-amber-100 border border-amber-400'
+                          : 'text-emerald-600 bg-emerald-100 border border-emerald-700'
+                    }`}
+                    title={t("editor.effectiveRes", { dpi: effectiveDPI })}
+                  >
+                    <span>{effectiveDPI} DPI</span>
+                    <span className="text-[8px] font-medium opacity-90 hidden sm:inline">
+                      {effectiveDPI < 198 ? 'Low Res' : effectiveDPI < 277 ? 'Okay to print' : 'Excellent'}
+                    </span>
+                  </span>
+                </div>
+              </>
+            )}
+            <div
+              className={`flex items-center gap-1.5 flex-shrink-0 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}
+              aria-hidden={designs.length < 2}
             >
-              <Undo2 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={handleRedo}
-              disabled={!canRedo()}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.redo")}
-            >
-              <Redo2 className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-gray-100 mx-0.5" />
-            <button
-              onClick={handleRotate90}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.rotate")}
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleAlignCorner('tl')}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.alignTL")}
-            >
-              <ArrowUpLeft className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleAlignCorner('tr')}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.alignTR")}
-            >
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleAlignCorner('bl')}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.alignBL")}
-            >
-              <ArrowDownLeft className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleAlignCorner('br')}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.alignBR")}
-            >
-              <ArrowDownRight className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-gray-100 mx-0.5" />
-            <button
-              onClick={handleDuplicateDesign}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.duplicate")}
-            >
-              <Copy className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => {
-                if (selectedDesignIds.size > 1) {
-                  handleDeleteMulti(selectedDesignIds);
-                } else if (selectedDesignId) {
-                  handleDeleteDesign(selectedDesignId);
-                }
-              }}
-              disabled={!selectedDesignId}
-              className="p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title={t("editor.delete")}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-gray-100 mx-0.5" />
-            <button
-              onClick={handleThresholdAlpha}
-              disabled={!selectedDesignId && selectedDesignIds.size === 0}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all whitespace-nowrap ${
-                selectedDesignId || selectedDesignIds.size > 0
-                  ? 'bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
-                  : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-              }`}
-              title={t("editor.cleanAlphaTitle")}
-            >
-              <Droplets className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-medium">{t("editor.cleanAlpha")}</span>
-            </button>
-            <button
-              onClick={handleThresholdAlphaAll}
-              disabled={designs.length === 0}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all whitespace-nowrap ${
-                designs.length > 0
-                  ? 'bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
-                  : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-              }`}
-              title={t("editor.cleanAlphaAllTitle")}
-            >
-              <Droplets className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-medium">{t("editor.cleanAlphaAll")}</span>
-            </button>
+              <div className="w-px h-5 bg-gray-100 hidden lg:block" />
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-600">{t("editor.margin")}</span>
+                <select
+                  value={designGap === undefined ? "auto" : String(designGap)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const newGap = v === "auto" ? undefined : parseFloat(v);
+                    setDesignGap(newGap);
+                    if (designs.length >= 2) {
+                      setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: false, preserveSelection: true }), 0);
+                    }
+                  }}
+                  className="h-5 px-1 bg-gray-100 border border-gray-300 rounded text-[10px] text-gray-700 outline-none cursor-pointer hover:border-gray-400 focus:border-cyan-500 transition-colors"
+                  title={useMetric(lang) ? t("editor.marginGapCm") : t("editor.marginGap")}
+                >
+                  <option value="auto">{t("editor.marginAuto")}</option>
+                  <option value="0.0625">{useMetric(lang) ? formatLength(0.0625, lang) : "1/16″"}</option>
+                  <option value="0.125">{useMetric(lang) ? formatLength(0.125, lang) : "1/8″"}</option>
+                  <option value="0.25">{useMetric(lang) ? formatLength(0.25, lang) : "1/4″"}</option>
+                  <option value="0.5">{useMetric(lang) ? formatLength(0.5, lang) : "1/2″"}</option>
+                  <option value="1">{useMetric(lang) ? formatLength(1, lang) : "1″"}</option>
+                </select>
+              </div>
+            </div>
+            {/* Row 3 on mobile: Rotate, Align, Clean Alpha */}
+            <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap lg:flex-nowrap w-full lg:w-auto">
+              <div className="w-px h-4 bg-gray-100 mx-0.5 hidden lg:block" />
+              <button
+                onClick={handleRotate90}
+                disabled={!selectedDesignId}
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                title={t("editor.rotate")}
+              >
+                <RotateCw className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+              </button>
+              <div className="grid grid-cols-4 gap-0.5 lg:contents">
+                <button
+                  onClick={() => handleAlignCorner('tl')}
+                  disabled={!selectedDesignId}
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  title={t("editor.alignTL")}
+                >
+                  <ArrowUpLeft className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleAlignCorner('tr')}
+                  disabled={!selectedDesignId}
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  title={t("editor.alignTR")}
+                >
+                  <ArrowUpRight className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleAlignCorner('bl')}
+                  disabled={!selectedDesignId}
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  title={t("editor.alignBL")}
+                >
+                  <ArrowDownLeft className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleAlignCorner('br')}
+                  disabled={!selectedDesignId}
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  title={t("editor.alignBR")}
+                >
+                  <ArrowDownRight className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                </button>
+              </div>
+              <div className="w-px h-4 bg-gray-100 mx-0.5 hidden lg:block" />
+              <button
+                onClick={handleThresholdAlpha}
+                disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 lg:px-3 lg:py-1 rounded-md transition-all whitespace-nowrap min-h-[40px] lg:min-h-0 ${
+                  selectedDesignId || selectedDesignIds.size > 0
+                    ? 'bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
+                    : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                }`}
+                title={t("editor.cleanAlphaTitle")}
+              >
+                <Droplets className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                <span className="text-[10px] font-medium">{t("editor.cleanAlpha")}</span>
+              </button>
+              <button
+                onClick={handleThresholdAlphaAll}
+                disabled={designs.length === 0}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 lg:px-3 lg:py-1 rounded-md transition-all whitespace-nowrap min-h-[40px] lg:min-h-0 ${
+                  designs.length > 0
+                    ? 'bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white shadow-sm shadow-green-500/20 hover:shadow-green-400/30'
+                    : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                }`}
+                title={t("editor.cleanAlphaAllTitle")}
+              >
+                <Droplets className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                <span className="text-[10px] font-medium">{t("editor.cleanAlphaAll")}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2699,6 +2860,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             { icon: FlipVertical2, label: t("editor.flipV"), shortcut: '', action: () => { handleFlipY(); setContextMenu(null); }, disabled: false },
             null,
             { icon: Droplets, label: t("editor.cleanAlpha"), shortcut: '', action: () => { handleThresholdAlpha(); setContextMenu(null); }, disabled: false },
+            { icon: Crop, label: t("editor.crop"), shortcut: '', action: () => { handleCropDesign(); }, disabled: false },
             null,
             { icon: LayoutGrid, label: t("editor.selectAll"), shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
             { icon: XCircle, label: t("editor.deselect"), shortcut: 'Esc', action: () => { handleSelectDesign(null); setContextMenu(null); }, disabled: false },
@@ -2720,6 +2882,20 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           )}
         </div>
       )}
+
+      {/* Crop Modal */}
+      {cropModalDesignId && (() => {
+        const design = designs.find(d => d.id === cropModalDesignId);
+        return design ? (
+          <CropModal
+            open={!!design}
+            onClose={() => setCropModalDesignId(null)}
+            imageInfo={design.imageInfo}
+            onCrop={(newInfo) => handleCropApply(cropModalDesignId, newInfo)}
+            t={t}
+          />
+        ) : null;
+      })()}
 
       {/* Processing Modal */}
       {isProcessing && (

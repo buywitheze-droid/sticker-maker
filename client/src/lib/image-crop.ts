@@ -1,4 +1,29 @@
 /**
+ * Check if image has binary alpha (0 or 255 only) - e.g. from Photoshop export.
+ * Returns true if >95% of opaque pixels have alpha 255 and >95% of transparent have alpha 0.
+ */
+export function hasCleanAlpha(data: Uint8ClampedArray, w: number, h: number): boolean {
+  let transparentCount = 0;
+  let transparentClean = 0;
+  let opaqueCount = 0;
+  let opaqueClean = 0;
+  const sampleStep = Math.max(1, Math.floor((w * h) / 10000));
+  for (let i = 0; i < w * h; i += sampleStep) {
+    const alpha = data[i * 4 + 3];
+    if (alpha < 50) {
+      transparentCount++;
+      if (alpha === 0) transparentClean++;
+    } else if (alpha > 200) {
+      opaqueCount++;
+      if (alpha === 255) opaqueClean++;
+    }
+  }
+  const transparentOk = transparentCount === 0 || transparentClean / transparentCount >= 0.95;
+  const opaqueOk = opaqueCount === 0 || opaqueClean / opaqueCount >= 0.95;
+  return transparentCount > 0 && opaqueCount > 0 && transparentOk && opaqueOk;
+}
+
+/**
  * Detect a solid background color by sampling edge pixels.
  * If > 70% of edge pixels share the same color (within tolerance), return it.
  */
@@ -33,6 +58,7 @@ function detectEdgeBackground(data: Uint8ClampedArray, w: number, h: number): {r
  */
 function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r: number; g: number; b: number}, tol: number = 35): boolean {
   const totalPixels = w * h;
+  const hadCleanAlpha = hasCleanAlpha(data, w, h);
   const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
 
@@ -72,6 +98,12 @@ function removeBackground(data: Uint8ClampedArray, w: number, h: number, bg: {r:
   const removedCount = queue.length;
   if (removedCount > totalPixels * 0.95) {
     return false;
+  }
+
+  // Skip edge-feather when image already had clean binary alpha (e.g. from Photoshop).
+  // The feather would incorrectly add semi-transparent pixels to crisp edges.
+  if (hadCleanAlpha) {
+    return true;
   }
 
   // Edge-feather pass: clean up JPEG compression artifact halos.
@@ -158,16 +190,21 @@ export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement |
     const data = imageData.data;
 
     let opaqueCount = 0;
+    let transparentCount = 0;
     const sampleStep = Math.max(1, Math.floor(data.length / 4 / 10000));
     for (let i = 3; i < data.length; i += sampleStep * 4) {
-      if (data[i] > 240) opaqueCount++;
+      const alpha = data[i];
+      if (alpha > 240) opaqueCount++;
+      else if (alpha < 50) transparentCount++;
     }
     const totalSampled = Math.ceil(data.length / 4 / sampleStep);
     const opaqueRatio = opaqueCount / totalSampled;
+    const transparentRatio = transparentCount / totalSampled;
 
     const pixelCount = canvas.width * canvas.height;
     let bgWasRemoved = false;
-    if (opaqueRatio > 0.9 && pixelCount <= 25_000_000) {
+    const hasSignificantTransparency = transparentRatio > 0.05;
+    if (!hasSignificantTransparency && opaqueRatio > 0.9 && pixelCount <= 25_000_000) {
       const bg = detectEdgeBackground(data, canvas.width, canvas.height);
       if (bg) {
         const dataCopy = new Uint8ClampedArray(data);

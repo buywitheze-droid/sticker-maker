@@ -255,14 +255,18 @@ function subtractRect(from: FreeRect, placed: { x: number; y: number; w: number;
     return [from];
   }
   const newFree: FreeRect[] = [];
+  // Left strip (full height)
   if (placed.x > from.x + 0.001)
     newFree.push({ x: from.x, y: from.y, w: placed.x - from.x, h: from.h });
+  // Right strip (full height)
   if (placed.x + placed.w < from.x + from.w - 0.001)
     newFree.push({ x: placed.x + placed.w, y: from.y, w: from.x + from.w - placed.x - placed.w, h: from.h });
+  // Top strip (directly above placed, between left/right strips to avoid overlap)
   if (placed.y > from.y + 0.001)
-    newFree.push({ x: from.x, y: from.y, w: from.w, h: placed.y - from.y });
+    newFree.push({ x: placed.x, y: from.y, w: placed.w, h: placed.y - from.y });
+  // Bottom strip (directly below placed)
   if (placed.y + placed.h < from.y + from.h - 0.001)
-    newFree.push({ x: from.x, y: placed.y + placed.h, w: from.w, h: from.y + from.h - placed.y - placed.h });
+    newFree.push({ x: placed.x, y: placed.y + placed.h, w: placed.w, h: from.y + from.h - placed.y - placed.h });
   return newFree;
 }
 
@@ -292,7 +296,16 @@ function applyObstacles(initial: FreeRect[], obstacles: FixedRect[], gap: number
     const placed = { x: obs.x, y: obs.y, w: obs.w + gap, h: obs.h + gap };
     const next: FreeRect[] = [];
     for (const fr of freeRects) {
-      next.push(...subtractRect(fr, placed));
+      // Clamp placed to the free rect so we only subtract the overlapping region
+      const clipX = Math.max(placed.x, fr.x);
+      const clipY = Math.max(placed.y, fr.y);
+      const clipW = Math.min(placed.x + placed.w, fr.x + fr.w) - clipX;
+      const clipH = Math.min(placed.y + placed.h, fr.y + fr.h) - clipY;
+      if (clipW > 0.001 && clipH > 0.001) {
+        next.push(...subtractRect(fr, { x: clipX, y: clipY, w: clipW, h: clipH }));
+      } else {
+        next.push(fr);
+      }
     }
     freeRects = removeContainedRects(next);
   }
@@ -366,9 +379,9 @@ function maxRectsPack(
         if (placed.x + placed.w < fr.x + fr.w - 0.001)
           newFree.push({ x: placed.x + placed.w, y: fr.y, w: fr.x + fr.w - placed.x - placed.w, h: fr.h });
         if (placed.y > fr.y + 0.001)
-          newFree.push({ x: fr.x, y: fr.y, w: fr.w, h: placed.y - fr.y });
+          newFree.push({ x: placed.x, y: fr.y, w: placed.w, h: placed.y - fr.y });
         if (placed.y + placed.h < fr.y + fr.h - 0.001)
-          newFree.push({ x: fr.x, y: placed.y + placed.h, w: fr.w, h: fr.y + fr.h - placed.y - placed.h });
+          newFree.push({ x: placed.x, y: placed.y + placed.h, w: placed.w, h: fr.y + fr.h - placed.y - placed.h });
       }
       freeRects = [];
       for (let i = 0; i < newFree.length; i++) {

@@ -5,6 +5,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ResizeSettings, ImageInfo } from "./image-editor";
 import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, Info } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
+import { formatLength } from "@/lib/format-length";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export interface SpotPreviewData {
   enabled: boolean;
@@ -36,6 +38,7 @@ interface ControlsSectionProps {
   downloadContainer?: HTMLDivElement | null;
   designCount?: number;
   gangsheetHeights?: number[];
+  recommendedArtboardHeight?: number | null;
   downloadFormat?: 'png' | 'pdf';
   enableFluorescent?: boolean;
   selectedDesignId?: string | null;
@@ -56,6 +59,7 @@ export default function ControlsSection({
   downloadContainer,
   designCount = 0,
   gangsheetHeights = DEFAULT_HEIGHTS,
+  recommendedArtboardHeight,
   downloadFormat = 'png',
   enableFluorescent = false,
   selectedDesignId,
@@ -63,7 +67,8 @@ export default function ControlsSection({
   fluorPanelContainer,
   copySpotSelectionsRef,
 }: ControlsSectionProps) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isMobile = useIsMobile();
   const canDownload = !!imageInfo || designCount > 0;
 
   const [showSpotColors, setShowSpotColors] = useState(false);
@@ -257,7 +262,7 @@ export default function ControlsSection({
           </div>
           <span className="text-xs font-medium text-gray-900 flex-shrink-0">{t("controls.gangsheetSize")}</span>
           <div className="flex items-center gap-1.5 ml-auto">
-            <span className="text-xs font-semibold text-gray-700">{artboardWidth}"</span>
+            <span className="text-xs font-semibold text-gray-700">{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""}</span>
             <span className="text-gray-600 text-xs">×</span>
             <Select value={String(artboardHeight)} onValueChange={(v) => onArtboardHeightChange?.(parseInt(v))}>
               <SelectTrigger className="w-[68px] h-7 text-xs font-semibold text-gray-900 bg-gray-100 border-gray-200">
@@ -265,7 +270,16 @@ export default function ControlsSection({
               </SelectTrigger>
               <SelectContent>
                 {gangsheetHeights.map((h) => (
-                  <SelectItem key={h} value={String(h)}>{h}"</SelectItem>
+                  <SelectItem key={h} value={String(h)}>
+                    <span className="flex items-center justify-between gap-3 w-full">
+                      <span>{formatLength(h, lang)}{lang === "en" ? '"' : ""}</span>
+                      {recommendedArtboardHeight === h && (
+                        <span className="text-[10px] text-blue-600 font-medium">
+                          {t("controls.currentBounds")}
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -426,7 +440,12 @@ export default function ControlsSection({
       )}
 
       {downloadContainer && createPortal(
-        <div className="flex items-center gap-3 bg-white border-t border-gray-200 px-4 py-2">
+        <div
+          className={`flex items-center gap-3 bg-white border-t border-gray-200 px-4 py-2 ${
+            isMobile ? "fixed bottom-0 left-0 right-0 z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]" : ""
+          }`}
+          style={isMobile ? { paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" } : undefined}
+        >
           <div className="flex items-center gap-2 text-xs text-gray-600 flex-shrink-0">
             <FileCheck className="w-3.5 h-3.5 text-gray-600" />
             <span className="tabular-nums">{designCount !== 1 ? t("controls.designsPlural", { count: designCount }) : t("controls.designs", { count: designCount })}</span>
