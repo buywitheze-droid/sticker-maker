@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import { Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
+import { useMetric } from "@/lib/format-length";
 import type { ImageInfo, ResizeSettings } from "./image-editor";
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
@@ -22,7 +23,8 @@ interface UploadSectionProps {
 
 export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }: UploadSectionProps) {
   const { toast } = useToast();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const metric = useMetric(lang);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = useCallback(async (file: File) => {
@@ -168,7 +170,7 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo }
             <Upload className="w-3.5 h-3.5 text-white" />
           )}
           {!isEmptyState && (
-            <p className="font-medium text-white text-[11px] whitespace-nowrap">
+            <p className={`font-medium text-white whitespace-nowrap ${metric ? 'text-[10px]' : 'text-[11px]'}`}>
               {t("editor.addDesigns")}
             </p>
           )}
