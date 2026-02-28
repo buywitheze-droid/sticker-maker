@@ -2448,23 +2448,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           {/* Layers Panel */}
           {designs.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
+              <div className="flex items-center px-3 py-1.5">
                 <button
                   onClick={() => setShowDesignInfo(!showDesignInfo)}
-                  className="flex items-center gap-2 flex-1 min-w-0 text-sm text-gray-700 hover:text-gray-900 transition-colors overflow-hidden"
+                  className="flex items-center gap-2 flex-1 min-w-0 text-sm text-gray-700 hover:text-gray-900 transition-colors"
                 >
-                  <Layers className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-                  <span className="font-medium text-xs truncate">{t("editor.layers")}</span>
-                  <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded-full flex-shrink-0">{designs.length}</span>
-                  {showDesignInfo ? <ChevronUp className="w-3 h-3 text-gray-600 flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-600 flex-shrink-0" />}
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="font-medium text-xs">{t("editor.layers")}</span>
+                  <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded-full">{designs.length}</span>
+                  {showDesignInfo ? <ChevronUp className="w-3 h-3 text-gray-600" /> : <ChevronDown className="w-3 h-3 text-gray-600" />}
                 </button>
                 <button
                   onClick={() => sidebarFileRef.current?.click()}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 font-medium transition-colors flex-shrink-0 whitespace-nowrap"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 text-[11px] font-medium transition-colors"
                   title={t("editor.addDesignTitle")}
                 >
-                  <Plus className="w-3 h-3 flex-shrink-0" />
-                  <span className={lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}>{t("editor.addDesigns")}</span>
+                  <Plus className="w-3 h-3" />
+                  <span>{t("editor.addDesigns")}</span>
                 </button>
                 <input
                   ref={sidebarFileRef}
@@ -2536,12 +2536,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           style={{ transform: `${d.transform.flipX ? 'scaleX(-1)' : ''} ${d.transform.flipY ? 'scaleY(-1)' : ''}` }}
                         />
                       </div>
-                      <div className="min-w-0 flex-1 overflow-hidden">
+                      <div className="min-w-0 flex-1">
                         <p className="text-[11px] text-gray-900 truncate">
                           {d.name}
                           {isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">{t("editor.resized")}</span>}
                         </p>
-                        <p className={`text-gray-600 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(d.widthInches * d.transform.s, d.heightInches * d.transform.s, lang)}>
+                        <p className={`text-gray-600 ${useMetric(lang) ? 'text-[9px]' : 'text-[10px]'}`}>
                           {formatDimensions(d.widthInches * d.transform.s, d.heightInches * d.transform.s, lang)}
                         </p>
                       </div>
@@ -2582,9 +2582,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       {/* Right area - Canvas workspace */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
         {/* Top bar: three rows on mobile, single row on desktop */}
-        <div className={`flex-shrink-0 flex flex-col gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5 ${useMetric(lang) ? 'lg:flex-wrap lg:flex-row lg:items-center' : 'lg:flex-row lg:items-center'}`}>
+        <div className="flex-shrink-0 flex flex-col lg:flex-row lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
           {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
-          <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap lg:flex-nowrap flex-shrink-0">
+          <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap lg:flex-nowrap">
             <UploadSection 
               onImageUpload={handleFileUploadUnified}
               onBatchStart={handleBatchStart}
@@ -2658,12 +2658,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             </div>
           </div>
           {/* Row 2: Size, DPI, Margin, Rotate, Align, Clean Alpha */}
-          <div className={`flex items-center gap-1.5 lg:gap-2 lg:flex-1 lg:justify-end ${useMetric(lang) ? 'flex-wrap' : 'flex-wrap lg:flex-nowrap'}`}>
+          <div className="flex items-center gap-1.5 lg:gap-2 flex-wrap lg:flex-nowrap lg:flex-1 lg:justify-end">
             {activeImageInfo && (
               <>
                 <div className="w-px h-5 bg-gray-100 flex-shrink-0 hidden lg:block" />
-                <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0">
-                  <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
+                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden flex-shrink-0">
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
                     <span className="text-[10px] text-gray-600">W</span>
                     <SizeInput
                       value={activeResizeSettings.widthInches * activeDesignTransform.s}
