@@ -2662,8 +2662,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             {activeImageInfo && (
               <>
                 <div className="w-px h-5 bg-gray-100 flex-shrink-0 hidden lg:block" />
-                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden flex-shrink-0">
-                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                <div className="flex items-center gap-1.5 min-w-0 flex-shrink min-w-0">
+                  <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
                     <span className="text-[10px] text-gray-600">W</span>
                     <SizeInput
                       value={activeResizeSettings.widthInches * activeDesignTransform.s}
