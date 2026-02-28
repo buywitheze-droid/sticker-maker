@@ -3074,20 +3074,20 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   variant="ghost"
                   size="sm"
                   onClick={() => setSelectionZoomActive(prev => !prev)}
-                  className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
+                  className={`h-6 px-1.5 hover:bg-gray-200 rounded whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
                   title={t("preview.selectionZoom")}
                 >
-                  <ScanSearch className="h-2.5 w-2.5 mr-0.5" />
+                  <ScanSearch className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
                   {t("preview.selectToZoom")}
                 </Button>
                 <Button 
                   variant="ghost"
                   size="sm"
                   onClick={resetView}
-                  className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
+                  className={`h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}`}
                   title={t("preview.resetView")}
                 >
-                  <RotateCcw className="h-2.5 w-2.5 mr-0.5" />
+                  <RotateCcw className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
                   {t("preview.reset")}
                 </Button>
                 <Button
@@ -3102,10 +3102,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       return next;
                     });
                   }}
-                  className={`h-6 px-1.5 hover:bg-gray-200 rounded text-[11px] ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
+                  className={`h-6 px-1.5 hover:bg-gray-200 rounded whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${moveMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'}`}
                   title={t("preview.moveMode")}
                 >
-                  <MousePointer2 className="h-2.5 w-2.5 mr-0.5" />
+                  <MousePointer2 className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
                   {t("preview.move")}
                 </Button>
                 {selectedDesignId && (
@@ -3113,10 +3113,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={zoomToSelected}
-                    className="h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 text-[11px]"
+                    className={`h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}`}
                     title={t("preview.focusTitle")}
                   >
-                    <Focus className="h-2.5 w-2.5 mr-0.5" />
+                    <Focus className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
                     {t("preview.focus")}
                   </Button>
                 )}

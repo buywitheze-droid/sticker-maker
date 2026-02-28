@@ -2608,10 +2608,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
                 disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 hover:border-cyan-500/50 text-gray-600 hover:text-cyan-400 text-[11px] font-medium transition-colors whitespace-nowrap disabled:pointer-events-none"
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 hover:border-cyan-500/50 text-gray-600 hover:text-cyan-400 font-medium transition-colors whitespace-nowrap disabled:pointer-events-none ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}`}
                 title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
               >
-                <LayoutGrid className="w-3 h-3" />
+                <LayoutGrid className="w-3 h-3 flex-shrink-0" />
                 {t("editor.autoArrange")}
               </button>
             </div>
@@ -2794,7 +2794,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 title={t("editor.cleanAlphaTitle")}
               >
                 <Droplets className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
-                <span className="text-[10px] font-medium">{t("editor.cleanAlpha")}</span>
+                <span className={`font-medium ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`}>{t("editor.cleanAlpha")}</span>
               </button>
               <button
                 onClick={handleThresholdAlphaAll}
@@ -2807,7 +2807,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 title={t("editor.cleanAlphaAllTitle")}
               >
                 <Droplets className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
-                <span className="text-[10px] font-medium">{t("editor.cleanAlphaAll")}</span>
+                <span className={`font-medium ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`}>{t("editor.cleanAlphaAll")}</span>
               </button>
             </div>
           </div>
@@ -2847,7 +2847,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       {/* Right-click context menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-white border border-gray-300 rounded-lg shadow-2xl shadow-black/60 py-1 min-w-[190px]"
+          className={`fixed z-50 bg-white border border-gray-300 rounded-lg shadow-2xl shadow-black/60 py-1 ${lang !== 'en' ? 'min-w-[220px]' : 'min-w-[190px]'}`}
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
