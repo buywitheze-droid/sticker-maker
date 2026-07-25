@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, ChevronLeft, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Stamp, Check, X, ScanSearch } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch } from "lucide-react";
 
 export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
@@ -272,8 +272,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [artboardHeight, setArtboardHeight] = useState(profile.gangsheetHeights[0] ?? 12);
   const [designGap, setDesignGap] = useState<number | undefined>(0.25);
   const [duplicateCount, setDuplicateCount] = useState(1);
-  const [previewDrawerOpen, setPreviewDrawerOpen] = useState(false);
-  const touchStartXRef = useRef<number | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<"controls" | "preview">("controls");
   const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
   const [designs, setDesigns] = useState<DesignItem[]>([]);
   const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
@@ -824,55 +823,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     return false;
   }, [designs, artboardWidth, artboardHeight]);
 
-  const handleDuplicateDesign = useCallback((count: number = 1) => {
-    if (!selectedDesignId || count < 1) return;
-    const design = designs.find(d => d.id === selectedDesignId);
-    if (!design) return;
-    const baseName = design.name.replace(/ copy( \d+)?$/, '');
-    const newDesigns: DesignItem[] = [];
-    for (let i = 0; i < count; i++) {
-      const newId = crypto.randomUUID();
-      const offsetT = { ...design.transform, nx: design.transform.nx + 0.03 * (i + 1), ny: design.transform.ny };
-      const { nx, ny } = clampDesignToArtboard({ ...design, transform: offsetT }, artboardWidth, artboardHeight);
-      newDesigns.push({
-        ...design,
-        id: newId,
-        name: baseName,
-        transform: { ...design.transform, nx, ny },
-        printFileName: false,
-      });
-    }
-    saveSnapshot();
-    setDesigns(prev => [...prev, ...newDesigns]);
-    setSelectedDesignId(newDesigns[newDesigns.length - 1].id);
-  }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight]);
-
-  const handleDuplicateAndArrange = useCallback((count: number) => {
-    if (!selectedDesignId || count < 1) return;
-    const design = designs.find(d => d.id === selectedDesignId);
-    if (!design) return;
-    const baseName = design.name.replace(/ copy( \d+)?$/, '');
-    const newDesigns: DesignItem[] = [];
-    for (let i = 0; i < count; i++) {
-      const newId = crypto.randomUUID();
-      const offsetT = { ...design.transform, nx: design.transform.nx + 0.03 * (i + 1), ny: design.transform.ny };
-      const { nx, ny } = clampDesignToArtboard({ ...design, transform: offsetT }, artboardWidth, artboardHeight);
-      newDesigns.push({
-        ...design,
-        id: newId,
-        name: baseName,
-        transform: { ...design.transform, nx, ny },
-        printFileName: false,
-      });
-    }
-    saveSnapshot();
-    setDesigns(prev => [...prev, ...newDesigns]);
-    setSelectedDesignId(newDesigns[newDesigns.length - 1].id);
-    requestAnimationFrame(() => {
-      handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true });
-    });
-  }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight]);
-
   const handleDuplicateSelected = useCallback((): string[] => {
     const toDup = designs.filter(d => selectedDesignIds.has(d.id));
     if (toDup.length === 0) return [];
@@ -895,6 +845,70 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     else setSelectedDesignId(newIds[newIds.length - 1]);
     return newIds;
   }, [designs, selectedDesignIds, saveSnapshot, artboardWidth, artboardHeight]);
+
+  const handleDuplicateDesign = useCallback((count: number = 1) => {
+    if (selectedDesignIds.size > 1) {
+      handleDuplicateSelected();
+      setDuplicateCount(1);
+      return;
+    }
+    if (!selectedDesignId || count < 1) return;
+    const design = designs.find(d => d.id === selectedDesignId);
+    if (!design) return;
+    const baseName = design.name.replace(/ copy( \d+)?$/, '');
+    const newDesigns: DesignItem[] = [];
+    for (let i = 0; i < count; i++) {
+      const newId = crypto.randomUUID();
+      const offsetT = { ...design.transform, nx: design.transform.nx + 0.03 * (i + 1), ny: design.transform.ny };
+      const { nx, ny } = clampDesignToArtboard({ ...design, transform: offsetT }, artboardWidth, artboardHeight);
+      newDesigns.push({
+        ...design,
+        id: newId,
+        name: baseName,
+        transform: { ...design.transform, nx, ny },
+        printFileName: false,
+      });
+    }
+    saveSnapshot();
+    setDesigns(prev => [...prev, ...newDesigns]);
+    setSelectedDesignId(newDesigns[newDesigns.length - 1].id);
+    setDuplicateCount(1);
+  }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight, selectedDesignIds, handleDuplicateSelected]);
+
+  const handleDuplicateAndArrange = useCallback((count: number) => {
+    if (selectedDesignIds.size > 1) {
+      const newIds = handleDuplicateSelected();
+      if (newIds.length > 0) {
+        setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+      }
+      setDuplicateCount(1);
+      return;
+    }
+    if (!selectedDesignId || count < 1) return;
+    const design = designs.find(d => d.id === selectedDesignId);
+    if (!design) return;
+    const baseName = design.name.replace(/ copy( \d+)?$/, '');
+    const newDesigns: DesignItem[] = [];
+    for (let i = 0; i < count; i++) {
+      const newId = crypto.randomUUID();
+      const offsetT = { ...design.transform, nx: design.transform.nx + 0.03 * (i + 1), ny: design.transform.ny };
+      const { nx, ny } = clampDesignToArtboard({ ...design, transform: offsetT }, artboardWidth, artboardHeight);
+      newDesigns.push({
+        ...design,
+        id: newId,
+        name: baseName,
+        transform: { ...design.transform, nx, ny },
+        printFileName: false,
+      });
+    }
+    saveSnapshot();
+    setDesigns(prev => [...prev, ...newDesigns]);
+    setSelectedDesignId(newDesigns[newDesigns.length - 1].id);
+    setDuplicateCount(1);
+    requestAnimationFrame(() => {
+      handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true });
+    });
+  }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight, selectedDesignIds, handleDuplicateSelected]);
 
   const handleDuplicateById = useCallback((designId: string) => {
     const design = designs.find(d => d.id === designId);
@@ -2721,18 +2735,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }}
-      onTouchEnd={(e) => {
-        if (touchStartXRef.current === null) return;
-        const dx = e.changedTouches[0].clientX - touchStartXRef.current;
-        const startX = touchStartXRef.current;
-        touchStartXRef.current = null;
-        if (!previewDrawerOpen && startX > window.innerWidth * 0.7 && dx < -40) {
-          setPreviewDrawerOpen(true);
-        } else if (previewDrawerOpen && dx > 60) {
-          setPreviewDrawerOpen(false);
-        }
-      }}
     >
       {isDragOver && (
           <div className="absolute inset-0 z-50 bg-blue-500/10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
@@ -2743,28 +2745,33 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             </div>
           </div>
         )}
-        <div className="flex-1 min-h-0 flex flex-col lg:flex-row relative">
-      {/* Mobile: backdrop when preview drawer is open */}
-      {isMobile && previewDrawerOpen && (
+        {/* Mobile tab switcher */}
+        {isMobile && (
+          <div className="flex-shrink-0 border-b border-gray-200 bg-white px-2 py-1.5">
+            <div className="grid grid-cols-2 gap-1 rounded-md bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => setMobilePanel("controls")}
+                className={`rounded px-2 py-1 text-xs font-medium transition-colors ${mobilePanel === "controls" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"}`}
+              >
+                Controls
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobilePanel("preview")}
+                className={`rounded px-2 py-1 text-xs font-medium transition-colors ${mobilePanel === "preview" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"}`}
+              >
+                Preview
+              </button>
+            </div>
+          </div>
+        )}
         <div
-          className="fixed inset-0 bg-black/40 z-40"
-          onClick={() => setPreviewDrawerOpen(false)}
-        />
-      )}
-      {/* Mobile: floating tab to open preview drawer */}
-      {isMobile && !previewDrawerOpen && (
-        <button
-          onClick={() => setPreviewDrawerOpen(true)}
-          className="fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-cyan-500 text-white py-5 px-1 rounded-l-xl shadow-lg flex flex-col items-center gap-1"
-          style={{ writingMode: 'vertical-rl' }}
-          title="Open preview"
+          className={isMobile ? "flex min-h-0 flex-1 flex-row transition-transform duration-300 ease-out overflow-hidden" : "flex-1 min-h-0 flex flex-col lg:flex-row"}
+          style={isMobile ? { transform: mobilePanel === "preview" ? "translateX(-100%)" : "translateX(0)" } : undefined}
         >
-          <ChevronLeft className="w-4 h-4 rotate-0 mb-0.5" style={{ writingMode: 'horizontal-tb' }} />
-          <span className="text-[10px] font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>PREVIEW</span>
-        </button>
-      )}
       {/* Left sidebar - Layers + Settings */}
-      <div className="flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-y-auto overflow-x-hidden">
+      <div className={`flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-x-hidden ${isMobile ? "overflow-y-auto" : "overflow-y-auto"}`}>
         <div className="p-2.5 space-y-2">
           <ControlsSection
             resizeSettings={activeResizeSettings}
@@ -2940,19 +2947,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         </button>
                       </div>
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const hasPrint = first.printFileName ?? false;
-                          setDesigns(prev => prev.map(d =>
-                            row.designs.some(rd => rd.id === d.id) ? { ...d, printFileName: !hasPrint } : d
-                          ));
-                        }}
-                        className={`p-0.5 rounded transition-colors flex-shrink-0 ${first.printFileName ? 'text-cyan-500 hover:text-cyan-600 bg-cyan-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'}`}
-                        title={first.printFileName ? t("editor.printNameOn") : t("editor.printName")}
-                      >
-                        <Stamp className="w-3 h-3" />
-                      </button>
-                      <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteGroup(row.designs.map(d => d.id)); }}
                         className="p-0.5 rounded hover:bg-gray-200 text-red-500 hover:text-red-600 transition-colors flex-shrink-0"
                       >
@@ -2968,24 +2962,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       </div>
 
       {/* Right area - Canvas workspace */}
-      <div className={
-        isMobile
-          ? `fixed inset-y-0 right-0 w-full z-50 flex flex-col bg-white transition-transform duration-300 ease-in-out ${previewDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`
-          : 'flex-1 min-w-0 flex flex-col h-full overflow-hidden'
-      }>
-        {/* Mobile drawer header */}
-        {isMobile && (
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
-            <button
-              onClick={() => setPreviewDrawerOpen(false)}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <span className="font-semibold text-sm text-gray-900">Preview &amp; Canvas</span>
-            <span className="text-[10px] text-gray-500 ml-1">← swipe right to close</span>
-          </div>
-        )}
+      <div className={`min-w-0 flex flex-col ${isMobile ? "w-full flex-shrink-0" : "flex-1 h-full overflow-hidden"}`}>
         {/* Top bar: three rows on mobile, wraps on desktop when metric to avoid overlap */}
         <div className="flex-shrink-0 flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
           {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
