@@ -2730,7 +2730,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   return (
     <div
-      className={`h-full flex flex-col ${isMobile ? "pb-16" : ""} relative`}
+      className={`h-full flex flex-col ${isMobile ? "pb-16 overflow-hidden" : ""} relative`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -2742,6 +2742,70 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <Plus className="w-10 h-10 text-blue-500 mx-auto mb-2" />
               <p className="text-blue-600 font-semibold text-lg">Drop files to add designs</p>
               <p className="text-gray-500 text-sm mt-1">PNG, JPG, WebP, or PDF</p>
+            </div>
+          </div>
+        )}
+        {/* Mobile action toolbar — always visible on both tabs */}
+        {isMobile && (
+          <div className="flex-shrink-0 flex flex-col bg-white border-b border-gray-200 px-2 py-1 gap-1">
+            {/* Row 1: Upload, Clean Alpha, Undo/Redo/Delete, Auto-Arrange */}
+            <div className="flex items-center gap-1 min-w-0 flex-wrap">
+              <UploadSection
+                onImageUpload={handleFileUploadUnified}
+                onBatchStart={handleBatchStart}
+                imageInfo={activeImageInfo}
+              />
+              {isUploading && (
+                <div className="flex items-center gap-1 text-cyan-400">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span className="text-[11px]">{t("editor.processing")}</span>
+                </div>
+              )}
+              <button onClick={handleThresholdAlpha} disabled={!selectedDesignId && selectedDesignIds.size === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaTitle")}><Droplets className="w-3 h-3" />{t("editor.cleanAlpha")}</button>
+              <button onClick={handleThresholdAlphaAll} disabled={designs.length === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaAllTitle")}><Droplets className="w-3 h-3" />All</button>
+              <div className="flex items-center gap-0.5 ml-auto">
+                <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
+                <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
+                <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-[#F1F5F9] text-[#0891B2] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
+              </div>
+            </div>
+            {/* Row 2: W/H + DPI + Duplicate (when design present) */}
+            {activeImageInfo && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <div className="flex items-center gap-0.5">
+                  <span className="text-[10px] text-gray-600">W</span>
+                  <SizeInput value={activeResizeSettings.widthInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("width", v)} title={useMetric(lang) ? t("editor.widthTitleCm") : t("editor.widthTitle")} max={artboardWidth} lang={lang} />
+                  <button onClick={() => setProportionalLock(prev => !prev)} className={`p-0.5 rounded ${proportionalLock ? 'text-cyan-400' : 'text-gray-600'}`}>{proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}</button>
+                  <span className="text-[10px] text-gray-600">H</span>
+                  <SizeInput value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={artboardHeight} lang={lang} />
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${effectiveDPI < 198 ? 'text-amber-600 bg-amber-100 border border-amber-400' : effectiveDPI < 277 ? 'text-green-700 bg-green-100 border border-green-500' : 'bg-black border border-green-400'}`} style={effectiveDPI >= 277 ? { color: '#39FF14' } : undefined}>{effectiveDPI} DPI</span>
+                </div>
+                <div className="flex items-center gap-1 ml-auto">
+                  <button onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }} disabled={!selectedDesignId} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId ? 'bg-[#F1F5F9] text-[#7C3AED] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.duplicate")}><Copy className="w-3 h-3" />{t("editor.duplicate").replace(/ \(.*/, '')}</button>
+                  <input type="number" min={1} max={200} value={duplicateCount} onChange={(e) => setDuplicateCount(Math.max(1, Math.min(200, parseInt(e.target.value) || 1)))} disabled={!selectedDesignId} className="w-10 h-[32px] text-center text-[11px] border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none" title="Number of copies" />
+                  <button onClick={() => { handleDuplicateAndArrange(duplicateCount); setDuplicateCount(1); }} disabled={!selectedDesignId} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium min-h-[36px] ${selectedDesignId ? 'bg-[#F1F5F9] text-[#0891B2] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.duplicateArrange")}><Copy className="w-3 h-3" />{t("editor.duplicateArrange")}</button>
+                </div>
+              </div>
+            )}
+            {/* Row 3: Rotate, Align, Margin */}
+            <div className="flex items-center gap-0.5 flex-wrap">
+              <button onClick={handleRotate90} disabled={!selectedDesignId} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.rotate")}><RotateCw className="w-4 h-4" /></button>
+              <button onClick={() => handleAlignCorner('tl')} disabled={!selectedDesignId} className="w-8 h-8 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.alignTL")}><ArrowUpLeft className="w-4 h-4" /></button>
+              <button onClick={() => handleAlignCorner('tr')} disabled={!selectedDesignId} className="w-8 h-8 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.alignTR")}><ArrowUpRight className="w-4 h-4" /></button>
+              <button onClick={() => handleAlignCorner('bl')} disabled={!selectedDesignId} className="w-8 h-8 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.alignBL")}><ArrowDownLeft className="w-4 h-4" /></button>
+              <button onClick={() => handleAlignCorner('br')} disabled={!selectedDesignId} className="w-8 h-8 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.alignBR")}><ArrowDownRight className="w-4 h-4" /></button>
+              <div className={`flex items-center gap-1 ml-1 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}>
+                <span className="text-[10px] text-gray-600">{t("editor.margin")}</span>
+                <select value={designGap === undefined ? "auto" : String(designGap)} onChange={(e) => { const v = e.target.value; const newGap = v === "auto" ? undefined : parseFloat(v); setDesignGap(newGap); if (designs.length >= 2) { setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: false, preserveSelection: true }), 0); } }} className="h-7 px-1.5 bg-gray-100 border border-gray-300 rounded text-[11px] text-gray-700 outline-none cursor-pointer">
+                  <option value="auto">{t("editor.marginAuto")}</option>
+                  <option value="0.0625">{useMetric(lang) ? formatLength(0.0625, lang) : "1/16″"}</option>
+                  <option value="0.125">{useMetric(lang) ? formatLength(0.125, lang) : "1/8″"}</option>
+                  <option value="0.25">{useMetric(lang) ? formatLength(0.25, lang) : "1/4″"}</option>
+                  <option value="0.5">{useMetric(lang) ? formatLength(0.5, lang) : "1/2″"}</option>
+                  <option value="1">{useMetric(lang) ? formatLength(1, lang) : "1″"}</option>
+                </select>
+              </div>
             </div>
           </div>
         )}
@@ -2767,11 +2831,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           </div>
         )}
         <div
-          className={isMobile ? "flex min-h-0 flex-1 flex-row transition-transform duration-300 ease-out overflow-hidden" : "flex-1 min-h-0 flex flex-col lg:flex-row"}
+          className={isMobile ? "flex min-h-0 flex-1 flex-row transition-transform duration-300 ease-out" : "flex-1 min-h-0 flex flex-col lg:flex-row"}
           style={isMobile ? { transform: mobilePanel === "preview" ? "translateX(-100%)" : "translateX(0)" } : undefined}
         >
       {/* Left sidebar - Layers + Settings */}
-      <div className={`flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-x-hidden ${isMobile ? "overflow-y-auto" : "overflow-y-auto"}`}>
+      <div className={`flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-x-hidden overflow-y-auto ${isMobile ? "h-full" : ""}`}>
         <div className="p-2.5 space-y-2">
           <ControlsSection
             resizeSettings={activeResizeSettings}
@@ -2962,9 +3026,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       </div>
 
       {/* Right area - Canvas workspace */}
-      <div className={`min-w-0 flex flex-col ${isMobile ? "w-full flex-shrink-0" : "flex-1 h-full overflow-hidden"}`}>
-        {/* Top bar: three rows on mobile, wraps on desktop when metric to avoid overlap */}
-        <div className="flex-shrink-0 flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
+      <div className={`min-w-0 flex flex-col ${isMobile ? "w-full flex-shrink-0 h-full" : "flex-1 h-full overflow-hidden"}`}>
+        {/* Top bar: desktop only — mobile toolbar is rendered above the tab switcher */}
+        {!isMobile && <div className="flex-shrink-0 flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
           {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
           <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap lg:flex-nowrap flex-shrink-0">
             <UploadSection 
@@ -3315,7 +3379,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               )}
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* Preview Canvas */}
         <div className="flex-1 min-h-0 relative">
