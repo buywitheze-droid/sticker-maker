@@ -2510,16 +2510,42 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   if (alpha < 10) continue;
                   const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
 
-                  // Nearest-centroid (squared distance, no sqrt needed)
+                  // Find nearest AND second-nearest centroid in one pass.
                   let bestDist = Infinity, bestIdx = -1;
+                  let secDist  = Infinity, secIdx  = -1;
                   for (let ci = 0; ci < centroids.length; ci++) {
                     const c = centroids[ci];
                     const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
-                    if (d < bestDist) { bestDist = d; bestIdx = ci; }
+                    if (d < bestDist) { secDist = bestDist; secIdx = bestIdx; bestDist = d; bestIdx = ci; }
+                    else if (d < secDist) { secDist = d; secIdx = ci; }
                   }
                   if (bestIdx < 0) continue;
                   const color = colors[bestIdx];
                   if (!color) continue;
+
+                  // ── Projection-based edge confidence ──────────────────────────
+                  // Project the pixel onto the line from bestCentroid → secCentroid.
+                  // t=0 → pixel exactly at bestCentroid (confidence 1.0, full ink).
+                  // t=0.5 → pixel at the colour-boundary midpoint (confidence 0.5,
+                  //          half ink — the anti-aliased transition zone).
+                  // t≥1  → pixel is actually closer to the second centroid; clip to 0.
+                  // This matches how Photoshop's magic wand anti-aliasing works and
+                  // naturally produces smooth edges at every colour boundary without
+                  // needing a post-pass blur.
+                  let confidence = 1.0;
+                  if (secIdx >= 0) {
+                    const cA = centroids[bestIdx], cB = centroids[secIdx];
+                    const vR = cB.r - cA.r, vG = cB.g - cA.g, vBc = cB.b - cA.b;
+                    const dotVV = vR*vR + vG*vG + vBc*vBc;
+                    if (dotVV > 0) {
+                      const t = ((r - cA.r)*vR + (g - cA.g)*vG + (b - cA.b)*vBc) / dotVV;
+                      confidence = Math.max(0, Math.min(1, 1 - t));
+                    }
+                  }
+                  // Combine canvas alpha (outer edge smoothing) with centroid
+                  // confidence (inner colour-boundary smoothing).
+                  const inkW = Math.round(alpha * confidence);
+                  if (inkW < 4) continue; // below threshold — skip both ink & knockout
 
                   if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
                     // Region-level: use 512-px map for sub-color region lookup
@@ -2529,15 +2555,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     const ri = (color.regionMap as Int16Array)[mpi] ?? -1;
                     if (ri < 0 || !color.regions[ri]) continue;
                     const region = color.regions[ri];
-                    if (region.spotFluorY)      mFY[pi] = alpha;
-                    if (region.spotFluorM)      mFM[pi] = alpha;
-                    if (region.spotFluorG)      mFG[pi] = alpha;
-                    if (region.spotFluorOrange) mFO[pi] = alpha;
+                    if (region.spotFluorY)      mFY[pi] = inkW;
+                    if (region.spotFluorM)      mFM[pi] = inkW;
+                    if (region.spotFluorG)      mFG[pi] = inkW;
+                    if (region.spotFluorOrange) mFO[pi] = inkW;
                   } else {
-                    if (color.spotFluorY)      mFY[pi] = alpha;
-                    if (color.spotFluorM)      mFM[pi] = alpha;
-                    if (color.spotFluorG)      mFG[pi] = alpha;
-                    if (color.spotFluorOrange) mFO[pi] = alpha;
+                    if (color.spotFluorY)      mFY[pi] = inkW;
+                    if (color.spotFluorM)      mFM[pi] = inkW;
+                    if (color.spotFluorG)      mFG[pi] = inkW;
+                    if (color.spotFluorOrange) mFO[pi] = inkW;
                   }
                 }
               }
