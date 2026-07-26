@@ -618,18 +618,21 @@ export default function ControlsSection({
                                   if (panModeActive) onPanModeChange?.(false);
                                 }
                               }}
-                              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:opacity-90'}`}
+                              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:brightness-95'}`}
                               style={{
                                 borderColor: bg,
-                                backgroundColor: isSelected ? bg + '44' : bg + '0d',
+                                // Unselected: ~20% tint so background carries the color identity.
+                                // Selected: ~45% tint with outline.
+                                // Text is always dark — fluorescent colors have terrible contrast on white.
+                                backgroundColor: isSelected ? bg + '72' : bg + '38',
                                 outline: isSelected ? `2px solid ${bg}` : 'none',
                                 outlineOffset: '2px',
                               }}
                               title={`${isSelected ? 'Deselect' : 'Select'} ${name} — then tap the image to assign`}
                             >
-                              <span className="text-[15px] font-black leading-none" style={{ color: isSelected ? '#111' : bg }}>{label}</span>
-                              <span className="text-[8px] leading-none mt-0.5" style={{ color: isSelected ? '#555' : '#9ca3af' }}>{name}</span>
-                              {hasAssignment && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: bg }} />}
+                              <span className="text-[15px] font-black leading-none text-gray-900">{label}</span>
+                              <span className="text-[9px] leading-none mt-0.5 text-gray-600">{name}</span>
+                              {hasAssignment && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: '#374151' }} />}
                             </button>
                           );
                         })}
@@ -639,7 +642,7 @@ export default function ControlsSection({
                   })()}
 
                   {/* Hint: tell the user to click the main preview */}
-                  <p className="text-[10px] text-center text-gray-400 leading-snug -mt-0.5">
+                  <p className="text-[10px] text-center text-gray-500 leading-snug -mt-0.5">
                     {activeChannel
                       ? <>Tap the design in the preview →<br/>to assign <strong>{activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'}</strong></>
                       : 'Select a channel above, then tap the design in the preview'
@@ -698,11 +701,13 @@ export default function ControlsSection({
                                       <button
                                         key={field}
                                         onClick={() => updateSpotColor(idx, field, !color[field])}
-                                        className={`w-7 h-7 rounded text-[9px] font-bold flex items-center justify-center transition-all ${isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : isSome ? 'opacity-70' : 'opacity-40 hover:opacity-90'}`}
+                                        className={`w-7 h-7 rounded text-[9px] font-bold flex items-center justify-center transition-all ${isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : isSome ? '' : 'hover:brightness-95'}`}
                                         style={{
-                                          backgroundColor: isAll ? bg : isSome ? bg + '55' : 'transparent',
-                                          color: (isAll || isSome) ? '#000' : bg,
-                                          border: `1.5px solid ${bg}`,
+                                          // Always dark text — fluorescent colors on white are unreadable.
+                                          // Background carries the color; brightness shows activation level.
+                                          backgroundColor: isAll ? bg : isSome ? bg + '66' : bg + '30',
+                                          color: '#111',
+                                          border: `1.5px solid ${isAll ? bg : bg + 'aa'}`,
                                           ['--tw-ring-color' as string]: bg,
                                         }}
                                       >{label}</button>
@@ -724,11 +729,11 @@ export default function ControlsSection({
                                           <button
                                             key={field}
                                             onClick={() => toggleRegionFluor(idx, region.id, field)}
-                                            className={`w-6 h-6 rounded text-[8px] font-bold flex items-center justify-center transition-all ${region[field] ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : 'opacity-35 hover:opacity-70'}`}
+                                            className={`w-6 h-6 rounded text-[8px] font-bold flex items-center justify-center transition-all ${region[field] ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : 'hover:brightness-95'}`}
                                             style={{
-                                              backgroundColor: region[field] ? bg : 'transparent',
-                                              color: region[field] ? '#000' : bg,
-                                              border: `1.5px solid ${bg}`,
+                                              backgroundColor: region[field] ? bg : bg + '30',
+                                              color: '#111',
+                                              border: `1.5px solid ${region[field] ? bg : bg + 'aa'}`,
                                               ['--tw-ring-color' as string]: bg,
                                             }}
                                           >{label}</button>
