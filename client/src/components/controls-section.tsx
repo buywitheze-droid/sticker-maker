@@ -11,6 +11,15 @@ import { useIsMobile } from "@/hooks/use-mobile";
 export interface SpotPreviewData {
   enabled: boolean;
   colors: ExtractedColor[];
+  /** Per-channel pixel masks from region-level spot assignments (512 px space). */
+  masks?: {
+    FY: Uint8Array;
+    FM: Uint8Array;
+    FG: Uint8Array;
+    FO: Uint8Array;
+    width: number;
+    height: number;
+  };
 }
 
 type ColorRegion = {
@@ -110,6 +119,8 @@ export default function ControlsSection({
   const prevDesignIdRef = useRef<string | null | undefined>(null);
   const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
   const colorListRef = useRef<HTMLDivElement>(null);
+  /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
+  const pixelMapRef = useRef<{ pixelMap: Int16Array; width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (!enableFluorescent) return;
@@ -140,6 +151,7 @@ export default function ControlsSection({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const mapResult = buildPixelMapFromImage(img, localColors as any);
             if (!mapResult || cancelled) return;
+            pixelMapRef.current = mapResult; // store for channel-mask computation
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, localColors as any, mapResult.imageData);
             if (!cancelled) setExtractedColors([...localColors]);
@@ -219,10 +231,56 @@ export default function ControlsSection({
     return () => { if (copySpotSelectionsRef) copySpotSelectionsRef.current = null; };
   }, [copySpotSelectionsRef, selectedDesignId, extractedColors, enableFluorescent]);
 
+  /** Compute per-channel pixel masks from pixelMap + region assignments.
+   *  Returns undefined when no multi-region spot assignments exist. */
+  const computeChannelMasks = useCallback((
+    colors: ExtractedColor[],
+    mapResult: { pixelMap: Int16Array; width: number; height: number }
+  ) => {
+    const hasRegionAssignments = colors.some(c =>
+      c.regions && c.regions.length > 1 &&
+      c.regions.some(r => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange)
+    );
+    if (!hasRegionAssignments) return undefined;
+
+    const { pixelMap, width, height } = mapResult;
+    const n = width * height;
+    const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
+    const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
+
+    for (let i = 0; i < n; i++) {
+      const ci = pixelMap[i];
+      if (ci < 0) continue;
+      const color = colors[ci];
+      if (!color) continue;
+
+      if (!color.regions || !color.regionMap || color.regions.length <= 1) {
+        if (color.spotFluorY) mFY[i] = 1;
+        if (color.spotFluorM) mFM[i] = 1;
+        if (color.spotFluorG) mFG[i] = 1;
+        if (color.spotFluorOrange) mFO[i] = 1;
+      } else {
+        const ri = color.regionMap[i];
+        if (ri < 0) continue;
+        const region = color.regions[ri];
+        if (!region) continue;
+        if (region.spotFluorY) mFY[i] = 1;
+        if (region.spotFluorM) mFM[i] = 1;
+        if (region.spotFluorG) mFG[i] = 1;
+        if (region.spotFluorOrange) mFO[i] = 1;
+      }
+    }
+
+    return { FY: mFY, FM: mFM, FG: mFG, FO: mFO, width, height };
+  }, []);
+
   useEffect(() => {
     if (!enableFluorescent) return;
-    onSpotPreviewChange?.({ enabled: spotPreviewEnabled, colors: extractedColors });
-  }, [spotPreviewEnabled, extractedColors, onSpotPreviewChange, enableFluorescent]);
+    const masks = pixelMapRef.current
+      ? computeChannelMasks(extractedColors, pixelMapRef.current)
+      : undefined;
+    onSpotPreviewChange?.({ enabled: spotPreviewEnabled, colors: extractedColors, masks });
+  }, [spotPreviewEnabled, extractedColors, onSpotPreviewChange, enableFluorescent, computeChannelMasks]);
 
   const updateSpotColor = useCallback((index: number, field: 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange', value: boolean) => {
     setExtractedColors(prev => {
@@ -312,6 +370,9 @@ export default function ControlsSection({
     spotFluorG: c.spotFluorG ?? false,
     spotFluorOrange: c.spotFluorOrange ?? false,
     spotFluorYName, spotFluorMName, spotFluorGName, spotFluorOrangeName,
+    // Carry region data for PDF per-region mask generation
+    regions: c.regions,
+    regionMap: c.regionMap,
   })), [spotFluorYName, spotFluorMName, spotFluorGName, spotFluorOrangeName]);
 
   const getAllDesignSpotColors = useCallback(() => {

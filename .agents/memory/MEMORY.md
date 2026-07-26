@@ -1,0 +1,1 @@
+- [Gangsheet spot color pipeline](spot-color-pipeline.md) — region-level PDF masks use buildPixelMapFromImage + trace_premask worker path; preview overlay uses pre-computed Uint8Array masks in SpotPreviewData.

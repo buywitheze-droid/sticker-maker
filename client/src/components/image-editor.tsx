@@ -1944,6 +1944,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       };
 
       applyImageDirectly(newImageInfo, widthInches, heightInches, imageHasCleanAlpha(finalImage));
+      if (isMobile) setMobilePanel("preview");
 
       const effectiveDPI = Math.min(finalImage.width / widthInches, finalImage.height / heightInches);
       if (effectiveDPI < 278) {
@@ -2077,6 +2078,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const heightInches = Math.max(0.01, parseFloat((physicalHeight / dpi).toFixed(2)));
       const newImageInfo: ImageInfo = { file, image: croppedImg, originalWidth: physicalWidth, originalHeight: physicalHeight, dpi };
       applyImageDirectly(newImageInfo, widthInches, heightInches, imageHasCleanAlpha(croppedImg));
+      if (isMobile) setMobilePanel("preview");
       if (matchesArtboard) {
         toast({ title: t("toast.gangsheetDetected"), description: t("toast.gangsheetDetectedDesc") });
       }
@@ -2130,6 +2132,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const heightInches = Math.max(0.01, parseFloat((image.height / dpi).toFixed(2)));
 
     applyImageDirectly(newImageInfo, widthInches, heightInches);
+    if (isMobile) setMobilePanel("preview");
   }, [applyImageDirectly]);
 
   const handleBatchStart = useCallback((fileCount: number) => {
@@ -2427,7 +2430,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
       if (format === 'pdf') {
         const { PDFDocument, degrees } = await import('pdf-lib');
-        const { addSpotColorVectorsToPDF } = await import('@/lib/spot-color-vectors');
+        const { addSpotColorVectorsToPDF, addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
 
         const exportDpi = 300;
         const pageWidthPt = artboardWidth * 72;
@@ -2510,15 +2513,69 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               if (hasFluor) {
                 const offsetXInches = design.transform.nx * artboardWidth - (design.widthInches * design.transform.s) / 2;
                 const offsetYInches = design.transform.ny * artboardHeight - (design.heightInches * design.transform.s) / 2;
-                await addSpotColorVectorsToPDF(
-                  pdfDoc, page, img, designSpotColors,
-                  design.widthInches * design.transform.s,
-                  design.heightInches * design.transform.s,
-                  artboardHeight,
-                  offsetXInches,
-                  offsetYInches,
-                  design.transform.rotation ?? 0,
+                const scaledW = design.widthInches * design.transform.s;
+                const scaledH = design.heightInches * design.transform.s;
+                const rot = design.transform.rotation ?? 0;
+
+                // If any color has region-level assignments, build per-channel pixel masks
+                // for accurate separation (bypasses color-proximity matching).
+                const hasRegionAssignments = designSpotColors.some((c: any) =>
+                  c.regions && c.regions.length > 1 &&
+                  c.regions.some((r: any) => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange)
                 );
+
+                if (hasRegionAssignments) {
+                  try {
+                    const { buildPixelMapFromImage } = await import('@/lib/color-extractor');
+                    const mapResult = buildPixelMapFromImage(img as any, designSpotColors as any);
+                    if (mapResult) {
+                      const n = mapResult.width * mapResult.height;
+                      const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
+                      const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
+                      for (let pi = 0; pi < n; pi++) {
+                        const ci = mapResult.pixelMap[pi];
+                        if (ci < 0) continue;
+                        const color = (designSpotColors as any[])[ci];
+                        if (!color) continue;
+                        if (!color.regions || !color.regionMap || color.regions.length <= 1) {
+                          if (color.spotFluorY) mFY[pi] = 1;
+                          if (color.spotFluorM) mFM[pi] = 1;
+                          if (color.spotFluorG) mFG[pi] = 1;
+                          if (color.spotFluorOrange) mFO[pi] = 1;
+                        } else {
+                          const ri = color.regionMap[pi];
+                          if (ri < 0) continue;
+                          const region = color.regions[ri];
+                          if (!region) continue;
+                          if (region.spotFluorY) mFY[pi] = 1;
+                          if (region.spotFluorM) mFM[pi] = 1;
+                          if (region.spotFluorG) mFG[pi] = 1;
+                          if (region.spotFluorOrange) mFO[pi] = 1;
+                        }
+                      }
+                      const cNames = {
+                        FY: designSpotColors[0]?.spotFluorYName || 'FY',
+                        FM: designSpotColors[0]?.spotFluorMName || 'FM',
+                        FG: designSpotColors[0]?.spotFluorGName || 'FG',
+                        FO: designSpotColors[0]?.spotFluorOrangeName || 'FO',
+                      };
+                      await addSpotColorVectorsFromMasksToPDF(
+                        pdfDoc, page,
+                        { FY: mFY, FM: mFM, FG: mFG, FO: mFO },
+                        mapResult.width, mapResult.height, cNames,
+                        scaledW, scaledH, artboardHeight,
+                        offsetXInches, offsetYInches, rot,
+                      );
+                    } else {
+                      // Fallback to color-level if map build failed
+                      await addSpotColorVectorsToPDF(pdfDoc, page, img, designSpotColors, scaledW, scaledH, artboardHeight, offsetXInches, offsetYInches, rot);
+                    }
+                  } catch {
+                    await addSpotColorVectorsToPDF(pdfDoc, page, img, designSpotColors, scaledW, scaledH, artboardHeight, offsetXInches, offsetYInches, rot);
+                  }
+                } else {
+                  await addSpotColorVectorsToPDF(pdfDoc, page, img, designSpotColors, scaledW, scaledH, artboardHeight, offsetXInches, offsetYInches, rot);
+                }
               }
             }
           }
@@ -2766,7 +2823,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <div className="flex items-center gap-0.5 ml-auto">
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
-                <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId && selectedDesignIds.size === 0} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
                 <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-[#F1F5F9] text-[#0891B2] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
               </div>
             </div>
@@ -3166,7 +3223,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     handleDeleteDesign(selectedDesignId);
                   }
                 }}
-                disabled={!selectedDesignId}
+                disabled={!selectedDesignId && selectedDesignIds.size === 0}
                 className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-red-500 hover:text-red-600 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
                 title={t("editor.delete")}
               >

@@ -338,3 +338,142 @@ export async function addSpotColorVectorsToPDF(
 
   return addedLabels;
 }
+
+/**
+ * Like addSpotColorVectorsToPDF but uses pre-computed per-channel pixel masks
+ * (from region-level spot selections) instead of re-running color detection.
+ */
+export async function addSpotColorVectorsFromMasksToPDF(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  masks: Record<string, Uint8Array>,
+  maskWidth: number,
+  maskHeight: number,
+  channelNames: Record<string, string>,
+  widthInches: number,
+  heightInches: number,
+  pageHeightInches: number,
+  imageOffsetXInches: number,
+  imageOffsetYInches: number,
+  rotationDeg = 0,
+): Promise<string[]> {
+  const hasMasks = Object.values(masks).some(m => m.some(v => v > 0));
+  if (!hasMasks) return [];
+
+  // Transfer mask buffers to worker (zero-copy)
+  const masksForWorker: Record<string, ArrayBuffer> = {};
+  const transferable: ArrayBuffer[] = [];
+  for (const [ch, mask] of Object.entries(masks)) {
+    const buf = mask.buffer.slice(mask.byteOffset, mask.byteOffset + mask.byteLength);
+    masksForWorker[ch] = buf;
+    transferable.push(buf);
+  }
+
+  const regions = await new Promise<SpotColorRegion[]>((resolve) => {
+    let worker: Worker;
+    try { worker = new SpotColorWorker(); }
+    catch (err) {
+      console.warn('[SpotColor] Worker creation failed for masks:', err);
+      resolve([]); return;
+    }
+
+    const outW = Math.round(widthInches * SPOT_COLOR_DPI);
+    const outH = Math.round(heightInches * SPOT_COLOR_DPI);
+    const timeoutMs = Math.max(30000, Math.round(outW * outH / 50000) * 1000);
+    const timeout = setTimeout(() => {
+      worker.terminate();
+      console.warn('[SpotColor] Mask worker timed out');
+      resolve([]);
+    }, timeoutMs);
+
+    worker.onmessage = (e: MessageEvent) => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve(e.data.type === 'result' ? e.data.regions : []);
+    };
+    worker.onerror = () => { clearTimeout(timeout); worker.terminate(); resolve([]); };
+
+    worker.postMessage({
+      type: 'trace_premask',
+      masks: masksForWorker,
+      maskWidth,
+      maskHeight,
+      widthInches,
+      heightInches,
+      dpi: SPOT_COLOR_DPI,
+      channelNames,
+    }, transferable);
+  });
+
+  if (regions.length === 0) return [];
+
+  const context = pdfDoc.context;
+  const addedLabels: string[] = [];
+  const ocgRefs: any[] = [];
+
+  const existingOcgTags = new Map<string, any>();
+  try {
+    const res = page.node.Resources();
+    const props = res?.get(PDFName.of('Properties'));
+    if (props instanceof PDFDict) {
+      for (const [key, val] of props.entries()) {
+        existingOcgTags.set(key.toString().replace('/', ''), val);
+      }
+    }
+  } catch { /* first call */ }
+
+  const designCx = imageOffsetXInches + widthInches / 2;
+  const designCy = imageOffsetYInches + heightInches / 2;
+  const rad = (-rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(rad), sinR = Math.sin(rad);
+
+  for (const region of regions) {
+    const offsetPaths = region.paths.map(path =>
+      path.map(p => {
+        const relX = p.x - widthInches / 2;
+        const relY = p.y - heightInches / 2;
+        const rotX = relX * cosR - relY * sinR;
+        const rotY = relX * sinR + relY * cosR;
+        return { x: designCx + rotX, y: pageHeightInches - (designCy + rotY) };
+      })
+    );
+
+    const ocgTag = `OC_${region.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    let ocgRef = existingOcgTags.get(ocgTag);
+    let isNewOcg = false;
+    if (!ocgRef) {
+      const ocgDict = context.obj({ Type: PDFName.of('OCG'), Name: PDFHexString.fromText(region.name) });
+      ocgRef = context.register(ocgDict);
+      isNewOcg = true;
+    }
+    if (isNewOcg) ocgRefs.push(ocgRef);
+
+    addSpotColorRegionAsLayer(pdfDoc, page, region, offsetPaths, ocgRef);
+    if (!addedLabels.includes(region.name)) addedLabels.push(region.name);
+  }
+
+  if (ocgRefs.length === 0) return addedLabels;
+
+  const catalog = pdfDoc.catalog;
+  let ocProperties = catalog.get(PDFName.of('OCProperties'));
+  if (!ocProperties) {
+    const ocgsArray = context.obj([...ocgRefs]);
+    const orderArray = context.obj([...ocgRefs]);
+    const onArray = context.obj([...ocgRefs]);
+    const dDict = context.obj({ ON: onArray, Order: orderArray, BaseState: PDFName.of('ON') });
+    ocProperties = context.obj({ OCGs: ocgsArray, D: dDict });
+    catalog.set(PDFName.of('OCProperties'), ocProperties);
+  } else {
+    const existingOCGs = (ocProperties as PDFDict).get(PDFName.of('OCGs'));
+    if (existingOCGs instanceof PDFArray) { for (const ref of ocgRefs) existingOCGs.push(ref); }
+    const dDict = (ocProperties as PDFDict).get(PDFName.of('D'));
+    if (dDict instanceof PDFDict) {
+      const order = dDict.get(PDFName.of('Order'));
+      if (order instanceof PDFArray) { for (const ref of ocgRefs) order.push(ref); }
+      const on = dDict.get(PDFName.of('ON'));
+      if (on instanceof PDFArray) { for (const ref of ocgRefs) on.push(ref); }
+    }
+  }
+
+  return addedLabels;
+}

@@ -42,6 +42,33 @@ interface WorkerResponse {
   regions: SpotColorRegionWorker[];
 }
 
+interface WorkerMessagePremask {
+  type: 'trace_premask';
+  masks: Record<string, ArrayBuffer>;
+  maskWidth: number;
+  maskHeight: number;
+  widthInches: number;
+  heightInches: number;
+  dpi: number;
+  channelNames: Record<string, string>;
+}
+
+/** Scale a 1-bit mask from srcW×srcH to dstW×dstH (nearest-neighbor). */
+function scaleMask(
+  src: Uint8Array, srcW: number, srcH: number,
+  dstW: number, dstH: number
+): Uint8Array {
+  const dst = new Uint8Array(dstW * dstH);
+  for (let dy = 0; dy < dstH; dy++) {
+    const sy = Math.min(Math.floor(dy * srcH / dstH), srcH - 1);
+    for (let dx = 0; dx < dstW; dx++) {
+      const sx = Math.min(Math.floor(dx * srcW / dstW), srcW - 1);
+      dst[dy * dstW + dx] = src[sy * srcW + sx];
+    }
+  }
+  return dst;
+}
+
 function createClosestColorMask(
   data: Uint8ClampedArray,
   width: number,
@@ -285,21 +312,28 @@ function processSpotColors(
     }
   }
 
-  const fluorTypes = [
-    { field: 'spotFluorY' as const, nameField: 'spotFluorYName' as const, defaultName: 'FY' },
-    { field: 'spotFluorM' as const, nameField: 'spotFluorMName' as const, defaultName: 'FM' },
-    { field: 'spotFluorG' as const, nameField: 'spotFluorGName' as const, defaultName: 'FG' },
-    { field: 'spotFluorOrange' as const, nameField: 'spotFluorOrangeName' as const, defaultName: 'FO' },
+  // Per-channel CMYK tints so RIP software can distinguish channels visually.
+  // FY = Yellow, FM = Magenta, FG = Green (C+Y), FO = Orange (M+Y)
+  const fluorTypes: Array<{
+    field: keyof SpotColorInputWorker;
+    nameField: keyof SpotColorInputWorker;
+    defaultName: string;
+    tintCMYK: [number, number, number, number];
+  }> = [
+    { field: 'spotFluorY',      nameField: 'spotFluorYName',      defaultName: 'FY', tintCMYK: [0,   0,   1, 0] },
+    { field: 'spotFluorM',      nameField: 'spotFluorMName',      defaultName: 'FM', tintCMYK: [0,   1,   0, 0] },
+    { field: 'spotFluorG',      nameField: 'spotFluorGName',      defaultName: 'FG', tintCMYK: [1,   0,   1, 0] },
+    { field: 'spotFluorOrange', nameField: 'spotFluorOrangeName', defaultName: 'FO', tintCMYK: [0, 0.5,   1, 0] },
   ];
 
   for (const ft of fluorTypes) {
-    const matchingColors = spotColors.filter(c => c[ft.field]);
+    const matchingColors = spotColors.filter(c => c[ft.field as keyof SpotColorInputWorker]);
     if (matchingColors.length > 0) {
-      const fluorName = matchingColors[0][ft.nameField] || ft.defaultName;
+      const fluorName = (matchingColors[0][ft.nameField as keyof SpotColorInputWorker] as string) || ft.defaultName;
       const mask = createClosestColorMask(pixelData, width, height, matchingColors, spotColors, 80, 128);
       const paths = traceMaskToInchPaths(mask, width, height, dpi);
       if (paths.length > 0) {
-        regions.push({ name: fluorName, paths, tintCMYK: [0, 1, 0, 0] });
+        regions.push({ name: fluorName, paths, tintCMYK: ft.tintCMYK });
       }
     }
   }
@@ -307,12 +341,37 @@ function processSpotColors(
   return regions;
 }
 
-self.onmessage = function(e: MessageEvent<WorkerMessage>) {
+self.onmessage = function(e: MessageEvent<WorkerMessage | WorkerMessagePremask>) {
   try {
     if (e.data.type === 'trace') {
-      const { imageBuffer, imageWidth, imageHeight, spotColors, dpi } = e.data;
+      const { imageBuffer, imageWidth, imageHeight, spotColors, dpi } = e.data as WorkerMessage;
       const pixelData = new Uint8ClampedArray(imageBuffer);
       const regions = processSpotColors(pixelData, imageWidth, imageHeight, spotColors, dpi);
+      const response: WorkerResponse = { type: 'result', regions };
+      self.postMessage(response);
+    } else if (e.data.type === 'trace_premask') {
+      const { masks, maskWidth, maskHeight, widthInches, heightInches, dpi, channelNames } = e.data as WorkerMessagePremask;
+      const outW = Math.round(widthInches * dpi);
+      const outH = Math.round(heightInches * dpi);
+
+      const FLUOR_TINTS: Record<string, [number, number, number, number]> = {
+        FY: [0,   0,   1, 0],
+        FM: [0,   1,   0, 0],
+        FG: [1,   0,   1, 0],
+        FO: [0, 0.5,   1, 0],
+      };
+
+      const regions: SpotColorRegionWorker[] = [];
+      for (const [channel, maskBuffer] of Object.entries(masks)) {
+        const srcMask = new Uint8Array(maskBuffer);
+        const scaledMask = scaleMask(srcMask, maskWidth, maskHeight, outW, outH);
+        const paths = traceMaskToInchPaths(scaledMask, outW, outH, dpi);
+        if (paths.length > 0) {
+          const name = channelNames[channel] || channel;
+          const tintCMYK = FLUOR_TINTS[channel] ?? ([0, 1, 0, 0] as [number, number, number, number]);
+          regions.push({ name, paths, tintCMYK });
+        }
+      }
       const response: WorkerResponse = { type: 'result', regions };
       self.postMessage(response);
     }

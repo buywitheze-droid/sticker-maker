@@ -47,7 +47,7 @@ interface PreviewSectionProps {
   onInteractionEnd?: () => void;
   onExpandArtboard?: () => void;
   onDesignContextMenu?: (x: number, y: number, designId: string | null) => void;
-  spotPreviewData?: { enabled: boolean; colors: Array<{ hex: string; rgb: { r: number; g: number; b: number }; spotWhite?: boolean; spotGloss?: boolean; spotFluorY?: boolean; spotFluorM?: boolean; spotFluorG?: boolean; spotFluorOrange?: boolean }> };
+  spotPreviewData?: { enabled: boolean; colors: Array<{ hex: string; rgb: { r: number; g: number; b: number }; spotWhite?: boolean; spotGloss?: boolean; spotFluorY?: boolean; spotFluorM?: boolean; spotFluorG?: boolean; spotFluorOrange?: boolean }>; masks?: { FY: Uint8Array; FM: Uint8Array; FG: Uint8Array; FO: Uint8Array; width: number; height: number } };
   selectionZoomActive?: boolean;
   onSelectionZoomChange?: (active: boolean) => void;
 }
@@ -2390,7 +2390,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const img = source || imageInfo.image;
       const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
-      const cacheKey = `${imgIdentity}-fy:${fluorY.map(c=>c.hex).join(',')}-fm:${fluorM.map(c=>c.hex).join(',')}-fg:${fluorG.map(c=>c.hex).join(',')}-fo:${fluorOr.map(c=>c.hex).join(',')}`;
+      const pm = (spotPreviewData as any).masks as { FY: Uint8Array; FM: Uint8Array; FG: Uint8Array; FO: Uint8Array; width: number; height: number } | undefined;
+      const maskFP = pm ? `m${pm.width}x${pm.height}l${pm.FY.length}` : 'nm';
+      const cacheKey = `${imgIdentity}-${maskFP}-fy:${fluorY.map(c=>c.hex).join(',')}-fm:${fluorM.map(c=>c.hex).join(',')}-fg:${fluorG.map(c=>c.hex).join(',')}-fo:${fluorOr.map(c=>c.hex).join(',')}`;
       if (spotOverlayCacheRef.current?.key === cacheKey) return spotOverlayCacheRef.current.canvas;
 
       let ow = img.width, oh = img.height;
@@ -2403,6 +2405,49 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       srcCtx.drawImage(img, 0, 0, ow, oh);
       let srcData: ImageData;
       try { srcData = srcCtx.getImageData(0, 0, ow, oh); } catch { return null; }
+
+      // ── Fast path: use pre-computed region masks (exact region-level accuracy) ──
+      if (pm) {
+        const mW = pm.width, mH = pm.height;
+        const channels: Array<{ mask: Uint8Array; oR: number; oG: number; oB: number }> = [
+          { mask: pm.FY, oR: 223, oG: 255, oB: 0   },
+          { mask: pm.FM, oR: 255, oG: 0,   oB: 255 },
+          { mask: pm.FG, oR: 57,  oG: 255, oB: 20  },
+          { mask: pm.FO, oR: 255, oG: 102, oB: 0   },
+        ].filter(ch => ch.mask.some(v => v > 0));
+
+        if (channels.length > 0) {
+          const oCanvas = document.createElement('canvas');
+          oCanvas.width = ow; oCanvas.height = oh;
+          const oCtx = oCanvas.getContext('2d');
+          if (oCtx) {
+            const oData = oCtx.createImageData(ow, oh);
+            const pixels = srcData.data;
+            const out = oData.data;
+
+            for (let pi = 0; pi < ow * oh; pi++) {
+              if (pixels[pi * 4 + 3] < 128) continue;
+              const px = pi % ow, py = Math.floor(pi / ow);
+              const mx = Math.min(Math.floor(px * mW / ow), mW - 1);
+              const my = Math.min(Math.floor(py * mH / oh), mH - 1);
+              const mi = my * mW + mx;
+              for (const ch of channels) {
+                if (ch.mask[mi]) {
+                  out[pi * 4]     = ch.oR;
+                  out[pi * 4 + 1] = ch.oG;
+                  out[pi * 4 + 2] = ch.oB;
+                  out[pi * 4 + 3] = 255;
+                  break;
+                }
+              }
+            }
+
+            oCtx.putImageData(oData, 0, 0);
+            spotOverlayCacheRef.current = { key: cacheKey, canvas: oCanvas };
+            return oCanvas;
+          }
+        }
+      }
 
       const overlayCanvas = document.createElement('canvas');
       overlayCanvas.width = ow;
