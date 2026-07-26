@@ -76,6 +76,9 @@ interface ControlsSectionProps {
   onActiveChannelChange?: (channel: string | null) => void;
   /** Ref populated by ControlsSection so the parent can forward normalized preview clicks. */
   wandAssignRef?: React.MutableRefObject<((nx: number, ny: number) => void) | null>;
+  /** When true, the preview is in hand/pan mode so the user can drag while zoomed in. */
+  panModeActive?: boolean;
+  onPanModeChange?: (active: boolean) => void;
 }
 
 const DEFAULT_HEIGHTS = [12, 18, 24, 35, 40, 45, 48, 50, 55, 60, 65, 70, 80, 85, 95, 110, 120, 130, 140, 150];
@@ -100,6 +103,8 @@ export default function ControlsSection({
   copySpotSelectionsRef,
   onActiveChannelChange,
   wandAssignRef,
+  panModeActive = false,
+  onPanModeChange,
 }: ControlsSectionProps) {
   const { t, lang } = useLanguage();
   const isMobile = useIsMobile();
@@ -244,11 +249,14 @@ export default function ControlsSection({
     colors: ExtractedColor[],
     mapResult: { pixelMap: Int16Array; width: number; height: number }
   ) => {
-    const hasRegionAssignments = colors.some(c =>
-      c.regions && c.regions.length > 1 &&
-      c.regions.some(r => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange)
+    // Build masks for ANY fluorescent assignment — color-level OR region-level.
+    // Returning undefined here falls back to imprecise hex matching; always use
+    // the pixel map when we have it so the preview is pixel-accurate.
+    const hasAnyFluorAssignment = colors.some(c =>
+      c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange ||
+      (c.regions?.some(r => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange) ?? false)
     );
-    if (!hasRegionAssignments) return undefined;
+    if (!hasAnyFluorAssignment) return undefined;
 
     const { pixelMap, width, height } = mapResult;
     const n = width * height;
@@ -350,7 +358,8 @@ export default function ControlsSection({
   extractedColorsLiveRef.current = extractedColors;
 
   /** Assign the active channel to the pixel at normalized image coordinates (0..1). Called from the preview canvas.
-   *  Reads activeChannel and extractedColors via live refs so it never captures a stale snapshot. */
+   *  Always assigns at region-level so only the clicked shape is affected — never the entire color.
+   *  Color-level assignment is only available through the color-list buttons, not the wand. */
   const handleWandAssign = useCallback((nx: number, ny: number) => {
     const ac = activeChannelLiveRef.current;
     if (!ac) return;
@@ -363,16 +372,23 @@ export default function ControlsSection({
     const ci = pm.pixelMap[mpi];
     if (ci < 0 || ci >= colors.length) return;
     const color = colors[ci];
-    const hasRegions = (color?.regions?.length ?? 0) > 1 && !!color?.regionMap;
-    const regionArrayIdx = hasRegions ? (color.regionMap![mpi] ?? -1) : -1;
-    if (hasRegions && regionArrayIdx >= 0) {
-      const region = color.regions![regionArrayIdx];
-      if (!region[ac]) toggleRegionFluor(ci, region.id, ac);
+    if (!color) return;
+
+    const regions = color.regions;
+    // Require region data — wand never falls back to color-level assignment.
+    // Color-level assignment is intentionally only available via the list buttons.
+    if (!regions || regions.length === 0) return;
+
+    if (regions.length > 1 && color.regionMap) {
+      // Multi-region color: assign only the specific disconnected shape the user clicked.
+      const ri = color.regionMap[mpi] ?? -1;
+      if (ri < 0 || !regions[ri]) return;
+      toggleRegionFluor(ci, regions[ri].id, ac);
     } else {
-      if (!color[ac]) updateSpotColor(ci, ac, true);
+      // Single-region color: there is only one shape, so assign it.
+      toggleRegionFluor(ci, regions[0].id, ac);
     }
-  // toggleRegionFluor and updateSpotColor are stable; refs supply the live values.
-  }, [toggleRegionFluor, updateSpotColor]);
+  }, [toggleRegionFluor]);
 
   // Keep wandAssignRef in sync. No cleanup nulling — old closure still works (idempotent assigns),
   // and a null window between renders would silently drop clicks.
@@ -387,24 +403,26 @@ export default function ControlsSection({
   }, [activeChannel, onActiveChannelChange]);
 
   const sortedColorIndices = useMemo(() => {
-    const fluorPriority = (c: ExtractedColor) => {
-      const r = c.rgb.r, g = c.rgb.g, b = c.rgb.b;
-      const max = Math.max(r, g, b);
-      const saturation = max === 0 ? 0 : 1 - Math.min(r, g, b) / max;
-      const lightness = (r + g + b) / 3;
-      if (saturation < 0.15 || lightness < 40 || lightness > 240) return 1;
-      const isMagenta = r > 180 && b > 120 && g < 120;
-      const isYellow = r > 180 && g > 160 && b < 100;
-      const isGreen = g > 150 && r < 150 && b < 150;
-      const isOrange = r > 200 && g > 80 && g < 180 && b < 80;
-      const isPink = r > 180 && g < 130 && b > 100;
-      const isRed = r > 180 && g < 80 && b < 80;
-      if (isMagenta || isYellow || isGreen || isOrange || isPink || isRed) return 0;
-      return 1;
+    // Sort by hue group in the order the user cares about for fluorescent printing:
+    // Magenta → Red → Orange → Yellow → Green → other → dark/achromatic
+    const huePriority = (c: ExtractedColor): number => {
+      const r = c.rgb.r / 255, g = c.rgb.g / 255, b = c.rgb.b / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+      if (d < 0.08 || max < 0.12) return 6; // very dark or near-grey → last
+      let h = 0;
+      if (max === r)      h = (60 * ((g - b) / d) + 360) % 360;
+      else if (max === g) h = 60 * ((b - r) / d) + 120;
+      else                h = 60 * ((r - g) / d) + 240;
+      if (h >= 285 && h < 345) return 0; // Magenta / pink / hot-pink
+      if (h >= 345 || h < 20)  return 1; // Red
+      if (h >= 20  && h < 50)  return 2; // Orange
+      if (h >= 50  && h < 80)  return 3; // Yellow
+      if (h >= 80  && h < 170) return 4; // Green / lime
+      return 5;                           // Cyan / blue / purple / other
     };
     return extractedColors
-      .map((c, i) => ({ index: i, priority: fluorPriority(c), pct: c.percentage }))
-      .sort((a, b) => a.priority - b.priority || b.pct - a.pct)
+      .map((c, i) => ({ index: i, hue: huePriority(c), pct: c.percentage ?? 0 }))
+      .sort((a, b) => a.hue - b.hue || b.pct - a.pct)
       .map(e => e.index);
   }, [extractedColors]);
 
@@ -577,7 +595,16 @@ export default function ControlsSection({
                           return (
                             <button
                               key={field}
-                              onClick={() => setActiveChannel(isSelected ? null : field)}
+                              onClick={() => {
+                                if (isSelected && panModeActive) {
+                                  // Reselecting same channel while in pan mode → exit pan mode, keep channel
+                                  onPanModeChange?.(false);
+                                } else {
+                                  setActiveChannel(isSelected ? null : field);
+                                  // Switching to or deselecting a channel → always exit pan mode
+                                  if (panModeActive) onPanModeChange?.(false);
+                                }
+                              }}
                               className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:opacity-90'}`}
                               style={{
                                 borderColor: bg,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, Focus } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, Focus, Hand } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,10 +53,13 @@ interface PreviewSectionProps {
   /** When set, clicks on the canvas assign this spot channel to the tapped design pixel. */
   activeSpotChannel?: string | null;
   onWandTap?: (nx: number, ny: number, designId: string) => void;
+  /** When true, left-click on the canvas pans (hand mode) instead of wand-assigning. */
+  panModeActive?: boolean;
+  onPanModeChange?: (active: boolean) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap, panModeActive = false, onPanModeChange }, ref) => {
     const { toast } = useToast();
     const { t, lang } = useLanguage();
     const isMobile = useIsMobile();
@@ -68,14 +71,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     activeSpotChannelRef.current = activeSpotChannel ?? null;
     const onWandTapRef = useRef<typeof onWandTap>(onWandTap);
     onWandTapRef.current = onWandTap;
+    const panModeActiveRef = useRef(panModeActive);
+    panModeActiveRef.current = panModeActive;
+    const onPanModeChangeRef = useRef(onPanModeChange);
+    onPanModeChangeRef.current = onPanModeChange;
 
-    // Forcibly set/clear the imperative style.cursor when wand mode toggles.
+    // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
     useEffect(() => {
       const area = canvasAreaRef.current;
       if (!area) return;
-      area.style.cursor = activeSpotChannel ? 'crosshair' : '';
-    }, [activeSpotChannel]);
+      if (panModeActive && activeSpotChannel) {
+        area.style.cursor = 'grab';
+      } else if (activeSpotChannel) {
+        area.style.cursor = 'crosshair';
+      } else {
+        area.style.cursor = '';
+      }
+    }, [activeSpotChannel, panModeActive]);
     const zoomMax = Math.max(10, Math.ceil(artboardHeight / Math.max(artboardWidth, 0.1)) * 3);
     const zoomMaxRef = useRef(zoomMax);
     zoomMaxRef.current = zoomMax;
@@ -1546,7 +1559,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const mr = { x: Math.min(s.x, e.x), y: Math.min(s.y, e.y), w: Math.abs(e.x - s.x), h: Math.abs(e.y - s.y) };
         setMarqueeRect(null);
         setMarqueeScreenRect(null);
-        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'default';
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : 'default';
         const cvs = canvasRef.current;
         if (mr && mr.w > 4 && mr.h > 4 && cvs) {
           const hitIds: string[] = [];
@@ -1585,7 +1598,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         altDragDuplicatedRef.current = false;
         altKeyAtDragStartRef.current = false;
         stopBottomGlow();
-        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
+        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
         checkPixelOverlap();
         if (wasGroupInteracting) onInteractionEnd?.();
         return;
@@ -1601,7 +1614,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       snapGuidesRef.current = [];
       stopBottomGlow();
       if (wasInteracting) onTransformChangeRef.current?.(transformRef.current);
-      if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
+      if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
       checkPixelOverlap();
       if (wasInteracting) onInteractionEnd?.();
     }, [checkPixelOverlap, onInteractionEnd, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow, stopAutoPan]);
@@ -1624,6 +1637,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
       // Wand channel assignment — intercept left-click when a spot channel is active.
       if (e.button === 0 && activeSpotChannelRef.current && onWandTapRef.current) {
+        // In pan mode, redirect to panning so user can navigate while channel is held.
+        if (panModeActiveRef.current) {
+          isPanningRef.current = true;
+          panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = 'grabbing';
+          return;
+        }
         const local = canvasToLocal(e.clientX, e.clientY);
         const hitId = findDesignAtPoint(local.x, local.y);
         if (hitId) {
@@ -1699,8 +1719,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         canvasAreaRef.current.style.cursor = 'grab';
         return;
       }
-      // In wand mode keep crosshair — don't let hover logic override it.
-      if (activeSpotChannelRef.current) return;
+      // In pan mode show grab cursor; in wand mode keep crosshair — don't let hover override.
+      if (activeSpotChannelRef.current) {
+        if (canvasAreaRef.current) {
+          canvasAreaRef.current.style.cursor = panModeActiveRef.current ? 'grab' : 'crosshair';
+        }
+        return;
+      }
       const local = canvasToLocal(e.clientX, e.clientY);
       // Group handle hover cursor
       if (selectedDesignIds.size > 1) {
@@ -2425,6 +2450,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         if (renderRef.current) renderRef.current();
         return;
       }
+      // Clear stale overlay cache and redraw immediately so the overlay appears
+      // on the current frame rather than waiting for the first animation tick.
+      spotOverlayCacheRef.current = null;
+      if (renderRef.current) renderRef.current();
+
       let startTime: number | null = null;
       let lastFrameTime = 0;
       const FRAME_INTERVAL = 1000 / 30;
@@ -2450,130 +2480,75 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const allColors = spotPreviewData.colors;
       if (!allColors || allColors.length === 0) return null;
 
-      const fluorY = allColors.filter(c => c.spotFluorY);
-      const fluorM = allColors.filter(c => c.spotFluorM);
-      const fluorG = allColors.filter(c => c.spotFluorG);
-      const fluorOr = allColors.filter(c => c.spotFluorOrange);
-      if (fluorY.length === 0 && fluorM.length === 0 && fluorG.length === 0 && fluorOr.length === 0) return null;
+      // Build channel→overlay-color map keyed by color index
+      type OverlayColor = { oR: number; oG: number; oB: number };
+      const channelForColor = new Map<number, OverlayColor>();
+      for (let ci = 0; ci < allColors.length; ci++) {
+        const c = allColors[ci];
+        if      (c.spotFluorY)      channelForColor.set(ci, { oR: 223, oG: 255, oB: 0   });
+        else if (c.spotFluorM)      channelForColor.set(ci, { oR: 255, oG: 0,   oB: 255 });
+        else if (c.spotFluorG)      channelForColor.set(ci, { oR: 57,  oG: 255, oB: 20  });
+        else if (c.spotFluorOrange) channelForColor.set(ci, { oR: 255, oG: 102, oB: 0   });
+      }
+      if (channelForColor.size === 0) return null;
 
       const img = source || imageInfo.image;
       const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
-      const pm = (spotPreviewData as any).masks as { FY: Uint8Array; FM: Uint8Array; FG: Uint8Array; FO: Uint8Array; width: number; height: number } | undefined;
-      const maskFP = pm ? `m${pm.width}x${pm.height}l${pm.FY.length}` : 'nm';
-      const cacheKey = `${imgIdentity}-${maskFP}-fy:${fluorY.map(c=>c.hex).join(',')}-fm:${fluorM.map(c=>c.hex).join(',')}-fg:${fluorG.map(c=>c.hex).join(',')}-fo:${fluorOr.map(c=>c.hex).join(',')}`;
+
+      // Cache key: based on actual assignments (no low-res mask fingerprint)
+      const assignKey = [...channelForColor.entries()].map(([ci, ch]) => `${ci}:${ch.oR}`).join(',');
+      const cacheKey = `${imgIdentity}-nc-${assignKey}`;
       if (spotOverlayCacheRef.current?.key === cacheKey) return spotOverlayCacheRef.current.canvas;
 
-      let ow = img.width, oh = img.height;
+      // Cap rendering resolution to keep the nearest-centroid loop fast
+      const MAX_DIM = 1024;
+      const srcW = img.width, srcH = img.height;
+      const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH, 1));
+      const ow = Math.max(1, Math.round(srcW * scale));
+      const oh = Math.max(1, Math.round(srcH * scale));
 
       const srcCanvas = document.createElement('canvas');
-      srcCanvas.width = ow;
-      srcCanvas.height = oh;
+      srcCanvas.width = ow; srcCanvas.height = oh;
       const srcCtx = srcCanvas.getContext('2d');
       if (!srcCtx) return null;
       srcCtx.drawImage(img, 0, 0, ow, oh);
       let srcData: ImageData;
       try { srcData = srcCtx.getImageData(0, 0, ow, oh); } catch { return null; }
 
-      // ── Fast path: use pre-computed region masks (exact region-level accuracy) ──
-      if (pm) {
-        const mW = pm.width, mH = pm.height;
-        const channels: Array<{ mask: Uint8Array; oR: number; oG: number; oB: number }> = [
-          { mask: pm.FY, oR: 223, oG: 255, oB: 0   },
-          { mask: pm.FM, oR: 255, oG: 0,   oB: 255 },
-          { mask: pm.FG, oR: 57,  oG: 255, oB: 20  },
-          { mask: pm.FO, oR: 255, oG: 102, oB: 0   },
-        ].filter(ch => ch.mask.some(v => v > 0));
+      // Pre-compute centroid RGB array (no sqrt needed — squared distance)
+      const centroids = allColors.map(c => c.rgb ?? { r: 128, g: 128, b: 128 });
 
-        if (channels.length > 0) {
-          const oCanvas = document.createElement('canvas');
-          oCanvas.width = ow; oCanvas.height = oh;
-          const oCtx = oCanvas.getContext('2d');
-          if (oCtx) {
-            const oData = oCtx.createImageData(ow, oh);
-            const pixels = srcData.data;
-            const out = oData.data;
-
-            for (let pi = 0; pi < ow * oh; pi++) {
-              if (pixels[pi * 4 + 3] < 128) continue;
-              const px = pi % ow, py = Math.floor(pi / ow);
-              const mx = Math.min(Math.floor(px * mW / ow), mW - 1);
-              const my = Math.min(Math.floor(py * mH / oh), mH - 1);
-              const mi = my * mW + mx;
-              for (const ch of channels) {
-                if (ch.mask[mi]) {
-                  out[pi * 4]     = ch.oR;
-                  out[pi * 4 + 1] = ch.oG;
-                  out[pi * 4 + 2] = ch.oB;
-                  out[pi * 4 + 3] = 255;
-                  break;
-                }
-              }
-            }
-
-            oCtx.putImageData(oData, 0, 0);
-            spotOverlayCacheRef.current = { key: cacheKey, canvas: oCanvas };
-            return oCanvas;
-          }
-        }
-      }
-
-      const overlayCanvas = document.createElement('canvas');
-      overlayCanvas.width = ow;
-      overlayCanvas.height = oh;
-      const overlayCtx = overlayCanvas.getContext('2d');
-      if (!overlayCtx) return null;
-      const overlayData = overlayCtx.createImageData(ow, oh);
-
-      const parseHex = (hex: string) => ({
-        r: parseInt(hex.slice(1, 3), 16),
-        g: parseInt(hex.slice(3, 5), 16),
-        b: parseInt(hex.slice(5, 7), 16),
-      });
-
-      const allColorsParsed = allColors.map(c => ({
-        ...parseHex(c.hex),
-        hex: c.hex,
-      }));
-      const markedHexMap = new Map<string, { oR: number; oG: number; oB: number }>();
-      for (const c of fluorY) markedHexMap.set(c.hex, { oR: 223, oG: 255, oB: 0 });
-      for (const c of fluorM) markedHexMap.set(c.hex, { oR: 255, oG: 0, oB: 255 });
-      for (const c of fluorG) markedHexMap.set(c.hex, { oR: 57, oG: 255, oB: 20 });
-      for (const c of fluorOr) markedHexMap.set(c.hex, { oR: 255, oG: 102, oB: 0 });
-
-      const colorTolerance = 80;
-      const directTolerance = 100;
-      const alphaThreshold = 128;
+      const oCanvas = document.createElement('canvas');
+      oCanvas.width = ow; oCanvas.height = oh;
+      const oCtx = oCanvas.getContext('2d');
+      if (!oCtx) return null;
+      const oData = oCtx.createImageData(ow, oh);
       const pixels = srcData.data;
-      const out = overlayData.data;
+      const out    = oData.data;
 
-      for (let idx = 0; idx < pixels.length; idx += 4) {
-        if (pixels[idx + 3] < alphaThreshold) continue;
-        const r = pixels[idx], g = pixels[idx + 1], b = pixels[idx + 2];
+      for (let pi = 0; pi < ow * oh; pi++) {
+        if (pixels[pi * 4 + 3] < 128) continue;
+        const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
 
-        let closestHex = '';
-        let closestDist = Infinity;
-        for (const ac of allColorsParsed) {
-          const dr = r - ac.r, dg = g - ac.g, db = b - ac.b;
-          const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-          if (dist < closestDist) { closestDist = dist; closestHex = ac.hex; }
+        // Nearest centroid — squared Euclidean distance, no sqrt
+        let bestDist = Infinity, bestIdx = -1;
+        for (let ci = 0; ci < centroids.length; ci++) {
+          const c = centroids[ci];
+          const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+          if (d < bestDist) { bestDist = d; bestIdx = ci; }
         }
-
-        if (closestDist < colorTolerance && markedHexMap.has(closestHex)) {
-          const markedRgb = parseHex(closestHex);
-          const dr = r - markedRgb.r, dg = g - markedRgb.g, db = b - markedRgb.b;
-          if (Math.sqrt(dr * dr + dg * dg + db * db) < directTolerance) {
-            const overlay = markedHexMap.get(closestHex)!;
-            out[idx] = overlay.oR;
-            out[idx + 1] = overlay.oG;
-            out[idx + 2] = overlay.oB;
-            out[idx + 3] = 255;
-          }
-        }
+        if (bestIdx < 0) continue;
+        const ch = channelForColor.get(bestIdx);
+        if (!ch) continue;
+        out[pi * 4]     = ch.oR;
+        out[pi * 4 + 1] = ch.oG;
+        out[pi * 4 + 2] = ch.oB;
+        out[pi * 4 + 3] = 255;
       }
 
-      overlayCtx.putImageData(overlayData, 0, 0);
-      spotOverlayCacheRef.current = { key: cacheKey, canvas: overlayCanvas };
-      return overlayCanvas;
+      oCtx.putImageData(oData, 0, 0);
+      spotOverlayCacheRef.current = { key: cacheKey, canvas: oCanvas };
+      return oCanvas;
     }, [imageInfo, spotPreviewData]);
 
     createSpotOverlayCanvasRef.current = createSpotOverlayCanvas;
@@ -3052,7 +3027,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className={`flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${activeSpotChannel ? 'cursor-crosshair' : 'cursor-default'}`}
+          className={`flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${activeSpotChannel && !panModeActive ? 'cursor-crosshair' : activeSpotChannel && panModeActive ? 'cursor-grab' : 'cursor-default'}`}
           style={{ userSelect: 'none', touchAction: 'none' }}
         >
           <div className="relative" style={{ paddingBottom: Math.abs(zoom - 1) < 0.03 ? 16 : 0, paddingRight: Math.abs(zoom - 1) < 0.03 ? 14 : 0 }}>
@@ -3378,6 +3353,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     <RotateCcw className="h-3.5 w-3.5 mr-1 flex-shrink-0" />
                     {t("preview.reset")}
                   </Button>
+                )}
+                {/* Hand/pan toggle — appears while a spot channel is active so user can pan while zoomed in */}
+                {activeSpotChannel && zoom > 1 && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onPanModeChange?.(!panModeActive)}
+                      className={`h-6 px-1.5 rounded whitespace-nowrap flex items-center gap-0.5 text-[11px] transition-colors ${panModeActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'text-gray-600 hover:bg-gray-200'}`}
+                      title={panModeActive ? 'Hand mode: click to return to paint mode' : 'Switch to hand tool to pan while zoomed in'}
+                    >
+                      <Hand className="h-2.5 w-2.5 flex-shrink-0" />
+                      <span className="ml-0.5">{panModeActive ? 'Pan' : 'Pan'}</span>
+                    </Button>
+                    <div className="w-px h-3.5 bg-gray-300" />
+                  </>
                 )}
                 <div className="flex items-center gap-0 flex-shrink-0 items-center">
                   <Button

@@ -292,6 +292,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
   const [activeSpotChannel, setActiveSpotChannel] = useState<string | null>(null);
+  const [panModeActive, setPanModeActive] = useState(false);
   const wandAssignRef = useRef<((nx: number, ny: number) => void) | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
@@ -2432,7 +2433,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
       if (format === 'pdf') {
         const { PDFDocument, degrees } = await import('pdf-lib');
-        const { addSpotColorVectorsToPDF, addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
 
         const exportDpi = 300;
         const pageWidthPt = artboardWidth * 72;
@@ -2458,67 +2458,114 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           } else {
             cctx.drawImage(img, 0, 0, drawW, drawH);
           }
-          // ── Knockout pass: build spot masks early so we can erase fluorescent
-          //    pixels from the CMYK canvas BEFORE exporting PNG.
-          //    Result: only the spot channel prints in those areas — no CMYK beneath.
+          // ── Full-resolution knockout + spot mask build ────────────────────────
+          //    Classify every canvas pixel by nearest-centroid at export DPI.
+          //    This gives pixel-perfect masks with no blockiness from low-res upscaling.
+          //    The same masks drive both the CMYK knockout and the PDF spot layers.
           const designSpotColors = spotColorsByDesign?.[design.id];
           const hasFluor = !!(designSpotColors?.some((c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange));
-          let prebuiltMasks: { FY: Uint8Array; FM: Uint8Array; FG: Uint8Array; FO: Uint8Array; width: number; height: number } | null = null;
+          let fullResMasks: Array<{
+            name: string;
+            tintCMYK: [number, number, number, number];
+            mask: Uint8Array;
+            maskWidth: number;
+            maskHeight: number;
+          }> | null = null;
 
-          if (hasFluor && designSpotColors) {
+          if (hasFluor && designSpotColors && designSpotColors.length > 0) {
             try {
-              const { buildPixelMapFromImage } = await import('@/lib/color-extractor');
-              const mapResult = buildPixelMapFromImage(img as any, designSpotColors as any);
-              if (mapResult) {
-                const n = mapResult.width * mapResult.height;
-                const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
-                const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
-                for (let pi = 0; pi < n; pi++) {
-                  const ci = mapResult.pixelMap[pi];
-                  if (ci < 0) continue;
-                  const color = (designSpotColors as any[])[ci];
-                  if (!color) continue;
-                  if (!color.regions || !color.regionMap || color.regions.length <= 1) {
-                    if (color.spotFluorY) mFY[pi] = 1;
-                    if (color.spotFluorM) mFM[pi] = 1;
-                    if (color.spotFluorG) mFG[pi] = 1;
-                    if (color.spotFluorOrange) mFO[pi] = 1;
-                  } else {
-                    const ri = color.regionMap[pi];
-                    if (ri >= 0 && color.regions[ri]) {
-                      if (color.regions[ri].spotFluorY) mFY[pi] = 1;
-                      if (color.regions[ri].spotFluorM) mFM[pi] = 1;
-                      if (color.regions[ri].spotFluorG) mFG[pi] = 1;
-                      if (color.regions[ri].spotFluorOrange) mFO[pi] = 1;
-                    }
-                  }
-                }
+              const colors = designSpotColors as any[];
+              // Pre-compute centroid RGB values
+              const centroids = colors.map((c: any) => c.rgb as { r: number; g: number; b: number });
 
-                // Erase fluorescent pixels from the canvas so no CMYK ink prints beneath them.
-                // Mirror the mask lookup when the design is flipped so it stays aligned.
-                const imgDataKO = cctx.getImageData(0, 0, drawW, drawH);
-                const dKO = imgDataKO.data;
-                const scaleX = mapResult.width / drawW;
-                const scaleY = mapResult.height / drawH;
-                const fX = design.transform.flipX;
-                const fY = design.transform.flipY;
-                for (let py = 0; py < drawH; py++) {
-                  let mySrc = Math.min(Math.floor(py * scaleY), mapResult.height - 1);
-                  if (fY) mySrc = mapResult.height - 1 - mySrc;
-                  const rowBase = mySrc * mapResult.width;
-                  for (let px = 0; px < drawW; px++) {
-                    let mxSrc = Math.min(Math.floor(px * scaleX), mapResult.width - 1);
-                    if (fX) mxSrc = mapResult.width - 1 - mxSrc;
-                    const mpi = rowBase + mxSrc;
-                    if (mFY[mpi] || mFM[mpi] || mFG[mpi] || mFO[mpi]) {
-                      dKO[(py * drawW + px) * 4 + 3] = 0; // alpha = 0 → no CMYK ink
-                    }
-                  }
-                }
-                cctx.putImageData(imgDataKO, 0, 0);
+              // Whether any color uses region-level (wand-per-region) assignments
+              const hasRegionLevel = colors.some((c: any) =>
+                c.regions && c.regions.length > 1 && c.regionMap &&
+                c.regions.some((r: any) => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange)
+              );
 
-                prebuiltMasks = { FY: mFY, FM: mFM, FG: mFG, FO: mFO, width: mapResult.width, height: mapResult.height };
+              // Low-res pixel map is only needed for region sub-division
+              let lowResMap: { pixelMap: Int16Array; width: number; height: number } | null = null;
+              if (hasRegionLevel) {
+                const { buildPixelMapFromImage } = await import('@/lib/color-extractor');
+                lowResMap = buildPixelMapFromImage(img as any, designSpotColors as any) ?? null;
               }
+
+              const n = drawW * drawH;
+              const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
+              const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
+
+              // Read canvas pixels (canvas already has flips applied)
+              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
+              const pixels = imgDataFull.data;
+
+              const lrW = lowResMap?.width ?? 1;
+              const lrH = lowResMap?.height ?? 1;
+
+              for (let py = 0; py < drawH; py++) {
+                for (let px = 0; px < drawW; px++) {
+                  const pi = py * drawW + px;
+                  if (pixels[pi * 4 + 3] < 10) continue;
+                  const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
+
+                  // Nearest-centroid (squared distance, no sqrt needed)
+                  let bestDist = Infinity, bestIdx = -1;
+                  for (let ci = 0; ci < centroids.length; ci++) {
+                    const c = centroids[ci];
+                    const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+                    if (d < bestDist) { bestDist = d; bestIdx = ci; }
+                  }
+                  if (bestIdx < 0) continue;
+                  const color = colors[bestIdx];
+                  if (!color) continue;
+
+                  if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
+                    // Region-level: use 512-px map for sub-color region lookup
+                    const mx = Math.min(Math.floor(px * lrW / drawW), lrW - 1);
+                    const my = Math.min(Math.floor(py * lrH / drawH), lrH - 1);
+                    const mpi = my * lrW + mx;
+                    const ri = (color.regionMap as Int16Array)[mpi] ?? -1;
+                    if (ri < 0 || !color.regions[ri]) continue;
+                    const region = color.regions[ri];
+                    if (region.spotFluorY)      mFY[pi] = 255;
+                    if (region.spotFluorM)      mFM[pi] = 255;
+                    if (region.spotFluorG)      mFG[pi] = 255;
+                    if (region.spotFluorOrange) mFO[pi] = 255;
+                  } else {
+                    if (color.spotFluorY)      mFY[pi] = 255;
+                    if (color.spotFluorM)      mFM[pi] = 255;
+                    if (color.spotFluorG)      mFG[pi] = 255;
+                    if (color.spotFluorOrange) mFO[pi] = 255;
+                  }
+                }
+              }
+
+              // ── Knockout: erase fluorescent pixels from CMYK canvas
+              for (let pi = 0; pi < n; pi++) {
+                if (mFY[pi] || mFM[pi] || mFG[pi] || mFO[pi]) {
+                  imgDataFull.data[pi * 4 + 3] = 0;
+                }
+              }
+              cctx.putImageData(imgDataFull, 0, 0);
+
+              const FLUOR_TINTS: Record<string, [number, number, number, number]> = {
+                FY: [0,   0,   1, 0],
+                FM: [0,   1,   0, 0],
+                FG: [1,   0,   1, 0],
+                FO: [0, 0.5,   1, 0],
+              };
+              const cNames = {
+                FY: (colors[0]?.spotFluorYName      as string) || 'FY',
+                FM: (colors[0]?.spotFluorMName      as string) || 'FM',
+                FG: (colors[0]?.spotFluorGName      as string) || 'FG',
+                FO: (colors[0]?.spotFluorOrangeName as string) || 'FO',
+              };
+              fullResMasks = [
+                { name: cNames.FY, tintCMYK: FLUOR_TINTS.FY, mask: mFY, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FM, tintCMYK: FLUOR_TINTS.FM, mask: mFM, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FG, tintCMYK: FLUOR_TINTS.FG, mask: mFG, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FO, tintCMYK: FLUOR_TINTS.FO, mask: mFO, maskWidth: drawW, maskHeight: drawH },
+              ].filter(ch => ch.mask.some(v => v > 0));
             } catch (koErr) {
               console.warn('[Knockout] mask build failed, skipping:', koErr);
             }
@@ -2574,29 +2621,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             });
           }
 
-          // ── Spot color layers (use pre-built masks from knockout pass when available)
-          if (hasFluor && designSpotColors && designSpotColors.length > 0) {
-            const offsetXInches = design.transform.nx * artboardWidth - (design.widthInches * design.transform.s) / 2;
-            const offsetYInches = design.transform.ny * artboardHeight - (design.heightInches * design.transform.s) / 2;
-            const scaledW = design.widthInches * design.transform.s;
-            const scaledH = design.heightInches * design.transform.s;
-            const rot = design.transform.rotation ?? 0;
-            const cNames = {
-              FY: designSpotColors[0]?.spotFluorYName || 'FY',
-              FM: designSpotColors[0]?.spotFluorMName || 'FM',
-              FG: designSpotColors[0]?.spotFluorGName || 'FG',
-              FO: designSpotColors[0]?.spotFluorOrangeName || 'FO',
-            };
-            if (prebuiltMasks) {
-              await addSpotColorVectorsFromMasksToPDF(
-                pdfDoc, page,
-                { FY: prebuiltMasks.FY, FM: prebuiltMasks.FM, FG: prebuiltMasks.FG, FO: prebuiltMasks.FO },
-                prebuiltMasks.width, prebuiltMasks.height, cNames,
-                scaledW, scaledH, artboardHeight, offsetXInches, offsetYInches, rot,
-              );
-            } else {
-              await addSpotColorVectorsToPDF(pdfDoc, page, img, designSpotColors, scaledW, scaledH, artboardHeight, offsetXInches, offsetYInches, rot);
-            }
+          // ── Spot color layers — raster image XObjects, pixel-perfect edges
+          if (fullResMasks && fullResMasks.length > 0) {
+            const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
+            // Bottom-left of image in PDF space (Y-up, pts); matches page.drawImage positioning
+            const bLX = centerXPt - (designWidthPt / 2) * cosR + (designHeightPt / 2) * sinR;
+            const bLY = centerYPt - (designWidthPt / 2) * sinR - (designHeightPt / 2) * cosR;
+            await addSpotColorRastersToPDF(
+              pdfDoc, page,
+              fullResMasks,
+              designWidthPt, designHeightPt,
+              bLX, bLY,
+              rotRad,
+            );
           }
           cvs.width = 0;
           cvs.height = 0;
@@ -2941,8 +2978,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onSpotPreviewChange={setSpotPreviewData}
             fluorPanelContainer={fluorPanelContainer}
             copySpotSelectionsRef={copySpotSelectionsRef}
-            onActiveChannelChange={setActiveSpotChannel}
+            onActiveChannelChange={(ch) => { setActiveSpotChannel(ch); setPanModeActive(false); }}
             wandAssignRef={wandAssignRef}
+            panModeActive={panModeActive}
+            onPanModeChange={setPanModeActive}
           />
 
           {/* Fluorescent panel portal target */}
@@ -3494,6 +3533,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onSelectionZoomChange={setSelectionZoomActive}
             activeSpotChannel={profile.enableFluorescent ? activeSpotChannel : null}
             onWandTap={profile.enableFluorescent ? (nx, ny) => wandAssignRef.current?.(nx, ny) : undefined}
+            panModeActive={profile.enableFluorescent ? panModeActive : false}
+            onPanModeChange={profile.enableFluorescent ? setPanModeActive : undefined}
           />
         </div>
       </div>

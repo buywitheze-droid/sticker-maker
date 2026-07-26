@@ -340,6 +340,123 @@ export async function addSpotColorVectorsToPDF(
 }
 
 /**
+ * Embed fluorescent spot color channels as raster image XObjects in the PDF.
+ * Each channel is a grayscale image (255 = full ink, 0 = no ink) placed in a
+ * Separation colorspace layer at exactly the same position/size/rotation as the
+ * CMYK design image.  No vectorization — edges are pixel-perfect.
+ */
+export async function addSpotColorRastersToPDF(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  channels: Array<{
+    name: string;
+    tintCMYK: [number, number, number, number];
+    mask: Uint8Array;        // grayscale bytes at maskWidth×maskHeight
+    maskWidth: number;
+    maskHeight: number;
+  }>,
+  designWidthPt: number,
+  designHeightPt: number,
+  bottomLeftX: number,       // PDF-space (pts, Y-up) bottom-left of design
+  bottomLeftY: number,
+  rotRad: number,            // rotation already in radians (same sign as page.drawImage uses)
+): Promise<string[]> {
+  const addedNames: string[] = [];
+  const context = pdfDoc.context;
+  const cosR = Math.cos(rotRad);
+  const sinR = Math.sin(rotRad);
+
+  // Ensure page has a Resources dict
+  let pageResources = page.node.Resources();
+  if (!pageResources) {
+    pageResources = context.obj({});
+    page.node.set(PDFName.of('Resources'), pageResources);
+  }
+
+  for (const ch of channels) {
+    if (!ch.mask.some(v => v > 0)) continue;
+
+    // ── 1. Separation colorspace: /Separation /Name /DeviceCMYK <<tint fn>>
+    const tintFn = context.obj({
+      FunctionType: 2,
+      Domain: [0, 1],
+      C0: [0, 0, 0, 0],
+      C1: ch.tintCMYK,
+      N: 1,
+    });
+    const tintFnRef = context.register(tintFn);
+    const sep = context.obj([
+      PDFName.of('Separation'),
+      PDFName.of(ch.name),
+      PDFName.of('DeviceCMYK'),
+      tintFnRef,
+    ]);
+    const sepRef = context.register(sep);
+
+    // ── 2. Image XObject (raw grayscale, 1 byte/pixel)
+    //       Decode [0 1] maps byte 0→tint 0 (no ink), 255→tint 1 (full ink)
+    const imageStream = context.stream(ch.mask, {
+      Type: PDFName.of('XObject'),
+      Subtype: PDFName.of('Image'),
+      Width: ch.maskWidth,
+      Height: ch.maskHeight,
+      ColorSpace: sepRef,
+      BitsPerComponent: 8,
+    });
+    const imageRef = context.register(imageStream);
+    const imgTag = `SpotR_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+    // ── 3. Optional Content Group (layer) so the channel can be toggled in Acrobat
+    const ocgDict = context.obj({
+      Type: PDFName.of('OCG'),
+      Name: PDFHexString.fromText(ch.name),
+    });
+    const ocgRef = context.register(ocgDict);
+    const ocgTag = `OC_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+    // ── 4. Register in page resources
+    let xoDict = pageResources.get(PDFName.of('XObject'));
+    if (!xoDict) { xoDict = context.obj({}); (pageResources as PDFDict).set(PDFName.of('XObject'), xoDict); }
+    (xoDict as PDFDict).set(PDFName.of(imgTag), imageRef);
+
+    let propsDict = pageResources.get(PDFName.of('Properties'));
+    if (!propsDict) { propsDict = context.obj({}); (pageResources as PDFDict).set(PDFName.of('Properties'), propsDict); }
+    (propsDict as PDFDict).set(PDFName.of(ocgTag), ocgRef);
+
+    // ── 5. Content stream: CTM positions image exactly like the CMYK layer
+    //       [a b c d e f] cm  where a=W·cosθ, b=W·sinθ, c=-H·sinθ, d=H·cosθ
+    const a = (designWidthPt  * cosR).toFixed(4);
+    const b = (designWidthPt  * sinR).toFixed(4);
+    const c = (-designHeightPt * sinR).toFixed(4);
+    const d = (designHeightPt  * cosR).toFixed(4);
+    const e = bottomLeftX.toFixed(4);
+    const f = bottomLeftY.toFixed(4);
+
+    const ops = `/OC /${ocgTag} BDC\nq\n${a} ${b} ${c} ${d} ${e} ${f} cm\n/${imgTag} Do\nQ\nEMC\n`;
+    appendContentStream(page, context, ops);
+
+    // ── 6. Register OCG in catalog OCProperties
+    try {
+      const catalog = pdfDoc.catalog;
+      let ocProps = catalog.get(PDFName.of('OCProperties'));
+      if (!ocProps) {
+        const arr = context.obj([ocgRef]);
+        ocProps = context.obj({ OCGs: arr, D: context.obj({ Order: arr }) });
+        catalog.set(PDFName.of('OCProperties'), ocProps);
+      } else {
+        const arr = (ocProps as PDFDict).get(PDFName.of('OCGs'));
+        if (arr instanceof PDFArray) arr.push(ocgRef);
+      }
+    } catch { /* non-fatal */ }
+
+    addedNames.push(ch.name);
+    console.log(`[SpotColor PDF] Raster layer "${ch.name}": ${ch.maskWidth}×${ch.maskHeight} px`);
+  }
+
+  return addedNames;
+}
+
+/**
  * Like addSpotColorVectorsToPDF but uses pre-computed per-channel pixel masks
  * (from region-level spot selections) instead of re-running color detection.
  */
