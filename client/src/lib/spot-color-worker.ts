@@ -286,14 +286,74 @@ function polygonArea(path: Point[]): number {
 // (~18 pixels) eliminates all single-pixel/noise islands cleanly.
 const MIN_CONTOUR_AREA_SQ_IN = 2e-4;
 
+/**
+ * Douglas-Peucker polyline simplification.
+ * Removes points that deviate less than `epsilon` from the straight line
+ * between their neighbours.  Collapses staircase pixel-runs into single
+ * diagonal segments before Chaikin smoothing, keeping the point count low.
+ */
+function douglasPeucker(pts: Point[], epsilon: number): Point[] {
+  if (pts.length < 3) return pts;
+
+  // Find the point with the greatest perpendicular distance from the
+  // line segment pts[0] → pts[last].
+  const last = pts.length - 1;
+  const ax = pts[0].x, ay = pts[0].y;
+  const bx = pts[last].x, by = pts[last].y;
+  const abLen = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2);
+
+  let maxDist = 0, maxIdx = 0;
+  for (let i = 1; i < last; i++) {
+    const dist = abLen === 0
+      ? Math.sqrt((pts[i].x - ax) ** 2 + (pts[i].y - ay) ** 2)
+      : Math.abs((by - ay) * pts[i].x - (bx - ax) * pts[i].y + bx * ay - by * ax) / abLen;
+    if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+  }
+
+  if (maxDist > epsilon) {
+    const left  = douglasPeucker(pts.slice(0, maxIdx + 1), epsilon);
+    const right = douglasPeucker(pts.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [pts[0], pts[last]];
+}
+
+/**
+ * Chaikin's corner-cutting algorithm for closed polygons.
+ * Each iteration replaces every edge AB with two new points at ¼ and ¾
+ * along the edge, converging to a quadratic B-spline.
+ * 3 iterations is enough to make pixel-grid staircase diagonals look smooth.
+ */
+function chaikinSmooth(pts: Point[], iterations: number): Point[] {
+  let cur = pts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const next: Point[] = [];
+    const n = cur.length;
+    for (let i = 0; i < n; i++) {
+      const a = cur[i];
+      const b = cur[(i + 1) % n];
+      next.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
+      next.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, pixelsPerInch: number): Point[][] {
+  // DP epsilon: 0.5 pixel in inch space — collapses staircase runs without
+  // losing any real shape detail before smoothing.
+  const dpEpsilon = 0.5 / pixelsPerInch;
+
   const rawPaths = marchingSquaresTrace(mask, width, height);
   return rawPaths.map(rawPath => {
     const collapsed = collapseCollinear(rawPath);
-    return collapsed.map(p => ({
-      x: p.x / pixelsPerInch,
-      y: p.y / pixelsPerInch
-    }));
+    // Convert to inches first so DP and Chaikin work in physical units.
+    const inchPts = collapsed.map(p => ({ x: p.x / pixelsPerInch, y: p.y / pixelsPerInch }));
+    // 1. Simplify staircase runs into diagonal segments.
+    const simplified = douglasPeucker(inchPts, dpEpsilon);
+    // 2. Smooth corners into curves (3 Chaikin passes ≈ quadratic B-spline).
+    return chaikinSmooth(simplified, 3);
   }).filter(p => p.length >= 3 && polygonArea(p) >= MIN_CONTOUR_AREA_SQ_IN);
 }
 
