@@ -291,6 +291,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
   const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
+  const [activeSpotChannel, setActiveSpotChannel] = useState<string | null>(null);
+  const wandAssignRef = useRef<((nx: number, ny: number) => void) | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -2922,6 +2924,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onSpotPreviewChange={setSpotPreviewData}
             fluorPanelContainer={fluorPanelContainer}
             copySpotSelectionsRef={copySpotSelectionsRef}
+            onActiveChannelChange={setActiveSpotChannel}
+            wandAssignRef={wandAssignRef}
           />
 
           {/* Fluorescent panel portal target */}
@@ -3471,6 +3475,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             spotPreviewData={profile.enableFluorescent ? spotPreviewData : undefined}
             selectionZoomActive={selectionZoomActive}
             onSelectionZoomChange={setSelectionZoomActive}
+            activeSpotChannel={profile.enableFluorescent ? activeSpotChannel : null}
+            onWandTap={profile.enableFluorescent ? (nx, ny) => wandAssignRef.current?.(nx, ny) : undefined}
           />
         </div>
       </div>

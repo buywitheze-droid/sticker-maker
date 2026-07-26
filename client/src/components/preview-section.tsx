@@ -50,16 +50,24 @@ interface PreviewSectionProps {
   spotPreviewData?: { enabled: boolean; colors: Array<{ hex: string; rgb: { r: number; g: number; b: number }; spotWhite?: boolean; spotGloss?: boolean; spotFluorY?: boolean; spotFluorM?: boolean; spotFluorG?: boolean; spotFluorOrange?: boolean }>; masks?: { FY: Uint8Array; FM: Uint8Array; FG: Uint8Array; FO: Uint8Array; width: number; height: number } };
   selectionZoomActive?: boolean;
   onSelectionZoomChange?: (active: boolean) => void;
+  /** When set, clicks on the canvas assign this spot channel to the tapped design pixel. */
+  activeSpotChannel?: string | null;
+  onWandTap?: (nx: number, ny: number, designId: string) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap }, ref) => {
     const { toast } = useToast();
     const { t, lang } = useLanguage();
     const isMobile = useIsMobile();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const resizeLimitToastRef = useRef(0);
+    // Wand mode refs — updated each render so handlers always read the latest value without re-creating.
+    const activeSpotChannelRef = useRef<string | null>(null);
+    activeSpotChannelRef.current = activeSpotChannel ?? null;
+    const onWandTapRef = useRef<typeof onWandTap>(onWandTap);
+    onWandTapRef.current = onWandTap;
     const zoomMax = Math.max(10, Math.ceil(artboardHeight / Math.max(artboardWidth, 0.1)) * 3);
     const zoomMaxRef = useRef(zoomMax);
     zoomMaxRef.current = zoomMax;
@@ -1606,6 +1614,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       altKeyRef.current = e.altKey;
       if (selectionZoomActiveRef.current) return;
       if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
+      // Wand channel assignment — intercept left-click when a spot channel is active.
+      if (e.button === 0 && activeSpotChannelRef.current && onWandTapRef.current) {
+        const local = canvasToLocal(e.clientX, e.clientY);
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId) {
+          const canvas = canvasRef.current;
+          const d = designs.find(d => d.id === hitId);
+          if (canvas && d) {
+            const rect = computeLayerRect(d.imageInfo.image.width, d.imageInfo.image.height, d.transform, canvas.width, canvas.height, artboardWidth, artboardHeight, d.widthInches, d.heightInches);
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            const rad = -(d.transform.rotation * Math.PI) / 180;
+            const dx = local.x - cx;
+            const dy = local.y - cy;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            const nx = 0.5 + lx / rect.width;
+            const ny = 0.5 + ly / rect.height;
+            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+              onWandTapRef.current(nx, ny, hitId);
+            }
+          }
+        }
+        return;
+      }
       if (e.button === 1 || (e.button === 0 && spaceDownRef.current)) {
         isPanningRef.current = true;
         panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
@@ -1832,6 +1865,31 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       if (e.touches.length !== 1) return;
       e.preventDefault();
+      // Wand channel assignment on touch.
+      if (activeSpotChannelRef.current && onWandTapRef.current) {
+        const local = canvasToLocal(e.touches[0].clientX, e.touches[0].clientY);
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId) {
+          const canvas = canvasRef.current;
+          const d = designs.find(d => d.id === hitId);
+          if (canvas && d) {
+            const rect = computeLayerRect(d.imageInfo.image.width, d.imageInfo.image.height, d.transform, canvas.width, canvas.height, artboardWidth, artboardHeight, d.widthInches, d.heightInches);
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            const rad = -(d.transform.rotation * Math.PI) / 180;
+            const dx = local.x - cx;
+            const dy = local.y - cy;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            const nx = 0.5 + lx / rect.width;
+            const ny = 0.5 + ly / rect.height;
+            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+              onWandTapRef.current(nx, ny, hitId);
+            }
+          }
+        }
+        return;
+      }
       if (isHorizOverflow() && !moveModeRef.current) {
         const local = canvasToLocal(e.touches[0].clientX, e.touches[0].clientY);
         const handleHit = selectedDesignId ? hitTestHandles(local.x, local.y) : null;
@@ -1844,7 +1902,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
       handleInteractionStart(e.touches[0].clientX, e.touches[0].clientY);
-    }, [handleInteractionStart, panX, panY, zoom, isHorizOverflow, canvasToLocal, hitTestHandles, hitTestMultiHandles, selectedDesignId, selectedDesignIds, findDesignAtPoint]);
+    }, [handleInteractionStart, panX, panY, zoom, isHorizOverflow, canvasToLocal, hitTestHandles, hitTestMultiHandles, selectedDesignId, selectedDesignIds, findDesignAtPoint, designs, artboardWidth, artboardHeight]);
 
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
       if (isPinchingRef.current && e.touches.length === 2) {
@@ -2984,7 +3042,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden cursor-default"
+          className={`flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${activeSpotChannel ? 'cursor-crosshair' : 'cursor-default'}`}
           style={{ userSelect: 'none', touchAction: 'none' }}
         >
           <div className="relative" style={{ paddingBottom: Math.abs(zoom - 1) < 0.03 ? 16 : 0, paddingRight: Math.abs(zoom - 1) < 0.03 ? 14 : 0 }}>

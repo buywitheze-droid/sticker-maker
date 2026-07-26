@@ -72,6 +72,10 @@ interface ControlsSectionProps {
   onSpotPreviewChange?: (data: SpotPreviewData) => void;
   fluorPanelContainer?: HTMLDivElement | null;
   copySpotSelectionsRef?: React.MutableRefObject<((fromId: string, toIds: string[]) => void) | null>;
+  /** Lifted: called whenever the active spot channel changes (or is cleared). */
+  onActiveChannelChange?: (channel: string | null) => void;
+  /** Ref populated by ControlsSection so the parent can forward normalized preview clicks. */
+  wandAssignRef?: React.MutableRefObject<((nx: number, ny: number) => void) | null>;
 }
 
 const DEFAULT_HEIGHTS = [12, 18, 24, 35, 40, 45, 48, 50, 55, 60, 65, 70, 80, 85, 95, 110, 120, 130, 140, 150];
@@ -94,6 +98,8 @@ export default function ControlsSection({
   onSpotPreviewChange,
   fluorPanelContainer,
   copySpotSelectionsRef,
+  onActiveChannelChange,
+  wandAssignRef,
 }: ControlsSectionProps) {
   const { t, lang } = useLanguage();
   const isMobile = useIsMobile();
@@ -121,7 +127,6 @@ export default function ControlsSection({
   const [showColorList, setShowColorList] = useState(false);
   const [activeChannel, setActiveChannel] = useState<'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null>(null);
   const colorListRef = useRef<HTMLDivElement>(null);
-  const wandCanvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
   const pixelMapRef = useRef<{ pixelMap: Int16Array; width: number; height: number } | null>(null);
 
@@ -339,70 +344,13 @@ export default function ControlsSection({
     });
   }, [selectedDesignId]);
 
-  /** Redraw the inline canvas whenever the panel is open or assignments change. */
-  useEffect(() => {
-    if (!showSpotColors || !imageInfo?.image) return;
-    // rAF so the canvas element is in the DOM before we try to paint.
-    const raf = requestAnimationFrame(() => {
-      const canvas = wandCanvasRef.current;
-      if (!canvas) return;
-      const img = imageInfo.image;
-      const pm = pixelMapRef.current;
-      const mW = pm?.width  ?? Math.min(img.width,  512);
-      const mH = pm?.height ?? Math.min(img.height, 512);
-      canvas.width  = mW;
-      canvas.height = mH;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0, mW, mH);
-      if (!pm) return;
-      const { pixelMap, width, height } = pm;
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const d = imgData.data;
-      const CH: Record<string, [number, number, number]> = {
-        spotFluorY:      [223, 255,   0],
-        spotFluorM:      [255,   0, 255],
-        spotFluorG:      [ 57, 255,  20],
-        spotFluorOrange: [255, 102,   0],
-      };
-      for (let i = 0; i < width * height; i++) {
-        const ci = pixelMap[i];
-        if (ci < 0) continue;
-        const c = extractedColors[ci];
-        if (!c) continue;
-        let field: string | null = null;
-        if (c.regions && c.regions.length > 1 && c.regionMap) {
-          const ri = c.regionMap[i];
-          if (ri >= 0 && c.regions[ri]) {
-            const r = c.regions[ri];
-            field = r.spotFluorY ? 'spotFluorY' : r.spotFluorM ? 'spotFluorM' : r.spotFluorG ? 'spotFluorG' : r.spotFluorOrange ? 'spotFluorOrange' : null;
-          }
-        } else {
-          field = c.spotFluorY ? 'spotFluorY' : c.spotFluorM ? 'spotFluorM' : c.spotFluorG ? 'spotFluorG' : c.spotFluorOrange ? 'spotFluorOrange' : null;
-        }
-        if (field) {
-          const [r, g, b] = CH[field];
-          d[i * 4]     = Math.round(d[i * 4]     * 0.25 + r * 0.75);
-          d[i * 4 + 1] = Math.round(d[i * 4 + 1] * 0.25 + g * 0.75);
-          d[i * 4 + 2] = Math.round(d[i * 4 + 2] * 0.25 + b * 0.75);
-        }
-      }
-      ctx.putImageData(imgData, 0, 0);
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [showSpotColors, imageInfo, extractedColors]);
-
-  /** Tap handler: assigns activeChannel to the tapped pixel's color/region directly. */
-  const handleWandInteract = useCallback((clientX: number, clientY: number) => {
+  /** Assign the active channel to the pixel at normalized image coordinates (0..1). Called from the preview canvas. */
+  const handleWandAssign = useCallback((nx: number, ny: number) => {
     if (!activeChannel) return;
-    const canvas = wandCanvasRef.current;
     const pm = pixelMapRef.current;
-    if (!canvas || !pm) return;
-    const rect = canvas.getBoundingClientRect();
-    const relX = (clientX - rect.left) / rect.width;
-    const relY = (clientY - rect.top) / rect.height;
-    const mx = Math.min(Math.floor(relX * pm.width),  pm.width  - 1);
-    const my = Math.min(Math.floor(relY * pm.height), pm.height - 1);
+    if (!pm) return;
+    const mx = Math.min(Math.floor(nx * pm.width),  pm.width  - 1);
+    const my = Math.min(Math.floor(ny * pm.height), pm.height - 1);
     const mpi = my * pm.width + mx;
     const ci = pm.pixelMap[mpi];
     if (ci < 0 || ci >= extractedColors.length) return;
@@ -416,6 +364,18 @@ export default function ControlsSection({
       updateSpotColor(ci, activeChannel, !color[activeChannel]);
     }
   }, [activeChannel, extractedColors, toggleRegionFluor, updateSpotColor]);
+
+  // Keep wandAssignRef in sync so the preview section can call it.
+  useEffect(() => {
+    if (!wandAssignRef) return;
+    wandAssignRef.current = handleWandAssign;
+    return () => { if (wandAssignRef) wandAssignRef.current = null; };
+  }, [wandAssignRef, handleWandAssign]);
+
+  // Bubble active-channel changes up so the preview can show a crosshair cursor.
+  useEffect(() => {
+    onActiveChannelChange?.(activeChannel);
+  }, [activeChannel, onActiveChannelChange]);
 
   const sortedColorIndices = useMemo(() => {
     const fluorPriority = (c: ExtractedColor) => {
@@ -628,31 +588,13 @@ export default function ControlsSection({
                     );
                   })()}
 
-                  {/* ── Inline image: tap to assign the active channel ── */}
-                  {imageInfo?.image && (
-                    <div
-                      className="relative rounded-lg overflow-hidden border border-gray-200"
-                      style={{ background: 'repeating-conic-gradient(#e5e7eb 0% 25%,#f9fafb 0% 50%) 0 0/16px 16px', lineHeight: 0 }}
-                    >
-                      <canvas
-                        ref={wandCanvasRef}
-                        style={{ display: 'block', width: '100%', height: 'auto', cursor: activeChannel ? 'crosshair' : 'default', touchAction: 'none' }}
-                        onClick={(e) => handleWandInteract(e.clientX, e.clientY)}
-                        onTouchEnd={(e) => { e.preventDefault(); const t = e.changedTouches[0]; handleWandInteract(t.clientX, t.clientY); }}
-                      />
-                      <div className="absolute bottom-1.5 left-0 right-0 flex justify-center pointer-events-none">
-                        {activeChannel ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white">
-                            {activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'} — tap to assign
-                          </span>
-                        ) : (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/40 text-white">
-                            Select a channel above, then tap
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  {/* Hint: tell the user to click the main preview */}
+                  <p className="text-[10px] text-center text-gray-400 leading-snug -mt-0.5">
+                    {activeChannel
+                      ? <>Tap the design in the preview →<br/>to assign <strong>{activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'}</strong></>
+                      : 'Select a channel above, then tap the design in the preview'
+                    }
+                  </p>
 
                   {/* ── Advanced color list (collapsed by default) ── */}
                   <div className="border-t border-gray-100 pt-1.5">
