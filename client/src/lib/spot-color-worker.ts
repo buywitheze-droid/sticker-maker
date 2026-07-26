@@ -153,8 +153,8 @@ function marchingSquaresTrace(mask: Uint8Array, width: number, height: number): 
     for (let x = 0; x < width; x++) {
       const above = getMask(x, y - 1);
       const below = getMask(x, y);
-      if (above !== below) {
-        if (above === 1) {
+      if ((above > 0) !== (below > 0)) {
+        if (above > 0) {
           edges.push({ fromX: x + 1, fromY: y, toX: x, toY: y, dx: -1, dy: 0 });
         } else {
           edges.push({ fromX: x, fromY: y, toX: x + 1, toY: y, dx: 1, dy: 0 });
@@ -167,8 +167,8 @@ function marchingSquaresTrace(mask: Uint8Array, width: number, height: number): 
     for (let y = 0; y < height; y++) {
       const left = getMask(x - 1, y);
       const right = getMask(x, y);
-      if (left !== right) {
-        if (left === 1) {
+      if ((left > 0) !== (right > 0)) {
+        if (left > 0) {
           edges.push({ fromX: x, fromY: y, toX: x, toY: y + 1, dx: 0, dy: 1 });
         } else {
           edges.push({ fromX: x, fromY: y + 1, toX: x, toY: y, dx: 0, dy: -1 });
