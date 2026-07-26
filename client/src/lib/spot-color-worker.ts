@@ -271,6 +271,21 @@ function collapseCollinear(contour: Point[]): Point[] {
   return result.length >= 3 ? result : contour;
 }
 
+/** Shoelace area of a closed polygon (in whatever units the points are in). */
+function polygonArea(path: Point[]): number {
+  let area = 0;
+  for (let i = 0; i < path.length; i++) {
+    const j = (i + 1) % path.length;
+    area += path[i].x * path[j].y - path[j].x * path[i].y;
+  }
+  return Math.abs(area) / 2;
+}
+
+// Minimum contour area to keep (sq inches). At 300 DPI a single pixel is
+// (1/300)² ≈ 1.1e-5 sq in; 4 sq-pixels = ~4.4e-5. Threshold of 2e-4 sq in
+// (~18 pixels) eliminates all single-pixel/noise islands cleanly.
+const MIN_CONTOUR_AREA_SQ_IN = 2e-4;
+
 function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, pixelsPerInch: number): Point[][] {
   const rawPaths = marchingSquaresTrace(mask, width, height);
   return rawPaths.map(rawPath => {
@@ -279,7 +294,7 @@ function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, p
       x: p.x / pixelsPerInch,
       y: p.y / pixelsPerInch
     }));
-  }).filter(p => p.length >= 3);
+  }).filter(p => p.length >= 3 && polygonArea(p) >= MIN_CONTOUR_AREA_SQ_IN);
 }
 
 function processSpotColors(

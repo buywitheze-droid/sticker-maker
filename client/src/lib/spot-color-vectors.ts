@@ -270,16 +270,16 @@ export async function addSpotColorVectorsToPDF(
   for (const region of regions) {
     const offsetPaths = region.paths.map(path =>
       path.map(p => {
-        // Image-relative to image-centered
+        // p.x / p.y are in design-local inches, Y-down (0,0 = top-left of design).
+        // relX/relY are relative to design center, still in Y-down image space.
         const relX = p.x - widthInches / 2;
         const relY = p.y - heightInches / 2;
-        // Rotate around image center
-        const rotX = relX * cosR - relY * sinR;
-        const rotY = relX * sinR + relY * cosR;
-        // Translate to absolute page coords, flip Y for PDF
+        // Convert to PDF page coords (inches, Y-up from bottom of page).
+        // The cross-term signs differ from the standard Y-up rotation matrix because
+        // relY is in Y-down image space — flipping Y negates the sinR cross terms.
         return {
-          x: designCx + rotX,
-          y: pageHeightInches - (designCy + rotY),
+          x: designCx + relX * cosR + relY * sinR,
+          y: (pageHeightInches - designCy) + relX * sinR - relY * cosR,
         };
       })
     );
@@ -620,11 +620,13 @@ export async function addSpotColorVectorsFromMasksToPDF(
   for (const region of regions) {
     const offsetPaths = region.paths.map(path =>
       path.map(p => {
+        // Same Y-down→Y-up correction as addSpotColorVectorsToPDF above.
         const relX = p.x - widthInches / 2;
         const relY = p.y - heightInches / 2;
-        const rotX = relX * cosR - relY * sinR;
-        const rotY = relX * sinR + relY * cosR;
-        return { x: designCx + rotX, y: pageHeightInches - (designCy + rotY) };
+        return {
+          x: designCx + relX * cosR + relY * sinR,
+          y: (pageHeightInches - designCy) + relX * sinR - relY * cosR,
+        };
       })
     );
 
