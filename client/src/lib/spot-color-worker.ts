@@ -281,9 +281,13 @@ function polygonArea(path: Point[]): number {
   return Math.abs(area) / 2;
 }
 
-// Minimum contour area to keep (sq inches). At 300 DPI a single pixel is
-// (1/300)² ≈ 1.1e-5 sq in; 4 sq-pixels = ~4.4e-5. Threshold of 2e-4 sq in
-// (~18 pixels) eliminates all single-pixel/noise islands cleanly.
+// Pre-filter: skip any raw contour whose pixel-space area is below this.
+// Applied before DP/Chaikin so we never run expensive processing on noise.
+// 200 sq-pixels ≈ a 14×14 region at any DPI — clearly below any real detail.
+const MIN_PIXEL_AREA = 200;
+
+// Post-filter: sanity check in inch space after smoothing.
+// 2e-4 sq in ≈ 18 pixels at 300 DPI — catches anything that shrank below threshold.
 const MIN_CONTOUR_AREA_SQ_IN = 2e-4;
 
 /**
@@ -340,21 +344,59 @@ function chaikinSmooth(pts: Point[], iterations: number): Point[] {
   return cur;
 }
 
+/**
+ * Signed area in Y-down image coordinates (marching squares' native space).
+ * Positive  → clockwise winding     → outer filled contour.
+ * Negative  → counter-clockwise     → inner hole contour.
+ */
+function signedArea(pts: Point[]): number {
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    sum += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return sum / 2;
+}
+
 function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, pixelsPerInch: number): Point[][] {
-  // DP epsilon: 0.5 pixel in inch space — collapses staircase runs without
-  // losing any real shape detail before smoothing.
-  const dpEpsilon = 0.5 / pixelsPerInch;
+  // DP epsilon: 1 pixel in inch space — aggressively collapses staircase runs
+  // into diagonal segments so Chaikin has clean corners to smooth.
+  const dpEpsilon = 1.0 / pixelsPerInch;
 
   const rawPaths = marchingSquaresTrace(mask, width, height);
-  return rawPaths.map(rawPath => {
+  const result: Point[][] = [];
+
+  for (const rawPath of rawPaths) {
     const collapsed = collapseCollinear(rawPath);
-    // Convert to inches first so DP and Chaikin work in physical units.
+    if (collapsed.length < 3) continue;
+
+    // ── Pre-filter in pixel space (cheap, before any costly processing).
+    //    signedArea on integer pixel coords gives the exact pixel area.
+    //    Skip anything smaller than MIN_PIXEL_AREA — pure noise.
+    const pxSA = signedArea(collapsed);
+    if (Math.abs(pxSA) < MIN_PIXEL_AREA) continue;
+
+    // ── Convert to inches.
     const inchPts = collapsed.map(p => ({ x: p.x / pixelsPerInch, y: p.y / pixelsPerInch }));
-    // 1. Simplify staircase runs into diagonal segments.
+
+    // ── Simplify staircase runs into diagonal segments.
     const simplified = douglasPeucker(inchPts, dpEpsilon);
-    // 2. Smooth corners into curves (3 Chaikin passes ≈ quadratic B-spline).
-    return chaikinSmooth(simplified, 3);
-  }).filter(p => p.length >= 3 && polygonArea(p) >= MIN_CONTOUR_AREA_SQ_IN);
+    if (simplified.length < 3) continue;
+
+    // ── Smooth outer contours only (2 Chaikin passes = 4× point multiplication).
+    //    Inner (hole) contours keep the DP-simplified polygon unchanged.
+    //    Chaikin cuts corners inward; applied to a hole it shrinks it — collapsing
+    //    thin ink rings and flooding the enclosed white area with ink.
+    //    Winding: positive signed area = CW in Y-down = outer; negative = hole.
+    const sa = signedArea(simplified);
+    const smoothed = sa > 0 ? chaikinSmooth(simplified, 2) : simplified;
+
+    if (smoothed.length >= 3 && polygonArea(smoothed) >= MIN_CONTOUR_AREA_SQ_IN) {
+      result.push(smoothed);
+    }
+  }
+
+  return result;
 }
 
 function processSpotColors(
