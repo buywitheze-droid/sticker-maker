@@ -2464,13 +2464,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           //    The same masks drive both the CMYK knockout and the PDF spot layers.
           const designSpotColors = spotColorsByDesign?.[design.id];
           const hasFluor = !!(designSpotColors?.some((c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange));
-          let fullResMasks: Array<{
-            name: string;
-            tintCMYK: [number, number, number, number];
-            mask: Uint8Array;
+          let spotVectorData: {
+            masks: Record<string, Uint8Array>;
+            channelNames: Record<string, string>;
             maskWidth: number;
             maskHeight: number;
-          }> | null = null;
+            widthInches: number;
+            heightInches: number;
+          } | null = null;
 
           if (hasFluor && designSpotColors && designSpotColors.length > 0) {
             try {
@@ -2598,12 +2599,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 FG: (colors[0]?.spotFluorGName      as string) || 'FG',
                 FO: (colors[0]?.spotFluorOrangeName as string) || 'FO',
               };
-              fullResMasks = [
-                { name: cNames.FY, tintCMYK: FLUOR_TINTS.FY, mask: mFY, softMask: sfFY, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FM, tintCMYK: FLUOR_TINTS.FM, mask: mFM, softMask: sfFM, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FG, tintCMYK: FLUOR_TINTS.FG, mask: mFG, softMask: sfFG, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FO, tintCMYK: FLUOR_TINTS.FO, mask: mFO, softMask: sfFO, maskWidth: drawW, maskHeight: drawH },
-              ].filter(ch => ch.mask.some(v => v > 0));
+              const allChannelMasks: Record<string, Uint8Array> = {
+                FY: mFY, FM: mFM, FG: mFG, FO: mFO,
+              };
+              const activeMasks: Record<string, Uint8Array> = {};
+              for (const [ch, m] of Object.entries(allChannelMasks)) {
+                if (m.some(v => v > 0)) activeMasks[ch] = m;
+              }
+              if (Object.keys(activeMasks).length > 0) {
+                spotVectorData = {
+                  masks: activeMasks,
+                  channelNames: { FY: cNames.FY, FM: cNames.FM, FG: cNames.FG, FO: cNames.FO },
+                  maskWidth: drawW,
+                  maskHeight: drawH,
+                  widthInches: design.widthInches * design.transform.s,
+                  heightInches: design.heightInches * design.transform.s,
+                };
+              }
             } catch (koErr) {
               console.warn('[Knockout] mask build failed, skipping:', koErr);
             }
@@ -2659,18 +2671,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             });
           }
 
-          // ── Spot color layers — raster image XObjects, pixel-perfect edges
-          if (fullResMasks && fullResMasks.length > 0) {
-            const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
-            // Bottom-left of image in PDF space (Y-up, pts); matches page.drawImage positioning
-            const bLX = centerXPt - (designWidthPt / 2) * cosR + (designHeightPt / 2) * sinR;
-            const bLY = centerYPt - (designWidthPt / 2) * sinR - (designHeightPt / 2) * cosR;
-            await addSpotColorRastersToPDF(
+          // ── Spot color layers — solid vector paths in Separation colorspace
+          if (spotVectorData) {
+            const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
+            const designWidthIn  = design.widthInches  * design.transform.s;
+            const designHeightIn = design.heightInches * design.transform.s;
+            const centerXIn      = design.transform.nx * artboardWidth;
+            const centerYIn      = design.transform.ny * artboardHeight;
+            await addSpotColorVectorsFromMasksToPDF(
               pdfDoc, page,
-              fullResMasks,
-              designWidthPt, designHeightPt,
-              bLX, bLY,
-              rotRad,
+              spotVectorData.masks,
+              spotVectorData.maskWidth,
+              spotVectorData.maskHeight,
+              spotVectorData.channelNames,
+              designWidthIn,
+              designHeightIn,
+              artboardHeight,
+              centerXIn - designWidthIn  / 2,   // imageOffsetXInches (left edge, Y-down)
+              centerYIn - designHeightIn / 2,   // imageOffsetYInches (top edge, Y-down)
+              design.transform.rotation ?? 0,
             );
           }
           cvs.width = 0;
