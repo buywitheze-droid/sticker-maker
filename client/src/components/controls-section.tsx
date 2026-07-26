@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
-import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info, Wand2, X } from "lucide-react";
+import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
 import { formatLength } from "@/lib/format-length";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -119,13 +119,7 @@ export default function ControlsSection({
   const prevDesignIdRef = useRef<string | null | undefined>(null);
   const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
   const [showColorList, setShowColorList] = useState(false);
-  const [wandMode, setWandMode] = useState(false);
-  const [wandPopover, setWandPopover] = useState<{
-    canvasX: number;
-    canvasY: number;
-    colorIdx: number;
-    regionArrayIdx: number;
-  } | null>(null);
+  const [activeChannel, setActiveChannel] = useState<'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null>(null);
   const colorListRef = useRef<HTMLDivElement>(null);
   const wandCanvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
@@ -345,82 +339,62 @@ export default function ControlsSection({
     });
   }, [selectedDesignId]);
 
-  /** Apply one channel to every significant color in the current design (toggle: if all set, clear). */
-  const applyChannelToAll = useCallback((field: 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange') => {
-    setExtractedColors(prev => {
-      const allSet = prev.filter(c => (c.percentage ?? 0) >= 0.5).every(c => c[field]);
-      const newVal = !allSet;
-      const next = prev.map(c => {
-        const updatedRegions = c.regions?.map(r => ({
-          ...r,
-          spotFluorY:      field === 'spotFluorY'      ? newVal : (newVal ? false : r.spotFluorY),
-          spotFluorM:      field === 'spotFluorM'      ? newVal : (newVal ? false : r.spotFluorM),
-          spotFluorG:      field === 'spotFluorG'      ? newVal : (newVal ? false : r.spotFluorG),
-          spotFluorOrange: field === 'spotFluorOrange' ? newVal : (newVal ? false : r.spotFluorOrange),
-        }));
-        return {
-          ...c,
-          spotFluorY:      field === 'spotFluorY'      ? newVal : (newVal ? false : c.spotFluorY),
-          spotFluorM:      field === 'spotFluorM'      ? newVal : (newVal ? false : c.spotFluorM),
-          spotFluorG:      field === 'spotFluorG'      ? newVal : (newVal ? false : c.spotFluorG),
-          spotFluorOrange: field === 'spotFluorOrange' ? newVal : (newVal ? false : c.spotFluorOrange),
-          regions: updatedRegions,
-        };
-      });
-      if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, next);
-      return next;
-    });
-  }, [selectedDesignId]);
-
-  /** Draw the current design + fluor overlay onto the wand canvas. Re-runs on each assignment change. */
+  /** Redraw the inline canvas whenever the panel is open or assignments change. */
   useEffect(() => {
-    if (!wandMode || !imageInfo?.image || !wandCanvasRef.current) return;
-    const canvas = wandCanvasRef.current;
-    const img = imageInfo.image;
-    const pm = pixelMapRef.current;
-    const mW = pm?.width  ?? Math.min(img.width,  512);
-    const mH = pm?.height ?? Math.min(img.height, 512);
-    canvas.width  = mW;
-    canvas.height = mH;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(img, 0, 0, mW, mH);
-    if (!pm) return;
-    const { pixelMap, width, height } = pm;
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const d = imgData.data;
-    const CH: Record<string, [number, number, number]> = {
-      spotFluorY:      [223, 255,  0],
-      spotFluorM:      [255,   0, 255],
-      spotFluorG:      [ 57, 255, 20],
-      spotFluorOrange: [255, 102,  0],
-    };
-    for (let i = 0; i < width * height; i++) {
-      const ci = pixelMap[i];
-      if (ci < 0) continue;
-      const c = extractedColors[ci];
-      if (!c) continue;
-      let field: string | null = null;
-      if (c.regions && c.regions.length > 1 && c.regionMap) {
-        const ri = c.regionMap[i];
-        if (ri >= 0 && c.regions[ri]) {
-          const r = c.regions[ri];
-          field = r.spotFluorY ? 'spotFluorY' : r.spotFluorM ? 'spotFluorM' : r.spotFluorG ? 'spotFluorG' : r.spotFluorOrange ? 'spotFluorOrange' : null;
+    if (!showSpotColors || !imageInfo?.image) return;
+    // rAF so the canvas element is in the DOM before we try to paint.
+    const raf = requestAnimationFrame(() => {
+      const canvas = wandCanvasRef.current;
+      if (!canvas) return;
+      const img = imageInfo.image;
+      const pm = pixelMapRef.current;
+      const mW = pm?.width  ?? Math.min(img.width,  512);
+      const mH = pm?.height ?? Math.min(img.height, 512);
+      canvas.width  = mW;
+      canvas.height = mH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, mW, mH);
+      if (!pm) return;
+      const { pixelMap, width, height } = pm;
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const d = imgData.data;
+      const CH: Record<string, [number, number, number]> = {
+        spotFluorY:      [223, 255,   0],
+        spotFluorM:      [255,   0, 255],
+        spotFluorG:      [ 57, 255,  20],
+        spotFluorOrange: [255, 102,   0],
+      };
+      for (let i = 0; i < width * height; i++) {
+        const ci = pixelMap[i];
+        if (ci < 0) continue;
+        const c = extractedColors[ci];
+        if (!c) continue;
+        let field: string | null = null;
+        if (c.regions && c.regions.length > 1 && c.regionMap) {
+          const ri = c.regionMap[i];
+          if (ri >= 0 && c.regions[ri]) {
+            const r = c.regions[ri];
+            field = r.spotFluorY ? 'spotFluorY' : r.spotFluorM ? 'spotFluorM' : r.spotFluorG ? 'spotFluorG' : r.spotFluorOrange ? 'spotFluorOrange' : null;
+          }
+        } else {
+          field = c.spotFluorY ? 'spotFluorY' : c.spotFluorM ? 'spotFluorM' : c.spotFluorG ? 'spotFluorG' : c.spotFluorOrange ? 'spotFluorOrange' : null;
         }
-      } else {
-        field = c.spotFluorY ? 'spotFluorY' : c.spotFluorM ? 'spotFluorM' : c.spotFluorG ? 'spotFluorG' : c.spotFluorOrange ? 'spotFluorOrange' : null;
+        if (field) {
+          const [r, g, b] = CH[field];
+          d[i * 4]     = Math.round(d[i * 4]     * 0.25 + r * 0.75);
+          d[i * 4 + 1] = Math.round(d[i * 4 + 1] * 0.25 + g * 0.75);
+          d[i * 4 + 2] = Math.round(d[i * 4 + 2] * 0.25 + b * 0.75);
+        }
       }
-      if (field) {
-        const [r, g, b] = CH[field];
-        d[i * 4]     = Math.round(d[i * 4]     * 0.25 + r * 0.75);
-        d[i * 4 + 1] = Math.round(d[i * 4 + 1] * 0.25 + g * 0.75);
-        d[i * 4 + 2] = Math.round(d[i * 4 + 2] * 0.25 + b * 0.75);
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-  }, [wandMode, imageInfo, extractedColors]);
+      ctx.putImageData(imgData, 0, 0);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [showSpotColors, imageInfo, extractedColors]);
 
+  /** Tap handler: assigns activeChannel to the tapped pixel's color/region directly. */
   const handleWandInteract = useCallback((clientX: number, clientY: number) => {
+    if (!activeChannel) return;
     const canvas = wandCanvasRef.current;
     const pm = pixelMapRef.current;
     if (!canvas || !pm) return;
@@ -431,13 +405,17 @@ export default function ControlsSection({
     const my = Math.min(Math.floor(relY * pm.height), pm.height - 1);
     const mpi = my * pm.width + mx;
     const ci = pm.pixelMap[mpi];
-    if (ci < 0 || ci >= extractedColors.length) { setWandPopover(null); return; }
+    if (ci < 0 || ci >= extractedColors.length) return;
     const color = extractedColors[ci];
-    const regionArrayIdx = (color?.regions?.length ?? 0) > 1 && color?.regionMap
-      ? (color.regionMap[mpi] ?? -1)
-      : -1;
-    setWandPopover({ canvasX: clientX - rect.left, canvasY: clientY - rect.top, colorIdx: ci, regionArrayIdx });
-  }, [extractedColors]);
+    const hasRegions = (color?.regions?.length ?? 0) > 1 && !!color?.regionMap;
+    const regionArrayIdx = hasRegions ? (color.regionMap![mpi] ?? -1) : -1;
+    if (hasRegions && regionArrayIdx >= 0) {
+      const region = color.regions![regionArrayIdx];
+      toggleRegionFluor(ci, region.id, activeChannel);
+    } else {
+      updateSpotColor(ci, activeChannel, !color[activeChannel]);
+    }
+  }, [activeChannel, extractedColors, toggleRegionFluor, updateSpotColor]);
 
   const sortedColorIndices = useMemo(() => {
     const fluorPriority = (c: ExtractedColor) => {
@@ -614,7 +592,7 @@ export default function ControlsSection({
                 <div className="text-xs text-gray-500 italic py-1">{t("controls.noColors")}</div>
               ) : (
                 <>
-                  {/* ── Primary channel selector ── */}
+                  {/* ── Channel selector: tap to activate, then tap image ── */}
                   {(() => {
                     const CHANNELS = [
                       { field: 'spotFluorY'      as const, label: 'FY', name: 'Yellow',  bg: '#DFFF00' },
@@ -625,18 +603,24 @@ export default function ControlsSection({
                     return (
                       <div className="grid grid-cols-4 gap-1.5">
                         {CHANNELS.map(({ field, label, name, bg }) => {
-                          const isActive = extractedColors.filter(c => (c.percentage ?? 0) >= 0.5).some(c => c[field]);
+                          const isSelected = activeChannel === field;
+                          const hasAssignment = extractedColors.filter(c => (c.percentage ?? 0) >= 0.5).some(c => c[field]);
                           return (
                             <button
                               key={field}
-                              onClick={() => applyChannelToAll(field)}
-                              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isActive ? 'shadow-md' : 'opacity-70 hover:opacity-100'}`}
-                              style={{ borderColor: bg, backgroundColor: isActive ? bg + '33' : bg + '0d' }}
-                              title={`Apply ${name} to entire design`}
+                              onClick={() => setActiveChannel(isSelected ? null : field)}
+                              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:opacity-90'}`}
+                              style={{
+                                borderColor: bg,
+                                backgroundColor: isSelected ? bg + '44' : bg + '0d',
+                                outline: isSelected ? `2px solid ${bg}` : 'none',
+                                outlineOffset: '2px',
+                              }}
+                              title={`${isSelected ? 'Deselect' : 'Select'} ${name} — then tap the image to assign`}
                             >
-                              <span className="text-[15px] font-black leading-none" style={{ color: isActive ? '#111' : bg }}>{label}</span>
-                              <span className="text-[8px] leading-none mt-0.5" style={{ color: isActive ? '#555' : '#9ca3af' }}>{name}</span>
-                              {isActive && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: bg }} />}
+                              <span className="text-[15px] font-black leading-none" style={{ color: isSelected ? '#111' : bg }}>{label}</span>
+                              <span className="text-[8px] leading-none mt-0.5" style={{ color: isSelected ? '#555' : '#9ca3af' }}>{name}</span>
+                              {hasAssignment && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: bg }} />}
                             </button>
                           );
                         })}
@@ -644,14 +628,31 @@ export default function ControlsSection({
                     );
                   })()}
 
-                  {/* ── Wand tool ── */}
-                  <button
-                    onClick={() => { setWandMode(true); setWandPopover(null); }}
-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-purple-300 bg-purple-50/60 hover:bg-purple-100 active:bg-purple-200 transition-colors text-purple-600 text-xs font-medium"
-                  >
-                    <Wand2 className="w-3.5 h-3.5" />
-                    Select by region (Wand)
-                  </button>
+                  {/* ── Inline image: tap to assign the active channel ── */}
+                  {imageInfo?.image && (
+                    <div
+                      className="relative rounded-lg overflow-hidden border border-gray-200"
+                      style={{ background: 'repeating-conic-gradient(#e5e7eb 0% 25%,#f9fafb 0% 50%) 0 0/16px 16px', lineHeight: 0 }}
+                    >
+                      <canvas
+                        ref={wandCanvasRef}
+                        style={{ display: 'block', width: '100%', height: 'auto', cursor: activeChannel ? 'crosshair' : 'default', touchAction: 'none' }}
+                        onClick={(e) => handleWandInteract(e.clientX, e.clientY)}
+                        onTouchEnd={(e) => { e.preventDefault(); const t = e.changedTouches[0]; handleWandInteract(t.clientX, t.clientY); }}
+                      />
+                      <div className="absolute bottom-1.5 left-0 right-0 flex justify-center pointer-events-none">
+                        {activeChannel ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white">
+                            {activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'} — tap to assign
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/40 text-white">
+                            Select a channel above, then tap
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* ── Advanced color list (collapsed by default) ── */}
                   <div className="border-t border-gray-100 pt-1.5">
@@ -750,106 +751,6 @@ export default function ControlsSection({
           )}
         </div>,
         fluorPanelContainer
-      )}
-
-      {/* ── Wand modal ── */}
-      {wandMode && imageInfo?.image && createPortal(
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) { setWandMode(false); setWandPopover(null); } }}
-        >
-          <div className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ maxWidth: 'min(92vw, 560px)', width: '100%' }}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-purple-50">
-              <div className="flex items-center gap-2">
-                <Wand2 className="w-4 h-4 text-purple-500" />
-                <span className="text-sm font-semibold text-gray-800">Tap a color region to assign a spot ink</span>
-              </div>
-              <button onClick={() => { setWandMode(false); setWandPopover(null); }} className="p-1.5 hover:bg-white/70 rounded-lg transition-colors">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-
-            {/* Canvas */}
-            <div
-              className="relative"
-              style={{ background: 'repeating-conic-gradient(#e5e7eb 0% 25%,#f9fafb 0% 50%) 0 0/16px 16px', lineHeight: 0 }}
-              onClick={(e) => { if (e.target === e.currentTarget) setWandPopover(null); }}
-            >
-              <canvas
-                ref={wandCanvasRef}
-                style={{ display: 'block', width: '100%', height: 'auto', maxHeight: '65vh', cursor: 'crosshair', touchAction: 'none' }}
-                onClick={(e) => handleWandInteract(e.clientX, e.clientY)}
-                onTouchEnd={(e) => { e.preventDefault(); const t = e.changedTouches[0]; handleWandInteract(t.clientX, t.clientY); }}
-              />
-
-              {/* Popover */}
-              {wandPopover && (() => {
-                const color = extractedColors[wandPopover.colorIdx];
-                if (!color) return null;
-                const hasRegions = (color.regions?.length ?? 0) > 1;
-                const region = hasRegions && wandPopover.regionArrayIdx >= 0 ? color.regions?.[wandPopover.regionArrayIdx] : null;
-                const target = region ?? color;
-                const currentField: 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null =
-                  target.spotFluorY ? 'spotFluorY' : target.spotFluorM ? 'spotFluorM' : target.spotFluorG ? 'spotFluorG' : target.spotFluorOrange ? 'spotFluorOrange' : null;
-                const CHANNELS = [
-                  { key: 'FY', field: 'spotFluorY'      as const, bg: '#DFFF00' },
-                  { key: 'FM', field: 'spotFluorM'      as const, bg: '#FF00FF' },
-                  { key: 'FG', field: 'spotFluorG'      as const, bg: '#39FF14' },
-                  { key: 'FO', field: 'spotFluorOrange' as const, bg: '#FF6600' },
-                ];
-                return (
-                  <div
-                    className="absolute z-10 bg-white border border-gray-200 rounded-xl shadow-2xl p-2 flex items-center gap-1.5"
-                    style={{ left: wandPopover.canvasX, top: wandPopover.canvasY, transform: 'translate(-50%, calc(-100% - 10px))', pointerEvents: 'auto' }}
-                    onClick={(e) => e.stopPropagation()}
-                    onTouchEnd={(e) => e.stopPropagation()}
-                  >
-                    <div className="w-4 h-4 rounded border border-gray-300 flex-shrink-0" style={{ backgroundColor: color.hex }} />
-                    {CHANNELS.map(({ key, field, bg }) => (
-                      <button
-                        key={key}
-                        onClick={() => {
-                          if (hasRegions && region) toggleRegionFluor(wandPopover.colorIdx, region.id, field);
-                          else updateSpotColor(wandPopover.colorIdx, field, !color[field]);
-                          setWandPopover(null);
-                        }}
-                        className={`w-9 h-9 rounded-lg text-[11px] font-black flex items-center justify-center border-2 transition-all ${currentField === field ? 'scale-110 shadow-md' : 'hover:scale-105'}`}
-                        style={{ backgroundColor: currentField === field ? bg : 'transparent', borderColor: bg, color: currentField === field ? '#111' : bg }}
-                      >{key}</button>
-                    ))}
-                    {currentField && (
-                      <button
-                        onClick={() => {
-                          if (hasRegions && region) toggleRegionFluor(wandPopover.colorIdx, region.id, currentField);
-                          else updateSpotColor(wandPopover.colorIdx, currentField, false);
-                          setWandPopover(null);
-                        }}
-                        className="w-9 h-9 rounded-lg text-sm font-bold flex items-center justify-center border-2 border-gray-200 text-gray-400 hover:bg-red-50 hover:border-red-300 hover:text-red-500 transition-all"
-                      >✕</button>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Legend */}
-            <div className="flex items-center justify-center gap-5 px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-              {[
-                { label: 'FY', color: '#DFFF00', name: 'Yellow'  },
-                { label: 'FM', color: '#FF00FF', name: 'Magenta' },
-                { label: 'FG', color: '#39FF14', name: 'Green'   },
-                { label: 'FO', color: '#FF6600', name: 'Orange'  },
-              ].map(({ label, color, name }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full border border-black/10" style={{ backgroundColor: color }} />
-                  <span className="text-[10px] text-gray-500 font-medium">{label} — {name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>,
-        document.body
       )}
 
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
