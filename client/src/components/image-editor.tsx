@@ -2491,38 +2491,37 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 lowResMap = buildPixelMapFromImage(img as any, designSpotColors as any) ?? null;
               }
 
-              // ── Classify at ¼ resolution, then bilinear-upscale ───────────────
-              // The browser's drawImage downsampler averages every 4×4 export-pixel
-              // block into one sample, naturally blending colour-boundary pixels.
-              // Classification then sees smooth gradients instead of hard steps,
-              // widening the anti-aliasing zone from 1–2 px to 4–8 px for free.
-              // The bilinear upscale recreates those gradients at export resolution.
-              const CLASSIFY_SCALE = 4;
-              const clW = Math.max(1, Math.round(drawW / CLASSIFY_SCALE));
-              const clH = Math.max(1, Math.round(drawH / CLASSIFY_SCALE));
-              const clCanvas = document.createElement('canvas');
-              clCanvas.width = clW; clCanvas.height = clH;
-              const clCtx = clCanvas.getContext('2d', { willReadFrequently: true })!;
-              clCtx.drawImage(cctx.canvas, 0, 0, clW, clH);   // bilinear downsample
-              const clData    = clCtx.getImageData(0, 0, clW, clH);
-              const clPixels  = clData.data;
+              // ── Full-resolution mask build with separated ink / soft-alpha ─────
+              //
+              // Two arrays per channel:
+              //   mFY  — binary ink (0 or 255).  confidence ≥ 0.5 = inside selection.
+              //          Stays binary so spot ink is full-density everywhere inside.
+              //   sfFY — soft SMask (0-255).  alpha × confidence gives a 1–2 px
+              //          anti-aliased fade at actual colour boundaries, no wider.
+              //
+              // NO downsampling — that was the primary halo source (it blended
+              // 4×4 export pixels into one, creating artificial soft zones ±4 px
+              // around every edge before any blur was applied).
+              const n = drawW * drawH;
+              const mFY  = new Uint8Array(n), mFM  = new Uint8Array(n);
+              const mFG  = new Uint8Array(n), mFO  = new Uint8Array(n);
+              const sfFY = new Uint8Array(n), sfFM = new Uint8Array(n);
+              const sfFG = new Uint8Array(n), sfFO = new Uint8Array(n);
+
+              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
+              const pixels = imgDataFull.data;
 
               const lrW = lowResMap?.width ?? 1;
               const lrH = lowResMap?.height ?? 1;
 
-              // Small masks at ¼ resolution
-              const nSm = clW * clH;
-              const smFY = new Uint8Array(nSm), smFM = new Uint8Array(nSm);
-              const smFG = new Uint8Array(nSm), smFO = new Uint8Array(nSm);
+              for (let py = 0; py < drawH; py++) {
+                for (let px = 0; px < drawW; px++) {
+                  const pi    = py * drawW + px;
+                  const alpha = pixels[pi * 4 + 3];
+                  if (alpha < 10) continue;
+                  const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
 
-              for (let cy = 0; cy < clH; cy++) {
-                for (let cx = 0; cx < clW; cx++) {
-                  const ci = cy * clW + cx;
-                  const alpha = clPixels[ci * 4 + 3];
-                  if (alpha < 4) continue;
-                  const r = clPixels[ci * 4], g = clPixels[ci * 4 + 1], b = clPixels[ci * 4 + 2];
-
-                  // Find nearest AND second-nearest centroid in one pass
+                  // Nearest + second-nearest centroid in one pass
                   let bestDist = Infinity, bestIdx = -1;
                   let secDist  = Infinity, secIdx  = -1;
                   for (let ki = 0; ki < centroids.length; ki++) {
@@ -2535,10 +2534,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   const color = colors[bestIdx];
                   if (!color) continue;
 
-                  // Projection-based edge confidence:
-                  //   t=0   → pixel at bestCentroid      → confidence 1.0 (full ink)
-                  //   t=0.5 → pixel at boundary midpoint → confidence 0.5 (half ink)
-                  //   t≥1   → pixel past the boundary    → confidence 0 (no ink)
+                  // Projection confidence: measures how far this pixel is from the
+                  // colour-boundary midpoint between the two nearest centroids.
+                  //   t = 0   → exactly at bestCentroid → confidence 1.0
+                  //   t = 0.5 → on the boundary         → confidence 0.5
+                  //   t ≥ 1   → past the boundary       → confidence 0
                   let confidence = 1.0;
                   if (secIdx >= 0) {
                     const cA = centroids[bestIdx], cB = centroids[secIdx];
@@ -2549,68 +2549,39 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       confidence = Math.max(0, Math.min(1, 1 - t));
                     }
                   }
-                  const inkW = Math.round(alpha * confidence);
-                  if (inkW < 4) continue;
+
+                  // Binary ink: full 255 inside, 0 outside (threshold at midpoint)
+                  const isInk = confidence >= 0.5 && alpha >= 10;
+                  // Soft SMask: smooth 0-255 gradient only at actual boundary pixels
+                  const softV = Math.round(alpha * confidence);
+
+                  const assignInk = (fy: boolean, fm: boolean, fg: boolean, fo: boolean) => {
+                    if (fy) { if (isInk) mFY[pi] = 255; sfFY[pi] = softV; }
+                    if (fm) { if (isInk) mFM[pi] = 255; sfFM[pi] = softV; }
+                    if (fg) { if (isInk) mFG[pi] = 255; sfFG[pi] = softV; }
+                    if (fo) { if (isInk) mFO[pi] = 255; sfFO[pi] = softV; }
+                  };
 
                   if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
-                    // Region-level: map classify-canvas coords → lowResMap coords
-                    const mx = Math.min(Math.floor(cx * lrW / clW), lrW - 1);
-                    const my = Math.min(Math.floor(cy * lrH / clH), lrH - 1);
+                    const mx = Math.min(Math.floor(px * lrW / drawW), lrW - 1);
+                    const my = Math.min(Math.floor(py * lrH / drawH), lrH - 1);
                     const mpi = my * lrW + mx;
-                    const ri = (color.regionMap as Int16Array)[mpi] ?? -1;
+                    const ri  = (color.regionMap as Int16Array)[mpi] ?? -1;
                     if (ri < 0 || !color.regions[ri]) continue;
                     const region = color.regions[ri];
-                    if (region.spotFluorY)      smFY[ci] = inkW;
-                    if (region.spotFluorM)      smFM[ci] = inkW;
-                    if (region.spotFluorG)      smFG[ci] = inkW;
-                    if (region.spotFluorOrange) smFO[ci] = inkW;
+                    assignInk(region.spotFluorY, region.spotFluorM, region.spotFluorG, region.spotFluorOrange);
                   } else {
-                    if (color.spotFluorY)      smFY[ci] = inkW;
-                    if (color.spotFluorM)      smFM[ci] = inkW;
-                    if (color.spotFluorG)      smFG[ci] = inkW;
-                    if (color.spotFluorOrange) smFO[ci] = inkW;
+                    assignInk(color.spotFluorY, color.spotFluorM, color.spotFluorG, color.spotFluorOrange);
                   }
                 }
               }
 
-              // Bilinear upscale: ¼-resolution mask → full export resolution.
-              // Half-pixel offset (+ 0.5) keeps samples centred in each output pixel.
-              const bilinUp = (sm: Uint8Array): Uint8Array => {
-                const out = new Uint8Array(drawW * drawH);
-                for (let ey = 0; ey < drawH; ey++) {
-                  const sy_f = (ey + 0.5) * clH / drawH - 0.5;
-                  const sy0  = Math.max(0, Math.floor(sy_f));
-                  const sy1  = Math.min(clH - 1, sy0 + 1);
-                  const ty   = sy_f - sy0;
-                  for (let ex = 0; ex < drawW; ex++) {
-                    const sx_f = (ex + 0.5) * clW / drawW - 0.5;
-                    const sx0  = Math.max(0, Math.floor(sx_f));
-                    const sx1  = Math.min(clW - 1, sx0 + 1);
-                    const tx   = sx_f - sx0;
-                    const v00  = sm[sy0 * clW + sx0], v10 = sm[sy0 * clW + sx1];
-                    const v01  = sm[sy1 * clW + sx0], v11 = sm[sy1 * clW + sx1];
-                    out[ey * drawW + ex] = ((1 - ty) * ((1 - tx) * v00 + tx * v10)
-                                          +      ty  * ((1 - tx) * v01 + tx * v11) + 0.5) | 0;
-                  }
-                }
-                return out;
-              };
-
-              const mFY = bilinUp(smFY), mFM = bilinUp(smFM);
-              const mFG = bilinUp(smFG), mFO = bilinUp(smFO);
-              const n = drawW * drawH;
-
-              // Read full-res canvas pixels for knockout (must happen AFTER masks are built)
-              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
-              const pixels = imgDataFull.data;
-
-              // ── Knockout: remove fluorescent coverage from CMYK canvas.
-              //    Proportional to the spot ink weight so boundary pixels blend smoothly.
+              // ── Knockout: hard binary — fully remove CMYK where spot ink lives.
+              //    No proportional blend; a clean knockout prevents colour mixing
+              //    at the boundary that would degrade the spot channel's vibrancy.
               for (let pi = 0; pi < n; pi++) {
-                const maxFluor = Math.max(mFY[pi], mFM[pi], mFG[pi], mFO[pi]);
-                if (maxFluor > 0) {
-                  const origAlpha = pixels[pi * 4 + 3];
-                  imgDataFull.data[pi * 4 + 3] = Math.max(0, origAlpha - maxFluor);
+                if (mFY[pi] || mFM[pi] || mFG[pi] || mFO[pi]) {
+                  imgDataFull.data[pi * 4 + 3] = 0;
                 }
               }
               cctx.putImageData(imgDataFull, 0, 0);
@@ -2628,10 +2599,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 FO: (colors[0]?.spotFluorOrangeName as string) || 'FO',
               };
               fullResMasks = [
-                { name: cNames.FY, tintCMYK: FLUOR_TINTS.FY, mask: mFY, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FM, tintCMYK: FLUOR_TINTS.FM, mask: mFM, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FG, tintCMYK: FLUOR_TINTS.FG, mask: mFG, maskWidth: drawW, maskHeight: drawH },
-                { name: cNames.FO, tintCMYK: FLUOR_TINTS.FO, mask: mFO, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FY, tintCMYK: FLUOR_TINTS.FY, mask: mFY, softMask: sfFY, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FM, tintCMYK: FLUOR_TINTS.FM, mask: mFM, softMask: sfFM, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FG, tintCMYK: FLUOR_TINTS.FG, mask: mFG, softMask: sfFG, maskWidth: drawW, maskHeight: drawH },
+                { name: cNames.FO, tintCMYK: FLUOR_TINTS.FO, mask: mFO, softMask: sfFO, maskWidth: drawW, maskHeight: drawH },
               ].filter(ch => ch.mask.some(v => v > 0));
             } catch (koErr) {
               console.warn('[Knockout] mask build failed, skipping:', koErr);

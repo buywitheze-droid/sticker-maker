@@ -403,7 +403,8 @@ export async function addSpotColorRastersToPDF(
   channels: Array<{
     name: string;
     tintCMYK: [number, number, number, number];
-    mask: Uint8Array;        // grayscale bytes at maskWidth×maskHeight
+    mask: Uint8Array;         // binary ink data (0 or 255) at maskWidth×maskHeight
+    softMask?: Uint8Array;    // optional soft-alpha data (0-255); same dimensions
     maskWidth: number;
     maskHeight: number;
   }>,
@@ -445,13 +446,13 @@ export async function addSpotColorRastersToPDF(
     ]);
     const sepRef = context.register(sep);
 
-    // ── 2a. Soft-mask (SMask) — Gaussian-blurred DeviceGray alpha channel.
-    //        Blurring smooths the hard binary 0/255 boundary into a gradient,
-    //        eliminating pixel-staircase aliasing on all edges (inner colour
-    //        boundaries and outer design-to-background transitions alike).
-    //        radius=2 at 300 DPI ≈ 0.007" of feather — invisible as a halo but
-    //        enough to produce the smooth Photoshop-wand look.
-    const smoothedSmask = _blurSmask(ch.mask, ch.maskWidth, ch.maskHeight, 8);
+    // ── 2a. Soft-mask (SMask) — uses the pre-computed soft-alpha array when
+    //        available (confidence × canvas-alpha, already 1–2 px wide at actual
+    //        colour boundaries, zero everywhere else — no halo).
+    //        A radius=1 blur removes single-pixel staircase jaggies at 45°
+    //        diagonals without widening the soft zone visibly.
+    const smaskSource = ch.softMask ?? ch.mask;
+    const smoothedSmask = _blurSmask(smaskSource, ch.maskWidth, ch.maskHeight, 1);
     const smaskStream = context.stream(smoothedSmask, {
       Type: PDFName.of('XObject'),
       Subtype: PDFName.of('Image'),
