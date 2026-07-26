@@ -2477,10 +2477,64 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     const createSpotOverlayCanvas = useCallback((source?: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement | null => {
       if (!imageInfo || !spotPreviewData?.enabled) return null;
+
+      const img = source || imageInfo.image;
+      const MAX_DIM = 1024;
+      const srcW = img.width, srcH = img.height;
+      const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH, 1));
+      const ow = Math.max(1, Math.round(srcW * scale));
+      const oh = Math.max(1, Math.round(srcH * scale));
+
+      // ── Masks path (region-aware) ─────────────────────────────────────────
+      // Use the pre-computed per-pixel masks from computeChannelMasks.
+      // These are built from regionMap so they only light up the specific
+      // region the user clicked — not every pixel of that color everywhere.
+      const masks = spotPreviewData.masks;
+      if (masks) {
+        const { FY, FM, FG, FO, width: mW, height: mH } = masks;
+
+        // Fast checksum for cache key (one pass, no extra allocation)
+        let cksum = 0;
+        for (let i = 0; i < mW * mH; i++) cksum += FY[i] + FM[i] * 2 + FG[i] * 4 + FO[i] * 8;
+        if (cksum === 0) return null; // nothing assigned yet
+
+        const maskCacheKey = `masks-${mW}x${mH}-${cksum}`;
+        if (spotOverlayCacheRef.current?.key === maskCacheKey) return spotOverlayCacheRef.current.canvas;
+
+        // Build an ImageData at mask resolution
+        const maskImgData = new ImageData(mW, mH);
+        const md = maskImgData.data;
+        for (let i = 0; i < mW * mH; i++) {
+          if      (FY[i]) { md[i*4]=223; md[i*4+1]=255; md[i*4+2]=0;   md[i*4+3]=255; }
+          else if (FM[i]) { md[i*4]=255; md[i*4+1]=0;   md[i*4+2]=255; md[i*4+3]=255; }
+          else if (FG[i]) { md[i*4]=57;  md[i*4+1]=255; md[i*4+2]=20;  md[i*4+3]=255; }
+          else if (FO[i]) { md[i*4]=255; md[i*4+1]=102; md[i*4+2]=0;   md[i*4+3]=255; }
+        }
+
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = mW; tmpCanvas.height = mH;
+        const tmpCtx = tmpCanvas.getContext('2d');
+        if (!tmpCtx) return null;
+        tmpCtx.putImageData(maskImgData, 0, 0);
+
+        const oCanvas = document.createElement('canvas');
+        oCanvas.width = ow; oCanvas.height = oh;
+        const oCtx = oCanvas.getContext('2d');
+        if (!oCtx) return null;
+        // Nearest-neighbor keeps crisp edges between region boundaries
+        oCtx.imageSmoothingEnabled = false;
+        oCtx.drawImage(tmpCanvas, 0, 0, ow, oh);
+
+        spotOverlayCacheRef.current = { key: maskCacheKey, canvas: oCanvas };
+        return oCanvas;
+      }
+
+      // ── Nearest-centroid fallback (region data not ready yet) ─────────────
+      // Reached only before detectColorRegionsAsync has finished.
+      // Uses color-level flags — acceptable as a brief loading state.
       const allColors = spotPreviewData.colors;
       if (!allColors || allColors.length === 0) return null;
 
-      // Build channel→overlay-color map keyed by color index
       type OverlayColor = { oR: number; oG: number; oB: number };
       const channelForColor = new Map<number, OverlayColor>();
       for (let ci = 0; ci < allColors.length; ci++) {
@@ -2492,20 +2546,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       if (channelForColor.size === 0) return null;
 
-      const img = source || imageInfo.image;
       const imgIdentity = (img as HTMLImageElement).src || `${img.width}x${img.height}`;
-
-      // Cache key: based on actual assignments (no low-res mask fingerprint)
       const assignKey = [...channelForColor.entries()].map(([ci, ch]) => `${ci}:${ch.oR}`).join(',');
       const cacheKey = `${imgIdentity}-nc-${assignKey}`;
       if (spotOverlayCacheRef.current?.key === cacheKey) return spotOverlayCacheRef.current.canvas;
-
-      // Cap rendering resolution to keep the nearest-centroid loop fast
-      const MAX_DIM = 1024;
-      const srcW = img.width, srcH = img.height;
-      const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH, 1));
-      const ow = Math.max(1, Math.round(srcW * scale));
-      const oh = Math.max(1, Math.round(srcH * scale));
 
       const srcCanvas = document.createElement('canvas');
       srcCanvas.width = ow; srcCanvas.height = oh;
@@ -2515,9 +2559,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       let srcData: ImageData;
       try { srcData = srcCtx.getImageData(0, 0, ow, oh); } catch { return null; }
 
-      // Pre-compute centroid RGB array (no sqrt needed — squared distance)
       const centroids = allColors.map(c => c.rgb ?? { r: 128, g: 128, b: 128 });
-
       const oCanvas = document.createElement('canvas');
       oCanvas.width = ow; oCanvas.height = oh;
       const oCtx = oCanvas.getContext('2d');
@@ -2529,8 +2571,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       for (let pi = 0; pi < ow * oh; pi++) {
         if (pixels[pi * 4 + 3] < 128) continue;
         const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
-
-        // Nearest centroid — squared Euclidean distance, no sqrt
         let bestDist = Infinity, bestIdx = -1;
         for (let ci = 0; ci < centroids.length; ci++) {
           const c = centroids[ci];

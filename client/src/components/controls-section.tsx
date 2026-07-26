@@ -375,20 +375,22 @@ export default function ControlsSection({
     if (!color) return;
 
     const regions = color.regions;
-    // Require region data — wand never falls back to color-level assignment.
-    // Color-level assignment is intentionally only available via the list buttons.
-    if (!regions || regions.length === 0) return;
 
-    if (regions.length > 1 && color.regionMap) {
-      // Multi-region color: assign only the specific disconnected shape the user clicked.
+    if (regions && regions.length > 1 && color.regionMap) {
+      // Multi-region color: assign ONLY the specific disconnected shape the user clicked.
+      // This is the bug-fix path — never assign every instance of the color.
       const ri = color.regionMap[mpi] ?? -1;
       if (ri < 0 || !regions[ri]) return;
       toggleRegionFluor(ci, regions[ri].id, ac);
-    } else {
-      // Single-region color: there is only one shape, so assign it.
+    } else if (regions && regions.length === 1) {
+      // Single region detected — one contiguous area, assign it.
       toggleRegionFluor(ci, regions[0].id, ac);
+    } else {
+      // No region data yet (region worker hasn't finished, or shapes are tiny).
+      // Color only has one visual area so color-level == region-level here.
+      updateSpotColor(ci, ac, !color[ac as keyof typeof color]);
     }
-  }, [toggleRegionFluor]);
+  }, [toggleRegionFluor, updateSpotColor]);
 
   // Keep wandAssignRef in sync. No cleanup nulling — old closure still works (idempotent assigns),
   // and a null window between renders would silently drop clicks.
