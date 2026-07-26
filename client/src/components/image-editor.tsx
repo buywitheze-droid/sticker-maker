@@ -2491,47 +2491,54 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 lowResMap = buildPixelMapFromImage(img as any, designSpotColors as any) ?? null;
               }
 
-              const n = drawW * drawH;
-              const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
-              const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
-
-              // Read canvas pixels (canvas already has flips applied)
-              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
-              const pixels = imgDataFull.data;
+              // ── Classify at ¼ resolution, then bilinear-upscale ───────────────
+              // The browser's drawImage downsampler averages every 4×4 export-pixel
+              // block into one sample, naturally blending colour-boundary pixels.
+              // Classification then sees smooth gradients instead of hard steps,
+              // widening the anti-aliasing zone from 1–2 px to 4–8 px for free.
+              // The bilinear upscale recreates those gradients at export resolution.
+              const CLASSIFY_SCALE = 4;
+              const clW = Math.max(1, Math.round(drawW / CLASSIFY_SCALE));
+              const clH = Math.max(1, Math.round(drawH / CLASSIFY_SCALE));
+              const clCanvas = document.createElement('canvas');
+              clCanvas.width = clW; clCanvas.height = clH;
+              const clCtx = clCanvas.getContext('2d', { willReadFrequently: true })!;
+              clCtx.drawImage(cctx.canvas, 0, 0, clW, clH);   // bilinear downsample
+              const clData    = clCtx.getImageData(0, 0, clW, clH);
+              const clPixels  = clData.data;
 
               const lrW = lowResMap?.width ?? 1;
               const lrH = lowResMap?.height ?? 1;
 
-              for (let py = 0; py < drawH; py++) {
-                for (let px = 0; px < drawW; px++) {
-                  const pi = py * drawW + px;
-                  // Use actual canvas alpha as ink weight — anti-aliases outer edges
-                  const alpha = pixels[pi * 4 + 3];
-                  if (alpha < 10) continue;
-                  const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
+              // Small masks at ¼ resolution
+              const nSm = clW * clH;
+              const smFY = new Uint8Array(nSm), smFM = new Uint8Array(nSm);
+              const smFG = new Uint8Array(nSm), smFO = new Uint8Array(nSm);
 
-                  // Find nearest AND second-nearest centroid in one pass.
+              for (let cy = 0; cy < clH; cy++) {
+                for (let cx = 0; cx < clW; cx++) {
+                  const ci = cy * clW + cx;
+                  const alpha = clPixels[ci * 4 + 3];
+                  if (alpha < 4) continue;
+                  const r = clPixels[ci * 4], g = clPixels[ci * 4 + 1], b = clPixels[ci * 4 + 2];
+
+                  // Find nearest AND second-nearest centroid in one pass
                   let bestDist = Infinity, bestIdx = -1;
                   let secDist  = Infinity, secIdx  = -1;
-                  for (let ci = 0; ci < centroids.length; ci++) {
-                    const c = centroids[ci];
+                  for (let ki = 0; ki < centroids.length; ki++) {
+                    const c = centroids[ki];
                     const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
-                    if (d < bestDist) { secDist = bestDist; secIdx = bestIdx; bestDist = d; bestIdx = ci; }
-                    else if (d < secDist) { secDist = d; secIdx = ci; }
+                    if (d < bestDist) { secDist = bestDist; secIdx = bestIdx; bestDist = d; bestIdx = ki; }
+                    else if (d < secDist) { secDist = d; secIdx = ki; }
                   }
                   if (bestIdx < 0) continue;
                   const color = colors[bestIdx];
                   if (!color) continue;
 
-                  // ── Projection-based edge confidence ──────────────────────────
-                  // Project the pixel onto the line from bestCentroid → secCentroid.
-                  // t=0 → pixel exactly at bestCentroid (confidence 1.0, full ink).
-                  // t=0.5 → pixel at the colour-boundary midpoint (confidence 0.5,
-                  //          half ink — the anti-aliased transition zone).
-                  // t≥1  → pixel is actually closer to the second centroid; clip to 0.
-                  // This matches how Photoshop's magic wand anti-aliasing works and
-                  // naturally produces smooth edges at every colour boundary without
-                  // needing a post-pass blur.
+                  // Projection-based edge confidence:
+                  //   t=0   → pixel at bestCentroid      → confidence 1.0 (full ink)
+                  //   t=0.5 → pixel at boundary midpoint → confidence 0.5 (half ink)
+                  //   t≥1   → pixel past the boundary    → confidence 0 (no ink)
                   let confidence = 1.0;
                   if (secIdx >= 0) {
                     const cA = centroids[bestIdx], cB = centroids[secIdx];
@@ -2542,35 +2549,63 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       confidence = Math.max(0, Math.min(1, 1 - t));
                     }
                   }
-                  // Combine canvas alpha (outer edge smoothing) with centroid
-                  // confidence (inner colour-boundary smoothing).
                   const inkW = Math.round(alpha * confidence);
-                  if (inkW < 4) continue; // below threshold — skip both ink & knockout
+                  if (inkW < 4) continue;
 
                   if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
-                    // Region-level: use 512-px map for sub-color region lookup
-                    const mx = Math.min(Math.floor(px * lrW / drawW), lrW - 1);
-                    const my = Math.min(Math.floor(py * lrH / drawH), lrH - 1);
+                    // Region-level: map classify-canvas coords → lowResMap coords
+                    const mx = Math.min(Math.floor(cx * lrW / clW), lrW - 1);
+                    const my = Math.min(Math.floor(cy * lrH / clH), lrH - 1);
                     const mpi = my * lrW + mx;
                     const ri = (color.regionMap as Int16Array)[mpi] ?? -1;
                     if (ri < 0 || !color.regions[ri]) continue;
                     const region = color.regions[ri];
-                    if (region.spotFluorY)      mFY[pi] = inkW;
-                    if (region.spotFluorM)      mFM[pi] = inkW;
-                    if (region.spotFluorG)      mFG[pi] = inkW;
-                    if (region.spotFluorOrange) mFO[pi] = inkW;
+                    if (region.spotFluorY)      smFY[ci] = inkW;
+                    if (region.spotFluorM)      smFM[ci] = inkW;
+                    if (region.spotFluorG)      smFG[ci] = inkW;
+                    if (region.spotFluorOrange) smFO[ci] = inkW;
                   } else {
-                    if (color.spotFluorY)      mFY[pi] = inkW;
-                    if (color.spotFluorM)      mFM[pi] = inkW;
-                    if (color.spotFluorG)      mFG[pi] = inkW;
-                    if (color.spotFluorOrange) mFO[pi] = inkW;
+                    if (color.spotFluorY)      smFY[ci] = inkW;
+                    if (color.spotFluorM)      smFM[ci] = inkW;
+                    if (color.spotFluorG)      smFG[ci] = inkW;
+                    if (color.spotFluorOrange) smFO[ci] = inkW;
                   }
                 }
               }
 
-              // ── Knockout: remove fluorescent pixels from CMYK canvas.
-              //    Proportional to the spot ink weight so outer-edge pixels blend
-              //    smoothly (e.g. 50% canvas alpha → 50% CMYK knocked out, 50% spot).
+              // Bilinear upscale: ¼-resolution mask → full export resolution.
+              // Half-pixel offset (+ 0.5) keeps samples centred in each output pixel.
+              const bilinUp = (sm: Uint8Array): Uint8Array => {
+                const out = new Uint8Array(drawW * drawH);
+                for (let ey = 0; ey < drawH; ey++) {
+                  const sy_f = (ey + 0.5) * clH / drawH - 0.5;
+                  const sy0  = Math.max(0, Math.floor(sy_f));
+                  const sy1  = Math.min(clH - 1, sy0 + 1);
+                  const ty   = sy_f - sy0;
+                  for (let ex = 0; ex < drawW; ex++) {
+                    const sx_f = (ex + 0.5) * clW / drawW - 0.5;
+                    const sx0  = Math.max(0, Math.floor(sx_f));
+                    const sx1  = Math.min(clW - 1, sx0 + 1);
+                    const tx   = sx_f - sx0;
+                    const v00  = sm[sy0 * clW + sx0], v10 = sm[sy0 * clW + sx1];
+                    const v01  = sm[sy1 * clW + sx0], v11 = sm[sy1 * clW + sx1];
+                    out[ey * drawW + ex] = ((1 - ty) * ((1 - tx) * v00 + tx * v10)
+                                          +      ty  * ((1 - tx) * v01 + tx * v11) + 0.5) | 0;
+                  }
+                }
+                return out;
+              };
+
+              const mFY = bilinUp(smFY), mFM = bilinUp(smFM);
+              const mFG = bilinUp(smFG), mFO = bilinUp(smFO);
+              const n = drawW * drawH;
+
+              // Read full-res canvas pixels for knockout (must happen AFTER masks are built)
+              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
+              const pixels = imgDataFull.data;
+
+              // ── Knockout: remove fluorescent coverage from CMYK canvas.
+              //    Proportional to the spot ink weight so boundary pixels blend smoothly.
               for (let pi = 0; pi < n; pi++) {
                 const maxFluor = Math.max(mFY[pi], mFM[pi], mFG[pi], mFO[pi]);
                 if (maxFluor > 0) {

@@ -451,7 +451,7 @@ export async function addSpotColorRastersToPDF(
     //        boundaries and outer design-to-background transitions alike).
     //        radius=2 at 300 DPI ≈ 0.007" of feather — invisible as a halo but
     //        enough to produce the smooth Photoshop-wand look.
-    const smoothedSmask = _blurSmask(ch.mask, ch.maskWidth, ch.maskHeight, 2);
+    const smoothedSmask = _blurSmask(ch.mask, ch.maskWidth, ch.maskHeight, 8);
     const smaskStream = context.stream(smoothedSmask, {
       Type: PDFName.of('XObject'),
       Subtype: PDFName.of('Image'),
