@@ -359,17 +359,19 @@ export default function ControlsSection({
     const regionArrayIdx = hasRegions ? (color.regionMap![mpi] ?? -1) : -1;
     if (hasRegions && regionArrayIdx >= 0) {
       const region = color.regions![regionArrayIdx];
-      toggleRegionFluor(ci, region.id, activeChannel);
+      // Always set (never toggle off) so multi-tapping works naturally.
+      if (!region[activeChannel]) toggleRegionFluor(ci, region.id, activeChannel);
     } else {
-      updateSpotColor(ci, activeChannel, !color[activeChannel]);
+      // Always set to true — wand mode is "paint on", not a toggle.
+      if (!color[activeChannel]) updateSpotColor(ci, activeChannel, true);
     }
   }, [activeChannel, extractedColors, toggleRegionFluor, updateSpotColor]);
 
-  // Keep wandAssignRef in sync so the preview section can call it.
+  // Keep wandAssignRef in sync. No cleanup nulling — old closure still works (idempotent assigns),
+  // and a null window between renders would silently drop clicks.
   useEffect(() => {
     if (!wandAssignRef) return;
     wandAssignRef.current = handleWandAssign;
-    return () => { if (wandAssignRef) wandAssignRef.current = null; };
   }, [wandAssignRef, handleWandAssign]);
 
   // Bubble active-channel changes up so the preview can show a crosshair cursor.

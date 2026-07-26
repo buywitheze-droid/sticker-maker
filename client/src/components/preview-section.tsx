@@ -1691,6 +1691,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         canvasAreaRef.current.style.cursor = 'grab';
         return;
       }
+      // In wand mode keep crosshair — don't let hover logic override it.
+      if (activeSpotChannelRef.current) return;
       const local = canvasToLocal(e.clientX, e.clientY);
       // Group handle hover cursor
       if (selectedDesignIds.size > 1) {
