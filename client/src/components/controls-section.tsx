@@ -30,6 +30,8 @@ type ExtractedColor = {
   hex: string;
   name?: string;
   rgb: { r: number; g: number; b: number };
+  /** Present on colors returned by the extractor; optional here for safety. */
+  count?: number;
   percentage: number;
   spotWhite?: boolean;
   spotGloss?: boolean;
@@ -125,57 +127,75 @@ export default function ControlsSection({
       } else {
         const cacheKey = `${imageInfo.image.width}x${imageInfo.image.height}-${imageInfo.file?.name ?? 'unknown'}-${imageInfo.file?.size ?? 0}`;
         const cached = colorCacheRef.current.get(cacheKey);
-        if (cached) {
-          setExtractedColors(cached.map(c => ({ ...c })));
-        } else {
-          import("@/lib/color-extractor").then(({ extractColorsFromImageAsync, extractColorsFromImage, buildPixelMapFromImage, detectColorRegionsAsync }) => {
+        // Always import the module — needed for region detection on both cache-hit
+        // and fresh-extract paths.
+        import("@/lib/color-extractor").then(({ extractColorsFromImageAsync, extractColorsFromImage, buildPixelMapFromImage, detectColorRegionsAsync }) => {
+          if (cancelled) return;
+          const img = imageInfo.image;
+
+          // Helper: detect regions on a local (mutable) copy of colors, then update state.
+          // Cast needed because the local ExtractedColor type has optional spot flags
+          // while the exported type has them required; structurally compatible at runtime.
+          const runRegionDetection = async (localColors: ExtractedColor[]) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const mapResult = buildPixelMapFromImage(img, localColors as any);
+            if (!mapResult || cancelled) return;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, localColors as any, mapResult.imageData);
+            if (!cancelled) setExtractedColors([...localColors]);
+          };
+
+          // Helper: write to cache, stripping large typed arrays so cache stays lean.
+          const writeCache = (cs: ExtractedColor[]) => {
+            const slim = cs.map(c => ({ ...c, regions: undefined, regionMap: undefined }));
+            colorCacheRef.current.set(cacheKey, slim);
+            if (colorCacheRef.current.size > 20) {
+              const firstKey = colorCacheRef.current.keys().next().value;
+              if (firstKey) colorCacheRef.current.delete(firstKey);
+            }
+          };
+
+          if (cached) {
+            // Show cached colors immediately (no regions yet), then detect async.
+            const localColors = cached.map(c => ({ ...c }));
+            setExtractedColors(localColors);
+            runRegionDetection(localColors);
+            return;
+          }
+
+          // Fresh extraction
+          extractColorsFromImageAsync(img, 999).then(async colors => {
             if (cancelled) return;
-            const img = imageInfo.image;
-            extractColorsFromImageAsync(img, 999).then(async colors => {
-              if (cancelled) return;
-              if (colors.length === 0) {
-                try {
-                  const fallback = extractColorsFromImage(img, 999);
-                  if (fallback.length > 0) {
-                    colorCacheRef.current.set(cacheKey, fallback);
-                    setExtractedColors(fallback);
-                    // detect regions for fallback too
-                    const mapResult = buildPixelMapFromImage(img, fallback);
-                    if (mapResult && !cancelled) {
-                      await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, fallback, mapResult.imageData);
-                      if (!cancelled) setExtractedColors([...fallback]);
-                    }
-                    return;
-                  }
-                } catch { /* sync fallback failed */ }
-              }
-              colorCacheRef.current.set(cacheKey, colors);
-              if (colorCacheRef.current.size > 20) {
-                const firstKey = colorCacheRef.current.keys().next().value;
-                if (firstKey) colorCacheRef.current.delete(firstKey);
-              }
-              setExtractedColors(colors);
-              // detect disconnected regions per color and generate thumbnails
-              const mapResult = buildPixelMapFromImage(img, colors);
-              if (mapResult && !cancelled) {
-                await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, colors, mapResult.imageData);
-                if (!cancelled) setExtractedColors([...colors]);
-              }
-            }).catch(async (err) => {
-              if (cancelled) return;
+            if (colors.length === 0) {
               try {
                 const fallback = extractColorsFromImage(img, 999);
-                colorCacheRef.current.set(cacheKey, fallback);
-                setExtractedColors(fallback);
-              } catch {
-                setExtractedColors([]);
-              }
-            });
-          }).catch((err) => {
+                if (fallback.length > 0) {
+                  writeCache(fallback);
+                  setExtractedColors(fallback);
+                  await runRegionDetection(fallback);
+                  return;
+                }
+              } catch { /* sync fallback failed */ }
+            }
+            // Cache base colors (no regions) before async detection so cache is
+            // always populated even if detection is cancelled mid-way.
+            writeCache(colors);
+            setExtractedColors(colors);
+            await runRegionDetection(colors);
+          }).catch(() => {
             if (cancelled) return;
-            console.warn('[Fluorescent] color-extractor import failed:', err);
+            try {
+              const fallback = extractColorsFromImage(img, 999);
+              writeCache(fallback);
+              setExtractedColors(fallback);
+            } catch {
+              setExtractedColors([]);
+            }
           });
-        }
+        }).catch((err) => {
+          if (cancelled) return;
+          console.warn('[Fluorescent] color-extractor import failed:', err);
+        });
       }
     } else {
       setExtractedColors([]);
@@ -209,12 +229,14 @@ export default function ControlsSection({
       const updated = prev.map((color, i) => {
         if (i === index) {
           // propagate assignment to all regions too
+          // Formula: if this IS the target field → use new value; otherwise if
+          // turning ON → clear competing field; if turning OFF → preserve sibling.
           const updatedRegions = color.regions?.map(r => ({
             ...r,
-            spotFluorY: value && field === 'spotFluorY' ? true : value ? false : r.spotFluorY,
-            spotFluorM: value && field === 'spotFluorM' ? true : value ? false : r.spotFluorM,
-            spotFluorG: value && field === 'spotFluorG' ? true : value ? false : r.spotFluorG,
-            spotFluorOrange: value && field === 'spotFluorOrange' ? true : value ? false : r.spotFluorOrange,
+            spotFluorY:       field === 'spotFluorY'       ? value : (value ? false : r.spotFluorY),
+            spotFluorM:       field === 'spotFluorM'       ? value : (value ? false : r.spotFluorM),
+            spotFluorG:       field === 'spotFluorG'       ? value : (value ? false : r.spotFluorG),
+            spotFluorOrange:  field === 'spotFluorOrange'  ? value : (value ? false : r.spotFluorOrange),
           }));
           if (value) {
             return { ...color, spotFluorY: false, spotFluorM: false, spotFluorG: false, spotFluorOrange: false, [field]: true, regions: updatedRegions };
@@ -388,9 +410,14 @@ export default function ControlsSection({
 
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <button
+          {/* Outer element must NOT be <button> — the eye toggle is a <button> inside,
+              and nested buttons are invalid HTML (React also warns about it). */}
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setShowSpotColors(!showSpotColors)}
-            className={`flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors ${showSpotColors ? 'bg-purple-50' : ''}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSpotColors(p => !p); } }}
+            className={`flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors cursor-pointer ${showSpotColors ? 'bg-purple-50' : ''}`}
           >
             <div className="flex items-center gap-2">
               <Palette className="w-3.5 h-3.5 text-purple-400" />
@@ -415,7 +442,7 @@ export default function ControlsSection({
               </button>
               <ChevronDown className={`w-3.5 h-3.5 text-gray-600 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
             </div>
-          </button>
+          </div>
 
           {showSpotColors && (
             <div className="px-3 pb-2.5 space-y-2">
@@ -441,23 +468,29 @@ export default function ControlsSection({
                               key={field}
                               onClick={() => {
                                 const newVal = !allSet;
-                                setExtractedColors(prev => prev.map(c => {
-                                  const updatedRegions = c.regions?.map(r => ({
-                                    ...r,
-                                    spotFluorY: newVal && field === 'spotFluorY',
-                                    spotFluorM: newVal && field === 'spotFluorM',
-                                    spotFluorG: newVal && field === 'spotFluorG',
-                                    spotFluorOrange: newVal && field === 'spotFluorOrange',
-                                  }));
-                                  return {
-                                    ...c,
-                                    spotFluorY: newVal && field === 'spotFluorY' ? true : newVal ? false : c.spotFluorY,
-                                    spotFluorM: newVal && field === 'spotFluorM' ? true : newVal ? false : c.spotFluorM,
-                                    spotFluorG: newVal && field === 'spotFluorG' ? true : newVal ? false : c.spotFluorG,
-                                    spotFluorOrange: newVal && field === 'spotFluorOrange' ? true : newVal ? false : c.spotFluorOrange,
-                                    regions: updatedRegions,
-                                  };
-                                }));
+                                setExtractedColors(prev => {
+                                  const next = prev.map(c => {
+                                    // Same formula as updateSpotColor:
+                                    // target field → use newVal; sibling → clear if turning on, preserve if turning off
+                                    const updatedRegions = c.regions?.map(r => ({
+                                      ...r,
+                                      spotFluorY:      field === 'spotFluorY'      ? newVal : (newVal ? false : r.spotFluorY),
+                                      spotFluorM:      field === 'spotFluorM'      ? newVal : (newVal ? false : r.spotFluorM),
+                                      spotFluorG:      field === 'spotFluorG'      ? newVal : (newVal ? false : r.spotFluorG),
+                                      spotFluorOrange: field === 'spotFluorOrange' ? newVal : (newVal ? false : r.spotFluorOrange),
+                                    }));
+                                    return {
+                                      ...c,
+                                      spotFluorY:      field === 'spotFluorY'      ? newVal : (newVal ? false : c.spotFluorY),
+                                      spotFluorM:      field === 'spotFluorM'      ? newVal : (newVal ? false : c.spotFluorM),
+                                      spotFluorG:      field === 'spotFluorG'      ? newVal : (newVal ? false : c.spotFluorG),
+                                      spotFluorOrange: field === 'spotFluorOrange' ? newVal : (newVal ? false : c.spotFluorOrange),
+                                      regions: updatedRegions,
+                                    };
+                                  });
+                                  if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, next);
+                                  return next;
+                                });
                               }}
                               className={`px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all ${allSet ? 'text-black' : 'opacity-50 hover:opacity-80'}`}
                               style={{ backgroundColor: allSet ? bg : 'transparent', border: `1.5px solid ${bg}`, color: allSet ? '#000' : bg }}

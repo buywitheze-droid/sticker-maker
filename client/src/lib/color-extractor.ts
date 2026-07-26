@@ -664,18 +664,14 @@ function generateRegionThumbnail(
   } catch { return undefined; }
 }
 
-let _regionWorker: Worker | null = null;
-function getRegionWorker(): Worker | null {
-  if (!_regionWorker) {
-    try { _regionWorker = new RegionWorker(); } catch { return null; }
-  }
-  return _regionWorker;
-}
-
 /**
  * For each extracted color, detect spatially disconnected regions via
  * connected-component labeling. Populates `regions` and `regionMap` on
  * colors that have 2+ distinct blobs. Generates thumbnail previews.
+ *
+ * Creates a fresh worker per call to prevent race conditions when called
+ * concurrently (e.g. rapid image switching). The worker is terminated after
+ * the result arrives.
  */
 export function detectColorRegionsAsync(
   pixelMap: Int16Array,
@@ -685,16 +681,26 @@ export function detectColorRegionsAsync(
   imageData?: ImageData,
 ): Promise<void> {
   return new Promise((resolve) => {
-    const worker = getRegionWorker();
-    if (!worker) { resolve(); return; }
+    let worker: Worker;
+    try { worker = new RegionWorker(); } catch { resolve(); return; }
+
     const mapCopy = pixelMap.slice(0);
-    const handler = (e: MessageEvent) => {
+
+    const finish = () => {
+      try { worker.terminate(); } catch { /* already gone */ }
+      resolve();
+    };
+
+    const errHandler = () => finish();
+    worker.addEventListener('error', errHandler);
+
+    worker.addEventListener('message', (e: MessageEvent) => {
+      worker.removeEventListener('error', errHandler);
       const results: Array<{
         colorIndex: number;
         regions: Array<{ id: number; bbox: { minX: number; minY: number; maxX: number; maxY: number }; pixelCount: number; percentage: number; pixelIndices: number[] }>;
         regionMap: Int32Array;
       }> = e.data;
-      worker.removeEventListener('message', handler);
       const processedIndices = new Set(results.map(r => r.colorIndex));
       for (let ci = 0; ci < colors.length; ci++) {
         if (!processedIndices.has(ci)) { colors[ci].regions = undefined; colors[ci].regionMap = undefined; }
@@ -709,10 +715,9 @@ export function detectColorRegionsAsync(
           return { id: r.id, bbox: r.bbox, pixelCount: r.pixelCount, percentage: r.percentage, selected: true, pixelIndices: r.pixelIndices, thumbnailUrl };
         });
       }
-      resolve();
-    };
-    worker.onerror = () => { worker.removeEventListener('message', handler); resolve(); };
-    worker.addEventListener('message', handler);
+      finish();
+    }, { once: true });
+
     worker.postMessage({ pixelMap: mapCopy, width, height, colorCount: colors.length }, [mapCopy.buffer]);
   });
 }
