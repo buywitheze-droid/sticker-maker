@@ -365,11 +365,7 @@ export default function ControlsSection({
                     const color = extractedColors[idx];
                     const isAssigned = color.spotFluorY || color.spotFluorM || color.spotFluorG || color.spotFluorOrange;
                     return (
-                      <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
-                        isAssigned
-                          ? 'bg-purple-50 border border-purple-500/20'
-                          : 'bg-gray-100/80 border border-transparent hover:border-gray-300'
-                      }`}>
+                      <div key={idx} className="flex items-center gap-2 px-2 py-1 rounded-md bg-gray-100 border border-gray-200">
                         <div
                           className="w-3.5 h-3.5 rounded flex-shrink-0 border border-gray-300"
                           style={{ backgroundColor: color.hex }}
