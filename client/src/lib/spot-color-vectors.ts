@@ -339,6 +339,58 @@ export async function addSpotColorVectorsToPDF(
   return addedLabels;
 }
 
+/* ─── SMask edge-smoothing ────────────────────────────────────────────────────
+ * Three-pass box blur that approximates a Gaussian blur.  Applied exclusively
+ * to the SMask (alpha channel) of each spot-color XObject so edges look smooth
+ * instead of pixel-staircase jagged.  The ink-tint channel is left untouched
+ * so full ink coverage is preserved inside the selection.
+ * radius=2 at 300 DPI ≈ 0.007" of edge feather — enough to kill staircases
+ * without producing a visible halo.
+ */
+function _boxBlurH(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const dst = new Float32Array(src.length);
+  const inv = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const base = y * w;
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += src[base + Math.max(0, Math.min(w - 1, k))];
+    dst[base] = acc * inv;
+    for (let x = 1; x < w; x++) {
+      acc += src[base + Math.min(x + r, w - 1)] - src[base + Math.max(x - r - 1, 0)];
+      dst[base + x] = acc * inv;
+    }
+  }
+  return dst;
+}
+
+function _boxBlurV(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const dst = new Float32Array(src.length);
+  const inv = 1 / (2 * r + 1);
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += src[Math.max(0, Math.min(h - 1, k)) * w + x];
+    dst[x] = acc * inv;
+    for (let y = 1; y < h; y++) {
+      acc += src[Math.min(y + r, h - 1) * w + x] - src[Math.max(y - r - 1, 0) * w + x];
+      dst[y * w + x] = acc * inv;
+    }
+  }
+  return dst;
+}
+
+function _blurSmask(mask: Uint8Array, w: number, h: number, radius: number): Uint8Array {
+  let buf = new Float32Array(mask);
+  for (let p = 0; p < 3; p++) {   // three passes ≈ Gaussian
+    buf = _boxBlurH(buf, w, h, radius);
+    buf = _boxBlurV(buf, w, h, radius);
+  }
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Math.min(255, Math.max(0, buf[i] + 0.5)) | 0;
+  }
+  return out;
+}
+
 /**
  * Embed fluorescent spot color channels as raster image XObjects in the PDF.
  * Each channel is a grayscale image (255 = full ink, 0 = no ink) placed in a
@@ -393,11 +445,14 @@ export async function addSpotColorRastersToPDF(
     ]);
     const sepRef = context.register(sep);
 
-    // ── 2a. Soft-mask (SMask) — DeviceGray image where 255=opaque, 0=transparent.
-    //        Without this the zero-ink pixels paint white over the CMYK layer.
-    //        The mask data itself is already 255 where ink is present and 0 elsewhere,
-    //        so we can reuse it directly as the alpha channel.
-    const smaskStream = context.stream(ch.mask, {
+    // ── 2a. Soft-mask (SMask) — Gaussian-blurred DeviceGray alpha channel.
+    //        Blurring smooths the hard binary 0/255 boundary into a gradient,
+    //        eliminating pixel-staircase aliasing on all edges (inner colour
+    //        boundaries and outer design-to-background transitions alike).
+    //        radius=2 at 300 DPI ≈ 0.007" of feather — invisible as a halo but
+    //        enough to produce the smooth Photoshop-wand look.
+    const smoothedSmask = _blurSmask(ch.mask, ch.maskWidth, ch.maskHeight, 2);
+    const smaskStream = context.stream(smoothedSmask, {
       Type: PDFName.of('XObject'),
       Subtype: PDFName.of('Image'),
       Width: ch.maskWidth,
@@ -407,9 +462,10 @@ export async function addSpotColorRastersToPDF(
     });
     const smaskRef = context.register(smaskStream);
 
-    // ── 2b. Image XObject (raw grayscale, 1 byte/pixel)
-    //        Decode [0 1] maps byte 0→tint 0 (no ink), 255→tint 1 (full ink).
-    //        SMask entry makes the no-ink areas transparent instead of white.
+    // ── 2b. Image XObject (raw grayscale, 1 byte/pixel).
+    //        Ink tint channel keeps the original (canvas-alpha-weighted) data so
+    //        full ink coverage is preserved inside the selection; only the SMask
+    //        is blurred for smooth edge transparency.
     const imageStream = context.stream(ch.mask, {
       Type: PDFName.of('XObject'),
       Subtype: PDFName.of('Image'),

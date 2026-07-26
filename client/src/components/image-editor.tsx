@@ -2505,7 +2505,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               for (let py = 0; py < drawH; py++) {
                 for (let px = 0; px < drawW; px++) {
                   const pi = py * drawW + px;
-                  if (pixels[pi * 4 + 3] < 10) continue;
+                  // Use actual canvas alpha as ink weight — anti-aliases outer edges
+                  const alpha = pixels[pi * 4 + 3];
+                  if (alpha < 10) continue;
                   const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
 
                   // Nearest-centroid (squared distance, no sqrt needed)
@@ -2527,23 +2529,27 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     const ri = (color.regionMap as Int16Array)[mpi] ?? -1;
                     if (ri < 0 || !color.regions[ri]) continue;
                     const region = color.regions[ri];
-                    if (region.spotFluorY)      mFY[pi] = 255;
-                    if (region.spotFluorM)      mFM[pi] = 255;
-                    if (region.spotFluorG)      mFG[pi] = 255;
-                    if (region.spotFluorOrange) mFO[pi] = 255;
+                    if (region.spotFluorY)      mFY[pi] = alpha;
+                    if (region.spotFluorM)      mFM[pi] = alpha;
+                    if (region.spotFluorG)      mFG[pi] = alpha;
+                    if (region.spotFluorOrange) mFO[pi] = alpha;
                   } else {
-                    if (color.spotFluorY)      mFY[pi] = 255;
-                    if (color.spotFluorM)      mFM[pi] = 255;
-                    if (color.spotFluorG)      mFG[pi] = 255;
-                    if (color.spotFluorOrange) mFO[pi] = 255;
+                    if (color.spotFluorY)      mFY[pi] = alpha;
+                    if (color.spotFluorM)      mFM[pi] = alpha;
+                    if (color.spotFluorG)      mFG[pi] = alpha;
+                    if (color.spotFluorOrange) mFO[pi] = alpha;
                   }
                 }
               }
 
-              // ── Knockout: erase fluorescent pixels from CMYK canvas
+              // ── Knockout: remove fluorescent pixels from CMYK canvas.
+              //    Proportional to the spot ink weight so outer-edge pixels blend
+              //    smoothly (e.g. 50% canvas alpha → 50% CMYK knocked out, 50% spot).
               for (let pi = 0; pi < n; pi++) {
-                if (mFY[pi] || mFM[pi] || mFG[pi] || mFO[pi]) {
-                  imgDataFull.data[pi * 4 + 3] = 0;
+                const maxFluor = Math.max(mFY[pi], mFM[pi], mFG[pi], mFO[pi]);
+                if (maxFluor > 0) {
+                  const origAlpha = pixels[pi * 4 + 3];
+                  imgDataFull.data[pi * 4 + 3] = Math.max(0, origAlpha - maxFluor);
                 }
               }
               cctx.putImageData(imgDataFull, 0, 0);
