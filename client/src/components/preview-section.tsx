@@ -68,6 +68,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     activeSpotChannelRef.current = activeSpotChannel ?? null;
     const onWandTapRef = useRef<typeof onWandTap>(onWandTap);
     onWandTapRef.current = onWandTap;
+
+    // Forcibly set/clear the imperative style.cursor when wand mode toggles.
+    // CSS classes cannot override inline style, so we must do this imperatively.
+    useEffect(() => {
+      const area = canvasAreaRef.current;
+      if (!area) return;
+      area.style.cursor = activeSpotChannel ? 'crosshair' : '';
+    }, [activeSpotChannel]);
     const zoomMax = Math.max(10, Math.ceil(artboardHeight / Math.max(artboardWidth, 0.1)) * 3);
     const zoomMaxRef = useRef(zoomMax);
     zoomMaxRef.current = zoomMax;

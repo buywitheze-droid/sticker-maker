@@ -344,28 +344,36 @@ export default function ControlsSection({
     });
   }, [selectedDesignId]);
 
-  /** Assign the active channel to the pixel at normalized image coordinates (0..1). Called from the preview canvas. */
+  // Live refs so handleWandAssign never reads a stale closure snapshot.
+  const activeChannelLiveRef = useRef(activeChannel);
+  activeChannelLiveRef.current = activeChannel;
+  const extractedColorsLiveRef = useRef(extractedColors);
+  extractedColorsLiveRef.current = extractedColors;
+
+  /** Assign the active channel to the pixel at normalized image coordinates (0..1). Called from the preview canvas.
+   *  Reads activeChannel and extractedColors via live refs so it never captures a stale snapshot. */
   const handleWandAssign = useCallback((nx: number, ny: number) => {
-    if (!activeChannel) return;
+    const ac = activeChannelLiveRef.current;
+    if (!ac) return;
     const pm = pixelMapRef.current;
     if (!pm) return;
+    const colors = extractedColorsLiveRef.current;
     const mx = Math.min(Math.floor(nx * pm.width),  pm.width  - 1);
     const my = Math.min(Math.floor(ny * pm.height), pm.height - 1);
     const mpi = my * pm.width + mx;
     const ci = pm.pixelMap[mpi];
-    if (ci < 0 || ci >= extractedColors.length) return;
-    const color = extractedColors[ci];
+    if (ci < 0 || ci >= colors.length) return;
+    const color = colors[ci];
     const hasRegions = (color?.regions?.length ?? 0) > 1 && !!color?.regionMap;
     const regionArrayIdx = hasRegions ? (color.regionMap![mpi] ?? -1) : -1;
     if (hasRegions && regionArrayIdx >= 0) {
       const region = color.regions![regionArrayIdx];
-      // Always set (never toggle off) so multi-tapping works naturally.
-      if (!region[activeChannel]) toggleRegionFluor(ci, region.id, activeChannel);
+      if (!region[ac]) toggleRegionFluor(ci, region.id, ac);
     } else {
-      // Always set to true — wand mode is "paint on", not a toggle.
-      if (!color[activeChannel]) updateSpotColor(ci, activeChannel, true);
+      if (!color[ac]) updateSpotColor(ci, ac, true);
     }
-  }, [activeChannel, extractedColors, toggleRegionFluor, updateSpotColor]);
+  // toggleRegionFluor and updateSpotColor are stable; refs supply the live values.
+  }, [toggleRegionFluor, updateSpotColor]);
 
   // Keep wandAssignRef in sync. No cleanup nulling — old closure still works (idempotent assigns),
   // and a null window between renders would silently drop clicks.
