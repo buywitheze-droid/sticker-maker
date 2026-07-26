@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
-import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, Info } from "lucide-react";
+import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
 import { formatLength } from "@/lib/format-length";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -12,6 +12,19 @@ export interface SpotPreviewData {
   enabled: boolean;
   colors: ExtractedColor[];
 }
+
+type ColorRegion = {
+  id: number;
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+  pixelCount: number;
+  percentage: number;
+  pixelIndices: number[];
+  thumbnailUrl?: string;
+  spotFluorY?: boolean;
+  spotFluorM?: boolean;
+  spotFluorG?: boolean;
+  spotFluorOrange?: boolean;
+};
 
 type ExtractedColor = {
   hex: string;
@@ -24,6 +37,8 @@ type ExtractedColor = {
   spotFluorM?: boolean;
   spotFluorG?: boolean;
   spotFluorOrange?: boolean;
+  regions?: ColorRegion[];
+  regionMap?: Int32Array;
 };
 
 interface ControlsSectionProps {
@@ -91,6 +106,8 @@ export default function ControlsSection({
   const colorCacheRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const spotSelectionsRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const prevDesignIdRef = useRef<string | null | undefined>(null);
+  const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
+  const colorListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!enableFluorescent) return;
@@ -111,16 +128,23 @@ export default function ControlsSection({
         if (cached) {
           setExtractedColors(cached.map(c => ({ ...c })));
         } else {
-          import("@/lib/color-extractor").then(({ extractColorsFromImageAsync, extractColorsFromImage }) => {
+          import("@/lib/color-extractor").then(({ extractColorsFromImageAsync, extractColorsFromImage, buildPixelMapFromImage, detectColorRegionsAsync }) => {
             if (cancelled) return;
-            extractColorsFromImageAsync(imageInfo.image, 999).then(colors => {
+            const img = imageInfo.image;
+            extractColorsFromImageAsync(img, 999).then(async colors => {
               if (cancelled) return;
               if (colors.length === 0) {
                 try {
-                  const fallback = extractColorsFromImage(imageInfo.image, 999);
+                  const fallback = extractColorsFromImage(img, 999);
                   if (fallback.length > 0) {
                     colorCacheRef.current.set(cacheKey, fallback);
                     setExtractedColors(fallback);
+                    // detect regions for fallback too
+                    const mapResult = buildPixelMapFromImage(img, fallback);
+                    if (mapResult && !cancelled) {
+                      await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, fallback, mapResult.imageData);
+                      if (!cancelled) setExtractedColors([...fallback]);
+                    }
                     return;
                   }
                 } catch { /* sync fallback failed */ }
@@ -131,10 +155,16 @@ export default function ControlsSection({
                 if (firstKey) colorCacheRef.current.delete(firstKey);
               }
               setExtractedColors(colors);
-            }).catch((err) => {
+              // detect disconnected regions per color and generate thumbnails
+              const mapResult = buildPixelMapFromImage(img, colors);
+              if (mapResult && !cancelled) {
+                await detectColorRegionsAsync(mapResult.pixelMap, mapResult.width, mapResult.height, colors, mapResult.imageData);
+                if (!cancelled) setExtractedColors([...colors]);
+              }
+            }).catch(async (err) => {
               if (cancelled) return;
               try {
-                const fallback = extractColorsFromImage(imageInfo.image, 999);
+                const fallback = extractColorsFromImage(img, 999);
                 colorCacheRef.current.set(cacheKey, fallback);
                 setExtractedColors(fallback);
               } catch {
@@ -178,16 +208,50 @@ export default function ControlsSection({
     setExtractedColors(prev => {
       const updated = prev.map((color, i) => {
         if (i === index) {
+          // propagate assignment to all regions too
+          const updatedRegions = color.regions?.map(r => ({
+            ...r,
+            spotFluorY: value && field === 'spotFluorY' ? true : value ? false : r.spotFluorY,
+            spotFluorM: value && field === 'spotFluorM' ? true : value ? false : r.spotFluorM,
+            spotFluorG: value && field === 'spotFluorG' ? true : value ? false : r.spotFluorG,
+            spotFluorOrange: value && field === 'spotFluorOrange' ? true : value ? false : r.spotFluorOrange,
+          }));
           if (value) {
-            return { ...color, spotFluorY: false, spotFluorM: false, spotFluorG: false, spotFluorOrange: false, [field]: true };
+            return { ...color, spotFluorY: false, spotFluorM: false, spotFluorG: false, spotFluorOrange: false, [field]: true, regions: updatedRegions };
           }
-          return { ...color, [field]: value };
+          return { ...color, [field]: value, regions: updatedRegions };
         }
         return color;
       });
-      if (selectedDesignId) {
-        spotSelectionsRef.current.set(selectedDesignId, updated);
-      }
+      if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
+      return updated;
+    });
+  }, [selectedDesignId]);
+
+  const toggleRegionFluor = useCallback((colorIndex: number, regionId: number, field: 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange') => {
+    setExtractedColors(prev => {
+      const updated = prev.map((color, i) => {
+        if (i !== colorIndex || !color.regions) return color;
+        const updatedRegions = color.regions.map(r => {
+          if (r.id !== regionId) return r;
+          const newVal = !r[field];
+          // if turning on, clear other fluors on this region; if turning off, just clear
+          return {
+            ...r,
+            spotFluorY: newVal && field === 'spotFluorY' ? true : newVal ? false : (field === 'spotFluorY' ? false : r.spotFluorY),
+            spotFluorM: newVal && field === 'spotFluorM' ? true : newVal ? false : (field === 'spotFluorM' ? false : r.spotFluorM),
+            spotFluorG: newVal && field === 'spotFluorG' ? true : newVal ? false : (field === 'spotFluorG' ? false : r.spotFluorG),
+            spotFluorOrange: newVal && field === 'spotFluorOrange' ? true : newVal ? false : (field === 'spotFluorOrange' ? false : r.spotFluorOrange),
+          };
+        });
+        // derive color-level flags: true if ANY region has the assignment
+        const anyY = updatedRegions.some(r => r.spotFluorY);
+        const anyM = updatedRegions.some(r => r.spotFluorM);
+        const anyG = updatedRegions.some(r => r.spotFluorG);
+        const anyOr = updatedRegions.some(r => r.spotFluorOrange);
+        return { ...color, regions: updatedRegions, spotFluorY: anyY, spotFluorM: anyM, spotFluorG: anyG, spotFluorOrange: anyOr };
+      });
+      if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
       return updated;
     });
   }, [selectedDesignId]);
@@ -358,53 +422,157 @@ export default function ControlsSection({
               {extractedColors.length === 0 ? (
                 <div className="text-xs text-gray-600 italic py-1">{t("controls.noColors")}</div>
               ) : (
-                <div className="flex flex-col gap-0.5 max-h-[240px] overflow-y-auto">
-                  {sortedColorIndices
-                    .filter((idx) => extractedColors[idx].percentage >= 0.5)
-                    .map((idx) => {
-                    const color = extractedColors[idx];
-                    const isAssigned = color.spotFluorY || color.spotFluorM || color.spotFluorG || color.spotFluorOrange;
+                <>
+                  {/* Bulk apply row */}
+                  {(() => {
+                    const INK_BTNS = [
+                      { field: 'spotFluorY' as const, label: 'Y', bg: '#DFFF00' },
+                      { field: 'spotFluorM' as const, label: 'M', bg: '#FF00FF' },
+                      { field: 'spotFluorG' as const, label: 'G', bg: '#39FF14' },
+                      { field: 'spotFluorOrange' as const, label: 'Or', bg: '#FF6600' },
+                    ];
                     return (
-                      <div key={idx} className="flex items-center gap-2 px-2 py-1 rounded-md bg-gray-100 border border-gray-200">
-                        <div
-                          className="w-3.5 h-3.5 rounded flex-shrink-0 border border-gray-300"
-                          style={{ backgroundColor: color.hex }}
-                          title={color.hex}
-                        />
-                        <span className="text-[10px] text-gray-700 truncate min-w-0 flex-1">{color.name || color.hex}</span>
-                        <div className="flex gap-1 flex-shrink-0">
-                          {([
-                            { field: 'spotFluorY' as const, label: 'Y', bg: '#DFFF00' },
-                            { field: 'spotFluorM' as const, label: 'M', bg: '#FF00FF' },
-                            { field: 'spotFluorG' as const, label: 'G', bg: '#39FF14' },
-                            { field: 'spotFluorOrange' as const, label: 'Or', bg: '#FF6600' },
-                          ]).map(({ field, label, bg }) => (
+                      <div className="flex items-center gap-1 pb-1 border-b border-gray-200">
+                        <span className="text-[9px] text-gray-500 flex-1">All:</span>
+                        {INK_BTNS.map(({ field, label, bg }) => {
+                          const allSet = extractedColors.filter(c => c.percentage >= 0.5).every(c => c[field]);
+                          return (
                             <button
                               key={field}
-                              onClick={() => updateSpotColor(idx, field, !color[field])}
-                              className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${
-                                color[field]
-                                  ? 'ring-1 ring-offset-1 ring-offset-white scale-110'
-                                  : 'opacity-40 hover:opacity-80'
-                              }`}
-                        style={{
-                          backgroundColor: color[field] ? bg : 'transparent',
-                          color: color[field] ? '#000' : bg,
-                          border: `1.5px solid ${bg}`,
-                          ['--tw-ring-color' as string]: bg,
-                        }}
-                              title={`Fluorescent ${label}`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
+                              onClick={() => {
+                                const newVal = !allSet;
+                                setExtractedColors(prev => prev.map(c => {
+                                  const updatedRegions = c.regions?.map(r => ({
+                                    ...r,
+                                    spotFluorY: newVal && field === 'spotFluorY',
+                                    spotFluorM: newVal && field === 'spotFluorM',
+                                    spotFluorG: newVal && field === 'spotFluorG',
+                                    spotFluorOrange: newVal && field === 'spotFluorOrange',
+                                  }));
+                                  return {
+                                    ...c,
+                                    spotFluorY: newVal && field === 'spotFluorY' ? true : newVal ? false : c.spotFluorY,
+                                    spotFluorM: newVal && field === 'spotFluorM' ? true : newVal ? false : c.spotFluorM,
+                                    spotFluorG: newVal && field === 'spotFluorG' ? true : newVal ? false : c.spotFluorG,
+                                    spotFluorOrange: newVal && field === 'spotFluorOrange' ? true : newVal ? false : c.spotFluorOrange,
+                                    regions: updatedRegions,
+                                  };
+                                }));
+                              }}
+                              className={`px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all ${allSet ? 'text-black' : 'opacity-50 hover:opacity-80'}`}
+                              style={{ backgroundColor: allSet ? bg : 'transparent', border: `1.5px solid ${bg}`, color: allSet ? '#000' : bg }}
+                              title={`${allSet ? 'Remove' : 'Apply'} ${label} to all colors`}
+                            >{label}</button>
+                          );
+                        })}
                       </div>
                     );
-                  })}
-                </div>
+                  })()}
+                  {/* Color list */}
+                  <div ref={colorListRef} className="flex flex-col gap-1 max-h-[320px] overflow-y-auto">
+                    {sortedColorIndices
+                      .filter((idx) => extractedColors[idx].percentage >= 0.5)
+                      .map((idx) => {
+                        const color = extractedColors[idx];
+                        const hasRegions = (color.regions?.length ?? 0) > 1;
+                        const isExpanded = expandedColorIndex === idx;
+                        const INK_BTNS = [
+                          { field: 'spotFluorY' as const, label: 'Y', bg: '#DFFF00' },
+                          { field: 'spotFluorM' as const, label: 'M', bg: '#FF00FF' },
+                          { field: 'spotFluorG' as const, label: 'G', bg: '#39FF14' },
+                          { field: 'spotFluorOrange' as const, label: 'Or', bg: '#FF6600' },
+                        ];
+                        // mixed = some regions assigned, not all
+                        const someFluor = (field: typeof INK_BTNS[0]['field']) =>
+                          hasRegions ? color.regions!.some(r => r[field]) : !!color[field];
+                        const allFluor = (field: typeof INK_BTNS[0]['field']) =>
+                          hasRegions ? color.regions!.every(r => r[field]) : !!color[field];
+                        return (
+                          <div key={idx} data-color-index={idx} className="rounded-md bg-gray-100 border border-gray-200 overflow-hidden">
+                            {/* Color header row */}
+                            <div className="flex items-center gap-1.5 px-2 py-1">
+                              {hasRegions && (
+                                <button
+                                  onClick={() => setExpandedColorIndex(isExpanded ? null : idx)}
+                                  className="p-0.5 hover:bg-gray-200 rounded flex-shrink-0"
+                                  title={`${color.regions!.length} shapes`}
+                                >
+                                  {isExpanded
+                                    ? <ChevronUp className="w-3 h-3 text-gray-500" />
+                                    : <ChevronDown className="w-3 h-3 text-gray-500" />}
+                                </button>
+                              )}
+                              <div className="w-4 h-4 rounded flex-shrink-0 border border-gray-300" style={{ backgroundColor: color.hex }} title={color.hex} />
+                              <div className="flex-1 min-w-0">
+                                <span className="text-[10px] text-gray-700 truncate block">{color.name || color.hex}</span>
+                                {hasRegions && (
+                                  <span className="text-[9px] text-purple-500">{color.regions!.length} shapes</span>
+                                )}
+                              </div>
+                              <div className="flex gap-0.5 flex-shrink-0">
+                                {INK_BTNS.map(({ field, label, bg }) => {
+                                  const isAll = allFluor(field);
+                                  const isSome = someFluor(field) && !isAll;
+                                  return (
+                                    <button
+                                      key={field}
+                                      onClick={() => updateSpotColor(idx, field, !color[field])}
+                                      className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${
+                                        isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-110'
+                                        : isSome ? 'opacity-70'
+                                        : 'opacity-40 hover:opacity-80'
+                                      }`}
+                                      style={{
+                                        backgroundColor: isAll ? bg : isSome ? bg + '66' : 'transparent',
+                                        color: (isAll || isSome) ? '#000' : bg,
+                                        border: `1.5px solid ${bg}`,
+                                        ['--tw-ring-color' as string]: bg,
+                                      }}
+                                      title={`Fluorescent ${label}${isSome ? ' (partial)' : ''}`}
+                                    >{label}</button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            {/* Expanded region rows */}
+                            {isExpanded && hasRegions && (
+                              <div className="border-t border-gray-200 bg-white">
+                                {color.regions!.map((region) => (
+                                  <div key={region.id} className="flex items-center gap-1.5 px-2 py-1 border-b border-gray-100 last:border-b-0">
+                                    {region.thumbnailUrl ? (
+                                      <img src={region.thumbnailUrl} alt={`Shape ${region.id + 1}`} className="w-6 h-6 rounded border border-gray-200 object-contain bg-gray-50 flex-shrink-0" />
+                                    ) : (
+                                      <div className="w-6 h-6 rounded border border-dashed border-gray-300 flex-shrink-0" />
+                                    )}
+                                    <span className="text-[9px] text-gray-500 flex-1">Shape {region.id + 1}</span>
+                                    <div className="flex gap-0.5 flex-shrink-0">
+                                      {INK_BTNS.map(({ field, label, bg }) => (
+                                        <button
+                                          key={field}
+                                          onClick={() => toggleRegionFluor(idx, region.id, field)}
+                                          className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${
+                                            region[field] ? 'ring-1 ring-offset-1 ring-offset-white scale-110' : 'opacity-35 hover:opacity-70'
+                                          }`}
+                                          style={{
+                                            backgroundColor: region[field] ? bg : 'transparent',
+                                            color: region[field] ? '#000' : bg,
+                                            border: `1.5px solid ${bg}`,
+                                            ['--tw-ring-color' as string]: bg,
+                                          }}
+                                          title={`Shape ${region.id + 1} → ${label}`}
+                                        >{label}</button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </>
               )}
-
             </div>
           )}
         </div>,

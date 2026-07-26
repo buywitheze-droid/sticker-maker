@@ -1,3 +1,17 @@
+export interface ColorRegion {
+  id: number;
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+  pixelCount: number;
+  percentage: number;
+  selected: boolean;
+  pixelIndices: number[];
+  thumbnailUrl?: string;
+  spotFluorY?: boolean;
+  spotFluorM?: boolean;
+  spotFluorG?: boolean;
+  spotFluorOrange?: boolean;
+}
+
 export interface ExtractedColor {
   hex: string;
   rgb: { r: number; g: number; b: number };
@@ -10,6 +24,8 @@ export interface ExtractedColor {
   spotFluorG: boolean;
   spotFluorOrange: boolean;
   name?: string;
+  regions?: ColorRegion[];
+  regionMap?: Int32Array;
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -561,6 +577,145 @@ export function extractColorsFromImage(image: HTMLImageElement, maxColors: numbe
 }
 
 import ColorExtractionWorker from './color-extraction-worker?worker';
+import RegionWorker from './region-worker?worker';
+
+export interface ColorExtractionResult {
+  colors: ExtractedColor[];
+  pixelMap: Int16Array;
+  width: number;
+  height: number;
+  imageData: ImageData;
+}
+
+/** Build a pixel→colorIndex map from an image + already-extracted colors. */
+export function buildPixelMapFromImage(
+  image: HTMLImageElement,
+  colors: ExtractedColor[],
+): { pixelMap: Int16Array; width: number; height: number; imageData: ImageData } | null {
+  try {
+    if (!image.complete || image.width === 0 || colors.length === 0) return null;
+    const MAX_DIM = 512;
+    let w = image.width, h = image.height;
+    if (Math.max(w, h) > MAX_DIM) {
+      const ratio = MAX_DIM / Math.max(w, h);
+      w = Math.round(w * ratio); h = Math.round(h * ratio);
+    }
+    const tc = document.createElement('canvas');
+    tc.width = w; tc.height = h;
+    const ctx = tc.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(image, 0, 0, w, h);
+    let imageData: ImageData;
+    try { imageData = ctx.getImageData(0, 0, w, h); } catch { return null; }
+    const data = imageData.data;
+    const pixelMap = new Int16Array(w * h).fill(-1);
+    for (let i = 0; i < w * h; i++) {
+      if (data[i * 4 + 3] < 10) continue;
+      const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+      let bestDist = Infinity, bestIdx = 0;
+      for (let ci = 0; ci < colors.length; ci++) {
+        const c = colors[ci].rgb;
+        const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+        if (d < bestDist) { bestDist = d; bestIdx = ci; }
+      }
+      pixelMap[i] = bestIdx;
+    }
+    return { pixelMap, width: w, height: h, imageData };
+  } catch { return null; }
+}
+
+/** Generate a small thumbnail data-URL for a region's pixels. */
+function generateRegionThumbnail(
+  imageData: ImageData,
+  pixelIndices: number[],
+  minX: number, minY: number, maxX: number, maxY: number,
+  imgW: number, imgH: number,
+): string | undefined {
+  try {
+    const bW = maxX - minX + 1, bH = maxY - minY + 1;
+    if (bW <= 0 || bH <= 0) return undefined;
+    const SIZE = 28;
+    const scale = Math.min(SIZE / bW, SIZE / bH, 1);
+    const outW = Math.max(1, Math.round(bW * scale));
+    const outH = Math.max(1, Math.round(bH * scale));
+    const tc = document.createElement('canvas');
+    tc.width = outW; tc.height = outH;
+    const tctx = tc.getContext('2d');
+    if (!tctx) return undefined;
+    const out = tctx.createImageData(outW, outH);
+    const mask = new Uint8Array(imgW * imgH);
+    for (const pi of pixelIndices) mask[pi] = 1;
+    for (let oy = 0; oy < outH; oy++) {
+      for (let ox = 0; ox < outW; ox++) {
+        const sx = Math.min(Math.floor(ox / scale) + minX, imgW - 1);
+        const sy = Math.min(Math.floor(oy / scale) + minY, imgH - 1);
+        const si = sy * imgW + sx;
+        const di = (oy * outW + ox) * 4;
+        if (mask[si]) {
+          out.data[di]     = imageData.data[si * 4];
+          out.data[di + 1] = imageData.data[si * 4 + 1];
+          out.data[di + 2] = imageData.data[si * 4 + 2];
+          out.data[di + 3] = imageData.data[si * 4 + 3];
+        }
+      }
+    }
+    tctx.putImageData(out, 0, 0);
+    return tc.toDataURL();
+  } catch { return undefined; }
+}
+
+let _regionWorker: Worker | null = null;
+function getRegionWorker(): Worker | null {
+  if (!_regionWorker) {
+    try { _regionWorker = new RegionWorker(); } catch { return null; }
+  }
+  return _regionWorker;
+}
+
+/**
+ * For each extracted color, detect spatially disconnected regions via
+ * connected-component labeling. Populates `regions` and `regionMap` on
+ * colors that have 2+ distinct blobs. Generates thumbnail previews.
+ */
+export function detectColorRegionsAsync(
+  pixelMap: Int16Array,
+  width: number,
+  height: number,
+  colors: ExtractedColor[],
+  imageData?: ImageData,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const worker = getRegionWorker();
+    if (!worker) { resolve(); return; }
+    const mapCopy = pixelMap.slice(0);
+    const handler = (e: MessageEvent) => {
+      const results: Array<{
+        colorIndex: number;
+        regions: Array<{ id: number; bbox: { minX: number; minY: number; maxX: number; maxY: number }; pixelCount: number; percentage: number; pixelIndices: number[] }>;
+        regionMap: Int32Array;
+      }> = e.data;
+      worker.removeEventListener('message', handler);
+      const processedIndices = new Set(results.map(r => r.colorIndex));
+      for (let ci = 0; ci < colors.length; ci++) {
+        if (!processedIndices.has(ci)) { colors[ci].regions = undefined; colors[ci].regionMap = undefined; }
+      }
+      for (const result of results) {
+        const color = colors[result.colorIndex];
+        color.regionMap = result.regionMap;
+        color.regions = result.regions.map(r => {
+          const thumbnailUrl = imageData
+            ? generateRegionThumbnail(imageData, r.pixelIndices, r.bbox.minX, r.bbox.minY, r.bbox.maxX, r.bbox.maxY, width, height)
+            : undefined;
+          return { id: r.id, bbox: r.bbox, pixelCount: r.pixelCount, percentage: r.percentage, selected: true, pixelIndices: r.pixelIndices, thumbnailUrl };
+        });
+      }
+      resolve();
+    };
+    worker.onerror = () => { worker.removeEventListener('message', handler); resolve(); };
+    worker.addEventListener('message', handler);
+    worker.postMessage({ pixelMap: mapCopy, width, height, colorCount: colors.length }, [mapCopy.buffer]);
+  });
+}
 
 let _colorWorker: Worker | null = null;
 function getColorWorker(): Worker | null {
