@@ -610,7 +610,7 @@ export default function ControlsSection({
                     <p className="text-[10px] text-gray-400 mb-1.5">
                       {extractedColors.filter(c => (c.percentage ?? 0) >= 1).length} colors detected
                     </p>
-                    <div ref={colorListRef} className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto">
+                    <div ref={colorListRef} className="flex flex-col gap-1.5">
                       {sortedColorIndices
                         .filter(idx => (extractedColors[idx].percentage ?? 0) >= 1)
                         .map(idx => {
