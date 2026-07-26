@@ -590,6 +590,17 @@ export default function ControlsSection({
                       { field: 'spotFluorOrange' as const, label: 'FO', name: 'Orange',  bg: '#FF6600' },
                     ];
                     return (
+                      <>
+                      {/* Label so new users understand these are the selection wand buttons */}
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <svg className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 2l1.5 1.5-7 7L3 10l7-7z"/>
+                          <path d="M13.5 4.5l-2-2"/>
+                          <path d="M4.5 13l-1-1 .5-1.5"/>
+                        </svg>
+                        <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide">Color Select Wand</span>
+                        <span className="text-[9px] text-gray-400 font-normal normal-case tracking-normal">— pick a channel, then tap your design</span>
+                      </div>
                       <div className="grid grid-cols-4 gap-1.5">
                         {CHANNELS.map(({ field, label, name, bg }) => {
                           const isSelected = activeChannel === field;
@@ -623,6 +634,7 @@ export default function ControlsSection({
                           );
                         })}
                       </div>
+                      </>
                     );
                   })()}
 
