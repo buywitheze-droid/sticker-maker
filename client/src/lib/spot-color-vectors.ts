@@ -393,8 +393,23 @@ export async function addSpotColorRastersToPDF(
     ]);
     const sepRef = context.register(sep);
 
-    // ── 2. Image XObject (raw grayscale, 1 byte/pixel)
-    //       Decode [0 1] maps byte 0→tint 0 (no ink), 255→tint 1 (full ink)
+    // ── 2a. Soft-mask (SMask) — DeviceGray image where 255=opaque, 0=transparent.
+    //        Without this the zero-ink pixels paint white over the CMYK layer.
+    //        The mask data itself is already 255 where ink is present and 0 elsewhere,
+    //        so we can reuse it directly as the alpha channel.
+    const smaskStream = context.stream(ch.mask, {
+      Type: PDFName.of('XObject'),
+      Subtype: PDFName.of('Image'),
+      Width: ch.maskWidth,
+      Height: ch.maskHeight,
+      ColorSpace: PDFName.of('DeviceGray'),
+      BitsPerComponent: 8,
+    });
+    const smaskRef = context.register(smaskStream);
+
+    // ── 2b. Image XObject (raw grayscale, 1 byte/pixel)
+    //        Decode [0 1] maps byte 0→tint 0 (no ink), 255→tint 1 (full ink).
+    //        SMask entry makes the no-ink areas transparent instead of white.
     const imageStream = context.stream(ch.mask, {
       Type: PDFName.of('XObject'),
       Subtype: PDFName.of('Image'),
@@ -402,6 +417,7 @@ export async function addSpotColorRastersToPDF(
       Height: ch.maskHeight,
       ColorSpace: sepRef,
       BitsPerComponent: 8,
+      SMask: smaskRef,
     });
     const imageRef = context.register(imageStream);
     const imgTag = `SpotR_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
