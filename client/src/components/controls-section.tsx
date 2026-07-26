@@ -124,7 +124,6 @@ export default function ControlsSection({
   const spotSelectionsRef = useRef<Map<string, ExtractedColor[]>>(new Map());
   const prevDesignIdRef = useRef<string | null | undefined>(null);
   const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
-  const [showColorList, setShowColorList] = useState(false);
   const [activeChannel, setActiveChannel] = useState<'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null>(null);
   const colorListRef = useRef<HTMLDivElement>(null);
   /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
@@ -606,96 +605,102 @@ export default function ControlsSection({
                     }
                   </p>
 
-                  {/* ── Advanced color list (collapsed by default) ── */}
-                  <div className="border-t border-gray-100 pt-1.5">
-                    <button
-                      onClick={() => setShowColorList(p => !p)}
-                      className="w-full flex items-center justify-between text-[10px] text-gray-400 hover:text-gray-600 transition-colors py-0.5"
-                    >
-                      <span>Advanced — {extractedColors.filter(c => (c.percentage ?? 0) >= 0.5).length} colors detected</span>
-                      <ChevronDown className={`w-3 h-3 transition-transform ${showColorList ? 'rotate-180' : ''}`} />
-                    </button>
-                    {showColorList && (
-                      <div ref={colorListRef} className="flex flex-col gap-1 mt-1.5 max-h-[280px] overflow-y-auto">
-                        {sortedColorIndices
-                          .filter(idx => (extractedColors[idx].percentage ?? 0) >= 0.5)
-                          .map(idx => {
-                            const color = extractedColors[idx];
-                            const hasRegions = (color.regions?.length ?? 0) > 1;
-                            const isExpanded = expandedColorIndex === idx;
-                            const INK_BTNS = [
-                              { field: 'spotFluorY'      as const, label: 'FY', bg: '#DFFF00' },
-                              { field: 'spotFluorM'      as const, label: 'FM', bg: '#FF00FF' },
-                              { field: 'spotFluorG'      as const, label: 'FG', bg: '#39FF14' },
-                              { field: 'spotFluorOrange' as const, label: 'FO', bg: '#FF6600' },
-                            ];
-                            const someFluor = (f: typeof INK_BTNS[0]['field']) => hasRegions ? color.regions!.some(r => r[f]) : !!color[f];
-                            const allFluor  = (f: typeof INK_BTNS[0]['field']) => hasRegions ? color.regions!.every(r => r[f]) : !!color[f];
-                            return (
-                              <div key={idx} className="rounded-md bg-gray-50 border border-gray-200 overflow-hidden">
-                                <div className="flex items-center gap-2 px-2 py-1.5">
+                  {/* ── Detected color list — always visible, matches reference app ── */}
+                  <div className="border-t border-gray-100 pt-2">
+                    <p className="text-[10px] text-gray-400 mb-1.5">
+                      {extractedColors.filter(c => (c.percentage ?? 0) >= 1).length} colors detected
+                    </p>
+                    <div ref={colorListRef} className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto">
+                      {sortedColorIndices
+                        .filter(idx => (extractedColors[idx].percentage ?? 0) >= 1)
+                        .map(idx => {
+                          const color = extractedColors[idx];
+                          const hasRegions = (color.regions?.length ?? 0) > 1;
+                          const isExpanded = expandedColorIndex === idx;
+                          const INK_BTNS = [
+                            { field: 'spotFluorY'      as const, label: 'FY', bg: '#DFFF00' },
+                            { field: 'spotFluorM'      as const, label: 'FM', bg: '#FF00FF' },
+                            { field: 'spotFluorG'      as const, label: 'FG', bg: '#39FF14' },
+                            { field: 'spotFluorOrange' as const, label: 'FO', bg: '#FF6600' },
+                          ];
+                          const someFluor = (f: typeof INK_BTNS[0]['field']) => hasRegions ? color.regions!.some(r => r[f]) : !!color[f];
+                          const allFluor  = (f: typeof INK_BTNS[0]['field']) => hasRegions ? color.regions!.every(r => r[f]) : !!color[f];
+                          return (
+                            <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden transition-all">
+                              <div className="flex items-center gap-2 p-2">
+                                {/* Expand toggle + large swatch */}
+                                <div className="flex items-center gap-1 flex-shrink-0">
                                   {hasRegions && (
-                                    <button onClick={() => setExpandedColorIndex(isExpanded ? null : idx)} className="p-0.5 hover:bg-gray-200 rounded flex-shrink-0">
+                                    <button onClick={() => setExpandedColorIndex(isExpanded ? null : idx)} className="p-0.5 hover:bg-gray-100 rounded">
                                       {isExpanded ? <ChevronUp className="w-3 h-3 text-gray-500" /> : <ChevronDown className="w-3 h-3 text-gray-500" />}
                                     </button>
                                   )}
-                                  <div className="w-5 h-5 rounded flex-shrink-0 border border-gray-300 shadow-sm" style={{ backgroundColor: color.hex }} title={color.hex} />
-                                  <div className="flex-1 min-w-0">
-                                    <span className="text-[11px] font-medium text-gray-800 truncate block">{color.name || color.hex}</span>
-                                    {hasRegions && <span className="text-[8px] text-purple-500">{color.regions!.length} shapes</span>}
-                                  </div>
-                                  <div className="flex gap-0.5 flex-shrink-0">
-                                    {INK_BTNS.map(({ field, label, bg }) => {
-                                      const isAll = allFluor(field);
-                                      const isSome = someFluor(field) && !isAll;
-                                      return (
-                                        <button
-                                          key={field}
-                                          onClick={() => updateSpotColor(idx, field, !color[field])}
-                                          className={`w-6 h-6 rounded text-[8px] font-bold flex items-center justify-center transition-all ${isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : isSome ? 'opacity-70' : 'opacity-50 hover:opacity-90'}`}
-                                          style={{
-                                            backgroundColor: isAll ? bg : isSome ? bg + '55' : 'transparent',
-                                            color: (isAll || isSome) ? '#000' : bg,
-                                            border: `1.5px solid ${bg}`,
-                                            ['--tw-ring-color' as string]: bg,
-                                          }}
-                                        >{label}</button>
-                                      );
-                                    })}
+                                  <div
+                                    className="w-8 h-8 rounded-lg border border-gray-300 shadow-sm flex-shrink-0"
+                                    style={{ backgroundColor: color.hex }}
+                                    title={color.hex}
+                                  />
+                                </div>
+                                {/* Hex + percentage */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[11px] font-mono font-medium text-gray-700 truncate">{color.hex}</div>
+                                  <div className="text-[9px] text-gray-400">
+                                    {(color.percentage ?? 0).toFixed(1)}%{hasRegions ? ` · ${color.regions!.length} shapes` : ''}
                                   </div>
                                 </div>
-                                {isExpanded && hasRegions && (
-                                  <div className="border-t border-gray-200 bg-white">
-                                    {color.regions!.map(region => (
-                                      <div key={region.id} className="flex items-center gap-1.5 px-2 py-1 border-b border-gray-100 last:border-b-0">
-                                        {region.thumbnailUrl
-                                          ? <img src={region.thumbnailUrl} alt="" className="w-6 h-6 rounded border border-gray-200 object-contain bg-gray-50 flex-shrink-0" />
-                                          : <div className="w-6 h-6 rounded border border-dashed border-gray-300 flex-shrink-0" />}
-                                        <span className="text-[9px] text-gray-500 flex-1">Shape {region.id + 1}</span>
-                                        <div className="flex gap-0.5">
-                                          {INK_BTNS.map(({ field, label, bg }) => (
-                                            <button
-                                              key={field}
-                                              onClick={() => toggleRegionFluor(idx, region.id, field)}
-                                              className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${region[field] ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : 'opacity-35 hover:opacity-70'}`}
-                                              style={{
-                                                backgroundColor: region[field] ? bg : 'transparent',
-                                                color: region[field] ? '#000' : bg,
-                                                border: `1.5px solid ${bg}`,
-                                                ['--tw-ring-color' as string]: bg,
-                                              }}
-                                            >{label}</button>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                {/* FY / FM / FG / FO buttons */}
+                                <div className="flex gap-0.5 flex-shrink-0">
+                                  {INK_BTNS.map(({ field, label, bg }) => {
+                                    const isAll = allFluor(field);
+                                    const isSome = someFluor(field) && !isAll;
+                                    return (
+                                      <button
+                                        key={field}
+                                        onClick={() => updateSpotColor(idx, field, !color[field])}
+                                        className={`w-7 h-7 rounded text-[9px] font-bold flex items-center justify-center transition-all ${isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : isSome ? 'opacity-70' : 'opacity-40 hover:opacity-90'}`}
+                                        style={{
+                                          backgroundColor: isAll ? bg : isSome ? bg + '55' : 'transparent',
+                                          color: (isAll || isSome) ? '#000' : bg,
+                                          border: `1.5px solid ${bg}`,
+                                          ['--tw-ring-color' as string]: bg,
+                                        }}
+                                      >{label}</button>
+                                    );
+                                  })}
+                                </div>
                               </div>
-                            );
-                          })}
-                      </div>
-                    )}
+                              {/* Expanded per-region rows */}
+                              {isExpanded && hasRegions && (
+                                <div className="border-t border-gray-100 bg-gray-50">
+                                  {color.regions!.map(region => (
+                                    <div key={region.id} className="flex items-center gap-2 px-2 py-1.5 border-b border-gray-100 last:border-b-0">
+                                      {region.thumbnailUrl
+                                        ? <img src={region.thumbnailUrl} alt="" className="w-7 h-7 rounded border border-gray-200 object-contain bg-white flex-shrink-0" />
+                                        : <div className="w-7 h-7 rounded border border-dashed border-gray-300 flex-shrink-0" />}
+                                      <span className="text-[10px] text-gray-500 flex-1">Shape {region.id + 1}</span>
+                                      <div className="flex gap-0.5">
+                                        {INK_BTNS.map(({ field, label, bg }) => (
+                                          <button
+                                            key={field}
+                                            onClick={() => toggleRegionFluor(idx, region.id, field)}
+                                            className={`w-6 h-6 rounded text-[8px] font-bold flex items-center justify-center transition-all ${region[field] ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : 'opacity-35 hover:opacity-70'}`}
+                                            style={{
+                                              backgroundColor: region[field] ? bg : 'transparent',
+                                              color: region[field] ? '#000' : bg,
+                                              border: `1.5px solid ${bg}`,
+                                              ['--tw-ring-color' as string]: bg,
+                                            }}
+                                          >{label}</button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
                   </div>
                 </>
               )}

@@ -1,1 +1,2 @@
 - [Gangsheet spot color pipeline](spot-color-pipeline.md) — region-level PDF masks use buildPixelMapFromImage + trace_premask worker path; preview overlay uses pre-computed Uint8Array masks in SpotPreviewData.
+- [GitHub reference repo](github-reference-repo.md) — https://github.com/buywitheze-droid/sticker-maker; color list UI parity target (w-8 swatch, hex+%, 1% threshold, always visible).
