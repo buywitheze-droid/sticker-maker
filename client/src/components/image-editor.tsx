@@ -3036,9 +3036,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 disabled={!selectedDesignId && selectedDesignIds.size === 0}
                 className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${
                   wandDeleteModeActive
-                    ? 'bg-amber-500 text-white border border-amber-600'
+                    ? 'bg-fuchsia-600 text-white border border-fuchsia-700'
                     : selectedDesignId || selectedDesignIds.size > 0
-                      ? 'bg-[#F1F5F9] text-[#92400E] border border-[#CBD5E1]'
+                      ? 'bg-[#F1F5F9] text-[#86198f] border border-[#CBD5E1]'
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                 }`}
                 title={wandDeleteModeActive ? 'Wand active — tap a color to erase it. Tap again to deactivate.' : 'Magic Wand: tap a color to flood-erase it'}
@@ -3389,9 +3389,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
                   className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
                     wandDeleteModeActive
-                      ? 'bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 shadow-none'
+                      ? 'bg-fuchsia-600 hover:bg-fuchsia-700 text-white border border-fuchsia-700 shadow-none'
                       : selectedDesignId || selectedDesignIds.size > 0
-                        ? 'bg-[#F1F5F9] hover:bg-amber-50 text-[#92400E] border border-[#CBD5E1] shadow-none'
+                        ? 'bg-[#F1F5F9] hover:bg-fuchsia-50 text-[#86198f] border border-[#CBD5E1] shadow-none'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                   }`}
                   title={wandDeleteModeActive ? 'Wand active — click any color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to flood-erase it'}
@@ -3401,16 +3401,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 </button>
                 {(wandDeleteModeActive || (selectedDesignId || selectedDesignIds.size > 0)) && (
                   <div className={`flex items-center gap-1 transition-opacity ${wandDeleteModeActive ? 'opacity-100' : 'opacity-40 pointer-events-none'}`} title="Magic Wand tolerance — higher = removes more similar colours">
-                    <span className="text-[10px] text-amber-700 font-medium whitespace-nowrap">Tol</span>
+                    <span className="text-[10px] text-fuchsia-700 font-medium whitespace-nowrap">Tol</span>
                     <input
                       type="range"
                       min={1}
                       max={100}
                       value={wandTolerance}
                       onChange={e => setWandTolerance(Number(e.target.value))}
-                      className="w-16 h-1.5 accent-amber-500 cursor-pointer"
+                      className="w-16 h-1.5 accent-fuchsia-600 cursor-pointer"
                     />
-                    <span className="text-[10px] text-amber-700 font-medium w-6 text-right tabular-nums">{wandTolerance}</span>
+                    <span className="text-[10px] text-fuchsia-700 font-medium w-6 text-right tabular-nums">{wandTolerance}</span>
                   </div>
                 )}
                 {!isMobile && (
@@ -3743,7 +3743,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onDesignContextMenu={handleCanvasContextMenu}
             spotPreviewData={profile.enableFluorescent ? (spotPreviewDataMap.get(selectedDesignId ?? '') ?? { enabled: false, colors: [] }) : undefined}
             selectionZoomActive={selectionZoomActive}
-            onSelectionZoomChange={setSelectionZoomActive}
+            onSelectionZoomChange={(active) => { setSelectionZoomActive(active); if (active) setWandDeleteModeActive(false); }}
             activeSpotChannel={profile.enableFluorescent ? activeSpotChannel : null}
             onWandTap={profile.enableFluorescent ? (nx, ny) => wandAssignRef.current?.(nx, ny) : undefined}
             panModeActive={profile.enableFluorescent ? panModeActive : false}
