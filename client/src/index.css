@@ -6,6 +6,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Magic-wand cursor always wins — overrides any inline style set by hover/zoom/drag handlers */
+.preview-canvas-area[data-wand-active="true"],
+.preview-canvas-area[data-wand-active="true"] * {
+  cursor: crosshair !important;
+}
+
 :root {
   --background: hsl(0, 0%, 100%);
   --foreground: hsl(0, 0%, 0%);

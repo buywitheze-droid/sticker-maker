@@ -1739,11 +1739,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (isPanningRef.current) {
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
-        const rawPx = panStartRef.current.px + dx / zoom;
-        const rawPy = panStartRef.current.py + dy / zoom;
-        const clamped = clampPanValue(rawPx, rawPy, zoom);
-        setPanX(clamped.x);
-        setPanY(clamped.y);
+        const z = zoomRef.current;
+        const rawPx = panStartRef.current.px + dx / z;
+        const rawPy = panStartRef.current.py + dy / z;
+        const clamped = clampPanValue(rawPx, rawPy, z);
+        queuePanStateCommit(clamped.x, clamped.y);
         return;
       }
       if (isMarqueeRef.current || isMultiDragRef.current || isMultiResizeRef.current || isMultiRotateRef.current || isDraggingRef.current || isResizingRef.current || isRotatingRef.current) {
@@ -1794,7 +1794,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       const hitId = findDesignAtPoint(local.x, local.y);
       canvasAreaRef.current.style.cursor = hitId ? 'pointer' : 'default';
-    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, selectedDesignIds, hitTestHandles, hitTestMultiHandles, hitTestDesign, findDesignAtPoint, zoom, clampPanValue]);
+    }, [handleInteractionMove, canvasToLocal, imageInfo, selectedDesignId, selectedDesignIds, hitTestHandles, hitTestMultiHandles, hitTestDesign, findDesignAtPoint, clampPanValue, queuePanStateCommit]);
 
     const handleMouseUp = useCallback(() => {
       if (isPanningRef.current) {
@@ -2010,16 +2010,33 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
       if (isPinchingRef.current && e.touches.length === 2) {
         e.preventDefault();
-        const dx = e.touches[1].clientX - e.touches[0].clientX;
-        const dy = e.touches[1].clientY - e.touches[0].clientY;
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const dx = t1.clientX - t0.clientX;
+        const dy = t1.clientY - t0.clientY;
         const dist = Math.sqrt(dx * dx + dy * dy);
         const ratio = dist / Math.max(1, pinchStartDistRef.current);
         const effectiveMin = minZoomRef.current;
         const newZoom = Math.max(effectiveMin, Math.min(zoomMaxRef.current, pinchStartZoomRef.current * ratio));
-        const clamped = clampPanValue(pinchStartPanRef.current.x, pinchStartPanRef.current.y, newZoom);
-        setZoom(newZoom);
-        setPanX(clamped.x);
-        setPanY(clamped.y);
+        // Anchor zoom to the midpoint between fingers relative to the viewport centre.
+        const area = canvasAreaRef.current;
+        if (area) {
+          const aRect = area.getBoundingClientRect();
+          const midX = (t0.clientX + t1.clientX) / 2 - (aRect.left + aRect.width / 2);
+          const midY = (t0.clientY + t1.clientY) / 2 - (aRect.top + aRect.height / 2);
+          const startZoom = pinchStartZoomRef.current;
+          const rawPx = pinchStartPanRef.current.x + midX * (1 / newZoom - 1 / startZoom);
+          const rawPy = pinchStartPanRef.current.y + midY * (1 / newZoom - 1 / startZoom);
+          const clamped = clampPanValue(rawPx, rawPy, newZoom);
+          setZoom(newZoom);
+          setPanX(clamped.x);
+          setPanY(clamped.y);
+        } else {
+          const clamped = clampPanValue(pinchStartPanRef.current.x, pinchStartPanRef.current.y, newZoom);
+          setZoom(newZoom);
+          setPanX(clamped.x);
+          setPanY(clamped.y);
+        }
         return;
       }
       if (e.touches.length !== 1) return;
@@ -2095,9 +2112,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     // Reset view to fit the full gangsheet in view
     const resetView = useCallback(() => {
       fitToView();
-      if (canvasAreaRef.current && !selectionZoomActiveRef.current) {
+      if (canvasAreaRef.current && !selectionZoomActiveRef.current && !wandDeleteActiveRef.current) {
         requestAnimationFrame(() => {
-          if (canvasAreaRef.current) {
+          if (canvasAreaRef.current && !wandDeleteActiveRef.current) {
             canvasAreaRef.current.style.cursor = getIdleCursor();
           }
         });
@@ -2359,9 +2376,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           const newZoom = Math.max(effectiveMin, Math.min(zoomMaxRef.current, oldZoom * factor));
           if (newZoom === oldZoom) return;
 
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          const rect = canvas.getBoundingClientRect();
+          // Anchor to viewport center so zoom follows cursor position on screen.
+          const rect = el.getBoundingClientRect();
           const cursorX = e.clientX - (rect.left + rect.width / 2);
           const cursorY = e.clientY - (rect.top + rect.height / 2);
 
@@ -2380,7 +2396,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           setZoom(newZoom);
           setPanX(clampedPanX);
           setPanY(clampedPanY);
-          if (!selectionZoomActiveRef.current && !isPanningRef.current) {
+          if (!selectionZoomActiveRef.current && !isPanningRef.current && !wandDeleteActiveRef.current) {
             el.style.cursor = (newZoom * dims.width > el.clientWidth * 1.05 && !moveModeRef.current) ? 'grab' : 'default';
           }
           return;
@@ -3140,7 +3156,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className={`flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${activeSpotChannel && !panModeActive ? 'cursor-crosshair' : activeSpotChannel && panModeActive ? 'cursor-grab' : 'cursor-default'}`}
+          className={`preview-canvas-area flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${wandDeleteActive ? 'cursor-crosshair' : activeSpotChannel && !panModeActive ? 'cursor-crosshair' : activeSpotChannel && panModeActive ? 'cursor-grab' : 'cursor-default'}`}
+          data-wand-active={wandDeleteActive ? "true" : undefined}
           style={{ userSelect: 'none', touchAction: 'none' }}
         >
           <div className="relative" style={{ paddingBottom: Math.abs(zoom - 1) < 0.03 ? 16 : 0, paddingRight: Math.abs(zoom - 1) < 0.03 ? 14 : 0 }}>
@@ -3490,11 +3507,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
-                      const newZ = Math.max(zoom / ZOOM_BUTTON_FACTOR, minZoomRef.current);
-                      const clamped = clampPanValue(panX, panY, newZ);
+                      const newZ = Math.max(zoomRef.current / ZOOM_BUTTON_FACTOR, minZoomRef.current);
+                      const clamped = clampPanValue(panXRef.current, panYRef.current, newZ);
                       setZoom(newZ);
                       queuePanStateCommit(clamped.x, clamped.y);
-                      if (canvasAreaRef.current) {
+                      if (canvasAreaRef.current && !wandDeleteActiveRef.current) {
                         const el = canvasAreaRef.current;
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
@@ -3512,11 +3529,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
-                      const newZ = Math.min(zoom * ZOOM_BUTTON_FACTOR, zoomMax);
-                      const clamped = clampPanValue(panX, panY, newZ);
+                      const newZ = Math.min(zoomRef.current * ZOOM_BUTTON_FACTOR, zoomMax);
+                      const clamped = clampPanValue(panXRef.current, panYRef.current, newZ);
                       setZoom(newZ);
                       queuePanStateCommit(clamped.x, clamped.y);
-                      if (canvasAreaRef.current) {
+                      if (canvasAreaRef.current && !wandDeleteActiveRef.current) {
                         const el = canvasAreaRef.current;
                         el.style.cursor = (newZ * previewDims.width > el.clientWidth * 1.05 && !moveMode) ? 'grab' : 'default';
                       }
