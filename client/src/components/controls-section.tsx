@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
-import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info, Sparkles } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
 import { formatLength } from "@/lib/format-length";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -82,6 +82,46 @@ interface ControlsSectionProps {
 }
 
 const DEFAULT_HEIGHTS = [12, 18, 24, 35, 40, 45, 48, 50, 55, 60, 65, 70, 80, 85, 95, 110, 120, 130, 140, 150];
+
+// ── Auto-assign helpers ────────────────────────────────────────────────────
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else                h = ((r - g) / d + 4) / 6;
+  return { h: h * 360, s, l };
+}
+
+/**
+ * Classify a color by hue into the most appropriate fluorescent channel.
+ * Returns null for neutrals (grays, black, white) and non-fluorescent hues (cyan, blue, purple).
+ *
+ * Hue map:
+ *   0–15 / 345–360 → FM  (reds, hot-pinks)
+ *   15–45          → FO  (oranges)
+ *   45–80          → FY  (yellows)
+ *   80–165         → FG  (greens, lime)
+ *   165–285        → null (cyan / blue / violet — no good fluorescent match)
+ *   285–345        → FM  (magentas, purples)
+ */
+function autoAssignChannel(
+  rgb: { r: number; g: number; b: number }
+): 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null {
+  const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  // Skip near-neutral colors — not worth fluorescent ink.
+  if (s < 0.20 || l < 0.08 || l > 0.93) return null;
+  if (h >= 45  && h < 80)  return 'spotFluorY';
+  if (h >= 80  && h < 165) return 'spotFluorG';
+  if (h >= 15  && h < 45)  return 'spotFluorOrange';
+  if (h >= 165 && h < 285) return null;        // cyan / blue — skip
+  return 'spotFluorM';                          // reds, hot-pinks, magentas
+}
 
 export default function ControlsSection({
   onDownload,
@@ -361,6 +401,29 @@ export default function ControlsSection({
         const anyG = updatedRegions.some(r => r.spotFluorG);
         const anyOr = updatedRegions.some(r => r.spotFluorOrange);
         return { ...color, regions: updatedRegions, spotFluorY: anyY, spotFluorM: anyM, spotFluorG: anyG, spotFluorOrange: anyOr };
+      });
+      if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
+      return updated;
+    });
+  }, [selectedDesignId]);
+
+  const handleAutoAssign = useCallback(() => {
+    setExtractedColors(prev => {
+      const updated = prev.map(color => {
+        const channel = autoAssignChannel(color.rgb);
+        // Colors with no fluorescent match are left unassigned (all flags cleared).
+        const fy = channel === 'spotFluorY';
+        const fm = channel === 'spotFluorM';
+        const fg = channel === 'spotFluorG';
+        const fo = channel === 'spotFluorOrange';
+        const updatedRegions = color.regions?.map(r => ({
+          ...r,
+          spotFluorY: fy,
+          spotFluorM: fm,
+          spotFluorG: fg,
+          spotFluorOrange: fo,
+        }));
+        return { ...color, spotFluorY: fy, spotFluorM: fm, spotFluorG: fg, spotFluorOrange: fo, regions: updatedRegions };
       });
       if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
       return updated;
@@ -664,6 +727,21 @@ export default function ControlsSection({
                       : 'Select a channel above, then tap the design in the preview'
                     }
                   </p>
+
+                  {/* ── Auto-assign button ── */}
+                  <button
+                    onClick={handleAutoAssign}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-[12px] text-white transition-all active:scale-95 hover:brightness-110 shadow-md"
+                    style={{
+                      background: 'linear-gradient(135deg, #DFFF00 0%, #39FF14 30%, #FF6600 65%, #FF00FF 100%)',
+                      color: '#111',
+                      textShadow: 'none',
+                    }}
+                    title="Automatically assign fluorescent channels based on color hue"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#111' }} />
+                    <span style={{ color: '#111' }}>Auto Color it for me!</span>
+                  </button>
 
                   {/* ── Detected color list — always visible, matches reference app ── */}
                   <div className="border-t border-gray-100 pt-2">
