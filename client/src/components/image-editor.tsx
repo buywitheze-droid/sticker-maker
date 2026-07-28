@@ -3719,6 +3719,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onWandTap={profile.enableFluorescent ? (nx, ny) => wandAssignRef.current?.(nx, ny) : undefined}
             panModeActive={profile.enableFluorescent ? panModeActive : false}
             onPanModeChange={profile.enableFluorescent ? setPanModeActive : undefined}
+            wandDeleteActive={wandDeleteModeActive}
+            onWandDeleteTap={handleWandDelete}
           />
         </div>
       </div>
