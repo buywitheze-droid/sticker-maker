@@ -2024,6 +2024,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       if (e.touches.length !== 1) return;
       e.preventDefault();
+      // When wand-delete mode is active, finger movement after a tap should not
+      // fall through to handleInteractionMove (which could accidentally nudge a design).
+      if (wandDeleteActiveRef.current) return;
       if (isPanningRef.current) {
         const dx = e.touches[0].clientX - panStartRef.current.x;
         const dy = e.touches[0].clientY - panStartRef.current.y;
@@ -3456,7 +3459,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={resetView}
+                    onClick={() => { if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.(); resetView(); }}
                     className="min-w-[40px] min-h-[40px] h-8 px-2 hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap text-[11px] flex items-center justify-center"
                     title={t("preview.resetView")}
                   >

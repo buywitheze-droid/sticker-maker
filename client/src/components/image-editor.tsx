@@ -3095,7 +3095,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                onClick={() => setMobilePanel("controls")}
+                onClick={() => { setMobilePanel("controls"); setWandDeleteModeActive(false); }}
                 className={`rounded-lg py-2 text-xs font-bold tracking-wide transition-all duration-200 ${
                   mobilePanel === "controls"
                     ? "bg-violet-600 text-white shadow-md shadow-violet-200"
