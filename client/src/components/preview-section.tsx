@@ -85,12 +85,37 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
+    // Magic-wand cursor: 32×32 SVG, hotspot at the star tip (22, 9).
+    const WAND_CURSOR = [
+      "url(\"data:image/svg+xml,",
+      "%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E",
+      // shadow stroke for contrast on any background
+      "%3Cline x1='5' y1='27' x2='18' y2='14' stroke='%23000' stroke-width='3.5' stroke-linecap='round'/%3E",
+      // white highlight on handle
+      "%3Cline x1='5' y1='27' x2='18' y2='14' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E",
+      // star shadow
+      "%3Cpath d='M22 2L23.7 7.3L29 9L23.7 10.7L22 16L20.3 10.7L15 9L20.3 7.3Z' fill='%23000'/%3E",
+      // star white fill
+      "%3Cpath d='M22 3.5L23.4 8L27.5 9L23.4 10L22 14.5L20.6 10L16.5 9L20.6 8Z' fill='%23fff'/%3E",
+      // sparkle dots
+      "%3Ccircle cx='11' cy='11' r='1.8' fill='%23000'/%3E",
+      "%3Ccircle cx='11' cy='11' r='1' fill='%23fff'/%3E",
+      "%3Ccircle cx='29' cy='17' r='1.8' fill='%23000'/%3E",
+      "%3Ccircle cx='29' cy='17' r='1' fill='%23fff'/%3E",
+      "%3Ccircle cx='28' cy='3' r='1.8' fill='%23000'/%3E",
+      "%3Ccircle cx='28' cy='3' r='1' fill='%23fff'/%3E",
+      "%3C/svg%3E",
+      "\") 22 9, crosshair",
+    ].join("");
+
     useEffect(() => {
       const area = canvasAreaRef.current;
       if (!area) return;
       if (panModeActive && activeSpotChannel) {
         area.style.cursor = 'grab';
-      } else if (activeSpotChannel || wandDeleteActive) {
+      } else if (wandDeleteActive) {
+        area.style.cursor = WAND_CURSOR;
+      } else if (activeSpotChannel) {
         area.style.cursor = 'crosshair';
       } else {
         area.style.cursor = '';
