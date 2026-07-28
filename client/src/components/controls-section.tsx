@@ -175,9 +175,11 @@ export default function ControlsSection({
   const prevDesignIdRef = useRef<string | null | undefined>(null);
   const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
   const [activeChannel, setActiveChannel] = useState<'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null>(null);
-  // Expose a clear-channel callback to the parent so it can deactivate the fluorescent wand
-  // when the magic-wand erase tool is toggled on (mutual exclusion).
-  if (clearActiveChannelRef) clearActiveChannelRef.current = () => setActiveChannel(null);
+  // Expose a clear-channel callback to the parent (must be in useEffect — not render — to avoid
+  // the "update a component while rendering a different component" React warning).
+  useEffect(() => {
+    if (clearActiveChannelRef) clearActiveChannelRef.current = () => setActiveChannel(null);
+  });
   const colorListRef = useRef<HTMLDivElement>(null);
   /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
   const pixelMapRef = useRef<{ pixelMap: Int16Array; width: number; height: number } | null>(null);
