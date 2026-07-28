@@ -1,15 +1,7 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
 
-// Magic-wand cursor — same three paths / viewBox as the fluorescent "Color Select Wand" icon.
-// Base64-encoded so the data URI is unambiguously valid in all browsers.
-// (encodeURIComponent produces %22 for quotes which some CSS parsers reject inside url().)
-// Source SVG (24×24, viewBox 0 0 16 16, stroke #222 width 1.5):
-//   <path d="M10 2l1.5 1.5-7 7L3 10l7-7z" …/>
-//   <path d="M13.5 4.5l-2-2" …/>
-//   <path d="M4.5 13l-1-1 .5-1.5" …/>
-// Hotspot at wand tip ≈ (17, 4) in 24-px space.
-const WAND_CURSOR_CSS =
-  'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBkPSJNMTAgMmwxLjUgMS41LTcgN0wzIDEwbDctN3oiIHN0cm9rZT0iIzIyMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xMy41IDQuNWwtMi0yIiBzdHJva2U9IiMyMjIiIHN0cm9rZS13aWR0aD0iMS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNNC41IDEzbC0xLTEgLjUtMS41IiBzdHJva2U9IiMyMjIiIHN0cm9rZS13aWR0aD0iMS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=") 17 4, crosshair';
+// Magic-wand erase mode uses the same crosshair cursor as the fluorescent channel picker —
+// consistent UX and zero browser compatibility issues with custom SVG cursors.
 import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, Focus, Hand } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
@@ -102,7 +94,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (panModeActive && activeSpotChannel) {
         area.style.cursor = 'grab';
       } else if (wandDeleteActive) {
-        area.style.cursor = WAND_CURSOR_CSS;
+        area.style.cursor = 'crosshair';
       } else if (activeSpotChannel) {
         area.style.cursor = 'crosshair';
       } else {

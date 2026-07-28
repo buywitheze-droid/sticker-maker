@@ -3025,6 +3025,24 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               )}
               <button onClick={handleThresholdAlpha} disabled={!selectedDesignId && selectedDesignIds.size === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaTitle")}><Droplets className="w-3 h-3" />{t("editor.cleanAlpha")}</button>
               <button onClick={handleThresholdAlphaAll} disabled={designs.length === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaAllTitle")}><Droplets className="w-3 h-3" />All</button>
+              <button
+                onClick={handleRemoveWhiteBackground}
+                disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-white text-gray-700 border border-gray-300' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`}
+                title="Flood-fill erase white/light background from edges"
+              ><Sun className="w-3 h-3" />White BG</button>
+              <button
+                onClick={() => setWandDeleteModeActive(prev => { if (!prev) clearActiveChannelRef.current?.(); return !prev; })}
+                disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${
+                  wandDeleteModeActive
+                    ? 'bg-amber-500 text-white border border-amber-600'
+                    : selectedDesignId || selectedDesignIds.size > 0
+                      ? 'bg-[#F1F5F9] text-[#92400E] border border-[#CBD5E1]'
+                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                }`}
+                title={wandDeleteModeActive ? 'Wand active — tap a color to erase it. Tap again to deactivate.' : 'Magic Wand: tap a color to flood-erase it'}
+              ><MagicWandIcon className="w-3.5 h-3.5" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}</button>
               <div className="flex items-center gap-0.5 ml-auto">
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
