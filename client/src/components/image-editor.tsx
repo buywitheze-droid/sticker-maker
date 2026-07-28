@@ -2499,9 +2499,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   /**
    * Apply a halftone dot pattern to pixels in the selected design that match
-   * the target colour (tr, tg, tb).  Uses the "Light" preset from the
-   * buywitheze halftone tool: 8 px cell grid, offset rows, max dot radius =
-   * 60 % of cell, 80-step max-channel tolerance.
+   * the target colour (tr, tg, tb).
+   *
+   * Cell size is derived from the design's actual DPI so the pattern is the
+   * same physical size regardless of image resolution:
+   *   • Estimated DPI  = image width in px / design width in inches
+   *   • Target 45 LPI  (standard "Light" halftone screen for garment printing)
+   *   • CELL = DPI / 45, clamped to [16, 80] px so it's always clearly visible
+   *
+   * MAX_R = CELL × 0.45  → at 100% coverage dots just touch each other,
+   * leaving a visible gap (area coverage ≈ 63 %).  This makes the halftone
+   * pattern obvious even in solid-colour regions.
+   *
+   * Brick-wall row offset produces the classic rosette / angled screen look.
    */
   const handleApplyHalftone = useCallback((designId: string, tr: number, tg: number, tb: number) => {
     const design = designs.find(d => d.id === designId);
@@ -2511,18 +2521,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const h = src.naturalHeight || src.height;
     if (!w || !h) return;
 
-    const CELL = 8;           // Light strength: 8 px cell
-    const MAX_R = CELL * 0.62; // Max dot radius (slightly over half cell so dots can touch)
-    const TOL   = 80;          // Max-channel tolerance — comparable to Wand at ~30 %
+    // ── Derive cell size from design DPI ───────────────────────────────────
+    const estimatedDPI = design.widthInches > 0 ? w / design.widthInches : 150;
+    // 45 LPI → dots clearly visible in print; clamp so screen preview always shows the effect
+    const CELL  = Math.round(Math.max(16, Math.min(80, estimatedDPI / 45)));
+    // At 100 % coverage dots just touch (area coverage ≈ π/4 ≈ 78 %):
+    const MAX_R = CELL * 0.5;
+    // Max-channel tolerance: treat pixels within this distance as "matching"
+    const TOL   = 60;
 
-    // ── Step 1: read pixels and compute halftone dots ──────────────────────
+    // ── Step 1: read pixels, sample cells, erase matched pixels ───────────
     const srcCvs = document.createElement('canvas');
     srcCvs.width = w; srcCvs.height = h;
     const srcCtx = srcCvs.getContext('2d', { willReadFrequently: true });
     if (!srcCtx) return;
     srcCtx.drawImage(src, 0, 0);
     const imgData = srcCtx.getImageData(0, 0, w, h);
-    const data = imgData.data;
+    const data    = imgData.data;
 
     const dots: Array<{ cx: number; cy: number; r: number }> = [];
     const rows = Math.ceil(h / CELL) + 2;
@@ -2530,7 +2545,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
     for (let row = -1; row < rows; row++) {
       for (let col = -1; col < cols; col++) {
-        // Offset every other row by half a cell (brick-wall / rosette layout)
+        // Brick-wall: offset odd rows by half a cell
         const cx = col * CELL + ((row & 1) === 0 ? 0 : CELL * 0.5);
         const cy = row * CELL;
 
@@ -2538,7 +2553,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         const y0 = Math.max(0, Math.floor(cy - CELL / 2));
         const x1 = Math.min(w, Math.ceil(cx + CELL / 2));
         const y1 = Math.min(h, Math.ceil(cy + CELL / 2));
+        if (x0 >= x1 || y0 >= y1) continue;
 
+        // First pass: count opaque pixels and how many match the target colour
         let total = 0, matched = 0;
         for (let py = y0; py < y1; py++) {
           for (let px = x0; px < x1; px++) {
@@ -2555,9 +2572,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           }
         }
 
-        if (total === 0 || matched / total < 0.05) continue;
+        if (total === 0 || matched === 0) continue;
 
-        // Erase matched pixels in this cell
+        // Coverage = fraction of the opaque cell that matches the target
+        const coverage = matched / total;
+        if (coverage < 0.04) continue; // < 4 % match → skip (noise)
+
+        // Second pass: erase only the matched pixels
         for (let py = y0; py < y1; py++) {
           for (let px = x0; px < x1; px++) {
             const i = (py * w + px) * 4;
@@ -2572,20 +2593,26 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           }
         }
 
-        // Record a dot — radius scales as sqrt of coverage so it looks natural
-        const radius = Math.sqrt(matched / total) * MAX_R;
-        if (radius >= 0.4) dots.push({ cx, cy, r: radius });
+        // Dot radius: sqrt scaling so it looks perceptually linear
+        // At coverage=1 → radius=MAX_R (dots touching), coverage=0.25 → radius=MAX_R/2
+        const radius = Math.sqrt(coverage) * MAX_R;
+        if (radius >= 1) dots.push({ cx, cy, r: radius });
       }
     }
 
-    // ── Step 2: composite erased image + dots onto result canvas ───────────
+    // ── Step 2: composite erased image + halftone dots ─────────────────────
     srcCtx.putImageData(imgData, 0, 0);
+
     const result = document.createElement('canvas');
-    result.width = w; result.height = h;
+    result.width  = w;
+    result.height = h;
     const rCtx = result.getContext('2d');
     if (!rCtx) return;
+
+    // Draw erased source first (non-target pixels are untouched)
     rCtx.drawImage(srcCvs, 0, 0);
 
+    // Draw halftone dots on top
     rCtx.fillStyle = `rgb(${tr},${tg},${tb})`;
     for (const { cx, cy, r } of dots) {
       rCtx.beginPath();
