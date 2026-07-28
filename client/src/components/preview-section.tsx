@@ -3486,6 +3486,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     size="sm"
                     className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
+                      if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
                       const newZ = Math.max(zoom / ZOOM_BUTTON_FACTOR, minZoomRef.current);
                       const clamped = clampPanValue(panX, panY, newZ);
                       setZoom(newZ);
@@ -3507,6 +3508,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     size="sm"
                     className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
+                      if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
                       const newZ = Math.min(zoom * ZOOM_BUTTON_FACTOR, zoomMax);
                       const clamped = clampPanValue(panX, panY, newZ);
                       setZoom(newZ);
