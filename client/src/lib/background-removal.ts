@@ -17,9 +17,24 @@ function getWorker(): Worker {
   return workerInstance;
 }
 
+export async function removeBlackBackgroundFromImage(
+  image: HTMLImageElement,
+  threshold: number = 50   // max-channel value (0–255); pixels darker than this are removed
+): Promise<HTMLImageElement> {
+  return _removeBackground(image, threshold, 'black');
+}
+
 export async function removeBackgroundFromImage(
   image: HTMLImageElement,
   threshold: number = 95
+): Promise<HTMLImageElement> {
+  return _removeBackground(image, threshold, 'white');
+}
+
+async function _removeBackground(
+  image: HTMLImageElement,
+  threshold: number,
+  mode: 'white' | 'black'
 ): Promise<HTMLImageElement> {
   if (currentReject) {
     currentReject(new Error('Cancelled: new background removal request'));
@@ -80,7 +95,7 @@ export async function removeBackgroundFromImage(
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
     worker.postMessage(
-      { imageData: buffer, width, height, threshold },
+      { imageData: buffer, width, height, threshold, mode },
       [buffer.buffer]
     );
   });

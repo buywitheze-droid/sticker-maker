@@ -56,10 +56,13 @@ interface PreviewSectionProps {
   /** When true, left-click on the canvas pans (hand mode) instead of wand-assigning. */
   panModeActive?: boolean;
   onPanModeChange?: (active: boolean) => void;
+  /** When true, clicking the canvas erases the color at the tapped pixel (magic wand delete). */
+  wandDeleteActive?: boolean;
+  onWandDeleteTap?: (nx: number, ny: number, designId: string) => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap, panModeActive = false, onPanModeChange }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap, panModeActive = false, onPanModeChange, wandDeleteActive = false, onWandDeleteTap }, ref) => {
     const { toast } = useToast();
     const { t, lang } = useLanguage();
     const isMobile = useIsMobile();
@@ -75,6 +78,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     panModeActiveRef.current = panModeActive;
     const onPanModeChangeRef = useRef(onPanModeChange);
     onPanModeChangeRef.current = onPanModeChange;
+    const wandDeleteActiveRef = useRef(wandDeleteActive);
+    wandDeleteActiveRef.current = wandDeleteActive;
+    const onWandDeleteTapRef = useRef<typeof onWandDeleteTap>(onWandDeleteTap);
+    onWandDeleteTapRef.current = onWandDeleteTap;
 
     // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
@@ -83,12 +90,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!area) return;
       if (panModeActive && activeSpotChannel) {
         area.style.cursor = 'grab';
-      } else if (activeSpotChannel) {
+      } else if (activeSpotChannel || wandDeleteActive) {
         area.style.cursor = 'crosshair';
       } else {
         area.style.cursor = '';
       }
-    }, [activeSpotChannel, panModeActive]);
+    }, [activeSpotChannel, panModeActive, wandDeleteActive]);
     const zoomMax = Math.max(10, Math.ceil(artboardHeight / Math.max(artboardWidth, 0.1)) * 3);
     const zoomMaxRef = useRef(zoomMax);
     zoomMaxRef.current = zoomMax;
@@ -1635,6 +1642,30 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       altKeyRef.current = e.altKey;
       if (selectionZoomActiveRef.current) return;
       if ((e.target as HTMLElement).closest('[data-scrollbar]')) return;
+      // Magic wand delete — intercept left-click when delete mode is active.
+      if (e.button === 0 && wandDeleteActiveRef.current && onWandDeleteTapRef.current) {
+        const local = canvasToLocal(e.clientX, e.clientY);
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId) {
+          const canvas = canvasRef.current;
+          const d = designs.find(d => d.id === hitId);
+          if (canvas && d) {
+            const rect = computeLayerRect(d.imageInfo.image.width, d.imageInfo.image.height, d.transform, canvas.width, canvas.height, artboardWidth, artboardHeight, d.widthInches, d.heightInches);
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            const rad = -(d.transform.rotation * Math.PI) / 180;
+            const dx = local.x - cx, dy = local.y - cy;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            const nx = 0.5 + lx / rect.width;
+            const ny = 0.5 + ly / rect.height;
+            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+              onWandDeleteTapRef.current(nx, ny, hitId);
+            }
+          }
+        }
+        return;
+      }
       // Wand channel assignment — intercept left-click when a spot channel is active.
       if (e.button === 0 && activeSpotChannelRef.current && onWandTapRef.current) {
         // In pan mode, redirect to panning so user can navigate while channel is held.
@@ -1900,6 +1931,30 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       }
       if (e.touches.length !== 1) return;
       e.preventDefault();
+      // Magic wand delete on touch.
+      if (wandDeleteActiveRef.current && onWandDeleteTapRef.current) {
+        const local = canvasToLocal(e.touches[0].clientX, e.touches[0].clientY);
+        const hitId = findDesignAtPoint(local.x, local.y);
+        if (hitId) {
+          const canvas = canvasRef.current;
+          const d = designs.find(d => d.id === hitId);
+          if (canvas && d) {
+            const rect = computeLayerRect(d.imageInfo.image.width, d.imageInfo.image.height, d.transform, canvas.width, canvas.height, artboardWidth, artboardHeight, d.widthInches, d.heightInches);
+            const cx = rect.x + rect.width / 2;
+            const cy = rect.y + rect.height / 2;
+            const rad = -(d.transform.rotation * Math.PI) / 180;
+            const dx = local.x - cx, dy = local.y - cy;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            const nx = 0.5 + lx / rect.width;
+            const ny = 0.5 + ly / rect.height;
+            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+              onWandDeleteTapRef.current(nx, ny, hitId);
+            }
+          }
+        }
+        return;
+      }
       // Wand channel assignment on touch.
       if (activeSpotChannelRef.current && onWandTapRef.current) {
         const local = canvasToLocal(e.touches[0].clientX, e.touches[0].clientY);

@@ -1,26 +1,34 @@
+// ── White background helpers ──────────────────────────────────────────────
 function isWhitePixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
-  const r = data[index];
-  const g = data[index + 1];
-  const b = data[index + 2];
   const a = data[index + 3];
   if (a < 128) return true;
-  const minChannel = Math.min(r, g, b);
-  return minChannel >= thresholdValue;
+  return Math.min(data[index], data[index + 1], data[index + 2]) >= thresholdValue;
+}
+function shouldRemovePixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
+  if (data[index + 3] < 128) return false;
+  return Math.min(data[index], data[index + 1], data[index + 2]) >= thresholdValue;
 }
 
-function shouldRemovePixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
+// ── Black background helpers ──────────────────────────────────────────────
+// A pixel is "black" when its brightest channel is below the threshold.
+function isBlackPixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
   const a = data[index + 3];
-  if (a < 128) return false;
-  const minChannel = Math.min(data[index], data[index + 1], data[index + 2]);
-  return minChannel >= thresholdValue;
+  if (a < 128) return true;
+  return Math.max(data[index], data[index + 1], data[index + 2]) <= thresholdValue;
+}
+function shouldRemoveBlackPixel(data: Uint8ClampedArray, index: number, thresholdValue: number): boolean {
+  if (data[index + 3] < 128) return false;
+  return Math.max(data[index], data[index + 1], data[index + 2]) <= thresholdValue;
 }
 
 function floodFillFromEdges(
   data: Uint8ClampedArray,
   width: number,
   height: number,
-  thresholdValue: number
+  thresholdValue: number,
+  mode: 'white' | 'black' = 'white'
 ): Set<number> {
+  const isBg  = mode === 'black' ? isBlackPixel  : isWhitePixel;
   const toRemove = new Set<number>();
   const visited = new Set<number>();
   const queue: number[] = [];
@@ -28,60 +36,55 @@ function floodFillFromEdges(
 
   for (let x = 0; x < width; x++) {
     const topIndex = getIndex(x, 0);
-    if (isWhitePixel(data, topIndex, thresholdValue) && !visited.has(topIndex)) {
-      queue.push(topIndex);
-      visited.add(topIndex);
+    if (isBg(data, topIndex, thresholdValue) && !visited.has(topIndex)) {
+      queue.push(topIndex); visited.add(topIndex);
     }
     const bottomIndex = getIndex(x, height - 1);
-    if (isWhitePixel(data, bottomIndex, thresholdValue) && !visited.has(bottomIndex)) {
-      queue.push(bottomIndex);
-      visited.add(bottomIndex);
+    if (isBg(data, bottomIndex, thresholdValue) && !visited.has(bottomIndex)) {
+      queue.push(bottomIndex); visited.add(bottomIndex);
     }
   }
   for (let y = 0; y < height; y++) {
     const leftIndex = getIndex(0, y);
-    if (isWhitePixel(data, leftIndex, thresholdValue) && !visited.has(leftIndex)) {
-      queue.push(leftIndex);
-      visited.add(leftIndex);
+    if (isBg(data, leftIndex, thresholdValue) && !visited.has(leftIndex)) {
+      queue.push(leftIndex); visited.add(leftIndex);
     }
     const rightIndex = getIndex(width - 1, y);
-    if (isWhitePixel(data, rightIndex, thresholdValue) && !visited.has(rightIndex)) {
-      queue.push(rightIndex);
-      visited.add(rightIndex);
+    if (isBg(data, rightIndex, thresholdValue) && !visited.has(rightIndex)) {
+      queue.push(rightIndex); visited.add(rightIndex);
     }
   }
 
+  const shouldRemove = mode === 'black' ? shouldRemoveBlackPixel : shouldRemovePixel;
   let queueIndex = 0;
   while (queueIndex < queue.length) {
     const currentIndex = queue[queueIndex++];
-    if (shouldRemovePixel(data, currentIndex, thresholdValue)) {
+    if (shouldRemove(data, currentIndex, thresholdValue)) {
       toRemove.add(currentIndex);
     }
     const pixelPos = currentIndex / 4;
     const x = pixelPos % width;
     const y = Math.floor(pixelPos / width);
     const neighbors = [
-      { nx: x, ny: y - 1 },
-      { nx: x, ny: y + 1 },
-      { nx: x - 1, ny: y },
-      { nx: x + 1, ny: y },
+      { nx: x, ny: y - 1 }, { nx: x, ny: y + 1 },
+      { nx: x - 1, ny: y }, { nx: x + 1, ny: y },
     ];
     for (const { nx, ny } of neighbors) {
       if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
       const neighborIndex = getIndex(nx, ny);
       if (visited.has(neighborIndex)) continue;
       visited.add(neighborIndex);
-      if (isWhitePixel(data, neighborIndex, thresholdValue)) {
-        queue.push(neighborIndex);
-      }
+      if (isBg(data, neighborIndex, thresholdValue)) queue.push(neighborIndex);
     }
   }
   return toRemove;
 }
 
-function processRemoval(data: Uint8ClampedArray, width: number, height: number, threshold: number): void {
-  const thresholdValue = (threshold / 100) * 255;
-  const pixelsToRemove = floodFillFromEdges(data, width, height, thresholdValue);
+function processRemoval(data: Uint8ClampedArray, width: number, height: number, threshold: number, mode: 'white' | 'black' = 'white'): void {
+  // White mode: threshold is the minimum brightness to be considered "white" (0–100 mapped to 0–255).
+  // Black mode: threshold is the maximum brightness to be considered "black" (direct 0–255 value).
+  const thresholdValue = mode === 'black' ? threshold : (threshold / 100) * 255;
+  const pixelsToRemove = floodFillFromEdges(data, width, height, thresholdValue, mode);
 
   const pixelArray = Array.from(pixelsToRemove);
   for (let i = 0; i < pixelArray.length; i++) {
@@ -154,15 +157,16 @@ function processRemoval(data: Uint8ClampedArray, width: number, height: number, 
 }
 
 self.onmessage = (e: MessageEvent) => {
-  const { imageData, width, height, threshold } = e.data as {
+  const { imageData, width, height, threshold, mode } = e.data as {
     imageData: Uint8ClampedArray;
     width: number;
     height: number;
     threshold: number;
+    mode?: 'white' | 'black';
   };
 
   try {
-    processRemoval(imageData, width, height, threshold);
+    processRemoval(imageData, width, height, threshold, mode ?? 'white');
     (self as unknown as Worker).postMessage(
       { type: 'result', imageData, width, height },
       [imageData.buffer] as any
