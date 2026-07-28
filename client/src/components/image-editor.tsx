@@ -288,7 +288,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [downloadContainer, setDownloadContainer] = useState<HTMLDivElement | null>(null);
-  const [spotPreviewData, setSpotPreviewData] = useState<SpotPreviewData>({ enabled: false, colors: [] });
+  const [spotPreviewDataMap, setSpotPreviewDataMap] = useState<Map<string, SpotPreviewData>>(new Map());
   const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
   const [activeSpotChannel, setActiveSpotChannel] = useState<string | null>(null);
@@ -3032,7 +3032,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             downloadFormat={profile.downloadFormat}
             enableFluorescent={profile.enableFluorescent}
             selectedDesignId={selectedDesignId}
-            onSpotPreviewChange={setSpotPreviewData}
+            onSpotPreviewChange={(data) => {
+              if (!selectedDesignId) return;
+              setSpotPreviewDataMap(prev => new Map(prev).set(selectedDesignId, data));
+            }}
             fluorPanelContainer={fluorPanelContainer}
             copySpotSelectionsRef={copySpotSelectionsRef}
             onActiveChannelChange={(ch) => { setActiveSpotChannel(ch); setPanModeActive(false); }}
@@ -3585,7 +3588,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onInteractionEnd={handleInteractionEnd}
             onExpandArtboard={artboardHeight < MAX_ARTBOARD_HEIGHT ? handleExpandArtboard : undefined}
             onDesignContextMenu={handleCanvasContextMenu}
-            spotPreviewData={profile.enableFluorescent ? spotPreviewData : undefined}
+            spotPreviewData={profile.enableFluorescent ? (spotPreviewDataMap.get(selectedDesignId ?? '') ?? { enabled: false, colors: [] }) : undefined}
             selectionZoomActive={selectionZoomActive}
             onSelectionZoomChange={setSelectionZoomActive}
             activeSpotChannel={profile.enableFluorescent ? activeSpotChannel : null}
