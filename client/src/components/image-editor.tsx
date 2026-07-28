@@ -3415,7 +3415,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 title={wandDeleteModeActive ? 'Wand active — tap a color to erase it. Tap again to deactivate.' : 'Magic Wand: tap a color to flood-erase it'}
               ><MagicWandIcon className="w-3.5 h-3.5" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}</button>
               {/* Halftone — mobile */}
-              <div className="relative">
+              {profile.enableHalftone !== false && <div className="relative">
                 <button
                   onClick={handleOpenHalftoneMenu}
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
@@ -3468,7 +3468,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     )}
                   </div>
                 )}
-              </div>
+              </div>}
               <div className="flex items-center gap-0.5 ml-auto">
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
@@ -3840,7 +3840,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   </div>
                 )}
                 {/* Halftone — desktop */}
-                <div className="relative">
+                {profile.enableHalftone !== false && <div className="relative">
                   <button
                     onClick={handleOpenHalftoneMenu}
                     disabled={!selectedDesignId && selectedDesignIds.size === 0}
@@ -3896,7 +3896,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       )}
                     </div>
                   )}
-                </div>
+                </div>}
                 {!isMobile && (
                   <button
                     onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
