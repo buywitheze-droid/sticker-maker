@@ -2548,13 +2548,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     if (!w || !h) return;
 
     // ── Screen params ──────────────────────────────────────────────────────
-    // The reference app resizes to 300 DPI FIRST, then uses targetDpi=300 for
-    // the cell formula.  We don't resize, so we must derive the effective DPI
-    // from the image's pixel width and its physical size on the gangsheet.
-    // This gives the SAME physical 35 LPI dot pitch regardless of image DPI.
-    //   effectiveDpi = pixels / inches  →  cell = effectiveDpi / 35
-    // MIN_DOT (0.20 mm) is also scaled to native pixels the same way.
-    const effectiveDpi = design.widthInches > 0 ? w / design.widthInches : 300;
+    // We resize to 300 DPI before processing (see step 1 below), so the
+    // effective DPI is capped at 300.  Images already below 300 DPI keep
+    // their native DPI (no upscale).  This gives the correct physical 35 LPI
+    // dot pitch after resize.
+    const nativeDpi    = design.widthInches > 0 ? w / design.widthInches : 300;
+    const effectiveDpi = Math.min(nativeDpi, 300);
     const LPI          = 35;
     const ANGLE        = 22.5 * Math.PI / 180;
     const MIN_DOT      = (0.20 / 25.4) * effectiveDpi; // 0.20 mm in native px
@@ -2594,15 +2593,52 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const FEATHER= featherUI / 200;
     const UPPER  = TOL + FEATHER;
 
-    // ── 1. Read pixels ─────────────────────────────────────────────────────
+    // ── 1. Resize to 300 DPI then read pixels ─────────────────────────────
+    // The reference app always resizes to 300 DPI before processing.
+    // Without this, a 1063 DPI image (3189 px @ 3") has 10 M+ pixels and the
+    // five O(N) loops take 10–30 s, freezing the main thread ("glitch storm").
+    // We cap at 300 DPI (downscale only; never upscale).  300 DPI gives
+    // cell = 300/35 ≈ 8.57 px — the same as the reference app at full quality.
+    const TARGET_DPI = 300;
+    let procW: number, procH: number;
+    if (design.widthInches > 0) {
+      procW = Math.min(w, Math.max(1, Math.round(design.widthInches * TARGET_DPI)));
+      procH = Math.min(h, Math.max(1, Math.round(procW * h / w)));
+    } else {
+      // No physical size info — cap at 2 000 px on the long side to stay responsive
+      const scale = Math.min(1, 2000 / Math.max(w, h));
+      procW = Math.max(1, Math.round(w * scale));
+      procH = Math.max(1, Math.round(h * scale));
+    }
+
     const cvs = document.createElement('canvas');
-    cvs.width = w; cvs.height = h;
+    cvs.width = procW; cvs.height = procH;
     const ctx = cvs.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
-    ctx.drawImage(src, 0, 0);
-    const imgData = ctx.getImageData(0, 0, w, h);
+    // High-quality step-down resize (matches reference app's highQualityResize)
+    if (procW < w || procH < h) {
+      let cur: HTMLCanvasElement | HTMLImageElement = src;
+      let cw = w, ch = h;
+      while (cw / 2 >= procW && ch / 2 >= procH) {
+        const half = document.createElement('canvas');
+        half.width  = Math.max(procW, Math.floor(cw / 2));
+        half.height = Math.max(procH, Math.floor(ch / 2));
+        const hctx = half.getContext('2d')!;
+        hctx.imageSmoothingEnabled = true;
+        hctx.imageSmoothingQuality = 'high';
+        hctx.drawImage(cur, 0, 0, half.width, half.height);
+        cur = half; cw = half.width; ch = half.height;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(cur, 0, 0, procW, procH);
+    } else {
+      ctx.drawImage(src, 0, 0, procW, procH);
+    }
+
+    const imgData = ctx.getImageData(0, 0, procW, procH);
     const data = imgData.data;
-    const N = w * h;
+    const N = procW * procH;
 
     // Save original alpha channel (needed for finalAlpha = min(base, screen))
     const baseAlpha = new Uint8ClampedArray(N);
