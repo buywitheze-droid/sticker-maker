@@ -24,6 +24,28 @@ import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
 import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun } from "lucide-react";
 
+// ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
+const SRGB_LINEAR_LUT = (() => {
+  const t = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const c = i / 255;
+    t[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  return t;
+})();
+function srgbToOklab(r: number, g: number, b: number): [number, number, number] {
+  const lr = SRGB_LINEAR_LUT[r], lg = SRGB_LINEAR_LUT[g], lb = SRGB_LINEAR_LUT[b];
+  const l = 0.4122214708*lr + 0.5363325363*lg + 0.0514459929*lb;
+  const m = 0.2119034982*lr + 0.6806995451*lg + 0.1073969566*lb;
+  const s = 0.0883024619*lr + 0.2817188376*lg + 0.6299787005*lb;
+  const lc = Math.cbrt(l), mc = Math.cbrt(m), sc = Math.cbrt(s);
+  return [
+    0.2104542553*lc + 0.7936177850*mc - 0.0040720468*sc,
+    1.9779984951*lc - 2.4285922050*mc + 0.4505937099*sc,
+    0.0259040371*lc + 0.7827717662*mc - 0.8086757660*sc,
+  ];
+}
+
 /** Magic-wand icon — matches the "Color Select Wand" icon in the fluorescent panel. */
 const MagicWandIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
@@ -2498,20 +2520,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [designs, selectedDesignId, saveSnapshot, wandTolerance]);
 
   /**
-   * Apply a halftone dot pattern to pixels in the selected design that match
-   * the target colour (tr, tg, tb).
+   * Halftone algorithm ported directly from the buywitheze / DTF Masters app.
    *
-   * Cell size is derived from the design's actual DPI so the pattern is the
-   * same physical size regardless of image resolution:
-   *   • Estimated DPI  = image width in px / design width in inches
-   *   • Target 45 LPI  (standard "Light" halftone screen for garment printing)
-   *   • CELL = DPI / 45, clamped to [16, 80] px so it's always clearly visible
+   * The RGB colours of the design are NEVER changed — only the alpha channel
+   * is sculpted by the halftone screen.
    *
-   * MAX_R = CELL × 0.45  → at 100% coverage dots just touch each other,
-   * leaving a visible gap (area coverage ≈ 63 %).  This makes the halftone
-   * pattern obvious even in solid-colour regions.
+   * Two modes (matching the real app):
+   *  • Black (tr=tg=tb=0) → LUMINANCE mode (Light preset: whiteCut=80).
+   *    Dark pixels fade out; the garment's black acts as the "ink".
+   *    tone = lum / 80, clamped 0..1.
+   *    tone=0 → fully transparent; tone=1 → solid; 0<tone<1 → halftone dots.
    *
-   * Brick-wall row offset produces the classic rosette / angled screen look.
+   *  • Any other colour → OKLab COLOR-DISTANCE mode (Light preset).
+   *    Pixels perceptually close to the garment colour → transparent.
+   *    Transition zone → halftone dots.  Far pixels → solid.
+   *
+   * Screen params (default "Light / Simple" in the real app):
+   *  LPI=35, angle=22.5°, minDot=0.20 mm, maxR=cell×0.72, gamma=1.
    */
   const handleApplyHalftone = useCallback((designId: string, tr: number, tg: number, tb: number) => {
     const design = designs.find(d => d.id === designId);
@@ -2521,107 +2546,149 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const h = src.naturalHeight || src.height;
     if (!w || !h) return;
 
-    // ── Derive cell size from design DPI ───────────────────────────────────
-    const estimatedDPI = design.widthInches > 0 ? w / design.widthInches : 150;
-    // 45 LPI → dots clearly visible in print; clamp so screen preview always shows the effect
-    const CELL  = Math.round(Math.max(16, Math.min(80, estimatedDPI / 45)));
-    // At 100 % coverage dots just touch (area coverage ≈ π/4 ≈ 78 %):
-    const MAX_R = CELL * 0.5;
-    // Max-channel tolerance: treat pixels within this distance as "matching"
-    const TOL   = 60;
+    const DPI      = design.widthInches > 0 ? w / design.widthInches : 300;
+    const LPI      = 35;
+    const ANGLE    = 22.5 * Math.PI / 180;
+    const MIN_DOT  = (0.20 / 25.4) * DPI; // 0.20 mm in pixels
+    const INCH_PX  = DPI / LPI;
+    const cell     = Math.max(2, INCH_PX);
+    const maxR     = cell * 0.72;
+    const ca = Math.cos(ANGLE), sa = Math.sin(ANGLE);
 
-    // ── Step 1: read pixels, sample cells, erase matched pixels ───────────
-    const srcCvs = document.createElement('canvas');
-    srcCvs.width = w; srcCvs.height = h;
-    const srcCtx = srcCvs.getContext('2d', { willReadFrequently: true });
-    if (!srcCtx) return;
-    srcCtx.drawImage(src, 0, 0);
-    const imgData = srcCtx.getImageData(0, 0, w, h);
-    const data    = imgData.data;
+    // ── 1. Read pixels ─────────────────────────────────────────────────────
+    const cvs = document.createElement('canvas');
+    cvs.width = w; cvs.height = h;
+    const ctx = cvs.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    ctx.drawImage(src, 0, 0);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    const N = w * h;
 
-    const dots: Array<{ cx: number; cy: number; r: number }> = [];
-    const rows = Math.ceil(h / CELL) + 2;
-    const cols = Math.ceil(w / CELL) + 2;
+    // ── 2. Compute tone[i] ∈ [0,1] per pixel ──────────────────────────────
+    // tone=0 → pixel is fully removed (garment colour shows through)
+    // tone=1 → pixel is fully solid (printed with full opacity)
+    const tone = new Float32Array(N);
+    const isBlack = tr < 5 && tg < 5 && tb < 5;
 
-    for (let row = -1; row < rows; row++) {
-      for (let col = -1; col < cols; col++) {
-        // Brick-wall: offset odd rows by half a cell
-        const cx = col * CELL + ((row & 1) === 0 ? 0 : CELL * 0.5);
-        const cy = row * CELL;
-
-        const x0 = Math.max(0, Math.floor(cx - CELL / 2));
-        const y0 = Math.max(0, Math.floor(cy - CELL / 2));
-        const x1 = Math.min(w, Math.ceil(cx + CELL / 2));
-        const y1 = Math.min(h, Math.ceil(cy + CELL / 2));
-        if (x0 >= x1 || y0 >= y1) continue;
-
-        // First pass: count opaque pixels and how many match the target colour
-        let total = 0, matched = 0;
-        for (let py = y0; py < y1; py++) {
-          for (let px = x0; px < x1; px++) {
-            const i = (py * w + px) * 4;
-            if (data[i + 3] < 10) continue;
-            total++;
-            if (
-              Math.max(
-                Math.abs(data[i]   - tr),
-                Math.abs(data[i+1] - tg),
-                Math.abs(data[i+2] - tb)
-              ) <= TOL
-            ) matched++;
-          }
-        }
-
-        if (total === 0 || matched === 0) continue;
-
-        // Coverage = fraction of the opaque cell that matches the target
-        const coverage = matched / total;
-        if (coverage < 0.04) continue; // < 4 % match → skip (noise)
-
-        // Second pass: erase only the matched pixels
-        for (let py = y0; py < y1; py++) {
-          for (let px = x0; px < x1; px++) {
-            const i = (py * w + px) * 4;
-            if (data[i + 3] < 10) continue;
-            if (
-              Math.max(
-                Math.abs(data[i]   - tr),
-                Math.abs(data[i+1] - tg),
-                Math.abs(data[i+2] - tb)
-              ) <= TOL
-            ) data[i + 3] = 0;
-          }
-        }
-
-        // Dot radius: sqrt scaling so it looks perceptually linear
-        // At coverage=1 → radius=MAX_R (dots touching), coverage=0.25 → radius=MAX_R/2
-        const radius = Math.sqrt(coverage) * MAX_R;
-        if (radius >= 1) dots.push({ cx, cy, r: radius });
+    if (isBlack) {
+      // Luminance mode — Light preset: whiteCut=80 (blackCut=0)
+      // Pure black (lum=0) → tone=0 (transparent / not printed)
+      // lum≥80 → tone=1 (solid)
+      const WHITE_CUT = 80;
+      for (let i = 0; i < N; i++) {
+        const o = i * 4;
+        if (data[o + 3] < 1) { tone[i] = 1; continue; } // transparent pixel → don't touch
+        const lum = 0.2126 * data[o] + 0.7152 * data[o + 1] + 0.0722 * data[o + 2];
+        let v = lum / WHITE_CUT;
+        if (v > 1) v = 1;
+        tone[i] = v;
+      }
+    } else {
+      // OKLab colour-distance mode — Light preset for colour garments:
+      //   tol=25/200=0.125, feather=22/200=0.110 OKLab units
+      const TOL     = 25 / 200;
+      const FEATHER = 22 / 200;
+      const UPPER   = TOL + FEATHER;
+      const gLab    = srgbToOklab(tr, tg, tb);
+      for (let i = 0; i < N; i++) {
+        const o = i * 4;
+        if (data[o + 3] < 1) { tone[i] = 1; continue; } // transparent → solid (don't touch)
+        const pLab = srgbToOklab(data[o], data[o + 1], data[o + 2]);
+        const dL = pLab[0] - gLab[0], da = pLab[1] - gLab[1], db = pLab[2] - gLab[2];
+        const dist = Math.sqrt(dL*dL + da*da + db*db);
+        if (dist <= TOL) { tone[i] = 0; continue; }
+        if (dist >= UPPER) { tone[i] = 1; continue; }
+        tone[i] = (dist - TOL) / FEATHER;
       }
     }
 
-    // ── Step 2: composite erased image + halftone dots ─────────────────────
-    srcCtx.putImageData(imgData, 0, 0);
+    // ── 3. Build AM halftone screen (rotated grid, one dot per cell) ───────
+    // Identical to makeHalftoneAlpha() in the real app source.
+    const cx = w * 0.5, cy = h * 0.5;
 
-    const result = document.createElement('canvas');
-    result.width  = w;
-    result.height = h;
-    const rCtx = result.getContext('2d');
-    if (!rCtx) return;
+    // Compute the bounding box of the rotated image corners
+    let minRX = Infinity, maxRX = -Infinity, minRY = Infinity, maxRY = -Infinity;
+    for (const [xc, yc] of [[-cx,-cy],[w-cx,-cy],[-cx,h-cy],[w-cx,h-cy]] as [number,number][]) {
+      const xr =  xc*ca + yc*sa;
+      const yr = -xc*sa + yc*ca;
+      if (xr < minRX) minRX = xr; if (xr > maxRX) maxRX = xr;
+      if (yr < minRY) minRY = yr; if (yr > maxRY) maxRY = yr;
+    }
+    const nx = Math.ceil(-minRX / cell - 0.5);
+    const ny = Math.ceil(-minRY / cell - 0.5);
+    const oX = (nx + 0.5) * cell;
+    const oY = (ny + 0.5) * cell;
+    const cellsX = Math.ceil((maxRX + oX) / cell) + 2;
+    const cellsY = Math.ceil((maxRY + oY) / cell) + 2;
+    const total  = cellsX * cellsY;
 
-    // Draw erased source first (non-target pixels are untouched)
-    rCtx.drawImage(srcCvs, 0, 0);
-
-    // Draw halftone dots on top
-    rCtx.fillStyle = `rgb(${tr},${tg},${tb})`;
-    for (const { cx, cy, r } of dots) {
-      rCtx.beginPath();
-      rCtx.arc(cx, cy, r, 0, Math.PI * 2);
-      rCtx.fill();
+    // Accumulate per-cell tone averages
+    const sums   = new Float64Array(total);
+    const counts = new Uint32Array(total);
+    for (let y = 0; y < h; y++) {
+      const yc = y - cy;
+      for (let x = 0; x < w; x++) {
+        const xc = x - cx;
+        const xr =  xc*ca + yc*sa + oX;
+        const yr = -xc*sa + yc*ca + oY;
+        const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
+        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
+        const idx = iy * cellsX + ix;
+        sums[idx] += tone[y * w + x];
+        counts[idx]++;
+      }
     }
 
+    // radius[cell] = sqrt(avgTone) * maxR  (same formula as real app)
+    const radii = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+      if (!counts[i]) continue;
+      const avg = sums[i] / counts[i];
+      let r = Math.sqrt(avg) * maxR;
+      if (r < MIN_DOT) r = 0;
+      radii[i] = r;
+    }
+
+    // ── 4. Carve halftone pattern into the alpha channel ───────────────────
+    // finalAlpha[i] = min(original_alpha, screen_alpha)
+    // The RGB values stay untouched — the garment colour shows through the
+    // transparent gaps, exactly as in the real app.
+    for (let y = 0; y < h; y++) {
+      const yc = y - cy;
+      for (let x = 0; x < w; x++) {
+        const o = y * w + x;
+        const t = tone[o];
+        const pxBase = o * 4;
+
+        if (t >= 0.999) continue;             // solid → keep original alpha
+        if (t <= 0.001) { data[pxBase + 3] = 0; continue; } // fully removed
+
+        // Halftone zone: is this pixel inside its cell's dot?
+        const xc = x - cx;
+        const xr =  xc*ca + yc*sa + oX;
+        const yr = -xc*sa + yc*ca + oY;
+        const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
+        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
+        const idx = iy * cellsX + ix;
+
+        const r = radii[idx];
+        if (r <= 0) { data[pxBase + 3] = 0; continue; }
+
+        const xrc = (ix + 0.5) * cell, yrc = (iy + 0.5) * cell;
+        const dx = xr - xrc, dy = yr - yrc;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        // Hard-edge dot (softEdges=false — the app's default)
+        const screenA = dist <= r ? 255 : 0;
+        if (screenA < data[pxBase + 3]) data[pxBase + 3] = screenA;
+      }
+    }
+
+    // ── 5. Commit ──────────────────────────────────────────────────────────
+    ctx.putImageData(imgData, 0, 0);
     saveSnapshot();
-    result.toBlob(blob => {
+    cvs.toBlob(blob => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const img = new Image();
