@@ -748,11 +748,11 @@ export default function ControlsSection({
                   {/* ── Detected color list — always visible, matches reference app ── */}
                   <div className="border-t border-gray-100 pt-2">
                     <p className="text-[10px] text-gray-400 mb-1.5">
-                      {extractedColors.filter(c => (c.percentage ?? 0) >= 1).length} colors detected
+                      {extractedColors.filter(c => (c.percentage ?? 0) >= 0.1).length} colors detected
                     </p>
                     <div ref={colorListRef} className="flex flex-col gap-1.5">
                       {sortedColorIndices
-                        .filter(idx => (extractedColors[idx].percentage ?? 0) >= 1)
+                        .filter(idx => (extractedColors[idx].percentage ?? 0) >= 0.1)
                         .map(idx => {
                           const color = extractedColors[idx];
                           const hasRegions = (color.regions?.length ?? 0) > 1;
