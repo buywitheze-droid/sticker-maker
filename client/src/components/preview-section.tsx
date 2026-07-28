@@ -85,27 +85,22 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
-    // Magic-wand cursor: 32×32 SVG, hotspot at the star tip (22, 9).
+    // Magic-wand cursor: 32×32 version of the "Color Select Wand" SVG icon used in the
+    // fluorescent panel — same three paths, scaled 2× from the 16×16 viewBox.
+    // Hotspot at the wand tip (top-right corner of the body path) ≈ (27, 9).
     const WAND_CURSOR = [
       "url(\"data:image/svg+xml,",
       "%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E",
-      // shadow stroke for contrast on any background
-      "%3Cline x1='5' y1='27' x2='18' y2='14' stroke='%23000' stroke-width='3.5' stroke-linecap='round'/%3E",
-      // white highlight on handle
-      "%3Cline x1='5' y1='27' x2='18' y2='14' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E",
-      // star shadow
-      "%3Cpath d='M22 2L23.7 7.3L29 9L23.7 10.7L22 16L20.3 10.7L15 9L20.3 7.3Z' fill='%23000'/%3E",
-      // star white fill
-      "%3Cpath d='M22 3.5L23.4 8L27.5 9L23.4 10L22 14.5L20.6 10L16.5 9L20.6 8Z' fill='%23fff'/%3E",
-      // sparkle dots
-      "%3Ccircle cx='11' cy='11' r='1.8' fill='%23000'/%3E",
-      "%3Ccircle cx='11' cy='11' r='1' fill='%23fff'/%3E",
-      "%3Ccircle cx='29' cy='17' r='1.8' fill='%23000'/%3E",
-      "%3Ccircle cx='29' cy='17' r='1' fill='%23fff'/%3E",
-      "%3Ccircle cx='28' cy='3' r='1.8' fill='%23000'/%3E",
-      "%3Ccircle cx='28' cy='3' r='1' fill='%23fff'/%3E",
+      // Drop-shadow pass (black, slightly thicker) for visibility on any background
+      "%3Cpath d='M20 4l3 3-14 14L6 20l14-14z' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
+      "%3Cpath d='M27 9l-4-4' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round'/%3E",
+      "%3Cpath d='M9 26l-2-2 1-3' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
+      // White foreground pass
+      "%3Cpath d='M20 4l3 3-14 14L6 20l14-14z' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
+      "%3Cpath d='M27 9l-4-4' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E",
+      "%3Cpath d='M9 26l-2-2 1-3' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
       "%3C/svg%3E",
-      "\") 22 9, crosshair",
+      "\") 27 9, crosshair",
     ].join("");
 
     useEffect(() => {

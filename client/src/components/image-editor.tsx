@@ -24,17 +24,12 @@ import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
 import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun } from "lucide-react";
 
-/** Magic-wand icon: diagonal handle + 4-pointed star tip + sparkle dots. */
+/** Magic-wand icon — matches the "Color Select Wand" icon in the fluorescent panel. */
 const MagicWandIcon = ({ className }: { className?: string }) => (
-  <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden="true">
-    {/* handle */}
-    <line x1="3" y1="17" x2="11" y2="9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-    {/* 4-pointed star at tip */}
-    <path d="M13.5 1.5 L14.6 5 L18 6 L14.6 7 L13.5 10.5 L12.4 7 L9 6 L12.4 5 Z" fill="currentColor"/>
-    {/* sparkle dots */}
-    <circle cx="7"  cy="6"  r="1.1" fill="currentColor" opacity="0.55"/>
-    <circle cx="17" cy="11" r="1"   fill="currentColor" opacity="0.55"/>
-    <circle cx="16" cy="2"  r="1"   fill="currentColor" opacity="0.55"/>
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+    <path d="M10 2l1.5 1.5-7 7L3 10l7-7z"/>
+    <path d="M13.5 4.5l-2-2"/>
+    <path d="M4.5 13l-1-1 .5-1.5"/>
   </svg>
 );
 
@@ -308,6 +303,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [activeSpotChannel, setActiveSpotChannel] = useState<string | null>(null);
   const [panModeActive, setPanModeActive] = useState(false);
   const wandAssignRef = useRef<((nx: number, ny: number) => void) | null>(null);
+  const clearActiveChannelRef = useRef<(() => void) | null>(null);
   const [wandDeleteModeActive, setWandDeleteModeActive] = useState(false);
   const [wandTolerance, setWandTolerance] = useState(30);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
@@ -3134,7 +3130,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             }}
             fluorPanelContainer={fluorPanelContainer}
             copySpotSelectionsRef={copySpotSelectionsRef}
-            onActiveChannelChange={(ch) => { setActiveSpotChannel(ch); setPanModeActive(false); }}
+            onActiveChannelChange={(ch) => { setActiveSpotChannel(ch); setPanModeActive(false); if (ch) setWandDeleteModeActive(false); }}
+            clearActiveChannelRef={clearActiveChannelRef}
             wandAssignRef={wandAssignRef}
             panModeActive={panModeActive}
             onPanModeChange={setPanModeActive}
@@ -3370,7 +3367,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   Delete White BG
                 </button>
                 <button
-                  onClick={() => setWandDeleteModeActive(prev => !prev)}
+                  onClick={() => setWandDeleteModeActive(prev => { if (!prev) clearActiveChannelRef.current?.(); return !prev; })}
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
                   className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
                     wandDeleteModeActive

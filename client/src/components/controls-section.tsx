@@ -79,6 +79,8 @@ interface ControlsSectionProps {
   /** When true, the preview is in hand/pan mode so the user can drag while zoomed in. */
   panModeActive?: boolean;
   onPanModeChange?: (active: boolean) => void;
+  /** Ref that the parent populates; calling it clears the active fluorescent channel from outside. */
+  clearActiveChannelRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 const DEFAULT_HEIGHTS = [12, 18, 24, 35, 40, 45, 48, 50, 55, 60, 65, 70, 80, 85, 95, 110, 120, 130, 140, 150];
@@ -147,6 +149,7 @@ export default function ControlsSection({
   wandAssignRef,
   panModeActive = false,
   onPanModeChange,
+  clearActiveChannelRef,
 }: ControlsSectionProps) {
   const { t, lang } = useLanguage();
   const isMobile = useIsMobile();
@@ -172,6 +175,9 @@ export default function ControlsSection({
   const prevDesignIdRef = useRef<string | null | undefined>(null);
   const [expandedColorIndex, setExpandedColorIndex] = useState<number | null>(null);
   const [activeChannel, setActiveChannel] = useState<'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null>(null);
+  // Expose a clear-channel callback to the parent so it can deactivate the fluorescent wand
+  // when the magic-wand erase tool is toggled on (mutual exclusion).
+  if (clearActiveChannelRef) clearActiveChannelRef.current = () => setActiveChannel(null);
   const colorListRef = useRef<HTMLDivElement>(null);
   /** Most-recent pixelMap for the current image (pixel → colorIndex at ≤512 px). */
   const pixelMapRef = useRef<{ pixelMap: Int16Array; width: number; height: number } | null>(null);
