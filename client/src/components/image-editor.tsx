@@ -2795,7 +2795,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       img.onload = () => {
         URL.revokeObjectURL(url);
         const newInfo: ImageInfo = { ...design.imageInfo, image: img };
-        setDesigns(prev => prev.map(d => d.id === designId ? { ...d, imageInfo: newInfo } : d));
+        // halftoned: true  → export pipeline will pre-clean before drawing
+        // alphaThresholded: true → nearest-neighbour scaling in export so
+        //   bilinear interpolation can't re-introduce semi-transparent edges
+        setDesigns(prev => prev.map(d => d.id === designId
+          ? { ...d, imageInfo: newInfo, halftoned: true, alphaThresholded: true }
+          : d));
         if (selectedDesignId === designId) setImageInfo(newInfo);
       };
       img.onerror = () => URL.revokeObjectURL(url);
@@ -3165,13 +3170,38 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         const outW = Math.max(1, Math.round(artboardWidth * exportDpi));
         const outH = Math.max(1, Math.round(artboardHeight * exportDpi));
 
+        // ── Pre-clean halftoned designs ────────────────────────────────────────
+        // Halftoned designs always have binary alpha (0 or 255). However, any
+        // time the image is drawn at a scaled or rotated size on a canvas, the
+        // browser's bilinear interpolation reintroduces semi-transparent fringe
+        // pixels at the alpha boundary.  We eliminate this by:
+        //   1. Re-running the 1-bit threshold on the stored design image so the
+        //      source pixels are guaranteed binary before any canvas draw.
+        //   2. Using nearest-neighbour scaling (alphaThresholded flag, already
+        //      set) so the draw itself cannot produce anti-aliased edges.
+        const halftoneCleanMap = new Map<string, ImageInfo>();
+        await Promise.all(
+          designs
+            .filter(d => d.halftoned)
+            .map(async d => {
+              const cleaned = await thresholdAlphaForDesign(d.imageInfo);
+              if (cleaned) halftoneCleanMap.set(d.id, cleaned);
+            })
+        );
+        // Use cleaned imageInfo for halftoned designs, originals for everything else
+        const exportSrc = designs.map(d =>
+          halftoneCleanMap.has(d.id)
+            ? { ...d, imageInfo: halftoneCleanMap.get(d.id)! }
+            : d
+        );
+
         let pngBlob: Blob;
 
         if (useWorker) {
           const bitmaps = await Promise.all(
-            designs.map(d => createImageBitmap(d.imageInfo.image))
+            exportSrc.map(d => createImageBitmap(d.imageInfo.image))
           );
-          const exportDesigns = designs.map((d, i) => ({
+          const exportDesigns = exportSrc.map((d, i) => ({
             widthInches: d.widthInches,
             heightInches: d.heightInches,
             nx: d.transform.nx,
@@ -3229,7 +3259,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           ctx.clearRect(0, 0, outW, outH);
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
-          for (const design of designs) {
+          for (const design of exportSrc) {
             const img = design.imageInfo.image;
             const drawW = Math.max(1, Math.round(design.widthInches * design.transform.s * exportDpi));
             const drawH = Math.max(1, Math.round(design.heightInches * design.transform.s * exportDpi));
