@@ -162,7 +162,7 @@ export default function ControlsSection({
     if (!editingWidth) setWidthInputValue(String(artboardWidth));
   }, [artboardWidth, editingWidth]);
 
-  const [showSpotColors, setShowSpotColors] = useState(false);
+  const [showDetectedColors, setShowDetectedColors] = useState(false);
   const [showFluorInfo, setShowFluorInfo] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
   /** Snapshot taken just before auto-assign runs; null means auto-assign is not active. */
@@ -648,15 +648,8 @@ export default function ControlsSection({
 
       {enableFluorescent && imageInfo && fluorPanelContainer && createPortal(
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          {/* Outer element must NOT be <button> — the eye toggle is a <button> inside,
-              and nested buttons are invalid HTML (React also warns about it). */}
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setShowSpotColors(!showSpotColors)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSpotColors(p => !p); } }}
-            className={`flex items-center justify-between w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors cursor-pointer ${showSpotColors ? 'bg-purple-50' : ''}`}
-          >
+          {/* Header — non-interactive label row; only the eye/preview button is interactive */}
+          <div className="flex items-center justify-between w-full px-3 py-2 bg-purple-50 border-b border-purple-100">
             <div className="flex items-center gap-2">
               <Palette className="w-3.5 h-3.5 text-purple-400" />
               <span className="text-xs font-medium text-gray-900">{t("controls.fluorColors")}</span>
@@ -666,122 +659,128 @@ export default function ControlsSection({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={(e) => { e.stopPropagation(); setSpotPreviewEnabled(!spotPreviewEnabled); }}
-                className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                  spotPreviewEnabled
-                    ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                    : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
-                }`}
-                title={spotPreviewEnabled ? t("controls.hideOverlay") : t("controls.showOverlay")}
-              >
-                {spotPreviewEnabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-              </button>
-              <ChevronDown className={`w-3.5 h-3.5 text-gray-600 transition-transform ${showSpotColors ? 'rotate-180' : ''}`} />
-            </div>
+            <button
+              onClick={() => setSpotPreviewEnabled(!spotPreviewEnabled)}
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                spotPreviewEnabled
+                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                  : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
+              }`}
+              title={spotPreviewEnabled ? t("controls.hideOverlay") : t("controls.showOverlay")}
+            >
+              {spotPreviewEnabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            </button>
           </div>
 
-          {showSpotColors && (
-            <div className="px-3 pb-3 space-y-3">
-              {extractedColors.length === 0 ? (
-                <div className="text-xs text-gray-500 italic py-1">{t("controls.noColors")}</div>
-              ) : (
-                <>
-                  {/* ── Channel selector: tap to activate, then tap image ── */}
-                  {(() => {
-                    const CHANNELS = [
-                      { field: 'spotFluorY'      as const, label: 'FY', name: 'Yellow',  bg: '#DFFF00' },
-                      { field: 'spotFluorM'      as const, label: 'FM', name: 'Magenta', bg: '#FF00FF' },
-                      { field: 'spotFluorG'      as const, label: 'FG', name: 'Green',   bg: '#39FF14' },
-                      { field: 'spotFluorOrange' as const, label: 'FO', name: 'Orange',  bg: '#FF6600' },
-                    ];
-                    return (
-                      <>
-                      {/* Label so new users understand these are the selection wand buttons */}
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <svg className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M10 2l1.5 1.5-7 7L3 10l7-7z"/>
-                          <path d="M13.5 4.5l-2-2"/>
-                          <path d="M4.5 13l-1-1 .5-1.5"/>
-                        </svg>
-                        <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide">Color Select Wand</span>
-                        <span className="text-[9px] text-gray-400 font-normal normal-case tracking-normal">— pick a channel, then tap your design</span>
-                      </div>
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {CHANNELS.map(({ field, label, name, bg }) => {
-                          const isSelected = activeChannel === field;
-                          const hasAssignment = extractedColors.filter(c => (c.percentage ?? 0) >= 0.5).some(c => c[field]);
-                          return (
-                            <button
-                              key={field}
-                              onClick={() => {
-                                if (isSelected && panModeActive) {
-                                  // Reselecting same channel while in pan mode → exit pan mode, keep channel
-                                  onPanModeChange?.(false);
-                                } else {
-                                  setActiveChannel(isSelected ? null : field);
-                                  // Switching to or deselecting a channel → always exit pan mode
-                                  if (panModeActive) onPanModeChange?.(false);
-                                }
-                              }}
-                              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:brightness-95'}`}
-                              style={{
-                                borderColor: bg,
-                                // Unselected: ~20% tint so background carries the color identity.
-                                // Selected: ~45% tint with outline.
-                                // Text is always dark — fluorescent colors have terrible contrast on white.
-                                backgroundColor: isSelected ? bg + '72' : bg + '38',
-                                outline: isSelected ? `2px solid ${bg}` : 'none',
-                                outlineOffset: '2px',
-                              }}
-                              title={`${isSelected ? 'Deselect' : 'Select'} ${name} — then tap the image to assign`}
-                            >
-                              <span className="text-[15px] font-black leading-none text-gray-900">{label}</span>
-                              <span className="text-[9px] leading-none mt-0.5 text-gray-600">{name}</span>
-                              {hasAssignment && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: '#374151' }} />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      </>
-                    );
-                  })()}
+          {/* Always-visible body */}
+          <div className="px-3 pb-3 pt-3 space-y-3">
+            {extractedColors.length === 0 ? (
+              <div className="text-xs text-gray-500 italic py-1">{t("controls.noColors")}</div>
+            ) : (
+              <>
+                {/* ── Channel selector: tap to activate, then tap image ── */}
+                {(() => {
+                  const CHANNELS = [
+                    { field: 'spotFluorY'      as const, label: 'FY', name: 'Yellow',  bg: '#DFFF00' },
+                    { field: 'spotFluorM'      as const, label: 'FM', name: 'Magenta', bg: '#FF00FF' },
+                    { field: 'spotFluorG'      as const, label: 'FG', name: 'Green',   bg: '#39FF14' },
+                    { field: 'spotFluorOrange' as const, label: 'FO', name: 'Orange',  bg: '#FF6600' },
+                  ];
+                  return (
+                    <>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <svg className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10 2l1.5 1.5-7 7L3 10l7-7z"/>
+                        <path d="M13.5 4.5l-2-2"/>
+                        <path d="M4.5 13l-1-1 .5-1.5"/>
+                      </svg>
+                      <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide">Color Select Wand</span>
+                      <span className="text-[9px] text-gray-400 font-normal normal-case tracking-normal">— pick a channel, then tap your design</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {CHANNELS.map(({ field, label, name, bg }) => {
+                        const isSelected = activeChannel === field;
+                        const hasAssignment = extractedColors.filter(c => (c.percentage ?? 0) >= 0.5).some(c => c[field]);
+                        return (
+                          <button
+                            key={field}
+                            onClick={() => {
+                              if (isSelected && panModeActive) {
+                                onPanModeChange?.(false);
+                              } else {
+                                setActiveChannel(isSelected ? null : field);
+                                if (panModeActive) onPanModeChange?.(false);
+                              }
+                            }}
+                            className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl border-2 transition-all select-none active:scale-95 ${isSelected ? 'shadow-lg scale-[1.04]' : 'hover:brightness-95'}`}
+                            style={{
+                              borderColor: bg,
+                              backgroundColor: isSelected ? bg + '72' : bg + '38',
+                              outline: isSelected ? `2px solid ${bg}` : 'none',
+                              outlineOffset: '2px',
+                            }}
+                            title={`${isSelected ? 'Deselect' : 'Select'} ${name} — then tap the image to assign`}
+                          >
+                            <span className="text-[15px] font-black leading-none text-gray-900">{label}</span>
+                            <span className="text-[9px] leading-none mt-0.5 text-gray-600">{name}</span>
+                            {hasAssignment && <div className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ backgroundColor: '#374151' }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    </>
+                  );
+                })()}
 
-                  {/* Hint: tell the user to click the main preview */}
-                  <p className="text-[10px] text-center text-gray-500 leading-snug -mt-0.5">
-                    {activeChannel
-                      ? <>Tap the design in the preview →<br/>to assign <strong>{activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'}</strong></>
-                      : 'Select a channel above, then tap the design in the preview'
-                    }
-                  </p>
+                {/* Hint */}
+                <p className="text-[10px] text-center text-gray-500 leading-snug -mt-0.5">
+                  {activeChannel
+                    ? <>Tap the design in the preview →<br/>to assign <strong>{activeChannel === 'spotFluorY' ? 'FY' : activeChannel === 'spotFluorM' ? 'FM' : activeChannel === 'spotFluorG' ? 'FG' : 'FO'}</strong></>
+                    : 'Select a channel above, then tap the design in the preview'
+                  }
+                </p>
 
-                  {/* ── Auto-assign button (toggle: click again to undo) ── */}
+                {/* ── Auto-assign button (toggle: click again to undo) ── */}
+                <button
+                  onClick={handleAutoAssign}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-[12px] transition-all active:scale-95 hover:brightness-110 shadow-md"
+                  style={autoAssignActive ? {
+                    background: '#e5e7eb',
+                    color: '#374151',
+                  } : {
+                    background: 'linear-gradient(135deg, #DFFF00 0%, #39FF14 30%, #FF6600 65%, #FF00FF 100%)',
+                    color: '#111',
+                    textShadow: 'none',
+                  }}
+                  title={autoAssignActive ? 'Undo auto-assign and restore previous assignments' : 'Automatically assign fluorescent channels based on color hue'}
+                >
+                  {autoAssignActive
+                    ? <><Undo2 className="w-3.5 h-3.5 flex-shrink-0" /><span>Undo Auto Color</span></>
+                    : <><Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#111' }} /><span style={{ color: '#111' }}>Auto Color it for me!</span></>
+                  }
+                </button>
+
+                {/* ── Detected Colors dropdown ── */}
+                <div className="border-t border-gray-100 pt-2">
                   <button
-                    onClick={handleAutoAssign}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-[12px] transition-all active:scale-95 hover:brightness-110 shadow-md"
-                    style={autoAssignActive ? {
-                      background: '#e5e7eb',
-                      color: '#374151',
-                    } : {
-                      background: 'linear-gradient(135deg, #DFFF00 0%, #39FF14 30%, #FF6600 65%, #FF00FF 100%)',
-                      color: '#111',
-                      textShadow: 'none',
-                    }}
-                    title={autoAssignActive ? 'Undo auto-assign and restore previous assignments' : 'Automatically assign fluorescent channels based on color hue'}
+                    onClick={() => setShowDetectedColors(p => !p)}
+                    className="flex items-center justify-between w-full py-1 text-left group"
                   >
-                    {autoAssignActive
-                      ? <><Undo2 className="w-3.5 h-3.5 flex-shrink-0" /><span>Undo Auto Color</span></>
-                      : <><Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#111' }} /><span style={{ color: '#111' }}>Auto Color it for me!</span></>
-                    }
+                    <div className="flex items-center gap-1.5">
+                      <Palette className="w-3 h-3 text-gray-400" />
+                      <span className="text-[11px] font-semibold text-gray-600 group-hover:text-gray-800 transition-colors">
+                        Detected Colors
+                      </span>
+                      <span className="text-[9px] text-gray-400">(Pick by Color)</span>
+                      <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">
+                        {extractedColors.filter(c => (c.percentage ?? 0) >= 0.1).length}
+                      </span>
+                    </div>
+                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showDetectedColors ? 'rotate-180' : ''}`} />
                   </button>
 
-                  {/* ── Detected color list — always visible, matches reference app ── */}
-                  <div className="border-t border-gray-100 pt-2">
-                    <p className="text-[10px] text-gray-400 mb-1.5">
-                      {extractedColors.filter(c => (c.percentage ?? 0) >= 0.1).length} colors detected
-                    </p>
-                    <div ref={colorListRef} className="flex flex-col gap-1.5">
+                  {showDetectedColors && (
+                    <div ref={colorListRef} className="flex flex-col gap-1.5 mt-2">
                       {sortedColorIndices
                         .filter(idx => (extractedColors[idx].percentage ?? 0) >= 0.1)
                         .map(idx => {
@@ -799,7 +798,6 @@ export default function ControlsSection({
                           return (
                             <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden transition-all">
                               <div className="flex items-center gap-2 p-2">
-                                {/* Expand toggle + large swatch */}
                                 <div className="flex items-center gap-1 flex-shrink-0">
                                   {hasRegions && (
                                     <button onClick={() => setExpandedColorIndex(isExpanded ? null : idx)} className="p-0.5 hover:bg-gray-100 rounded">
@@ -812,14 +810,12 @@ export default function ControlsSection({
                                     title={color.hex}
                                   />
                                 </div>
-                                {/* Hex + percentage */}
                                 <div className="flex-1 min-w-0">
                                   <div className="text-[11px] font-mono font-medium text-gray-700 truncate">{color.hex}</div>
                                   <div className="text-[9px] text-gray-400">
                                     {(color.percentage ?? 0).toFixed(1)}%{hasRegions ? ` · ${color.regions!.length} shapes` : ''}
                                   </div>
                                 </div>
-                                {/* FY / FM / FG / FO buttons */}
                                 <div className="flex gap-0.5 flex-shrink-0">
                                   {INK_BTNS.map(({ field, label, bg }) => {
                                     const isAll = allFluor(field);
@@ -830,8 +826,6 @@ export default function ControlsSection({
                                         onClick={() => updateSpotColor(idx, field, !color[field])}
                                         className={`w-7 h-7 rounded text-[9px] font-bold flex items-center justify-center transition-all ${isAll ? 'ring-1 ring-offset-1 ring-offset-white scale-105' : isSome ? '' : 'hover:brightness-95'}`}
                                         style={{
-                                          // Always dark text — fluorescent colors on white are unreadable.
-                                          // Background carries the color; brightness shows activation level.
                                           backgroundColor: isAll ? bg : isSome ? bg + '66' : bg + '30',
                                           color: '#111',
                                           border: `1.5px solid ${isAll ? bg : bg + 'aa'}`,
@@ -842,7 +836,6 @@ export default function ControlsSection({
                                   })}
                                 </div>
                               </div>
-                              {/* Expanded per-region rows */}
                               {isExpanded && hasRegions && (
                                 <div className="border-t border-gray-100 bg-gray-50">
                                   {color.regions!.map(region => (
@@ -874,11 +867,11 @@ export default function ControlsSection({
                           );
                         })}
                     </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>,
         fluorPanelContainer
       )}
