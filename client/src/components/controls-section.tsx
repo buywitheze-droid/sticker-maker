@@ -139,6 +139,11 @@ export default function ControlsSection({
 
     let cancelled = false;
 
+    // Reset immediately so the previous design's pixelMap is never used to build
+    // masks for the incoming design.  computeChannelMasks will return undefined
+    // (no overlay) until runRegionDetection (or the rebuild below) repopulates it.
+    pixelMapRef.current = null;
+
     if (prevDesignIdRef.current && extractedColors.length > 0) {
       spotSelectionsRef.current.set(prevDesignIdRef.current, extractedColors);
     }
@@ -146,7 +151,18 @@ export default function ControlsSection({
 
     if (imageInfo?.image) {
       if (selectedDesignId && spotSelectionsRef.current.has(selectedDesignId)) {
-        setExtractedColors(spotSelectionsRef.current.get(selectedDesignId)!);
+        const savedColors = spotSelectionsRef.current.get(selectedDesignId)!;
+        setExtractedColors(savedColors);
+        // Rebuild pixelMap for this design so channel masks use its own pixel
+        // dimensions — not those of the previously-viewed design.
+        import("@/lib/color-extractor").then(({ buildPixelMapFromImage }) => {
+          if (cancelled) return;
+          const mapResult = buildPixelMapFromImage(imageInfo.image, savedColors as any);
+          if (!mapResult || cancelled) return;
+          pixelMapRef.current = mapResult;
+          // Trigger the mask-building effect with the fresh pixelMap.
+          if (!cancelled) setExtractedColors(prev => [...prev]);
+        }).catch(() => { /* non-critical */ });
       } else {
         const cacheKey = `${imageInfo.image.width}x${imageInfo.image.height}-${imageInfo.file?.name ?? 'unknown'}-${imageInfo.file?.size ?? 0}`;
         const cached = colorCacheRef.current.get(cacheKey);
