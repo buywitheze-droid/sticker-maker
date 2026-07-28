@@ -2680,11 +2680,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }
 
     // ── 3. Build AM halftone screen — makeHalftoneAlpha() ─────────────────
-    // Rotated cell grid centred on image; one dot per cell; radius ∝ √avgTone.
-    const cx = w * 0.5, cy = h * 0.5;
+    // All 2-D loops MUST use procW/procH — not the original w/h — because the
+    // tone/baseAlpha/screenAlpha arrays are sized N = procW*procH.  Using the
+    // original image dimensions would read out-of-bounds indices, corrupt the
+    // cell averages, and leave the screenAlpha array mostly un-written.
+    const cx = procW * 0.5, cy = procH * 0.5;
 
     let minRX = Infinity, maxRX = -Infinity, minRY = Infinity, maxRY = -Infinity;
-    for (const [xc, yc] of [[-cx,-cy],[w-cx,-cy],[-cx,h-cy],[w-cx,h-cy]] as [number,number][]) {
+    for (const [xc, yc] of [[-cx,-cy],[procW-cx,-cy],[-cx,procH-cy],[procW-cx,procH-cy]] as [number,number][]) {
       const xr =  xc*ca + yc*sa, yr = -xc*sa + yc*ca;
       if (xr < minRX) minRX = xr; if (xr > maxRX) maxRX = xr;
       if (yr < minRY) minRY = yr; if (yr > maxRY) maxRY = yr;
@@ -2697,103 +2700,93 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const cellsY = Math.ceil((maxRY + oY) / cell) + 2;
     const totalCells = cellsX * cellsY;
 
-    // Accumulate per-cell tone averages.
-    // We track two things per cell:
-    //   sums/counts — tone sum and count of OPAQUE pixels only (alpha≥1)
-    //   hasTransparent — whether the cell contains any fully-transparent bg pixel
-    //
-    // "Edge cells" (hasTransparent=true, counts>0) sit on the design boundary.
-    // Their normal dot radius would be too small because dark/mid-tone edge
-    // pixels drag the average down, leaving transparent gaps right at the
-    // design outline.  We fix this by giving edge cells a full maxR dot —
-    // every opaque pixel in the cell ends up inside the dot → solid coverage.
-    // The transparent bg pixels in the same cell still resolve to alpha=0
-    // through the min(baseAlpha, screenAlpha) composite step, so the
-    // background stays clean.
+    // Accumulate per-cell tone averages (opaque pixels only; track edge cells).
     const sums          = new Float64Array(totalCells);
     const counts        = new Uint32Array(totalCells);
-    const hasTransparent= new Uint8Array(totalCells); // 1 if cell has any alpha=0 pixel
+    const hasTransparent= new Uint8Array(totalCells);
 
-    for (let y = 0; y < h; y++) {
+    for (let y = 0; y < procH; y++) {            // ← procH, not h
       const yc = y - cy;
-      for (let x = 0; x < w; x++) {
+      for (let x = 0; x < procW; x++) {          // ← procW, not w
         const xc = x - cx;
         const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
         if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
         const idx = iy * cellsX + ix;
-        const ba = baseAlpha[y * w + x];
+        const ba = baseAlpha[y * procW + x];      // ← procW, not w
         if (ba < 1) {
-          hasTransparent[idx] = 1; // mark this cell as a boundary/edge cell
+          hasTransparent[idx] = 1;
         } else {
-          sums[idx]   += tone[y * w + x];
+          sums[idx]   += tone[y * procW + x];     // ← procW, not w
           counts[idx] ++;
         }
       }
     }
 
-    // radius[cell]:
-    //   fully transparent (no opaque pixels) → 0 (no dot)
-    //   edge cell (has transparent bg pixels)  → maxR (full dot, clean boundary)
-    //   interior cell                          → √avgTone × maxR (normal halftone)
+    // radius[cell]: transparent→0, edge→maxR (solid boundary), interior→√avg×maxR
     const radii = new Float32Array(totalCells);
     for (let i = 0; i < totalCells; i++) {
-      if (!counts[i]) continue; // no opaque pixels → radius stays 0
-      if (hasTransparent[i]) {
-        // Edge cell: force full dot so design boundary is solid, not frayed.
-        // maxR = cell×0.72 which is > cell×(√2/2)≈0.707, meaning the circle
-        // covers every pixel inside the cell — no gaps at the edge.
-        radii[i] = maxR;
-        continue;
-      }
-      // Interior cell: standard AM halftone dot
+      if (!counts[i]) continue;
+      if (hasTransparent[i]) { radii[i] = maxR; continue; }
       const avg = sums[i] / counts[i];
       let r = Math.sqrt(avg) * maxR;
       if (r < MIN_DOT) r = 0;
       radii[i] = r;
     }
 
-    // Build screenAlpha (initialised to 0; solid zone → 255; dot inside → 255)
+    // Build screenAlpha — must use procW/procH for the same reason.
     const screenAlpha = new Uint8ClampedArray(N);
-    for (let y = 0; y < h; y++) {
+    for (let y = 0; y < procH; y++) {            // ← procH, not h
       const yc = y - cy;
-      for (let x = 0; x < w; x++) {
-        const o = y * w + x;
+      for (let x = 0; x < procW; x++) {          // ← procW, not w
+        const o = y * procW + x;                  // ← procW, not w
         const t = tone[o];
 
-        // Early exits matching makeHalftoneAlpha exactly
         if (t >= 0.999) { screenAlpha[o] = 255; continue; }
-        if (t <= 0.001) { /* screenAlpha[o] stays 0 */ continue; }
+        if (t <= 0.001) { continue; }
 
         const xc = x - cx;
         const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
-        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue; // stays 0
+        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
 
         const r = radii[iy * cellsX + ix];
-        if (r <= 0) continue; // stays 0
+        if (r <= 0) continue;
 
         const xrc = (ix + 0.5) * cell, yrc = (iy + 0.5) * cell;
         const dx = xr - xrc, dy = yr - yrc;
-        if (Math.sqrt(dx*dx + dy*dy) <= r) screenAlpha[o] = 255; // inside dot
-        // outside dot: stays 0
+        if (Math.sqrt(dx*dx + dy*dy) <= r) screenAlpha[o] = 255;
       }
     }
 
-    // ── 4. Composite: finalAlpha = min(baseAlpha, screenAlpha) ────────────
-    // Then 1-bit alpha threshold (alphaThresholdOn=true, T=128) — exactly as
-    // in the reference app's runProcessSync:
-    //   if (finalAlpha >= 128) → 255 else → 0
+    // ── 4. Composite + 1-bit threshold ────────────────────────────────────
     const T = 128;
     for (let i = 0; i < N; i++) {
       let a = baseAlpha[i];
       if (screenAlpha[i] < a) a = screenAlpha[i];
-      // 1-bit threshold
       data[i * 4 + 3] = a >= T ? 255 : 0;
     }
 
     // ── 5. Commit ──────────────────────────────────────────────────────────
     ctx.putImageData(imgData, 0, 0);
+
+    // Re-read and re-threshold after putImageData.  Browsers store canvas pixels
+    // as premultiplied alpha internally; the straight→premult→straight round-trip
+    // can introduce ±1 drift on boundary pixels, leaving a handful of values like
+    // 254 or 1 that are visually semi-transparent.  One extra pass eliminates them.
+    const verify = ctx.getImageData(0, 0, procW, procH);
+    let dirty = false;
+    for (let i = 3; i < verify.data.length; i += 4) {
+      const a = verify.data[i];
+      if (a !== 0 && a !== 255) { dirty = true; break; }
+    }
+    if (dirty) {
+      for (let i = 3; i < verify.data.length; i += 4) {
+        verify.data[i] = verify.data[i] >= 128 ? 255 : 0;
+      }
+      ctx.putImageData(verify, 0, 0);
+    }
+
     saveSnapshot();
     cvs.toBlob(blob => {
       if (!blob) return;
