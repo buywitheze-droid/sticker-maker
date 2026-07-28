@@ -523,7 +523,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           setSelectionZoomActive(false);
           isSelectionZoomDragging.current = false;
           setSelZoomRect(null);
-          if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
+          if (canvasAreaRef.current && !wandDeleteActiveRef.current) canvasAreaRef.current.style.cursor = getIdleCursor();
           return;
         }
         if (!isKeyboardScopeActiveRef.current) return;
@@ -541,7 +541,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         if (e.code === 'Space') {
           spaceDownRef.current = false;
           isPanningRef.current = false;
-          if (canvasAreaRef.current && !selectionZoomActiveRef.current) {
+          if (canvasAreaRef.current && !selectionZoomActiveRef.current && !wandDeleteActiveRef.current) {
             canvasAreaRef.current.style.cursor = getIdleCursor();
           }
         }
@@ -1585,7 +1585,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const mr = { x: Math.min(s.x, e.x), y: Math.min(s.y, e.y), w: Math.abs(e.x - s.x), h: Math.abs(e.y - s.y) };
         setMarqueeRect(null);
         setMarqueeScreenRect(null);
-        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : 'default';
+        if (canvasAreaRef.current && !wandDeleteActiveRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : 'default';
         const cvs = canvasRef.current;
         if (mr && mr.w > 4 && mr.h > 4 && cvs) {
           const hitIds: string[] = [];
@@ -1624,7 +1624,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         altDragDuplicatedRef.current = false;
         altKeyAtDragStartRef.current = false;
         stopBottomGlow();
-        if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
+        if (canvasAreaRef.current && !wandDeleteActiveRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
         checkPixelOverlap();
         if (wasGroupInteracting) onInteractionEnd?.();
         return;
@@ -1640,7 +1640,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       snapGuidesRef.current = [];
       stopBottomGlow();
       if (wasInteracting) onTransformChangeRef.current?.(transformRef.current);
-      if (canvasAreaRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
+      if (canvasAreaRef.current && !wandDeleteActiveRef.current) canvasAreaRef.current.style.cursor = activeSpotChannelRef.current ? 'crosshair' : getIdleCursor();
       checkPixelOverlap();
       if (wasInteracting) onInteractionEnd?.();
     }, [checkPixelOverlap, onInteractionEnd, designs, artboardWidth, artboardHeight, onMultiSelect, stopBottomGlow, stopAutoPan]);
@@ -1761,6 +1761,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         return;
       }
       if (!canvasAreaRef.current) return;
+      // When magic-wand erase mode is active the cursor is owned by the useEffect — never override it here.
+      if (wandDeleteActiveRef.current) return;
       if (spaceDownRef.current) {
         canvasAreaRef.current.style.cursor = 'grab';
         return;
@@ -1807,7 +1809,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     const handleMouseUp = useCallback(() => {
       if (isPanningRef.current) {
         isPanningRef.current = false;
-        if (canvasAreaRef.current) {
+        if (canvasAreaRef.current && !wandDeleteActiveRef.current) {
           canvasAreaRef.current.style.cursor = spaceDownRef.current ? 'grab' : getIdleCursor();
         }
         return;
