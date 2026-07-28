@@ -295,6 +295,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [panModeActive, setPanModeActive] = useState(false);
   const wandAssignRef = useRef<((nx: number, ny: number) => void) | null>(null);
   const [wandDeleteModeActive, setWandDeleteModeActive] = useState(false);
+  const [wandTolerance, setWandTolerance] = useState(30);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -2389,21 +2390,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }
   }, [designs, selectedDesignId, saveSnapshot, toast, thresholdAlphaForDesign]);
 
-  const handleRemoveBlackBackground = useCallback(async () => {
+  const handleRemoveWhiteBackground = useCallback(async () => {
     const targetIds = selectedDesignIds.size > 0 ? Array.from(selectedDesignIds) : (selectedDesignId ? [selectedDesignId] : []);
     if (targetIds.length === 0) return;
     saveSnapshot();
-    const { removeBlackBackgroundFromImage } = await import('@/lib/background-removal');
+    const { removeBackgroundFromImage } = await import('@/lib/background-removal');
     const targetDesigns = designs.filter(d => targetIds.includes(d.id));
-    const results = await Promise.all(targetDesigns.map(d => removeBlackBackgroundFromImage(d.imageInfo.image).catch(() => null)));
+    // threshold 75 → minChannel ≥ 191 — catches off-white, cream, light-grey backgrounds
+    const results = await Promise.all(targetDesigns.map(d => removeBackgroundFromImage(d.imageInfo.image, 75).catch(() => null)));
     const updates = new Map<string, ImageInfo>();
     targetDesigns.forEach((d, i) => {
       if (results[i]) updates.set(d.id, { ...d.imageInfo, image: results[i]! });
     });
-    if (updates.size === 0) { toast({ title: 'Remove failed', description: 'Could not remove black background.', variant: 'destructive' }); return; }
+    if (updates.size === 0) { toast({ title: 'Remove failed', description: 'Could not remove white background.', variant: 'destructive' }); return; }
     setDesigns(prev => prev.map(d => { const n = updates.get(d.id); return n ? { ...d, imageInfo: n } : d; }));
     if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
-    toast({ title: 'Black background removed', description: `Applied to ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
+    toast({ title: 'White background removed', description: `Applied to ${updates.size} design${updates.size !== 1 ? 's' : ''}.` });
   }, [designs, selectedDesignId, selectedDesignIds, saveSnapshot, toast]);
 
   const handleWandDelete = useCallback((nx: number, ny: number, designId: string) => {
@@ -2412,6 +2414,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const src = design.imageInfo.image;
     const w = src.naturalWidth || src.width;
     const h = src.naturalHeight || src.height;
+    if (!w || !h) return;
     const cvs = document.createElement('canvas');
     cvs.width = w; cvs.height = h;
     const ctx = cvs.getContext('2d', { willReadFrequently: true });
@@ -2422,9 +2425,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const imgData = ctx.getImageData(0, 0, w, h);
     const data = imgData.data;
     const si = (py * w + px) * 4;
+    // Nothing to erase if we clicked transparent
     if (data[si + 3] < 10) return;
     const sr = data[si], sg = data[si + 1], sb = data[si + 2];
-    const TOL = 40;
+    // Map slider 1–100 → max-channel diff 1–255 (same metric as most wand tools)
+    const maxDiff = Math.round(wandTolerance / 100 * 255);
     const visited = new Uint8Array(w * h);
     const queue: number[] = [py * w + px];
     visited[py * w + px] = 1;
@@ -2432,9 +2437,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     while (qi < queue.length) {
       const pos = queue[qi++];
       const idx = pos * 4;
-      if (data[idx + 3] < 10) continue;
-      const dr = data[idx] - sr, dg = data[idx + 1] - sg, db = data[idx + 2] - sb;
-      if (Math.sqrt(dr*dr + dg*dg + db*db) > TOL) continue;
+      if (data[idx + 3] < 10) continue; // skip already-transparent
+      // Use max-channel distance: predictable 0–255 scale, stops at hard colour edges
+      if (
+        Math.max(
+          Math.abs(data[idx]     - sr),
+          Math.abs(data[idx + 1] - sg),
+          Math.abs(data[idx + 2] - sb)
+        ) > maxDiff
+      ) continue;
       data[idx + 3] = 0;
       const x = pos % w, y = Math.floor(pos / w);
       if (x > 0   && !visited[pos-1]) { visited[pos-1]=1; queue.push(pos-1); }
@@ -2457,7 +2468,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       img.onerror = () => URL.revokeObjectURL(url);
       img.src = url;
     }, 'image/png');
-  }, [designs, selectedDesignId, saveSnapshot]);
+  }, [designs, selectedDesignId, saveSnapshot, wandTolerance]);
 
   const handleCropDesign = useCallback(() => {
     const id = contextMenu?.designId ?? selectedDesignId;
@@ -3004,50 +3015,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               )}
               <button onClick={handleThresholdAlpha} disabled={!selectedDesignId && selectedDesignIds.size === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaTitle")}><Droplets className="w-3 h-3" />{t("editor.cleanAlpha")}</button>
               <button onClick={handleThresholdAlphaAll} disabled={designs.length === 0} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length > 0 ? 'bg-[#F1F5F9] text-[#2563EB] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.cleanAlphaAllTitle")}><Droplets className="w-3 h-3" />All</button>
-              <button
-                onClick={handleRemoveBlackBackground}
-                disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-[#1a1a1a] text-white border border-gray-700 hover:bg-gray-800' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`}
-                title="Flood-fill remove black/dark background from edges"
-              >
-                <Sun className="w-3 h-3" />Delete Black BG
-              </button>
-              <button
-                onClick={() => setWandDeleteModeActive(prev => !prev)}
-                disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] transition-all ${
-                  wandDeleteModeActive
-                    ? 'bg-amber-500 text-white border border-amber-600 shadow-sm'
-                    : selectedDesignId || selectedDesignIds.size > 0
-                      ? 'bg-[#F1F5F9] text-[#92400E] border border-[#CBD5E1] hover:bg-amber-50'
-                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                }`}
-                title={wandDeleteModeActive ? 'Wand active — click a color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to erase it'}
-              >
-                <Wand2 className="w-3 h-3" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}
-              </button>
-              <button
-                onClick={handleRemoveBlackBackground}
-                disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-[#1a1a1a] text-white border border-gray-700 hover:bg-gray-800' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`}
-                title="Flood-fill remove black/dark background from edges"
-              >
-                <Sun className="w-3 h-3" />Delete Black BG
-              </button>
-              <button
-                onClick={() => setWandDeleteModeActive(prev => !prev)}
-                disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] transition-all ${
-                  wandDeleteModeActive
-                    ? 'bg-amber-500 text-white border border-amber-600 shadow-sm'
-                    : selectedDesignId || selectedDesignIds.size > 0
-                      ? 'bg-[#F1F5F9] text-[#92400E] border border-[#CBD5E1] hover:bg-amber-50'
-                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                }`}
-                title={wandDeleteModeActive ? 'Wand active — click a color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to erase it'}
-              >
-                <Wand2 className="w-3 h-3" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}
-              </button>
               <div className="flex items-center gap-0.5 ml-auto">
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
@@ -3375,6 +3342,48 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <Droplets className="w-3 h-3" />
                   {t("editor.cleanAlphaAll")}
                 </button>
+                <button
+                  onClick={handleRemoveWhiteBackground}
+                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                    selectedDesignId || selectedDesignIds.size > 0
+                      ? 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-none'
+                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                  }`}
+                  title="Flood-fill erase white/light background from edges"
+                >
+                  <Sun className="w-3 h-3" />
+                  Delete White BG
+                </button>
+                <button
+                  onClick={() => setWandDeleteModeActive(prev => !prev)}
+                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                    wandDeleteModeActive
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 shadow-none'
+                      : selectedDesignId || selectedDesignIds.size > 0
+                        ? 'bg-[#F1F5F9] hover:bg-amber-50 text-[#92400E] border border-[#CBD5E1] shadow-none'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                  }`}
+                  title={wandDeleteModeActive ? 'Wand active — click any color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to flood-erase it'}
+                >
+                  <Wand2 className="w-3 h-3" />
+                  {wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}
+                </button>
+                {(wandDeleteModeActive || (selectedDesignId || selectedDesignIds.size > 0)) && (
+                  <div className={`flex items-center gap-1 transition-opacity ${wandDeleteModeActive ? 'opacity-100' : 'opacity-40 pointer-events-none'}`} title="Magic Wand tolerance — higher = removes more similar colours">
+                    <span className="text-[10px] text-amber-700 font-medium whitespace-nowrap">Tol</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={100}
+                      value={wandTolerance}
+                      onChange={e => setWandTolerance(Number(e.target.value))}
+                      className="w-16 h-1.5 accent-amber-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-amber-700 font-medium w-6 text-right tabular-nums">{wandTolerance}</span>
+                  </div>
+                )}
                 {!isMobile && (
                   <button
                     onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
