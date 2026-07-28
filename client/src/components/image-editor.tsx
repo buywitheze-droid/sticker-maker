@@ -2661,30 +2661,56 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const cellsY = Math.ceil((maxRY + oY) / cell) + 2;
     const totalCells = cellsX * cellsY;
 
-    // Accumulate per-cell tone averages — ONLY from opaque/semi-transparent pixels.
-    // Fully transparent background pixels (alpha=0, tone≈0) would drag down the
-    // average for edge cells, producing tiny or absent dots right at the design
-    // boundary and leaving transparent halos around the design.
-    const sums   = new Float64Array(totalCells);
-    const counts = new Uint32Array(totalCells);
+    // Accumulate per-cell tone averages.
+    // We track two things per cell:
+    //   sums/counts — tone sum and count of OPAQUE pixels only (alpha≥1)
+    //   hasTransparent — whether the cell contains any fully-transparent bg pixel
+    //
+    // "Edge cells" (hasTransparent=true, counts>0) sit on the design boundary.
+    // Their normal dot radius would be too small because dark/mid-tone edge
+    // pixels drag the average down, leaving transparent gaps right at the
+    // design outline.  We fix this by giving edge cells a full maxR dot —
+    // every opaque pixel in the cell ends up inside the dot → solid coverage.
+    // The transparent bg pixels in the same cell still resolve to alpha=0
+    // through the min(baseAlpha, screenAlpha) composite step, so the
+    // background stays clean.
+    const sums          = new Float64Array(totalCells);
+    const counts        = new Uint32Array(totalCells);
+    const hasTransparent= new Uint8Array(totalCells); // 1 if cell has any alpha=0 pixel
+
     for (let y = 0; y < h; y++) {
       const yc = y - cy;
       for (let x = 0; x < w; x++) {
-        if (baseAlpha[y * w + x] < 1) continue; // skip fully transparent bg pixels
         const xc = x - cx;
         const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
         if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
         const idx = iy * cellsX + ix;
-        sums[idx] += tone[y * w + x];
-        counts[idx]++;
+        const ba = baseAlpha[y * w + x];
+        if (ba < 1) {
+          hasTransparent[idx] = 1; // mark this cell as a boundary/edge cell
+        } else {
+          sums[idx]   += tone[y * w + x];
+          counts[idx] ++;
+        }
       }
     }
 
-    // radius[cell] = sqrt(avgTone) * maxR, clamped to minDot
+    // radius[cell]:
+    //   fully transparent (no opaque pixels) → 0 (no dot)
+    //   edge cell (has transparent bg pixels)  → maxR (full dot, clean boundary)
+    //   interior cell                          → √avgTone × maxR (normal halftone)
     const radii = new Float32Array(totalCells);
     for (let i = 0; i < totalCells; i++) {
-      if (!counts[i]) continue;
+      if (!counts[i]) continue; // no opaque pixels → radius stays 0
+      if (hasTransparent[i]) {
+        // Edge cell: force full dot so design boundary is solid, not frayed.
+        // maxR = cell×0.72 which is > cell×(√2/2)≈0.707, meaning the circle
+        // covers every pixel inside the cell — no gaps at the edge.
+        radii[i] = maxR;
+        continue;
+      }
+      // Interior cell: standard AM halftone dot
       const avg = sums[i] / counts[i];
       let r = Math.sqrt(avg) * maxR;
       if (r < MIN_DOT) r = 0;
