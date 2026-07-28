@@ -2547,15 +2547,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const h = src.naturalHeight || src.height;
     if (!w || !h) return;
 
-    // ── Screen params (fixed 300 DPI like the reference app) ──────────────
-    // The reference app always processes at targetDpi=300 regardless of image
-    // resolution.  We do the same so cell sizes / minDot match exactly.
-    const TARGET_DPI = 300;
-    const LPI        = 35;
-    const ANGLE      = 22.5 * Math.PI / 180;
-    const MIN_DOT    = (0.20 / 25.4) * TARGET_DPI; // 0.20 mm → ≈ 2.36 px
-    const cell       = Math.max(2, TARGET_DPI / LPI); // ≈ 8.57 px
-    const maxR       = cell * 0.72;                   // ≈ 6.17 px
+    // ── Screen params ──────────────────────────────────────────────────────
+    // The reference app resizes to 300 DPI FIRST, then uses targetDpi=300 for
+    // the cell formula.  We don't resize, so we must derive the effective DPI
+    // from the image's pixel width and its physical size on the gangsheet.
+    // This gives the SAME physical 35 LPI dot pitch regardless of image DPI.
+    //   effectiveDpi = pixels / inches  →  cell = effectiveDpi / 35
+    // MIN_DOT (0.20 mm) is also scaled to native pixels the same way.
+    const effectiveDpi = design.widthInches > 0 ? w / design.widthInches : 300;
+    const LPI          = 35;
+    const ANGLE        = 22.5 * Math.PI / 180;
+    const MIN_DOT      = (0.20 / 25.4) * effectiveDpi; // 0.20 mm in native px
+    const cell         = Math.max(2, effectiveDpi / LPI);
+    const maxR         = cell * 0.72;
     const ca = Math.cos(ANGLE), sa = Math.sin(ANGLE);
 
     // ── Strength presets (negra mode) ──────────────────────────────────────
@@ -2657,12 +2661,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const cellsY = Math.ceil((maxRY + oY) / cell) + 2;
     const totalCells = cellsX * cellsY;
 
-    // Accumulate per-cell tone averages (all pixels, including transparent — matches source)
+    // Accumulate per-cell tone averages — ONLY from opaque/semi-transparent pixels.
+    // Fully transparent background pixels (alpha=0, tone≈0) would drag down the
+    // average for edge cells, producing tiny or absent dots right at the design
+    // boundary and leaving transparent halos around the design.
     const sums   = new Float64Array(totalCells);
     const counts = new Uint32Array(totalCells);
     for (let y = 0; y < h; y++) {
       const yc = y - cy;
       for (let x = 0; x < w; x++) {
+        if (baseAlpha[y * w + x] < 1) continue; // skip fully transparent bg pixels
         const xc = x - cx;
         const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
