@@ -345,6 +345,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [wandTolerance, setWandTolerance] = useState(30);
   const [halftoneMenuOpen, setHalftoneMenuOpen] = useState(false);
   const [halftoneTopColors, setHalftoneTopColors] = useState<Array<{ r: number; g: number; b: number; hex: string; name?: string }>>([]);
+  const [halftoneStrength, setHalftoneStrength] = useState<'light' | 'balanced' | 'strong'>('balanced');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -2538,7 +2539,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
    * Screen params (default "Light / Simple" in the real app):
    *  LPI=35, angle=22.5°, minDot=0.20 mm, maxR=cell×0.72, gamma=1.
    */
-  const handleApplyHalftone = useCallback((designId: string, tr: number, tg: number, tb: number) => {
+  const handleApplyHalftone = useCallback((designId: string, tr: number, tg: number, tb: number, strength: 'light' | 'balanced' | 'strong' = 'balanced') => {
     const design = designs.find(d => d.id === designId);
     if (!design) return;
     const src = design.imageInfo.image;
@@ -2546,14 +2547,48 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const h = src.naturalHeight || src.height;
     if (!w || !h) return;
 
-    const DPI      = design.widthInches > 0 ? w / design.widthInches : 300;
-    const LPI      = 35;
-    const ANGLE    = 22.5 * Math.PI / 180;
-    const MIN_DOT  = (0.20 / 25.4) * DPI; // 0.20 mm in pixels
-    const INCH_PX  = DPI / LPI;
-    const cell     = Math.max(2, INCH_PX);
-    const maxR     = cell * 0.72;
+    // ── Screen params (fixed 300 DPI like the reference app) ──────────────
+    // The reference app always processes at targetDpi=300 regardless of image
+    // resolution.  We do the same so cell sizes / minDot match exactly.
+    const TARGET_DPI = 300;
+    const LPI        = 35;
+    const ANGLE      = 22.5 * Math.PI / 180;
+    const MIN_DOT    = (0.20 / 25.4) * TARGET_DPI; // 0.20 mm → ≈ 2.36 px
+    const cell       = Math.max(2, TARGET_DPI / LPI); // ≈ 8.57 px
+    const maxR       = cell * 0.72;                   // ≈ 6.17 px
     const ca = Math.cos(ANGLE), sa = Math.sin(ANGLE);
+
+    // ── Strength presets (negra mode) ──────────────────────────────────────
+    // Source: INTENSITIES.negra in the reference app (s_remove/s_spread → bc/wc)
+    //   s_remove → bc = round(eff/100 * 180)
+    //   s_spread → wc = min(255, bc + 80 + round(v/100*100))
+    //   light:    s_remove=0,  s_spread=0  → bc=0,  wc=80
+    //   balanced: s_remove=15, s_spread=25 → bc=27, wc=132
+    //   strong:   s_remove=30, s_spread=40 → bc=54, wc=174
+    //
+    // For colour garments (OKLab distance mode):
+    //   Light:    s_remove=25, s_spread=18 → tol=25, feather=round(18/100*120)=22
+    //   Balanced: s_remove=40, s_spread=25 → tol=40, feather=30
+    //   Strong:   s_remove=55, s_spread=32 → tol=55, feather=38
+    const isBlack = tr < 5 && tg < 5 && tb < 5;
+
+    let blackCut: number, whiteCut: number;
+    let tolUI: number,    featherUI: number;
+
+    if (strength === 'light') {
+      blackCut = 0;  whiteCut = 80;
+      tolUI = 25;    featherUI = 22;
+    } else if (strength === 'strong') {
+      blackCut = 54; whiteCut = 174;
+      tolUI = 55;    featherUI = 38;
+    } else { // balanced (default)
+      blackCut = 27; whiteCut = 132;
+      tolUI = 40;    featherUI = 30;
+    }
+    const denom  = Math.max(1, whiteCut - blackCut);
+    const TOL    = tolUI    / 200; // OKLab units  (UI_TO_OK = 1/200)
+    const FEATHER= featherUI / 200;
+    const UPPER  = TOL + FEATHER;
 
     // ── 1. Read pixels ─────────────────────────────────────────────────────
     const cvs = document.createElement('canvas');
@@ -2565,53 +2600,52 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const data = imgData.data;
     const N = w * h;
 
-    // ── 2. Compute tone[i] ∈ [0,1] per pixel ──────────────────────────────
-    // tone=0 → pixel is fully removed (garment colour shows through)
-    // tone=1 → pixel is fully solid (printed with full opacity)
+    // Save original alpha channel (needed for finalAlpha = min(base, screen))
+    const baseAlpha = new Uint8ClampedArray(N);
+    for (let i = 0; i < N; i++) baseAlpha[i] = data[i * 4 + 3];
+
+    // ── 2. Compute tone[i] ∈ [0,1] for EVERY pixel (including transparent)
+    // This exactly matches toneFromLuminance / toneFromColorDistance in the
+    // reference app — alpha is NOT checked here. The alpha channel is only
+    // re-applied in step 4 via min(baseAlpha, screenAlpha).
     const tone = new Float32Array(N);
-    const isBlack = tr < 5 && tg < 5 && tb < 5;
 
     if (isBlack) {
-      // Luminance mode — Light preset: whiteCut=80 (blackCut=0)
-      // Pure black (lum=0) → tone=0 (transparent / not printed)
-      // lum≥80 → tone=1 (solid)
-      const WHITE_CUT = 80;
+      // Luminance mode — tone = (lum − blackCut) / (whiteCut − blackCut)
+      // Reference: toneFromLuminance(data, w, h, blackCut, whiteCut, gamma=1)
       for (let i = 0; i < N; i++) {
         const o = i * 4;
-        if (data[o + 3] < 1) { tone[i] = 1; continue; } // transparent pixel → don't touch
         const lum = 0.2126 * data[o] + 0.7152 * data[o + 1] + 0.0722 * data[o + 2];
-        let v = lum / WHITE_CUT;
-        if (v > 1) v = 1;
-        tone[i] = v;
+        let v = (lum - blackCut) / denom;
+        if (v < 0) v = 0; else if (v > 1) v = 1;
+        tone[i] = v; // gamma=1 → no power needed
       }
     } else {
-      // OKLab colour-distance mode — Light preset for colour garments:
-      //   tol=25/200=0.125, feather=22/200=0.110 OKLab units
-      const TOL     = 25 / 200;
-      const FEATHER = 22 / 200;
-      const UPPER   = TOL + FEATHER;
-      const gLab    = srgbToOklab(tr, tg, tb);
+      // OKLab colour-distance mode — tone = (dist − tol) / feather
+      // Reference: toneFromColorDistance(data, w, h, garmentLab, tolUI, featherUI,
+      //            chromaWeight=1, preserveLuma=false, gamma=1)
+      const gLab = srgbToOklab(tr, tg, tb);
       for (let i = 0; i < N; i++) {
         const o = i * 4;
-        if (data[o + 3] < 1) { tone[i] = 1; continue; } // transparent → solid (don't touch)
         const pLab = srgbToOklab(data[o], data[o + 1], data[o + 2]);
+        // chromaWeight=1, preserveLuma=false → Lw=1, Cw=1 (defaults)
         const dL = pLab[0] - gLab[0], da = pLab[1] - gLab[1], db = pLab[2] - gLab[2];
         const dist = Math.sqrt(dL*dL + da*da + db*db);
-        if (dist <= TOL) { tone[i] = 0; continue; }
-        if (dist >= UPPER) { tone[i] = 1; continue; }
-        tone[i] = (dist - TOL) / FEATHER;
+        let v: number;
+        if (dist <= TOL) v = 0;
+        else if (dist >= UPPER) v = 1;
+        else v = (dist - TOL) / FEATHER;
+        tone[i] = v; // gamma=1
       }
     }
 
-    // ── 3. Build AM halftone screen (rotated grid, one dot per cell) ───────
-    // Identical to makeHalftoneAlpha() in the real app source.
+    // ── 3. Build AM halftone screen — makeHalftoneAlpha() ─────────────────
+    // Rotated cell grid centred on image; one dot per cell; radius ∝ √avgTone.
     const cx = w * 0.5, cy = h * 0.5;
 
-    // Compute the bounding box of the rotated image corners
     let minRX = Infinity, maxRX = -Infinity, minRY = Infinity, maxRY = -Infinity;
     for (const [xc, yc] of [[-cx,-cy],[w-cx,-cy],[-cx,h-cy],[w-cx,h-cy]] as [number,number][]) {
-      const xr =  xc*ca + yc*sa;
-      const yr = -xc*sa + yc*ca;
+      const xr =  xc*ca + yc*sa, yr = -xc*sa + yc*ca;
       if (xr < minRX) minRX = xr; if (xr > maxRX) maxRX = xr;
       if (yr < minRY) minRY = yr; if (yr > maxRY) maxRY = yr;
     }
@@ -2621,17 +2655,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const oY = (ny + 0.5) * cell;
     const cellsX = Math.ceil((maxRX + oX) / cell) + 2;
     const cellsY = Math.ceil((maxRY + oY) / cell) + 2;
-    const total  = cellsX * cellsY;
+    const totalCells = cellsX * cellsY;
 
-    // Accumulate per-cell tone averages
-    const sums   = new Float64Array(total);
-    const counts = new Uint32Array(total);
+    // Accumulate per-cell tone averages (all pixels, including transparent — matches source)
+    const sums   = new Float64Array(totalCells);
+    const counts = new Uint32Array(totalCells);
     for (let y = 0; y < h; y++) {
       const yc = y - cy;
       for (let x = 0; x < w; x++) {
         const xc = x - cx;
-        const xr =  xc*ca + yc*sa + oX;
-        const yr = -xc*sa + yc*ca + oY;
+        const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
         if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
         const idx = iy * cellsX + ix;
@@ -2640,9 +2673,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       }
     }
 
-    // radius[cell] = sqrt(avgTone) * maxR  (same formula as real app)
-    const radii = new Float32Array(total);
-    for (let i = 0; i < total; i++) {
+    // radius[cell] = sqrt(avgTone) * maxR, clamped to minDot
+    const radii = new Float32Array(totalCells);
+    for (let i = 0; i < totalCells; i++) {
       if (!counts[i]) continue;
       const avg = sums[i] / counts[i];
       let r = Math.sqrt(avg) * maxR;
@@ -2650,39 +2683,43 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       radii[i] = r;
     }
 
-    // ── 4. Carve halftone pattern into the alpha channel ───────────────────
-    // finalAlpha[i] = min(original_alpha, screen_alpha)
-    // The RGB values stay untouched — the garment colour shows through the
-    // transparent gaps, exactly as in the real app.
+    // Build screenAlpha (initialised to 0; solid zone → 255; dot inside → 255)
+    const screenAlpha = new Uint8ClampedArray(N);
     for (let y = 0; y < h; y++) {
       const yc = y - cy;
       for (let x = 0; x < w; x++) {
         const o = y * w + x;
         const t = tone[o];
-        const pxBase = o * 4;
 
-        if (t >= 0.999) continue;             // solid → keep original alpha
-        if (t <= 0.001) { data[pxBase + 3] = 0; continue; } // fully removed
+        // Early exits matching makeHalftoneAlpha exactly
+        if (t >= 0.999) { screenAlpha[o] = 255; continue; }
+        if (t <= 0.001) { /* screenAlpha[o] stays 0 */ continue; }
 
-        // Halftone zone: is this pixel inside its cell's dot?
         const xc = x - cx;
-        const xr =  xc*ca + yc*sa + oX;
-        const yr = -xc*sa + yc*ca + oY;
+        const xr =  xc*ca + yc*sa + oX, yr = -xc*sa + yc*ca + oY;
         const ix = (xr / cell) | 0, iy = (yr / cell) | 0;
-        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue;
-        const idx = iy * cellsX + ix;
+        if (ix < 0 || iy < 0 || ix >= cellsX || iy >= cellsY) continue; // stays 0
 
-        const r = radii[idx];
-        if (r <= 0) { data[pxBase + 3] = 0; continue; }
+        const r = radii[iy * cellsX + ix];
+        if (r <= 0) continue; // stays 0
 
         const xrc = (ix + 0.5) * cell, yrc = (iy + 0.5) * cell;
         const dx = xr - xrc, dy = yr - yrc;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-
-        // Hard-edge dot (softEdges=false — the app's default)
-        const screenA = dist <= r ? 255 : 0;
-        if (screenA < data[pxBase + 3]) data[pxBase + 3] = screenA;
+        if (Math.sqrt(dx*dx + dy*dy) <= r) screenAlpha[o] = 255; // inside dot
+        // outside dot: stays 0
       }
+    }
+
+    // ── 4. Composite: finalAlpha = min(baseAlpha, screenAlpha) ────────────
+    // Then 1-bit alpha threshold (alphaThresholdOn=true, T=128) — exactly as
+    // in the reference app's runProcessSync:
+    //   if (finalAlpha >= 128) → 255 else → 0
+    const T = 128;
+    for (let i = 0; i < N; i++) {
+      let a = baseAlpha[i];
+      if (screenAlpha[i] < a) a = screenAlpha[i];
+      // 1-bit threshold
+      data[i * 4 + 3] = a >= T ? 255 : 0;
     }
 
     // ── 5. Commit ──────────────────────────────────────────────────────────
@@ -3297,12 +3334,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   title="Halftone: convert a colour in your design to halftone dots"
                 ><HalftoneIcon className="w-3.5 h-3.5" />Halftone</button>
                 {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
-                  <div className="absolute bottom-full mb-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[190px] py-1" onClick={e => e.stopPropagation()}>
-                    <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Halftone for…</div>
+                  <div className="absolute bottom-full mb-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[210px] py-1" onClick={e => e.stopPropagation()}>
+                    {/* Strength selector */}
+                    <div className="px-3 pt-1.5 pb-1">
+                      <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Strength</div>
+                      <div className="flex gap-1">
+                        {(['light','balanced','strong'] as const).map(s => (
+                          <button key={s} onClick={() => setHalftoneStrength(s)}
+                            className={`flex-1 text-[10px] py-0.5 rounded border font-medium capitalize transition-colors ${halftoneStrength === s ? 'bg-amber-500 text-white border-amber-600' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-amber-50'}`}>
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="h-px bg-gray-100 mb-1" />
+                    <div className="px-3 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Garment colour</div>
                     {/* Black — always first */}
                     <button
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
-                      onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0); }}
+                      onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0, halftoneStrength); }}
                     >
                       <span className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0" style={{ background: '#000000' }} />
                       <span className="font-medium">Black</span>
@@ -3315,7 +3365,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           <button
                             key={i}
                             className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
-                            onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b); }}
+                            onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b, halftoneStrength); }}
                           >
                             <span className="w-4 h-4 rounded-full border border-gray-200 flex-shrink-0" style={{ background: c.hex }} />
                             <span>{c.name ?? c.hex}</span>
@@ -3712,12 +3762,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     Halftone
                   </button>
                   {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
-                    <div className="absolute top-full mt-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[200px] py-1" onClick={e => e.stopPropagation()}>
-                      <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Halftone for…</div>
+                    <div className="absolute top-full mt-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[210px] py-1" onClick={e => e.stopPropagation()}>
+                      {/* Strength selector */}
+                      <div className="px-3 pt-1.5 pb-1">
+                        <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Strength</div>
+                        <div className="flex gap-1">
+                          {(['light','balanced','strong'] as const).map(s => (
+                            <button key={s} onClick={() => setHalftoneStrength(s)}
+                              className={`flex-1 text-[10px] py-0.5 rounded border font-medium capitalize transition-colors ${halftoneStrength === s ? 'bg-amber-500 text-white border-amber-600' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-amber-50'}`}>
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="h-px bg-gray-100 mb-1" />
+                      <div className="px-3 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Garment colour</div>
                       {/* Black — always first */}
                       <button
                         className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
-                        onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0); }}
+                        onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0, halftoneStrength); }}
                       >
                         <span className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0" style={{ background: '#000000' }} />
                         <span className="font-medium">Black</span>
@@ -3730,7 +3793,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                             <button
                               key={i}
                               className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
-                              onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b); }}
+                              onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b, halftoneStrength); }}
                             >
                               <span className="w-4 h-4 rounded-full border border-gray-200 flex-shrink-0" style={{ background: c.hex }} />
                               <span>{c.name ?? c.hex}</span>
