@@ -345,7 +345,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [wandTolerance, setWandTolerance] = useState(30);
   const [halftoneMenuOpen, setHalftoneMenuOpen] = useState(false);
   const [halftoneTopColors, setHalftoneTopColors] = useState<Array<{ r: number; g: number; b: number; hex: string; name?: string }>>([]);
-  const [halftoneStrength, setHalftoneStrength] = useState<'light' | 'balanced' | 'strong'>('balanced');
+  const [halftoneStrength, setHalftoneStrength] = useState<'light' | 'balanced' | 'strong'>('light');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
