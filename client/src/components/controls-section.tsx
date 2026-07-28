@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizeSettings, ImageInfo } from "./image-editor";
-import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info, Sparkles } from "lucide-react";
+import { Download, Layers, FileCheck, Palette, Eye, EyeOff, ChevronDown, ChevronUp, Info, Sparkles, Undo2 } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
 import { formatLength } from "@/lib/format-length";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -165,6 +165,9 @@ export default function ControlsSection({
   const [showSpotColors, setShowSpotColors] = useState(false);
   const [showFluorInfo, setShowFluorInfo] = useState(false);
   const [extractedColors, setExtractedColors] = useState<ExtractedColor[]>([]);
+  /** Snapshot taken just before auto-assign runs; null means auto-assign is not active. */
+  const preAutoAssignSnapshot = useRef<ExtractedColor[] | null>(null);
+  const [autoAssignActive, setAutoAssignActive] = useState(false);
   const [spotPreviewEnabled, setSpotPreviewEnabled] = useState(true);
   const spotFluorYName = "FY";
   const spotFluorMName = "FM";
@@ -193,6 +196,9 @@ export default function ControlsSection({
     // masks for the incoming design.  computeChannelMasks will return undefined
     // (no overlay) until runRegionDetection (or the rebuild below) repopulates it.
     pixelMapRef.current = null;
+    // Reset auto-assign toggle whenever the active design changes.
+    preAutoAssignSnapshot.current = null;
+    setAutoAssignActive(false);
 
     if (prevDesignIdRef.current && extractedColors.length > 0) {
       spotSelectionsRef.current.set(prevDesignIdRef.current, extractedColors);
@@ -418,7 +424,18 @@ export default function ControlsSection({
   }, [selectedDesignId]);
 
   const handleAutoAssign = useCallback(() => {
+    if (autoAssignActive && preAutoAssignSnapshot.current) {
+      // ── Undo: restore the snapshot taken before auto-assign ──
+      const restored = preAutoAssignSnapshot.current;
+      preAutoAssignSnapshot.current = null;
+      setAutoAssignActive(false);
+      setExtractedColors(restored);
+      if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, restored);
+      return;
+    }
+    // ── Apply: save snapshot then assign channels ──
     setExtractedColors(prev => {
+      preAutoAssignSnapshot.current = prev.map(c => ({ ...c, regions: c.regions ? [...c.regions] : undefined }));
       const updated = prev.map(color => {
         const channel = autoAssignChannel(color.rgb);
         // Colors with no fluorescent match are left unassigned (all flags cleared).
@@ -438,7 +455,8 @@ export default function ControlsSection({
       if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
       return updated;
     });
-  }, [selectedDesignId]);
+    setAutoAssignActive(true);
+  }, [selectedDesignId, autoAssignActive]);
 
   // Live refs so handleWandAssign never reads a stale closure snapshot.
   const activeChannelLiveRef = useRef(activeChannel);
@@ -738,19 +756,24 @@ export default function ControlsSection({
                     }
                   </p>
 
-                  {/* ── Auto-assign button ── */}
+                  {/* ── Auto-assign button (toggle: click again to undo) ── */}
                   <button
                     onClick={handleAutoAssign}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-[12px] text-white transition-all active:scale-95 hover:brightness-110 shadow-md"
-                    style={{
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-[12px] transition-all active:scale-95 hover:brightness-110 shadow-md"
+                    style={autoAssignActive ? {
+                      background: '#e5e7eb',
+                      color: '#374151',
+                    } : {
                       background: 'linear-gradient(135deg, #DFFF00 0%, #39FF14 30%, #FF6600 65%, #FF00FF 100%)',
                       color: '#111',
                       textShadow: 'none',
                     }}
-                    title="Automatically assign fluorescent channels based on color hue"
+                    title={autoAssignActive ? 'Undo auto-assign and restore previous assignments' : 'Automatically assign fluorescent channels based on color hue'}
                   >
-                    <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#111' }} />
-                    <span style={{ color: '#111' }}>Auto Color it for me!</span>
+                    {autoAssignActive
+                      ? <><Undo2 className="w-3.5 h-3.5 flex-shrink-0" /><span>Undo Auto Color</span></>
+                      : <><Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#111' }} /><span style={{ color: '#111' }}>Auto Color it for me!</span></>
+                    }
                   </button>
 
                   {/* ── Detected color list — always visible, matches reference app ── */}
