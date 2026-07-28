@@ -1,21 +1,18 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
 
-// Magic-wand cursor: same wand icon used in the fluorescent-panel header, scaled to 32×32.
-// Built once at module load with encodeURIComponent so every space and special character
-// is properly percent-encoded — unencoded spaces inside a CSS url() break the cursor.
+// Magic-wand cursor: identical paths and stroke settings to the "Color Select Wand" icon
+// in the fluorescent panel (viewBox 0 0 16 16, stroke-width 1.5, same three paths).
+// Rendered at 24×24 px so it looks exactly like the button icon.
+// Hotspot at the wand tip: path 2 ends at (11.5, 2.5) in the 16-unit space → ~(17, 4) in 24px.
+// encodeURIComponent ensures every space is percent-encoded; without it CSS url() silently drops the cursor.
 const _WAND_SVG = [
-  `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`,
-  // black shadow pass
-  `<path d="M20 4l3 3-14 14L6 20l14-14z" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-  `<path d="M27 9l-4-4" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round"/>`,
-  `<path d="M9 26l-2-2 1-3" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-  // white foreground pass
-  `<path d="M20 4l3 3-14 14L6 20l14-14z" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-  `<path d="M27 9l-4-4" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
-  `<path d="M9 26l-2-2 1-3" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 16 16">`,
+  `<path d="M10 2l1.5 1.5-7 7L3 10l7-7z" stroke="#222" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  `<path d="M13.5 4.5l-2-2" stroke="#222" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+  `<path d="M4.5 13l-1-1 .5-1.5" stroke="#222" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
   `</svg>`,
 ].join("");
-const WAND_CURSOR_CSS = `url("data:image/svg+xml,${encodeURIComponent(_WAND_SVG)}") 27 9, crosshair`;
+const WAND_CURSOR_CSS = `url("data:image/svg+xml,${encodeURIComponent(_WAND_SVG)}") 17 4, crosshair`;
 import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, Focus, Hand } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
