@@ -1,4 +1,21 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from "react";
+
+// Magic-wand cursor: same wand icon used in the fluorescent-panel header, scaled to 32×32.
+// Built once at module load with encodeURIComponent so every space and special character
+// is properly percent-encoded — unencoded spaces inside a CSS url() break the cursor.
+const _WAND_SVG = [
+  `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`,
+  // black shadow pass
+  `<path d="M20 4l3 3-14 14L6 20l14-14z" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  `<path d="M27 9l-4-4" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round"/>`,
+  `<path d="M9 26l-2-2 1-3" stroke="#000" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // white foreground pass
+  `<path d="M20 4l3 3-14 14L6 20l14-14z" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  `<path d="M27 9l-4-4" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
+  `<path d="M9 26l-2-2 1-3" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+  `</svg>`,
+].join("");
+const WAND_CURSOR_CSS = `url("data:image/svg+xml,${encodeURIComponent(_WAND_SVG)}") 27 9, crosshair`;
 import { ZoomIn, ZoomOut, RotateCcw, ScanSearch, Focus, Hand } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/i18n";
@@ -85,31 +102,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
-    // Magic-wand cursor: 32×32 version of the "Color Select Wand" SVG icon used in the
-    // fluorescent panel — same three paths, scaled 2× from the 16×16 viewBox.
-    // Hotspot at the wand tip (top-right corner of the body path) ≈ (27, 9).
-    const WAND_CURSOR = [
-      "url(\"data:image/svg+xml,",
-      "%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E",
-      // Drop-shadow pass (black, slightly thicker) for visibility on any background
-      "%3Cpath d='M20 4l3 3-14 14L6 20l14-14z' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
-      "%3Cpath d='M27 9l-4-4' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round'/%3E",
-      "%3Cpath d='M9 26l-2-2 1-3' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
-      // White foreground pass
-      "%3Cpath d='M20 4l3 3-14 14L6 20l14-14z' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
-      "%3Cpath d='M27 9l-4-4' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E",
-      "%3Cpath d='M9 26l-2-2 1-3' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E",
-      "%3C/svg%3E",
-      "\") 27 9, crosshair",
-    ].join("");
-
     useEffect(() => {
       const area = canvasAreaRef.current;
       if (!area) return;
       if (panModeActive && activeSpotChannel) {
         area.style.cursor = 'grab';
       } else if (wandDeleteActive) {
-        area.style.cursor = WAND_CURSOR;
+        area.style.cursor = WAND_CURSOR_CSS;
       } else if (activeSpotChannel) {
         area.style.cursor = 'crosshair';
       } else {
