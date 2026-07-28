@@ -3750,6 +3750,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             onPanModeChange={profile.enableFluorescent ? setPanModeActive : undefined}
             wandDeleteActive={wandDeleteModeActive}
             onWandDeleteTap={handleWandDelete}
+            onWandDeactivate={() => setWandDeleteModeActive(false)}
           />
         </div>
       </div>

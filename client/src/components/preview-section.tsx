@@ -62,10 +62,12 @@ interface PreviewSectionProps {
   /** When true, clicking the canvas erases the color at the tapped pixel (magic wand delete). */
   wandDeleteActive?: boolean;
   onWandDeleteTap?: (nx: number, ny: number, designId: string) => void;
+  /** Called whenever the user initiates a zoom gesture so the parent can deactivate wand mode. */
+  onWandDeactivate?: () => void;
 }
 
 const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
-  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap, panModeActive = false, onPanModeChange, wandDeleteActive = false, onWandDeleteTap }, ref) => {
+  ({ imageInfo, resizeSettings, artboardWidth = 24.5, artboardHeight = 12, designTransform, onTransformChange, designs = [], selectedDesignId, selectedDesignIds = new Set(), onSelectDesign, onMultiSelect, onMultiDragDelta, onMultiResizeDelta, onMultiRotateDelta, onDuplicateSelected, onInteractionEnd, onExpandArtboard, onDesignContextMenu, spotPreviewData, selectionZoomActive: selectionZoomActiveProp, onSelectionZoomChange, activeSpotChannel, onWandTap, panModeActive = false, onPanModeChange, wandDeleteActive = false, onWandDeleteTap, onWandDeactivate }, ref) => {
     const { toast } = useToast();
     const { t, lang } = useLanguage();
     const isMobile = useIsMobile();
@@ -85,6 +87,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     wandDeleteActiveRef.current = wandDeleteActive;
     const onWandDeleteTapRef = useRef<typeof onWandDeleteTap>(onWandDeleteTap);
     onWandDeleteTapRef.current = onWandDeleteTap;
+    const onWandDeactivateRef = useRef<typeof onWandDeactivate>(onWandDeactivate);
+    onWandDeactivateRef.current = onWandDeactivate;
 
     // Forcibly set/clear the imperative style.cursor when wand / pan mode changes.
     // CSS classes cannot override inline style, so we must do this imperatively.
@@ -1929,6 +1933,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         e.preventDefault();
         isPinchingRef.current = true;
         isPanningRef.current = false;
+        // Deactivate magic wand when a pinch-zoom gesture begins.
+        if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
         const dx = e.touches[1].clientX - e.touches[0].clientX;
         const dy = e.touches[1].clientY - e.touches[0].clientY;
         pinchStartDistRef.current = Math.sqrt(dx * dx + dy * dy);
@@ -2338,6 +2344,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
         // Ctrl/Cmd+wheel OR pinch-to-zoom (browsers set ctrlKey for pinch): ZOOM
         if (e.ctrlKey || e.metaKey) {
+          // Deactivate magic wand when the user starts zooming with the wheel.
+          if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
           isWheelZoomingRef.current = true;
           if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
           wheelTimeoutRef.current = setTimeout(() => { isWheelZoomingRef.current = false; }, 200);
