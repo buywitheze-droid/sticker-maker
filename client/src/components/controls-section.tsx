@@ -115,9 +115,9 @@ function autoAssignChannel(
 ): 'spotFluorY' | 'spotFluorM' | 'spotFluorG' | 'spotFluorOrange' | null {
   const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
   // Skip near-neutral colors — not worth fluorescent ink.
-  // Threshold at 0.35: warm greys and cool greys typically sit at s=0.05–0.30
-  // and without this they bleed into FM (which wraps around 0°/360°).
-  if (s < 0.35 || l < 0.08 || l > 0.93) return null;
+  // Threshold at 0.60: only clearly vivid colors qualify for auto-assign.
+  // Greys, muted tones, and lightly-tinted neutrals all sit below this.
+  if (s < 0.60 || l < 0.08 || l > 0.93) return null;
   if (h >= 45  && h < 80)  return 'spotFluorY';
   if (h >= 80  && h < 165) return 'spotFluorG';
   if (h >= 15  && h < 45)  return 'spotFluorOrange';
