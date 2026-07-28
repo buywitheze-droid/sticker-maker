@@ -33,6 +33,21 @@ const MagicWandIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+/** Halftone icon — a grid of circles shrinking diagonally, representing halftone dots. */
+const HalftoneIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 16 16" fill="currentColor" className={className} aria-hidden="true">
+    <circle cx="2.5" cy="2.5" r="2.2"/>
+    <circle cx="8"   cy="2.5" r="1.6"/>
+    <circle cx="13.5" cy="2.5" r="0.9"/>
+    <circle cx="2.5" cy="8"   r="1.6"/>
+    <circle cx="8"   cy="8"   r="1.1"/>
+    <circle cx="13.5" cy="8"   r="0.6"/>
+    <circle cx="2.5" cy="13.5" r="0.9"/>
+    <circle cx="8"   cy="13.5" r="0.6"/>
+    <circle cx="13.5" cy="13.5" r="0.3"/>
+  </svg>
+);
+
 export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import { type ProfileConfig, HOT_PEEL_PROFILE } from "@/lib/profiles";
@@ -306,6 +321,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const clearActiveChannelRef = useRef<(() => void) | null>(null);
   const [wandDeleteModeActive, setWandDeleteModeActive] = useState(false);
   const [wandTolerance, setWandTolerance] = useState(30);
+  const [halftoneMenuOpen, setHalftoneMenuOpen] = useState(false);
+  const [halftoneTopColors, setHalftoneTopColors] = useState<Array<{ r: number; g: number; b: number; hex: string; name?: string }>>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -2480,6 +2497,136 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }, 'image/png');
   }, [designs, selectedDesignId, saveSnapshot, wandTolerance]);
 
+  /**
+   * Apply a halftone dot pattern to pixels in the selected design that match
+   * the target colour (tr, tg, tb).  Uses the "Light" preset from the
+   * buywitheze halftone tool: 8 px cell grid, offset rows, max dot radius =
+   * 60 % of cell, 80-step max-channel tolerance.
+   */
+  const handleApplyHalftone = useCallback((designId: string, tr: number, tg: number, tb: number) => {
+    const design = designs.find(d => d.id === designId);
+    if (!design) return;
+    const src = design.imageInfo.image;
+    const w = src.naturalWidth || src.width;
+    const h = src.naturalHeight || src.height;
+    if (!w || !h) return;
+
+    const CELL = 8;           // Light strength: 8 px cell
+    const MAX_R = CELL * 0.62; // Max dot radius (slightly over half cell so dots can touch)
+    const TOL   = 80;          // Max-channel tolerance — comparable to Wand at ~30 %
+
+    // ── Step 1: read pixels and compute halftone dots ──────────────────────
+    const srcCvs = document.createElement('canvas');
+    srcCvs.width = w; srcCvs.height = h;
+    const srcCtx = srcCvs.getContext('2d', { willReadFrequently: true });
+    if (!srcCtx) return;
+    srcCtx.drawImage(src, 0, 0);
+    const imgData = srcCtx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    const dots: Array<{ cx: number; cy: number; r: number }> = [];
+    const rows = Math.ceil(h / CELL) + 2;
+    const cols = Math.ceil(w / CELL) + 2;
+
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        // Offset every other row by half a cell (brick-wall / rosette layout)
+        const cx = col * CELL + ((row & 1) === 0 ? 0 : CELL * 0.5);
+        const cy = row * CELL;
+
+        const x0 = Math.max(0, Math.floor(cx - CELL / 2));
+        const y0 = Math.max(0, Math.floor(cy - CELL / 2));
+        const x1 = Math.min(w, Math.ceil(cx + CELL / 2));
+        const y1 = Math.min(h, Math.ceil(cy + CELL / 2));
+
+        let total = 0, matched = 0;
+        for (let py = y0; py < y1; py++) {
+          for (let px = x0; px < x1; px++) {
+            const i = (py * w + px) * 4;
+            if (data[i + 3] < 10) continue;
+            total++;
+            if (
+              Math.max(
+                Math.abs(data[i]   - tr),
+                Math.abs(data[i+1] - tg),
+                Math.abs(data[i+2] - tb)
+              ) <= TOL
+            ) matched++;
+          }
+        }
+
+        if (total === 0 || matched / total < 0.05) continue;
+
+        // Erase matched pixels in this cell
+        for (let py = y0; py < y1; py++) {
+          for (let px = x0; px < x1; px++) {
+            const i = (py * w + px) * 4;
+            if (data[i + 3] < 10) continue;
+            if (
+              Math.max(
+                Math.abs(data[i]   - tr),
+                Math.abs(data[i+1] - tg),
+                Math.abs(data[i+2] - tb)
+              ) <= TOL
+            ) data[i + 3] = 0;
+          }
+        }
+
+        // Record a dot — radius scales as sqrt of coverage so it looks natural
+        const radius = Math.sqrt(matched / total) * MAX_R;
+        if (radius >= 0.4) dots.push({ cx, cy, r: radius });
+      }
+    }
+
+    // ── Step 2: composite erased image + dots onto result canvas ───────────
+    srcCtx.putImageData(imgData, 0, 0);
+    const result = document.createElement('canvas');
+    result.width = w; result.height = h;
+    const rCtx = result.getContext('2d');
+    if (!rCtx) return;
+    rCtx.drawImage(srcCvs, 0, 0);
+
+    rCtx.fillStyle = `rgb(${tr},${tg},${tb})`;
+    for (const { cx, cy, r } of dots) {
+      rCtx.beginPath();
+      rCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      rCtx.fill();
+    }
+
+    saveSnapshot();
+    result.toBlob(blob => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const newInfo: ImageInfo = { ...design.imageInfo, image: img };
+        setDesigns(prev => prev.map(d => d.id === designId ? { ...d, imageInfo: newInfo } : d));
+        if (selectedDesignId === designId) setImageInfo(newInfo);
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    }, 'image/png');
+  }, [designs, selectedDesignId, saveSnapshot]);
+
+  /** Open the halftone colour-picker menu, extracting the top 4 image colours. */
+  const handleOpenHalftoneMenu = useCallback(async () => {
+    const id = selectedDesignId;
+    if (!id) return;
+    const design = designs.find(d => d.id === id);
+    if (!design) return;
+    if (wandDeleteModeActive) setWandDeleteModeActive(false);
+
+    const { extractColorsFromImage } = await import('@/lib/color-extractor');
+    const extracted = extractColorsFromImage(design.imageInfo.image, 8);
+    // Top 4 colours — include any colour (user picks what to halftone)
+    const top4 = extracted.slice(0, 4).map(c => ({
+      r: c.rgb.r, g: c.rgb.g, b: c.rgb.b, hex: c.hex, name: c.name,
+    }));
+    setHalftoneTopColors(top4);
+    setHalftoneMenuOpen(prev => !prev);
+  }, [selectedDesignId, designs, wandDeleteModeActive]);
+
   const handleCropDesign = useCallback(() => {
     const id = contextMenu?.designId ?? selectedDesignId;
     if (id) {
@@ -3043,6 +3190,48 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 }`}
                 title={wandDeleteModeActive ? 'Wand active — tap a color to erase it. Tap again to deactivate.' : 'Magic Wand: tap a color to flood-erase it'}
               ><MagicWandIcon className="w-3.5 h-3.5" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}</button>
+              {/* Halftone — mobile */}
+              <div className="relative">
+                <button
+                  onClick={handleOpenHalftoneMenu}
+                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${
+                    selectedDesignId || selectedDesignIds.size > 0
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                  }`}
+                  title="Halftone: convert a colour in your design to halftone dots"
+                ><HalftoneIcon className="w-3.5 h-3.5" />Halftone</button>
+                {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
+                  <div className="absolute bottom-full mb-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[190px] py-1" onClick={e => e.stopPropagation()}>
+                    <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Halftone for…</div>
+                    {/* Black — always first */}
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
+                      onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0); }}
+                    >
+                      <span className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0" style={{ background: '#000000' }} />
+                      <span className="font-medium">Black</span>
+                    </button>
+                    {halftoneTopColors.length > 0 && (
+                      <>
+                        <div className="h-px bg-gray-100 my-1" />
+                        <div className="px-3 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Top colours</div>
+                        {halftoneTopColors.map((c, i) => (
+                          <button
+                            key={i}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
+                            onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b); }}
+                          >
+                            <span className="w-4 h-4 rounded-full border border-gray-200 flex-shrink-0" style={{ background: c.hex }} />
+                            <span>{c.name ?? c.hex}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="flex items-center gap-0.5 ml-auto">
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
@@ -3413,6 +3602,51 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     <span className="text-[10px] text-fuchsia-700 font-medium w-6 text-right tabular-nums">{wandTolerance}</span>
                   </div>
                 )}
+                {/* Halftone — desktop */}
+                <div className="relative">
+                  <button
+                    onClick={handleOpenHalftoneMenu}
+                    disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                      selectedDesignId || selectedDesignIds.size > 0
+                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 shadow-none'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title="Halftone: convert a colour in your design to halftone dots (Light preset)"
+                  >
+                    <HalftoneIcon className="w-3.5 h-3.5" />
+                    Halftone
+                  </button>
+                  {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
+                    <div className="absolute top-full mt-1 left-0 z-50 bg-white border border-gray-200 rounded-lg shadow-xl min-w-[200px] py-1" onClick={e => e.stopPropagation()}>
+                      <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Halftone for…</div>
+                      {/* Black — always first */}
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
+                        onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, 0, 0, 0); }}
+                      >
+                        <span className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0" style={{ background: '#000000' }} />
+                        <span className="font-medium">Black</span>
+                      </button>
+                      {halftoneTopColors.length > 0 && (
+                        <>
+                          <div className="h-px bg-gray-100 my-1" />
+                          <div className="px-3 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Top colours</div>
+                          {halftoneTopColors.map((c, i) => (
+                            <button
+                              key={i}
+                              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-900 hover:bg-amber-50 transition-colors"
+                              onClick={() => { setHalftoneMenuOpen(false); const id = selectedDesignId ?? [...selectedDesignIds][0]; if (id) handleApplyHalftone(id, c.r, c.g, c.b); }}
+                            >
+                              <span className="w-4 h-4 rounded-full border border-gray-200 flex-shrink-0" style={{ background: c.hex }} />
+                              <span>{c.name ?? c.hex}</span>
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {!isMobile && (
                   <button
                     onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
@@ -3758,6 +3992,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       </div>
       {/* Download bar at the very bottom of the app */}
       <div ref={setDownloadContainer} className="flex-shrink-0" />
+
+      {/* Halftone menu backdrop — closes the menu when clicking anywhere outside it */}
+      {halftoneMenuOpen && (
+        <div className="fixed inset-0 z-40" onClick={() => setHalftoneMenuOpen(false)} />
+      )}
 
       {/* Right-click context menu */}
       {contextMenu && (
