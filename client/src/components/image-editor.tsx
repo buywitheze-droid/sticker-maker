@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
 import UploadSection from "./upload-section";
 import PreviewSection from "./preview-section";
@@ -100,7 +100,11 @@ function SizeInput({
       : cm.toFixed(2)
     : value.toFixed(2);
 
-  const commit = (raw: string) => {
+  // Capture onCommit at focus time — immune to mid-edit flushSync deselects
+  // that create a new onCommit(selectedDesignId=null) closure before blur fires.
+  const onCommitAtFocusRef = useRef<typeof onCommit>(onCommit);
+
+  const commit = (raw: string, commitFn: typeof onCommit) => {
     const v = parseFloat(raw);
     if (isNaN(v)) return;
     const inches = metric
@@ -108,8 +112,11 @@ function SizeInput({
         ? cmToInches(v * 100)
         : cmToInches(v)
       : v;
-    onCommit(Math.max(min, Math.min(inches, max)));
+    commitFn(Math.max(min, Math.min(inches, max)));
   };
+
+  // Step size: 0.1" imperial, ~0.25 cm metric
+  const stepInches = metric ? cmToInches(0.25) : 0.1;
 
   if (editing) {
     return (
@@ -121,12 +128,12 @@ function SizeInput({
         autoFocus
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {
-          commit(draft);
+          commit(draft, onCommitAtFocusRef.current);
           setEditing(false);
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            commit(draft);
+            commit(draft, onCommitAtFocusRef.current);
             setEditing(false);
           } else if (e.key === "Escape") setEditing(false);
         }}
@@ -136,17 +143,42 @@ function SizeInput({
   }
 
   return (
-    <input
-      type="text"
-      readOnly
-      className={`h-6 bg-white border-2 border-gray-300 rounded font-semibold text-gray-800 text-center outline-none cursor-pointer hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 transition-colors shadow-sm ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
-      value={display}
-      onFocus={() => {
-        setDraft(display);
-        setEditing(true);
-      }}
-      title={title + " — click to edit"}
-    />
+    <div className="flex items-center gap-px">
+      <input
+        type="text"
+        readOnly
+        className={`h-6 bg-white border-2 border-gray-300 rounded font-semibold text-gray-800 text-center outline-none cursor-pointer hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 transition-colors shadow-sm ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
+        value={display}
+        onFocus={() => {
+          onCommitAtFocusRef.current = onCommit;
+          setDraft(display);
+          setEditing(true);
+        }}
+        title={title + " — click to edit"}
+      />
+      <div className="flex flex-col" style={{ gap: 1 }}>
+        <button
+          type="button"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onCommit(Math.max(min, Math.min(max, value + stepInches)))}
+          className="w-3.5 h-[10px] flex items-center justify-center bg-gray-100 hover:bg-cyan-100 border border-gray-300 rounded-t text-gray-400 hover:text-cyan-600 transition-colors"
+          title="Increase size"
+        >
+          <ChevronUp className="w-2.5 h-2.5" strokeWidth={3} />
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onCommit(Math.max(min, Math.min(max, value - stepInches)))}
+          className="w-3.5 h-[10px] flex items-center justify-center bg-gray-100 hover:bg-cyan-100 border border-gray-300 border-t-0 rounded-b text-gray-400 hover:text-cyan-600 transition-colors"
+          title="Decrease size"
+        >
+          <ChevronDown className="w-2.5 h-2.5" strokeWidth={3} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -327,6 +359,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [selectionZoomActive, setSelectionZoomActive] = useState(false);
   const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
+  const [editingCountKey, setEditingCountKey] = useState<string | null>(null);
+  const [editingCountValue, setEditingCountValue] = useState('');
   const clipboardRef = useRef<DesignItem[]>([]);
   const [proportionalLock, setProportionalLock] = useState(true);
   const designInfoRef = useRef<HTMLDivElement>(null);
@@ -511,6 +545,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       return () => clearTimeout(t);
     }
   }, [designs.length]);
+
+  // Belt-and-suspenders: keep lastActiveDesignIdRef in sync via layout effect
+  // so it is valid regardless of which code path performs the selection.
+  // useLayoutEffect fires synchronously after each render (including inside
+  // flushSync), so the ref is always set before any subsequent event handler.
+  useLayoutEffect(() => {
+    if (selectedDesignId !== null) {
+      lastActiveDesignIdRef.current = selectedDesignId;
+    }
+  }, [selectedDesignId]);
 
   const handleSelectDesign = useCallback((id: string | null) => {
     // Update the last-active ref BEFORE flushSync so that any blur handler
@@ -1023,6 +1067,32 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     setSelectedDesignIds(nextIds);
     setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
   }, [designs, saveSnapshot, selectedDesignId, selectedDesignIds]);
+
+  const handleSetGroupCount = useCallback((
+    row: { baseName: string; sizeKey: string; designs: DesignItem[] },
+    targetCount: number
+  ) => {
+    if (isNaN(targetCount) || targetCount < 1 || targetCount > 200) return;
+    const current = row.designs.length;
+    const delta = targetCount - current;
+    if (delta === 0) return;
+    saveSnapshot();
+    if (delta > 0) {
+      const base = row.designs[0];
+      const copies = Array.from({ length: delta }, () => ({
+        ...base,
+        id: crypto.randomUUID(),
+        name: base.name.replace(/ copy( \d+)?$/, ''),
+        transform: { ...base.transform },
+        printFileName: false,
+      }));
+      setDesigns(prev => [...prev, ...copies]);
+    } else {
+      const idsToRemove = new Set(row.designs.slice(current + delta).map(d => d.id));
+      setDesigns(prev => prev.filter(d => !idsToRemove.has(d.id)));
+    }
+    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+  }, [saveSnapshot]);
 
   const handleCopySelected = useCallback(() => {
     const toCopy = designs.filter(d => selectedDesignIds.has(d.id));
@@ -3759,7 +3829,26 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         >
                           <Minus className="w-2.5 h-2.5" strokeWidth={3} />
                         </button>
-                        <span className="text-[10px] text-cyan-400 font-semibold min-w-[18px] text-center tabular-nums">x{count}</span>
+                        {editingCountKey === `${row.baseName}::${row.sizeKey}` ? (
+                          <input
+                            type="number"
+                            min="1"
+                            max="200"
+                            autoFocus
+                            className="w-8 h-4 text-[10px] text-cyan-600 font-semibold text-center border border-cyan-400 rounded bg-white outline-none tabular-nums"
+                            value={editingCountValue}
+                            onChange={(e) => setEditingCountValue(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onBlur={() => { handleSetGroupCount(row, parseInt(editingCountValue)); setEditingCountKey(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { handleSetGroupCount(row, parseInt(editingCountValue)); setEditingCountKey(null); } else if (e.key === 'Escape') setEditingCountKey(null); e.stopPropagation(); }}
+                          />
+                        ) : (
+                          <span
+                            className="text-[10px] text-cyan-400 font-semibold min-w-[18px] text-center tabular-nums cursor-pointer hover:text-cyan-600"
+                            title="Click to set exact count"
+                            onClick={(e) => { e.stopPropagation(); setEditingCountKey(`${row.baseName}::${row.sizeKey}`); setEditingCountValue(String(count)); }}
+                          >x{count}</span>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDuplicateById(first.id); }}
                           className="w-4 h-4 rounded-full bg-gray-200 hover:bg-cyan-100 text-gray-600 hover:text-cyan-600 flex items-center justify-center transition-colors"

@@ -3431,7 +3431,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-100 border-t border-gray-200 px-2 py-1.5 lg:px-3 lg:py-1.5 min-w-0">
+        <div className="flex-shrink-0 flex items-center justify-between gap-2 bg-gray-100 border-t border-gray-200 px-2 py-1.5 lg:px-3 lg:py-2.5 min-w-0">
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto overflow-y-hidden flex-1 [scrollbar-width:thin]">
                 {selectedDesignId && designTransform && (
                   <>
@@ -3491,10 +3491,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                       variant="ghost"
                       size="sm"
                       onClick={() => onPanModeChange?.(!panModeActive)}
-                      className={`h-6 px-1.5 rounded whitespace-nowrap flex items-center gap-0.5 text-[11px] transition-colors ${panModeActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'text-gray-600 hover:bg-gray-200'}`}
+                      className={`h-6 lg:h-10 px-1.5 lg:px-3 rounded whitespace-nowrap flex items-center gap-0.5 text-[11px] lg:text-sm transition-colors ${panModeActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'text-gray-600 hover:bg-gray-200'}`}
                       title={panModeActive ? 'Hand mode: click to return to paint mode' : 'Switch to hand tool to pan while zoomed in'}
                     >
-                      <Hand className="h-2.5 w-2.5 flex-shrink-0" />
+                      <Hand className="h-2.5 w-2.5 lg:h-4 lg:w-4 flex-shrink-0" />
                       <span className="ml-0.5">{panModeActive ? 'Pan' : 'Pan'}</span>
                     </Button>
                     <div className="w-px h-3.5 bg-gray-300" />
@@ -3504,7 +3504,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
+                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 lg:h-11 lg:w-11 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
                       const newZ = Math.max(zoomRef.current / ZOOM_BUTTON_FACTOR, minZoomRef.current);
@@ -3518,15 +3518,15 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     }}
                     title={t("preview.zoomOut")}
                   >
-                    <ZoomOut className="h-4 w-4 text-gray-600" />
+                    <ZoomOut className="h-4 w-4 lg:h-6 lg:w-6 text-gray-600" />
                   </Button>
-                  <span className="text-[11px] text-gray-600 min-w-[32px] text-center font-medium tabular-nums px-0.5">
+                  <span className="text-[11px] lg:text-sm text-gray-600 min-w-[32px] lg:min-w-[48px] text-center font-medium tabular-nums px-0.5">
                     {Math.round(zoom * 100)}%
                   </span>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
+                    className="min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 h-8 w-8 sm:h-7 sm:w-7 lg:h-11 lg:w-11 p-0 hover:bg-gray-200 rounded flex items-center justify-center"
                     onClick={() => {
                       if (wandDeleteActiveRef.current) onWandDeactivateRef.current?.();
                       const newZ = Math.min(zoomRef.current * ZOOM_BUTTON_FACTOR, zoomMax);
@@ -3540,7 +3540,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     }}
                     title={t("preview.zoomIn")}
                   >
-                    <ZoomIn className="h-4 w-4 text-gray-600" />
+                    <ZoomIn className="h-4 w-4 lg:h-6 lg:w-6 text-gray-600" />
                   </Button>
                 </div>
                 <div className="w-px h-3.5 bg-gray-300" />
@@ -3549,10 +3549,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={() => setSelectionZoomActive(prev => !prev)}
-                    className={`h-6 px-1.5 hover:bg-gray-200 rounded whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'} flex items-center`}
+                    className={`h-6 lg:h-10 px-1.5 lg:px-3 hover:bg-gray-200 rounded whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} lg:text-sm ${selectionZoomActive ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-600'} flex items-center`}
                     title={t("preview.selectionZoom")}
                   >
-                    <ScanSearch className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
+                    <ScanSearch className="h-2.5 w-2.5 lg:h-4 lg:w-4 mr-0.5 flex-shrink-0" />
                     {t("preview.selectToZoom")}
                   </Button>
                 )}
@@ -3561,10 +3561,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={resetView}
-                    className={`h-6 px-1.5 hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}`}
+                    className={`h-6 lg:h-10 px-1.5 lg:px-3 hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} lg:text-sm`}
                     title={t("preview.resetView")}
                   >
-                    <RotateCcw className="h-2.5 w-2.5 mr-0.5 flex-shrink-0" />
+                    <RotateCcw className="h-2.5 w-2.5 lg:h-4 lg:w-4 mr-0.5 flex-shrink-0" />
                     {t("preview.reset")}
                   </Button>
                 )}
@@ -3573,16 +3573,16 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={zoomToSelected}
-                    className={`${isMobile ? 'min-w-[36px] min-h-[36px] h-8 w-8 p-0 justify-center' : 'h-6 px-1.5'} hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} flex items-center`}
+                    className={`${isMobile ? 'min-w-[36px] min-h-[36px] h-8 w-8 p-0 justify-center' : 'h-6 lg:h-10 px-1.5 lg:px-3'} hover:bg-gray-200 rounded text-gray-600 whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} flex items-center`}
                     title={t("preview.focusTitle")}
                   >
-                    <Focus className={`${isMobile ? 'h-4 w-4' : 'h-2.5 w-2.5 mr-0.5'} flex-shrink-0`} />
+                    <Focus className={`${isMobile ? 'h-4 w-4' : 'h-2.5 lg:h-4 w-2.5 lg:w-4 mr-0.5'} flex-shrink-0`} />
                     {!isMobile && t("preview.focus")}
                   </Button>
                 )}
               </div>
 
-              <div className={`flex items-center ${isMobile ? 'gap-1.5' : 'gap-1'} flex-shrink-0`}>
+              <div className={`flex items-center ${isMobile ? 'gap-1.5' : 'gap-2.5'} flex-shrink-0`}>
                 {[
                   { color: 'transparent', label: 'Transparent' },
                   { color: '#ffffff', label: 'White' },
@@ -3596,8 +3596,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     className={`rounded-full border-2 transition-all ${previewBgColor === color ? 'border-cyan-400 scale-110' : 'border-gray-300 hover:border-gray-500'}`}
                     title={label}
                     style={{
-                      width: isMobile ? 22 : 18,
-                      height: isMobile ? 22 : 18,
+                      width: isMobile ? 22 : 36,
+                      height: isMobile ? 22 : 36,
                       background: color === 'transparent'
                         ? 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 6px 6px'
                         : color
