@@ -348,6 +348,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [halftoneStrength, setHalftoneStrength] = useState<'light' | 'balanced' | 'strong'>('balanced');
   const [showSizeHint, setShowSizeHint] = useState(false);
   const hasShownSizeHintRef = useRef(false);
+  // Holds the last non-null selectedDesignId so size-input blur commits
+  // survive the flushSync deselect that fires before blur in browser event order.
+  const lastActiveDesignIdRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -510,6 +513,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [designs.length]);
 
   const handleSelectDesign = useCallback((id: string | null) => {
+    // Update the last-active ref BEFORE flushSync so that any blur handler
+    // that fires synchronously after flushSync can still read the correct ID.
+    if (id) lastActiveDesignIdRef.current = id;
     flushSync(() => {
       setSelectedDesignId(id);
       setSelectedDesignIds(id ? new Set([id]) : new Set());
@@ -778,8 +784,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [selectedDesignIds, artboardWidth, artboardHeight]);
 
   const handleEffectiveSizeChange = useCallback((axis: 'width' | 'height', value: number) => {
-    if (!selectedDesignId || value <= 0) return;
-    const design = designs.find(d => d.id === selectedDesignId);
+    // Fall back to lastActiveDesignIdRef when selectedDesignId is null.
+    // This handles the case where the canvas mousedown (capture phase) fires
+    // flushSync-deselect BEFORE the SizeInput blur commit, so the id is gone
+    // by the time we get here.
+    const targetId = selectedDesignId ?? lastActiveDesignIdRef.current;
+    if (!targetId || value <= 0) return;
+    const design = designs.find(d => d.id === targetId);
     if (!design) return;
     const currentS = design.transform.s;
     const currentW = design.widthInches;
@@ -802,20 +813,20 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
       const newTransform = { ...design.transform, s: newS, nx, ny };
       setDesignTransform(newTransform);
-      setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, transform: newTransform } : d));
+      setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, transform: newTransform } : d));
     } else {
       if (axis === 'width') {
         const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / currentS));
         const updated = { ...design, widthInches: newW };
         const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, widthInches: newW }));
-        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } } : d));
+        setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } } : d));
       } else {
         const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / currentS));
         const updated = { ...design, heightInches: newH };
         const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, heightInches: newH }));
-        setDesigns(prev => prev.map(d => d.id === selectedDesignId ? { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } } : d));
+        setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } } : d));
       }
     }
   }, [selectedDesignId, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight]);
