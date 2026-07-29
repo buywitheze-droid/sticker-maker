@@ -121,12 +121,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const metadata = await sharp(req.file.buffer).metadata();
       
+      // PNGs without a pHYs chunk have no real embedded DPI.
+      // Sharp reports density: 72 synthetically for these files.
+      // Treat that synthetic default as "no real metadata" and fall back to 300 DPI.
+      const isUnsetPngDpi = metadata.format === 'png' && metadata.density === 72;
+      const density = (!metadata.density || isUnsetPngDpi) ? 300 : metadata.density;
+
       res.json({
         width: metadata.width,
         height: metadata.height,
         format: metadata.format,
         channels: metadata.channels,
-        density: metadata.density || 72,
+        density,
         size: req.file.size,
       });
     } catch (error) {

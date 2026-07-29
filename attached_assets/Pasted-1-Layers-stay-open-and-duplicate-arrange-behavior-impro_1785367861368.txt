@@ -1,0 +1,300 @@
+1. Layers stay open and duplicate/arrange behavior improved
+Commit: 6d21126 Keep layers open with per-design duplicate arrange
+
+Changed:
+
+client/src/components/image-editor/image-editor-provider.tsx
+client/src/components/image-editor/image-editor-view.tsx
+client/src/components/image-editor/useImageEditorModelArrangeKeyboard.ts
+client/src/components/image-editor/useImageEditorModelStateDesign.ts
+Behavior:
+
+Layers panel remains open during duplicate operations.
+Per-design duplicate-and-arrange behavior was preserved.
+Duplicate actions trigger arrangement without unexpectedly closing or replacing the Layers UI.
+2. Auto-Arrange and Layers row readability
+Commit: b881cbf Improve auto arrange and layer row readability
+
+Changed:
+
+client/src/components/image-editor/editor-action-toolbar.tsx
+client/src/components/image-editor/image-editor-view.tsx
+Behavior/UI:
+
+Improved Auto-Arrange visibility.
+Improved spacing and readability of Layers rows.
+Adjusted controls so layer actions are easier to identify.
+3. Layer copy input matches size controls
+Commit: a10030f Match layer copy input to size controls
+
+Changed:
+
+client/src/components/image-editor/image-editor-view.tsx
+Behavior/UI:
+
+Copy-count input styling was aligned with the newer size controls.
+Exact copy counts can be edited from Layers.
+Increment/decrement controls were improved.
+4. Auto-Arrange expands gangsheet height on overflow
+Commit: 60f2252 Expand gangsheet for auto arrange overflow
+
+Changed:
+
+client/src/components/image-editor/image-editor-view.tsx
+client/src/components/image-editor/useImageEditorModelArrangeKeyboard.ts
+Behavior:
+
+Auto-Arrange detects when designs do not fit.
+It advances through configured gangsheet heights.
+It reruns arrangement after resizing.
+It does not invent unconfigured gangsheet sizes.
+5. Shopify embed uses configured gangsheet heights
+Commit: 57d06dd Load embed with Shopify height configuration
+
+Changed:
+
+client/src/pages/embed.tsx
+Behavior:
+
+Embed views receive Shopify-configured gangsheet height information.
+Embed sizing now respects the same configured height behavior as the main editor.
+6. Direct embed editor access
+Commit: e4b7ada Allow direct embed editor access
+
+Changed:
+
+client/src/pages/sticker-maker.tsx
+Behavior:
+
+Direct /embed access remains usable without a Shopify product context.
+Shopify context continues to enhance the editor when available.
+7. Raster uploads default to 300 DPI
+Commit: 0e3c471 Use stable DPI defaults for raster uploads
+
+Changed:
+
+client/src/components/image-editor/constants.ts
+client/src/components/image-editor/utils.ts
+server/routes.ts
+Behavior:
+
+Raster uploads without valid DPI metadata default to 300 DPI.
+Valid DPI is not silently lowered based on pixel dimensions.
+The old behavior that could reinterpret uploads using low-resolution assumptions was removed.
+8. Raster DPI behavior documented
+Commit: e7737ea Document raster upload DPI rule
+
+Changed:
+
+.agents/memory/MEMORY.md
+.agents/memory/raster-upload-dpi.md
+Documentation:
+
+Documents the 300-DPI fallback.
+Documents that pixel dimensions alone do not determine physical print size.
+9. Size controls made more readable
+Commit: e2a8ec3 Improve size control readability
+
+Changed:
+
+client/src/components/image-editor/editor-action-toolbar.tsx
+client/src/components/image-editor/size-input.tsx
+UI:
+
+Enlarged size fields.
+Increased contrast.
+Improved readability of numeric width/height controls.
+10. Editor typography improvements
+Commit: 0548377 Improve editor typography readability
+
+Changed:
+
+client/src/components/controls-section.tsx
+client/src/components/image-editor/editor-action-toolbar.tsx
+client/src/components/image-editor/image-editor-view.tsx
+client/src/components/preview-section.tsx
+UI:
+
+Increased text sizes where controls were difficult to read.
+Improved button labels and metadata contrast.
+Preserved compact sizing only for intentionally compact badges.
+11. Multi-selection rotates as a true group
+Commit: 469fe40 Rotate selected designs as a group
+
+Changed:
+
+client/src/components/image-editor/image-editor-provider.tsx
+client/src/components/image-editor/useImageEditorModelStateDesign.ts
+Behavior:
+
+Selected designs rotate around the combined selection center.
+Individual spacing is preserved.
+Each design’s own rotation is updated.
+The group is treated as one geometric unit rather than rotating each item independently.
+12. Group rotation rule documented
+Commit: 776592e Document group rotation clamping rule
+
+Changed:
+
+.agents/memory/MEMORY.md
+.agents/memory/group-rotation-clamping.md
+Documentation:
+
+Records the group-center rotation rule.
+Records the requirement to avoid independent per-design clamping.
+13. Group rotation wall bounds and stronger controls
+Commit: 74cdf70 Enforce rotation bounds and strengthen controls
+
+Changed:
+
+.agents/memory/group-rotation-clamping.md
+client/src/components/image-editor/editor-action-toolbar.tsx
+client/src/components/image-editor/image-editor-provider.tsx
+client/src/components/image-editor/useImageEditorModelStateDesign.ts
+Behavior/UI:
+
+Rotation stops when the group would cross any artboard wall.
+The group is not shifted back into bounds.
+Individual designs are not independently clamped during group rotation.
+Rotation and positioning controls were made larger and higher contrast.
+14. Initial Layers copy arrangement delay
+Commit: db2bf75 Arrange layers copies after count changes
+
+Changed:
+
+client/src/components/image-editor/image-editor-provider.tsx
+Behavior:
+
+Copy-count changes wait for React state updates before running Auto-Arrange.
+Uses a double requestAnimationFrame() delay so the new design list and selection state are committed first.
+15. Direct embeds load full configured sizes
+Commit: 32954d3 Load full sizes for direct embeds
+
+Changed:
+
+client/src/pages/sticker-maker.tsx
+Behavior:
+
+Direct embed views load the full Shopify-configured gangsheet sizes.
+Larger configured sizes are no longer omitted when opening embeds directly.
+16. Prominent Undo button
+Commit: dd20125 Make undo action easier to find
+
+Changed:
+
+client/src/components/image-editor/editor-action-toolbar.tsx
+UI:
+
+Undo now has a clear UNDO label.
+Increased button prominence.
+Preserved existing undo functionality and disabled state.
+17. Fix Sharp’s synthetic 72-DPI PNG value
+Commit: 7fcef88 Treat metadata-free PNGs as 300 DPI
+
+Changed:
+
+server/routes.ts
+.agents/memory/raster-upload-dpi.md
+Root cause fixed:
+
+PNGs without a pHYs chunk have no real embedded DPI.
+Sharp reports a default density: 72 for these files.
+The app was mistakenly treating that synthetic 72 value as real metadata.
+Implementation:
+
+Added real PNG pHYs chunk detection.
+Metadata-free PNGs now return 300 DPI.
+Real embedded PNG DPI remains respected, capped at the application’s supported maximum.
+Verified with:
+
+Cousinfront: 3417×4923, density 300
+cousin_back: 3055×5268, density 300
+
+18. Added Cousin artwork test assets
+Commit: 017481d Add cousin front and back images to assets
+
+Added:
+
+attached_assets/Cousinfront_1785366629010.png
+attached_assets/cousin_back_1785366629010.png
+These were used to reproduce and verify the 72-DPI upload issue.
+
+19. Fix Layers copies stacking in one vertical line
+Commit: e3b91c4 Pack layer copies across the full sheet
+
+Changed:
+
+client/src/components/image-editor/image-editor-provider.tsx
+client/src/components/image-editor/useImageEditorModelArrangeKeyboard.ts
+client/src/components/image-editor/useImageEditorModelStateDesign.ts
+.agents/memory/MEMORY.md
+.agents/memory/copy-count-arrangement.md
+Root cause fixed:
+
+Increasing a Layers copy count selected the new copies.
+Auto-Arrange interpreted that as “arrange selected designs only.”
+All other designs were treated as fixed obstacles.
+The new copies therefore stacked below the source design.
+Implementation:
+
+Added an arrangeAll option to Auto-Arrange.
+Layers copy-count changes now call:
+bag.handleAutoArrangeRef.current({
+  skipSnapshot: true,
+  preserveSelection: true,
+  arrangeAll: true,
+});
+
+Behavior:
+
+Copy changes now repack the entire sheet.
+Designs fill space across and down.
+Gangsheet height expansion still works.
+The copied layer remains selected.
+A second click on Auto-Arrange is no longer required.
+20. Shrink selection handles and rotation zones at low zoom
+Commit: 2a84434 Shrink selection controls at low zoom
+
+Changed:
+
+client/src/components/preview-section.tsx
+.agents/memory/MEMORY.md
+.agents/memory/low-zoom-selection-controls.md
+Root cause fixed:
+
+Handles used inverse zoom scaling.
+When the whole sheet was fit into view, the handles and rotation hit zones appeared disproportionately large.
+The rotation ring could activate when clicking in the design interior.
+Implementation:
+
+function getLowZoomHandleScale(zoom: number): number {
+  return zoom < 1 ? 0.25 : 1;
+}
+
+Applied to:
+
+Single-design resize handles.
+Single-design rotation hit zones.
+Multi-selection resize handles.
+Multi-selection rotation hit zones.
+Visible single-design corner controls.
+Visible multi-selection corner controls.
+Behavior:
+
+Below 100% zoom: controls are 25% of their previous size.
+At 100% zoom and above: existing behavior is unchanged.
+Rotation no longer triggers across an oversized center-area zone.
+21. Added low-zoom reference screenshot
+Commit: 6870855 Add screenshot asset
+
+Added:
+
+attached_assets/Screenshot_2026-07-29_162254_1785367389608.png
+This was the reference image for the oversized low-zoom handles and rotation hit area.
+
+22. Deployment commits
+These commits contain deployment bookkeeping rather than additional application behavior:
+
+ebbac1b Published your App
+ececb1c Published your App
+18e6970 Published your App

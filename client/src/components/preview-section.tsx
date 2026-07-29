@@ -17,6 +17,12 @@ const ZOOM_WHEEL_FACTOR = 1.1;
 const ZOOM_BUTTON_FACTOR = 1.2;
 const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round'%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='%23000' stroke-width='4'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M4 12a8 8 0 0 1 14.93-4' stroke='white' stroke-width='2'/%3E%3Cpath d='m19 4 0 4-4 0' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 12a8 8 0 0 1-14.93 4' stroke='white' stroke-width='2'/%3E%3Cpath d='m5 20 0-4 4 0' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 11 11, pointer`;
 
+/** At low zoom the inverse-zoom scaling makes handles disproportionately large.
+ *  Scale them down to 25% when zoomed out below 100% so they don't swamp the design. */
+function getLowZoomHandleScale(zoom: number): number {
+  return zoom < 1 ? 0.25 : 1;
+}
+
 function getResizeCursor(handleId: string, rotationDeg: number): string {
   const baseMap: Record<string, number> = { tl: 315, tr: 45, br: 135, bl: 225 };
   const base = baseMap[handleId] ?? 135;
@@ -615,8 +621,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (!rect) return null;
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
-      const resizeR = 7 * inv;
-      const rotateOuterR = 18 * inv;
+      const hScale = getLowZoomHandleScale(z);
+      const resizeR = 7 * inv * hScale;
+      const rotateOuterR = 18 * inv * hScale;
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
@@ -688,8 +695,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (handles.length === 0) return null;
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
-      const resizeR = 9 * inv;
-      const rotateOuterR = 20 * inv;
+      const hScale = getLowZoomHandleScale(z);
+      const resizeR = 9 * inv * hScale;
+      const rotateOuterR = 20 * inv * hScale;
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
@@ -2855,7 +2863,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           ctx.restore();
 
           // Resize handles at corners (br is 2x on mobile for easier touch)
-          const handleR = 4.5 * inv;
+          const hScale = getLowZoomHandleScale(z);
+          const handleR = 4.5 * inv * hScale;
           const brHandleR = isMobile ? handleR * 2 : handleR;
           const groupHandles = [
             { x: groupBBox.x, y: groupBBox.y },
@@ -3018,8 +3027,9 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.restore();
       }
 
-      const handleSize = 5 * inv;
-      const handleR = 1.5 * inv;
+      const hScale = getLowZoomHandleScale(z);
+      const handleSize = 5 * inv * hScale;
+      const handleR = 1.5 * inv * hScale;
       const borderW = 1.5 * inv;
       const brHandleSize = isMobile ? handleSize * 2 : handleSize;
       const brHandleR = isMobile ? handleR * 2 : handleR;

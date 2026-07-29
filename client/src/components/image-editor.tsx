@@ -1087,7 +1087,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const nextIds = new Set(selectedDesignIds);
     nextIds.delete(last.id);
     setSelectedDesignIds(nextIds);
-    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true, arrangeAll: true }), 0);
   }, [designs, saveSnapshot, selectedDesignId, selectedDesignIds]);
 
   const handleSetGroupCount = useCallback((
@@ -1113,7 +1113,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       const idsToRemove = new Set(row.designs.slice(current + delta).map(d => d.id));
       setDesigns(prev => prev.filter(d => !idsToRemove.has(d.id)));
     }
-    setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true }), 0);
+    // Double rAF ensures React has committed the new design list and selection
+    // state before auto-arrange reads them. arrangeAll repacks the entire sheet
+    // so new copies spread across available space instead of stacking.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true, arrangeAll: true });
+      });
+    });
   }, [saveSnapshot]);
 
   const handleCopySelected = useCallback(() => {
@@ -1449,7 +1456,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const contentFillCacheRef = useRef<Map<string, number>>(new Map());
 
-  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean }) => {
+  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; arrangeAll?: boolean }) => {
     const currentDesigns = designsRef.current;
     if (currentDesigns.length === 0) { console.warn('[autoArrange] no designs'); return; }
     if (!opts?.skipSnapshot) saveSnapshot();
@@ -1458,7 +1465,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const usableH = artboardHeightRef.current;
     console.log('[autoArrange] starting', { designCount: currentDesigns.length, usableW, usableH });
 
-    const arrangeSelection = selectedDesignIds.size >= 2;
+    // arrangeAll bypasses selection — always pack the full sheet
+    const arrangeSelection = !opts?.arrangeAll && selectedDesignIds.size >= 2;
     const designsToArrange = arrangeSelection
       ? currentDesigns.filter(d => selectedDesignIds.has(d.id))
       : currentDesigns;
@@ -1522,6 +1530,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean) => {
       if (hasOverflow) {
+        // Try advancing to the next configured gangsheet height before giving up
+        const nextH = GANGSHEET_HEIGHTS.find(h => h > artboardHeightRef.current);
+        if (nextH) {
+          setArtboardHeight(nextH);
+          requestAnimationFrame(() => {
+            handleAutoArrangeRef.current({
+              skipSnapshot: true,
+              preserveSelection: opts?.preserveSelection ?? true,
+              arrangeAll: opts?.arrangeAll,
+            });
+          });
+          return;
+        }
         toast({ title: t("toast.noSpace"), description: t("toast.noSpaceDesc"), variant: "destructive" });
       } else if (anyRotated) {
         toast({ title: t("toast.autoArranged"), description: t("toast.autoArrangedDesc") });
@@ -4134,10 +4155,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleUndo}
                 disabled={!canUndo()}
-                className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
+                className="flex items-center gap-1 px-2 py-1 lg:px-3 lg:py-2 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none shadow-sm min-h-[36px]"
                 title={t("editor.undo")}
               >
                 <Undo2 className="w-4 h-4" />
+                <span className="text-[11px] lg:text-sm font-medium">Undo</span>
               </button>
               <button
                 onClick={handleRedo}
