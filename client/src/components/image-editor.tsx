@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun, Maximize2, AlignCenterVertical, AlignCenterHorizontal } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Maximize2, AlignCenterVertical, AlignCenterHorizontal, WandSparkles, Eraser } from "lucide-react";
 
 // ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
 const SRGB_LINEAR_LUT = (() => {
@@ -3596,7 +3596,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 disabled={!selectedDesignId && selectedDesignIds.size === 0}
                 className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId || selectedDesignIds.size > 0 ? 'bg-white text-gray-700 border border-gray-300' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`}
                 title="Flood-fill erase white/light background from edges"
-              ><Sun className="w-3 h-3" />White BG</button>
+              ><Eraser className="w-3 h-3" />White BG</button>
               <button
                 onClick={() => setWandDeleteModeActive(prev => { if (!prev) clearActiveChannelRef.current?.(); return !prev; })}
                 disabled={!selectedDesignId && selectedDesignIds.size === 0}
@@ -3608,7 +3608,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                 }`}
                 title={wandDeleteModeActive ? 'Wand active — tap a color to erase it. Tap again to deactivate.' : 'Magic Wand: tap a color to flood-erase it'}
-              ><MagicWandIcon className="w-3.5 h-3.5" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}</button>
+              ><WandSparkles className="w-3.5 h-3.5" />{wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}</button>
               {/* Halftone — mobile */}
               {profile.enableHalftone !== false && <div className="relative">
                 <button
@@ -4038,7 +4038,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   }`}
                   title="Flood-fill erase white/light background from edges"
                 >
-                  <Sun className="w-3 h-3 lg:w-4 lg:h-4" />
+                  <Eraser className="w-3 h-3 lg:w-4 lg:h-4" />
                   Delete White BG
                 </button>
                 <button
@@ -4053,7 +4053,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   }`}
                   title={wandDeleteModeActive ? 'Wand active — click any color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to flood-erase it'}
                 >
-                  <MagicWandIcon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
+                  <WandSparkles className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                   {wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}
                 </button>
                 {(wandDeleteModeActive || (selectedDesignId || selectedDesignIds.size > 0)) && (
