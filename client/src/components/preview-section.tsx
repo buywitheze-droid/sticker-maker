@@ -616,22 +616,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
       const resizeR = 7 * inv;
-      // Rotation handle is further out; give it a larger hit radius to compensate
-      const rotHitR = 10 * inv;
-
-      const tl = handles.find(h => h.id === 'tl');
-      const tr = handles.find(h => h.id === 'tr');
-      if (tl && tr) {
-        const topMidX = (tl.x + tr.x) / 2;
-        const topMidY = (tl.y + tr.y) / 2;
-        const rad = (transformRef.current.rotation * Math.PI) / 180;
-        const rotDist = 44 * inv;
-        const rotHandleX = topMidX + (-Math.sin(rad)) * rotDist;
-        const rotHandleY = topMidY + (-Math.cos(rad)) * rotDist;
-        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < rotHitR) {
-          return { type: 'rotate', id: 'rot-top' };
-        }
-      }
+      const rotateOuterR = 18 * inv;
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
@@ -640,8 +625,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
-      // Corner donut rotation zone removed — rotation only fires from the dedicated
-      // handle circle above the design, never from a near-miss on a resize corner.
+      // Rotating by dragging just outside any corner handle
+      for (const h of handles) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        if (d >= resizeR && d < rotateOuterR) {
+          return { type: 'rotate', id: `rot-${h.id}` };
+        }
+      }
 
       return null;
     }, [getHandlePositions, getDesignRect, isMobile]);
@@ -699,20 +689,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
       const resizeR = 9 * inv;
-      const rotHitR = 12 * inv;
-
-      const tl = handles.find(h => h.id === 'tl');
-      const tr = handles.find(h => h.id === 'tr');
-      if (tl && tr) {
-        const topMidX = (tl.x + tr.x) / 2;
-        const topMidY = (tl.y + tr.y) / 2;
-        const rotDist = 44 * inv;
-        const rotHandleX = topMidX;
-        const rotHandleY = topMidY - rotDist;
-        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < rotHitR) {
-          return { type: 'rotate', id: 'rot-top' };
-        }
-      }
+      const rotateOuterR = 20 * inv;
 
       for (const h of handles) {
         const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
@@ -721,7 +698,13 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
-      // Corner donut rotation zone removed — rotation only fires from the dedicated handle.
+      // Rotating by dragging just outside any corner handle
+      for (const h of handles) {
+        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
+        if (d >= resizeR && d < rotateOuterR) {
+          return { type: 'rotate', id: `rot-${h.id}` };
+        }
+      }
 
       return null;
     }, [getMultiHandlePositions, isMobile]);
@@ -2894,27 +2877,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
             ctx.restore();
           }
 
-          // Rotation handle at top-center
-          const rotDist = 44 * inv;
-          const topMidX = groupBBox.x + groupBBox.width / 2;
-          const topMidY = groupBBox.y;
-          const rotHandleX = topMidX;
-          const rotHandleY = topMidY - rotDist;
-          ctx.save();
-          ctx.strokeStyle = '#22d3ee';
-          ctx.lineWidth = 1 * inv;
-          ctx.beginPath();
-          ctx.moveTo(topMidX, topMidY);
-          ctx.lineTo(rotHandleX, rotHandleY);
-          ctx.stroke();
-          ctx.fillStyle = '#ffffff';
-          ctx.strokeStyle = '#22d3ee';
-          ctx.lineWidth = 1.5 * inv;
-          ctx.beginPath();
-          ctx.arc(rotHandleX, rotHandleY, handleR, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.restore();
         }
       }
 
@@ -3083,60 +3045,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         ctx.stroke();
         ctx.restore();
       }
-
-      const topMidX = (pts[0].x + pts[1].x) / 2;
-      const topMidY = (pts[0].y + pts[1].y) / 2;
-      const rotDist = 44 * inv;
-      const upDirX = -sin;
-      const upDirY = -cos;
-      const rotHandleX = topMidX + upDirX * rotDist;
-      const rotHandleY = topMidY + upDirY * rotDist;
-
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1 * inv;
-      ctx.globalAlpha = 0.6;
-      ctx.beginPath();
-      ctx.moveTo(topMidX, topMidY);
-      ctx.lineTo(rotHandleX, rotHandleY);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-
-      ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.25)';
-      ctx.shadowBlur = 3 * inv;
-      ctx.shadowOffsetY = 1 * inv;
-      const rotR = 6 * inv;
-      ctx.beginPath();
-      ctx.arc(rotHandleX, rotHandleY, rotR, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = borderW;
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.translate(rotHandleX, rotHandleY);
-      ctx.rotate(rad);
-      const arrowR = 3.5 * inv;
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1.2 * inv;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(0, 0, arrowR, -Math.PI * 0.7, Math.PI * 0.4);
-      ctx.stroke();
-      const tipAngle = Math.PI * 0.4;
-      const tipX = arrowR * Math.cos(tipAngle);
-      const tipY = arrowR * Math.sin(tipAngle);
-      const aLen = 2.5 * inv;
-      ctx.beginPath();
-      ctx.moveTo(tipX + aLen * Math.cos(tipAngle - 0.3), tipY + aLen * Math.sin(tipAngle - 0.3));
-      ctx.lineTo(tipX, tipY);
-      ctx.lineTo(tipX + aLen * Math.cos(tipAngle + Math.PI * 0.5), tipY + aLen * Math.sin(tipAngle + Math.PI * 0.5));
-      ctx.stroke();
-      ctx.restore();
 
       ctx.restore();
     };
