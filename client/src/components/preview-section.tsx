@@ -616,7 +616,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
       const resizeR = 7 * inv;
-      const rotateOuterR = 18 * inv;
+      // Rotation handle is further out; give it a larger hit radius to compensate
+      const rotHitR = 10 * inv;
 
       const tl = handles.find(h => h.id === 'tl');
       const tr = handles.find(h => h.id === 'tr');
@@ -624,10 +625,10 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const topMidX = (tl.x + tr.x) / 2;
         const topMidY = (tl.y + tr.y) / 2;
         const rad = (transformRef.current.rotation * Math.PI) / 180;
-        const rotDist = 24 * inv;
+        const rotDist = 44 * inv;
         const rotHandleX = topMidX + (-Math.sin(rad)) * rotDist;
         const rotHandleY = topMidY + (-Math.cos(rad)) * rotDist;
-        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < resizeR) {
+        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < rotHitR) {
           return { type: 'rotate', id: 'rot-top' };
         }
       }
@@ -639,12 +640,8 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
-      for (const h of handles) {
-        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
-        if (d >= resizeR && d < rotateOuterR) {
-          return { type: 'rotate', id: `rot-${h.id}` };
-        }
-      }
+      // Corner donut rotation zone removed — rotation only fires from the dedicated
+      // handle circle above the design, never from a near-miss on a resize corner.
 
       return null;
     }, [getHandlePositions, getDesignRect, isMobile]);
@@ -702,17 +699,17 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       const z = Math.max(0.25, zoomRef.current);
       const inv = dpiScaleRef.current / z;
       const resizeR = 9 * inv;
-      const rotateOuterR = 20 * inv;
+      const rotHitR = 12 * inv;
 
       const tl = handles.find(h => h.id === 'tl');
       const tr = handles.find(h => h.id === 'tr');
       if (tl && tr) {
         const topMidX = (tl.x + tr.x) / 2;
         const topMidY = (tl.y + tr.y) / 2;
-        const rotDist = 26 * inv;
+        const rotDist = 44 * inv;
         const rotHandleX = topMidX;
         const rotHandleY = topMidY - rotDist;
-        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < resizeR) {
+        if (Math.sqrt((px - rotHandleX) ** 2 + (py - rotHandleY) ** 2) < rotHitR) {
           return { type: 'rotate', id: 'rot-top' };
         }
       }
@@ -724,12 +721,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         }
       }
 
-      for (const h of handles) {
-        const d = Math.sqrt((px - h.x) ** 2 + (py - h.y) ** 2);
-        if (d >= resizeR && d < rotateOuterR) {
-          return { type: 'rotate', id: `rot-${h.id}` };
-        }
-      }
+      // Corner donut rotation zone removed — rotation only fires from the dedicated handle.
 
       return null;
     }, [getMultiHandlePositions, isMobile]);
@@ -2903,7 +2895,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           }
 
           // Rotation handle at top-center
-          const rotDist = 26 * inv;
+          const rotDist = 44 * inv;
           const topMidX = groupBBox.x + groupBBox.width / 2;
           const topMidY = groupBBox.y;
           const rotHandleX = topMidX;
@@ -3094,7 +3086,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
       const topMidX = (pts[0].x + pts[1].x) / 2;
       const topMidY = (pts[0].y + pts[1].y) / 2;
-      const rotDist = 24 * inv;
+      const rotDist = 44 * inv;
       const upDirX = -sin;
       const upDirY = -cos;
       const rotHandleX = topMidX + upDirX * rotDist;
