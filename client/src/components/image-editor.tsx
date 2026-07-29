@@ -3574,6 +3574,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       {/* Left sidebar - Layers + Settings */}
       <div className={`flex-shrink-0 w-full lg:w-[320px] xl:w-[340px] border-r border-gray-200 bg-white overflow-x-hidden overflow-y-auto ${isMobile ? "h-full" : ""}`}>
         <div className="p-2.5 space-y-2">
+          {/* ── Desktop "Add Designs" hero button ──────────────────────────────
+               Shown once the first design is placed; lives above the gangsheet
+               size controls so it's always visible and never crowded by inputs. */}
+          {!isMobile && designs.length > 0 && (
+            <button
+              onClick={() => sidebarFileRef.current?.click()}
+              className="w-full flex items-center justify-center gap-2.5 px-4 py-4 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-600 hover:to-cyan-700 active:from-cyan-700 active:to-cyan-800 text-white font-bold text-base shadow-lg shadow-cyan-200/60 transition-all duration-200 border border-cyan-400/30"
+              title={t("editor.addDesignTitle")}
+            >
+              <Plus className="w-5 h-5 flex-shrink-0" />
+              {t("editor.addDesigns")}
+            </button>
+          )}
           <ControlsSection
             resizeSettings={activeResizeSettings}
             onResizeChange={handleResizeChange}
@@ -3776,11 +3789,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         {!isMobile && <div className="flex-shrink-0 flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-1.5 lg:gap-2 bg-white border-b border-gray-200 px-2 py-1 lg:px-3 lg:py-1.5">
           {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
           <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap lg:flex-nowrap flex-shrink-0">
-            <UploadSection 
-              onImageUpload={handleFileUploadUnified}
-              onBatchStart={handleBatchStart}
-              imageInfo={activeImageInfo}
-            />
+            {/* Desktop: only show UploadSection for the initial empty-state green card.
+                Once designs exist the sidebar button takes over. */}
+            {!activeImageInfo && (
+              <UploadSection 
+                onImageUpload={handleFileUploadUnified}
+                onBatchStart={handleBatchStart}
+                imageInfo={activeImageInfo}
+              />
+            )}
             {isUploading && (
               <div className="flex items-center gap-1.5 text-cyan-400">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -3797,46 +3814,46 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button
                   onClick={handleThresholdAlpha}
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                     selectedDesignId || selectedDesignIds.size > 0
                       ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#2563EB] border border-[#CBD5E1] shadow-none'
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                   }`}
                   title={t("editor.cleanAlphaTitle")}
                 >
-                  <Droplets className="w-3 h-3" />
+                  <Droplets className="w-3 h-3 lg:w-4 lg:h-4" />
                   {t("editor.cleanAlpha")}
                 </button>
                 <button
                   onClick={handleThresholdAlphaAll}
                   disabled={designs.length === 0}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                     designs.length > 0
                       ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#2563EB] border border-[#CBD5E1] shadow-none'
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                   }`}
                   title={t("editor.cleanAlphaAllTitle")}
                 >
-                  <Droplets className="w-3 h-3" />
+                  <Droplets className="w-3 h-3 lg:w-4 lg:h-4" />
                   {t("editor.cleanAlphaAll")}
                 </button>
                 <button
                   onClick={handleRemoveWhiteBackground}
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                     selectedDesignId || selectedDesignIds.size > 0
                       ? 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-none'
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                   }`}
                   title="Flood-fill erase white/light background from edges"
                 >
-                  <Sun className="w-3 h-3" />
+                  <Sun className="w-3 h-3 lg:w-4 lg:h-4" />
                   Delete White BG
                 </button>
                 <button
                   onClick={() => setWandDeleteModeActive(prev => { if (!prev) clearActiveChannelRef.current?.(); return !prev; })}
                   disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                     wandDeleteModeActive
                       ? 'bg-fuchsia-600 hover:bg-fuchsia-700 text-white border border-fuchsia-700 shadow-none'
                       : selectedDesignId || selectedDesignIds.size > 0
@@ -3845,7 +3862,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   }`}
                   title={wandDeleteModeActive ? 'Wand active — click any color on your design to erase it. Click again to deactivate.' : 'Magic Wand: click a color on your design to flood-erase it'}
                 >
-                  <MagicWandIcon className="w-3.5 h-3.5" />
+                  <MagicWandIcon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                   {wandDeleteModeActive ? 'Wand ON' : 'Magic Wand'}
                 </button>
                 {(wandDeleteModeActive || (selectedDesignId || selectedDesignIds.size > 0)) && (
@@ -3867,14 +3884,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <button
                     onClick={handleOpenHalftoneMenu}
                     disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                       selectedDesignId || selectedDesignIds.size > 0
                         ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 shadow-none'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                     }`}
                     title="Halftone: convert a colour in your design to halftone dots (Light preset)"
                   >
-                    <HalftoneIcon className="w-3.5 h-3.5" />
+                    <HalftoneIcon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                     Halftone
                   </button>
                   {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
@@ -3924,14 +3941,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <button
                     onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
                     disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-medium shadow-sm min-h-[36px] lg:min-h-0 ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-medium shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${
                       designs.length >= 2 || selectedDesignIds.size >= 2
                         ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                     }`}
                     title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
                   >
-                    <LayoutGrid className="w-3 h-3 flex-shrink-0" />
+                    <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
                     {t("editor.autoArrange")}
                   </button>
                 )}
@@ -3941,14 +3958,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <button
                     onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }}
                     disabled={!selectedDesignId}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                       selectedDesignId
                         ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#7C3AED] border border-[#CBD5E1] shadow-none'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                     }`}
                     title={t("editor.duplicate")}
                   >
-                    <Copy className="w-3 h-3" />
+                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
                     {t("editor.duplicate").replace(/ \(.*/, '')}
                   </button>
                   <input
@@ -3958,20 +3975,20 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     value={duplicateCount}
                     onChange={(e) => setDuplicateCount(Math.max(1, Math.min(200, parseInt(e.target.value) || 1)))}
                     disabled={!selectedDesignId}
-                    className="w-10 h-[28px] lg:h-[24px] text-center text-[11px] border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
+                    className="w-10 h-[28px] lg:h-[40px] text-center text-[11px] border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
                     title="Number of copies"
                   />
                   <button
                     onClick={() => { handleDuplicateAndArrange(duplicateCount); setDuplicateCount(1); }}
                     disabled={!selectedDesignId}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} font-medium shadow-sm min-h-[36px] lg:min-h-0 ${
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} font-medium shadow-sm min-h-[36px] ${
                       selectedDesignId
                         ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                     }`}
                     title={t("editor.duplicateArrange")}
                   >
-                    <Copy className="w-3 h-3" />
+                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
                     {t("editor.duplicateArrange")}
                   </button>
                 </div>
@@ -3981,7 +3998,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleUndo}
                 disabled={!canUndo()}
-                className="w-8 h-8 lg:w-7 lg:h-7 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
+                className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
                 title={t("editor.undo")}
               >
                 <Undo2 className="w-4 h-4" />
@@ -3989,7 +4006,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleRedo}
                 disabled={!canRedo()}
-                className="w-8 h-8 lg:w-7 lg:h-7 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
+                className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
                 title={t("editor.redo")}
               >
                 <Redo2 className="w-4 h-4" />
@@ -4004,23 +4021,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   }
                 }}
                 disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-red-500 hover:text-red-600 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-red-500 hover:text-red-600 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
                 title={t("editor.delete")}
               >
-                <Trash2 className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                <Trash2 className="w-4 h-4 lg:w-5 lg:h-5" />
               </button>
               {isMobile && (
                 <button
                   onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
                   disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-medium shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ml-auto ${
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-medium shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ml-auto ${
                     designs.length >= 2 || selectedDesignIds.size >= 2
                       ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
                       : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                   }`}
                   title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
                 >
-                  <LayoutGrid className="w-3 h-3 flex-shrink-0" />
+                  <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
                   {t("editor.autoArrange")}
                 </button>
               )}
@@ -4050,7 +4067,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       className={`p-0.5 rounded transition-colors ${proportionalLock ? 'text-cyan-400 hover:text-cyan-300' : 'text-gray-600 hover:text-gray-700'}`}
                       title={proportionalLock ? 'Proportions locked – click to unlock' : 'Proportions unlocked – click to lock'}
                     >
-                      {proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
+                      {proportionalLock ? <Link className="w-3 h-3 lg:w-4 lg:h-4" /> : <Unlink className="w-3 h-3 lg:w-4 lg:h-4" />}
                     </button>
                     <span className="text-[10px] text-gray-600">H</span>
                     <SizeInput
@@ -4091,14 +4108,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     <button
                       onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }}
                       disabled={!selectedDesignId}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[11px] font-medium shadow-sm min-h-[36px] ${
+                      className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
                         selectedDesignId
                           ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#7C3AED] border border-[#CBD5E1] shadow-none'
                           : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                       }`}
                       title={t("editor.duplicate")}
                     >
-                      <Copy className="w-3 h-3" />
+                      <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
                       {t("editor.duplicate").replace(/ \(.*/, '')}
                     </button>
                     <input
@@ -4114,14 +4131,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     <button
                       onClick={() => { handleDuplicateAndArrange(duplicateCount); setDuplicateCount(1); }}
                       disabled={!selectedDesignId}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap text-[10px] font-medium shadow-sm min-h-[36px] ${
+                      className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[10px] font-medium shadow-sm min-h-[36px] ${
                         selectedDesignId
                           ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
                           : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                       }`}
                       title={t("editor.duplicateArrange")}
                     >
-                      <Copy className="w-3 h-3" />
+                      <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
                       {t("editor.duplicateArrange")}
                     </button>
                   </div>
@@ -4146,7 +4163,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         setTimeout(() => handleAutoArrangeRef.current({ skipSnapshot: false, preserveSelection: true }), 0);
                       }
                     }}
-                    className="h-5 px-1 bg-gray-100 border border-gray-300 rounded text-[10px] text-gray-700 outline-none cursor-pointer hover:border-gray-400 focus:border-cyan-500 transition-colors"
+                    className="h-5 lg:h-8 px-1 bg-gray-100 border border-gray-300 rounded text-[10px] lg:text-xs text-gray-700 outline-none cursor-pointer hover:border-gray-400 focus:border-cyan-500 transition-colors"
                     title={useMetric(lang) ? t("editor.marginGapCm") : t("editor.marginGap")}
                   >
                     <option value="auto">{t("editor.marginAuto")}</option>
@@ -4165,7 +4182,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleRotate90}
                 disabled={!selectedDesignId}
-                className="w-8 h-8 lg:w-7 lg:h-7 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
+                className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
                 title={t("editor.rotate")}
               >
                 <RotateCw className="w-4 h-4" />
@@ -4174,34 +4191,34 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button
                   onClick={() => handleAlignCorner('tl')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
                   title={t("editor.alignTL")}
                 >
-                  <ArrowUpLeft className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                  <ArrowUpLeft className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
                 <button
                   onClick={() => handleAlignCorner('tr')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
                   title={t("editor.alignTR")}
                 >
-                  <ArrowUpRight className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                  <ArrowUpRight className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
                 <button
                   onClick={() => handleAlignCorner('bl')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
                   title={t("editor.alignBL")}
                 >
-                  <ArrowDownLeft className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                  <ArrowDownLeft className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
                 <button
                   onClick={() => handleAlignCorner('br')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center"
+                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
                   title={t("editor.alignBR")}
                 >
-                  <ArrowDownRight className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                  <ArrowDownRight className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
               </div>
               {isMobile && (
