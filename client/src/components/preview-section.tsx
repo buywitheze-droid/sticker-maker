@@ -3156,7 +3156,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className={`preview-canvas-area flex-1 min-h-0 flex items-center justify-center bg-gray-100 p-3 relative overflow-hidden ${wandDeleteActive ? 'cursor-crosshair' : activeSpotChannel && !panModeActive ? 'cursor-crosshair' : activeSpotChannel && panModeActive ? 'cursor-grab' : 'cursor-default'}`}
+          className={`preview-canvas-area flex-1 min-h-0 flex items-center justify-center bg-gray-400 p-3 relative overflow-hidden ${wandDeleteActive ? 'cursor-crosshair' : activeSpotChannel && !panModeActive ? 'cursor-crosshair' : activeSpotChannel && panModeActive ? 'cursor-grab' : 'cursor-default'}`}
           data-wand-active={wandDeleteActive ? "true" : undefined}
           style={{ userSelect: 'none', touchAction: 'none' }}
         >
