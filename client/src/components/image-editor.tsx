@@ -4026,62 +4026,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     </div>
                   )}
                 </div>}
-                {!isMobile && (
-                  <button
-                    onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
-                    disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-medium shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} ${
-                      designs.length >= 2 || selectedDesignIds.size >= 2
-                        ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
-                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                    }`}
-                    title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
-                  >
-                    <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
-                    {t("editor.autoArrange")}
-                  </button>
-                )}
               </div>
-              {!isMobile && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }}
-                    disabled={!selectedDesignId}
-                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
-                      selectedDesignId
-                        ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#7C3AED] border border-[#CBD5E1] shadow-none'
-                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                    }`}
-                    title={t("editor.duplicate")}
-                  >
-                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
-                    {t("editor.duplicate").replace(/ \(.*/, '')}
-                  </button>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={duplicateCount}
-                    onChange={(e) => setDuplicateCount(Math.max(1, Math.min(200, parseInt(e.target.value) || 1)))}
-                    disabled={!selectedDesignId}
-                    className="w-10 h-[28px] lg:h-[40px] text-center text-[11px] border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
-                    title="Number of copies"
-                  />
-                  <button
-                    onClick={() => { handleDuplicateAndArrange(duplicateCount); setDuplicateCount(1); }}
-                    disabled={!selectedDesignId}
-                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} font-medium shadow-sm min-h-[36px] ${
-                      selectedDesignId
-                        ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
-                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                    }`}
-                    title={t("editor.duplicateArrange")}
-                  >
-                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
-                    {t("editor.duplicateArrange")}
-                  </button>
-                </div>
-              )}
             </div>
             <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap lg:flex-nowrap">
               <button
@@ -4192,6 +4137,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     </span>
                   </span>
                 </div>
+                {/* Pink Auto-Arrange — desktop only; between DPI badge and rotate icons */}
+                {!isMobile && (
+                  <button
+                    onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
+                    disabled={designs.length < 2 && selectedDesignIds.size < 2}
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-semibold shadow-md min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} lg:text-sm ${
+                      designs.length >= 2 || selectedDesignIds.size >= 2
+                        ? 'bg-pink-500 hover:bg-pink-600 text-white border border-pink-600'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
+                  >
+                    <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+                    {t("editor.autoArrange")}
+                  </button>
+                )}
                 {isMobile && (
                   <div className="flex items-center gap-1 ml-auto">
                     <button
@@ -4310,6 +4271,48 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <ArrowDownRight className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
               </div>
+              {/* Desktop Duplicate + count + Dup-Arrange — right of rotate/align icons */}
+              {!isMobile && (
+                <div className="flex items-center gap-1 ml-1">
+                  <div className="w-px h-5 bg-gray-200 mr-0.5" />
+                  <button
+                    onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }}
+                    disabled={!selectedDesignId}
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
+                      selectedDesignId
+                        ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#7C3AED] border border-[#CBD5E1] shadow-none'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title={t("editor.duplicate")}
+                  >
+                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
+                    {t("editor.duplicate").replace(/ \(.*/, '')}
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={duplicateCount}
+                    onChange={(e) => setDuplicateCount(Math.max(1, Math.min(200, parseInt(e.target.value) || 1)))}
+                    disabled={!selectedDesignId}
+                    className="w-10 h-[28px] lg:h-[40px] text-center text-[11px] border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
+                    title="Number of copies"
+                  />
+                  <button
+                    onClick={() => { handleDuplicateAndArrange(duplicateCount); setDuplicateCount(1); }}
+                    disabled={!selectedDesignId}
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} font-medium shadow-sm min-h-[36px] ${
+                      selectedDesignId
+                        ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title={t("editor.duplicateArrange")}
+                  >
+                    <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
+                    {t("editor.duplicateArrange")}
+                  </button>
+                </div>
+              )}
               {isMobile && (
                 <div
                   className={`flex items-center gap-1 flex-shrink-0 ${designs.length >= 2 ? 'opacity-100' : 'opacity-0'}`}

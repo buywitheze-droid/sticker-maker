@@ -1646,6 +1646,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
+      // Commit any pending toolbar input (e.g. SizeInput) before canvas interaction.
+      // e.preventDefault() blocks the browser from naturally moving focus away from
+      // the focused input, so its onBlur would never fire — we trigger it manually
+      // here so the edited size value is saved before the design is deselected.
+      const activeEl = document.activeElement;
+      if (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement) {
+        activeEl.blur();
+      }
       // Ensure keyboard scope is active on mousedown (fixes first-upload case where mouseenter never fired)
       isKeyboardScopeActiveRef.current = true;
       altKeyRef.current = e.altKey;
