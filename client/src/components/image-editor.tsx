@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun, Maximize2, AlignLeft, AlignCenter, AlignRight, AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun, Maximize2, AlignCenterVertical, AlignCenterHorizontal } from "lucide-react";
 
 // ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
 const SRGB_LINEAR_LUT = (() => {
@@ -1368,10 +1368,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [selectedDesignId, saveSnapshot, getAlignNxNy]);
 
   // Align single or multiple selected designs to canvas edges / centres.
+  // For multi-select center-h/center-v, snaps to the group centroid so designs
+  // line up on the same axis without jumping to the canvas centre.
   const handleAlignEdge = useCallback((edge: 'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom') => {
     const hasMulti = selectedDesignIds.size > 1;
     const targetId = selectedDesignId;
     if (!hasMulti && !targetId) return;
+
+    // Compute group centroid for multi-select center operations
+    let groupNx = 0.5, groupNy = 0.5;
+    if (hasMulti) {
+      const sel = designsRef.current.filter(d => selectedDesignIds.has(d.id));
+      if (sel.length > 0) {
+        groupNx = sel.reduce((s, d) => s + d.transform.nx, 0) / sel.length;
+        groupNy = sel.reduce((s, d) => s + d.transform.ny, 0) / sel.length;
+      }
+    }
 
     const computePos = (d: DesignItem): { nx: number; ny: number } => {
       const rad = (d.transform.rotation * Math.PI) / 180;
@@ -1383,13 +1395,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       let ny = d.transform.ny;
       switch (edge) {
         case 'left':     nx = halfW / artboardWidth; break;
-        case 'center-h': nx = 0.5; break;
+        case 'center-h': nx = hasMulti ? groupNx : 0.5; break;
         case 'right':    nx = 1 - halfW / artboardWidth; break;
         case 'top':      ny = halfH / artboardHeight; break;
-        case 'center-v': ny = 0.5; break;
+        case 'center-v': ny = hasMulti ? groupNy : 0.5; break;
         case 'bottom':   ny = 1 - halfH / artboardHeight; break;
       }
-      return { nx, ny };
+      // Clamp to artboard bounds
+      const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, nx));
+      const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, ny));
+      return { nx: clampedNx, ny: clampedNy };
     };
 
     // Pre-compute positions from the current design snapshot
@@ -1414,6 +1429,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       if (pos) setDesignTransform(prev => ({ ...prev, nx: pos.nx, ny: pos.ny }));
     }
   }, [selectedDesignId, selectedDesignIds, artboardWidth, artboardHeight, saveSnapshot]);
+
+  // Set an absolute rotation on single design or all selected designs.
+  const handleSetRotation = useCallback((deg: number) => {
+    const normalized = ((Math.round(deg) % 360) + 360) % 360;
+    const hasMulti = selectedDesignIds.size > 1;
+    const targetId = selectedDesignId;
+    if (!hasMulti && !targetId) return;
+    saveSnapshot();
+    const idsToSet = hasMulti ? selectedDesignIds : new Set([targetId!]);
+    setDesigns(prev => prev.map(d => {
+      if (!idsToSet.has(d.id)) return d;
+      const rotated = { ...d, transform: { ...d.transform, rotation: normalized } };
+      const { nx, ny } = clampDesignToArtboard(rotated, artboardWidth, artboardHeight);
+      return { ...rotated, transform: { ...rotated.transform, nx, ny } };
+    }));
+    if (targetId) setDesignTransform(prev => ({ ...prev, rotation: normalized }));
+  }, [selectedDesignId, selectedDesignIds, saveSnapshot, artboardWidth, artboardHeight]);
 
   const contentFillCacheRef = useRef<Map<string, number>>(new Map());
 
@@ -4388,65 +4420,68 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   </button>
                 </div>
               )}
-              {/* Desktop Alignment panel — right of Duplicate group */}
-              {!isMobile && (
-                <div className="flex items-center gap-1 ml-1">
-                  <div className="w-px h-5 bg-gray-200 mr-0.5 flex-shrink-0" />
-                  {/* 3×2 grid: top row = horizontal align, bottom row = vertical align */}
-                  <div
-                    className="grid grid-cols-3 gap-px"
-                    title={selectedDesignIds.size > 1 ? `Align all ${selectedDesignIds.size} selected designs` : 'Align design to canvas'}
-                  >
-                    {/* Horizontal alignment row */}
-                    <button
-                      onClick={() => handleAlignEdge('left')}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Align left edge to canvas"
-                    >
-                      <AlignLeft className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
-                    </button>
+              {/* Desktop: Align + Rotation panel — right of Duplicate group, desktop only */}
+              {!isMobile && (selectedDesignId || selectedDesignIds.size > 0) && (
+                <div className="flex items-center gap-1.5 ml-1 flex-shrink-0">
+                  <div className="w-px h-5 bg-gray-200 flex-shrink-0" />
+
+                  {/* ── Alignment ── */}
+                  <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => handleAlignEdge('center-h')}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Center horizontally on canvas"
+                      className="flex flex-col items-center justify-center gap-0.5 px-1.5 py-1 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-600 transition-colors"
+                      title={selectedDesignIds.size > 1 ? 'Align all selected to the same vertical axis' : 'Center horizontally on canvas'}
                     >
-                      <AlignCenter className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleAlignEdge('right')}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Align right edge to canvas"
-                    >
-                      <AlignRight className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
-                    </button>
-                    {/* Vertical alignment row */}
-                    <button
-                      onClick={() => handleAlignEdge('top')}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Align top edge to canvas"
-                    >
-                      <AlignStartHorizontal className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
+                      <AlignCenterVertical className="w-4 h-4" />
+                      <span className="text-[8px] leading-none font-medium">Vert</span>
                     </button>
                     <button
                       onClick={() => handleAlignEdge('center-v')}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Center vertically on canvas"
+                      className="flex flex-col items-center justify-center gap-0.5 px-1.5 py-1 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-600 transition-colors"
+                      title={selectedDesignIds.size > 1 ? 'Align all selected to the same horizontal axis' : 'Center vertically on canvas'}
                     >
-                      <AlignCenterHorizontal className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
+                      <AlignCenterHorizontal className="w-4 h-4" />
+                      <span className="text-[8px] leading-none font-medium">Horiz</span>
                     </button>
-                    <button
-                      onClick={() => handleAlignEdge('bottom')}
+                  </div>
+
+                  <div className="w-px h-5 bg-gray-200 flex-shrink-0" />
+
+                  {/* ── Rotation ── */}
+                  <div className="flex items-center gap-1">
+                    <RotateCw className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                    {/* Editable degree input */}
+                    <input
+                      type="number"
+                      min={0}
+                      max={359}
+                      value={activeDesignTransform.rotation}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value);
+                        if (!isNaN(v)) handleSetRotation(v);
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                       disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-8 h-7 lg:w-9 lg:h-8 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-500 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                      title="Align bottom edge to canvas"
-                    >
-                      <AlignEndHorizontal className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
-                    </button>
+                      className="w-10 h-7 text-center text-[11px] font-mono border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
+                      title="Rotation (degrees)"
+                    />
+                    <span className="text-[10px] text-gray-400">°</span>
+                    {/* Quick-set presets */}
+                    {([0, 90, 180, 270] as const).map(deg => (
+                      <button
+                        key={deg}
+                        onClick={() => handleSetRotation(deg)}
+                        disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                        className={`h-7 px-1.5 rounded text-[10px] font-semibold transition-colors border disabled:opacity-30 disabled:pointer-events-none ${
+                          activeDesignTransform.rotation === deg
+                            ? 'bg-cyan-500 text-white border-cyan-600'
+                            : 'bg-gray-100 text-gray-600 border-gray-300 hover:bg-cyan-50 hover:text-cyan-700 hover:border-cyan-400'
+                        }`}
+                        title={`Set rotation to ${deg}°`}
+                      >
+                        {deg}°
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
