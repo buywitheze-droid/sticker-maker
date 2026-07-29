@@ -682,66 +682,69 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         );
       }
       const starts = multiResizeStartRef.current;
-      const centerX = centerNx * artboardWidth;
-      const centerY = centerNy * artboardHeight;
+      const Cx = centerNx * artboardWidth;  // group centre in inches
+      const Cy = centerNy * artboardHeight;
 
-      const unclamped = new Map<string, { nx: number; ny: number; s: number }>();
+      // ── Find the maximum scale ratio that keeps ALL selected designs within bounds ──
+      //
+      // For each design, at scale ratio r, the new position and half-extents are:
+      //   newNx  = Cx/AW + (nx0 - Cx/AW) * r   →   in inches: Cx + (x0 - Cx) * r
+      //   halfW  = kW * r   where kW = (w*cos + h*sin)/2 * s0
+      //
+      // Four boundary constraints (all linear in r):
+      //   Left:   Cx + (x0-Cx)*r - kW*r >= 0   →   r ≤ Cx / (kW - (x0-Cx))    if coeff > 0
+      //   Right:  Cx + (x0-Cx)*r + kW*r ≤ AW   →   r ≤ (AW-Cx) / (x0-Cx+kW)  if coeff > 0
+      //   Top:    Cy + (y0-Cy)*r - kH*r >= 0   →   r ≤ Cy / (kH - (y0-Cy))    if coeff > 0
+      //   Bottom: Cy + (y0-Cy)*r + kH*r ≤ AH   →   r ≤ (AH-Cy) / (y0-Cy+kH)  if coeff > 0
+      //
+      // effectiveRatio = min(scaleRatio, min over all designs × all 4 edges)
+      let maxRatio = scaleRatio;
       for (const d of prev) {
         if (!selectedDesignIds.has(d.id)) continue;
         const start = starts.get(d.id);
         if (!start) continue;
-        const newS = Math.max(0.05, start.s * scaleRatio);
-        const px = start.nx * artboardWidth - centerX;
-        const py = start.ny * artboardHeight - centerY;
-        unclamped.set(d.id, {
-          nx: (centerX + px * scaleRatio) / artboardWidth,
-          ny: (centerY + py * scaleRatio) / artboardHeight,
-          s: newS,
-        });
-      }
-
-      let shiftR = 0, shiftL = 0, shiftD = 0, shiftU = 0;
-      for (const d of prev) {
-        if (!selectedDesignIds.has(d.id)) continue;
-        const u = unclamped.get(d.id);
-        if (!u) continue;
         const rad = (d.transform.rotation * Math.PI) / 180;
-        const cos = Math.abs(Math.cos(rad));
-        const sin = Math.abs(Math.sin(rad));
-        const halfW = (d.widthInches * u.s * cos + d.heightInches * u.s * sin) / 2;
-        const halfH = (d.widthInches * u.s * sin + d.heightInches * u.s * cos) / 2;
-        const minNx = halfW / artboardWidth;
-        const maxNx = 1 - halfW / artboardWidth;
-        const minNy = halfH / artboardHeight;
-        const maxNy = 1 - halfH / artboardHeight;
-        if (minNx <= maxNx) {
-          if (u.nx < minNx) shiftR = Math.max(shiftR, minNx - u.nx);
-          if (u.nx > maxNx) shiftL = Math.max(shiftL, u.nx - maxNx);
-        }
-        if (minNy <= maxNy) {
-          if (u.ny < minNy) shiftD = Math.max(shiftD, minNy - u.ny);
-          if (u.ny > maxNy) shiftU = Math.max(shiftU, u.ny - maxNy);
-        }
-      }
-      const groupDnx = shiftR - shiftL;
-      const groupDny = shiftD - shiftU;
+        const cosA = Math.abs(Math.cos(rad));
+        const sinA = Math.abs(Math.sin(rad));
+        const kW = (d.widthInches * cosA + d.heightInches * sinA) / 2 * start.s;
+        const kH = (d.widthInches * sinA + d.heightInches * cosA) / 2 * start.s;
+        const x0 = start.nx * artboardWidth;
+        const y0 = start.ny * artboardHeight;
 
+        const leftC = kW - (x0 - Cx);
+        if (leftC > 0 && Cx > 0) maxRatio = Math.min(maxRatio, Cx / leftC);
+
+        const rightC = (x0 - Cx) + kW;
+        if (rightC > 0) maxRatio = Math.min(maxRatio, (artboardWidth - Cx) / rightC);
+
+        const topC = kH - (y0 - Cy);
+        if (topC > 0 && Cy > 0) maxRatio = Math.min(maxRatio, Cy / topC);
+
+        const bottomC = (y0 - Cy) + kH;
+        if (bottomC > 0) maxRatio = Math.min(maxRatio, (artboardHeight - Cy) / bottomC);
+      }
+      // Never let the ratio collapse to zero (handles floating-point edge cases)
+      const effectiveRatio = Math.max(0.001, maxRatio);
+
+      // Apply the uniformly clamped ratio to every selected design
       return prev.map(d => {
         if (!selectedDesignIds.has(d.id)) return d;
-        const u = unclamped.get(d.id);
-        if (!u) return d;
+        const start = starts.get(d.id);
+        if (!start) return d;
+        const newS = Math.max(0.05, start.s * effectiveRatio);
+        const newNx = Cx / artboardWidth + (start.nx - Cx / artboardWidth) * effectiveRatio;
+        const newNy = Cy / artboardHeight + (start.ny - Cy / artboardHeight) * effectiveRatio;
+        // Safety position clamp — guards against floating-point drift only
         const rad = (d.transform.rotation * Math.PI) / 180;
-        const cos = Math.abs(Math.cos(rad));
-        const sin = Math.abs(Math.sin(rad));
-        const halfW = (d.widthInches * u.s * cos + d.heightInches * u.s * sin) / 2;
-        const halfH = (d.widthInches * u.s * sin + d.heightInches * u.s * cos) / 2;
-        const adjNx = u.nx + groupDnx;
-        const adjNy = u.ny + groupDny;
-        const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, adjNx));
-        const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, adjNy));
+        const cosA = Math.abs(Math.cos(rad));
+        const sinA = Math.abs(Math.sin(rad));
+        const halfW = (d.widthInches * newS * cosA + d.heightInches * newS * sinA) / 2;
+        const halfH = (d.widthInches * newS * sinA + d.heightInches * newS * cosA) / 2;
+        const clampedNx = Math.max(halfW / artboardWidth, Math.min(1 - halfW / artboardWidth, newNx));
+        const clampedNy = Math.max(halfH / artboardHeight, Math.min(1 - halfH / artboardHeight, newNy));
         return {
           ...d,
-          transform: { ...d.transform, s: u.s, nx: clampedNx, ny: clampedNy },
+          transform: { ...d.transform, s: newS, nx: clampedNx, ny: clampedNy },
         };
       });
     });
