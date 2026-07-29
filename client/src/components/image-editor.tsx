@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Sun, Maximize2 } from "lucide-react";
 
 // ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
 const SRGB_LINEAR_LUT = (() => {
@@ -139,13 +139,13 @@ function SizeInput({
     <input
       type="text"
       readOnly
-      className={`h-5 bg-gray-100 border border-gray-300 rounded font-semibold text-gray-900 text-center outline-none cursor-pointer hover:border-gray-400 transition-colors ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
+      className={`h-6 bg-white border-2 border-gray-300 rounded font-semibold text-gray-800 text-center outline-none cursor-pointer hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 transition-colors shadow-sm ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
       value={display}
       onFocus={() => {
         setDraft(display);
         setEditing(true);
       }}
-      title={title}
+      title={title + " — click to edit"}
     />
   );
 }
@@ -346,6 +346,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [halftoneMenuOpen, setHalftoneMenuOpen] = useState(false);
   const [halftoneTopColors, setHalftoneTopColors] = useState<Array<{ r: number; g: number; b: number; hex: string; name?: string }>>([]);
   const [halftoneStrength, setHalftoneStrength] = useState<'light' | 'balanced' | 'strong'>('balanced');
+  const [showSizeHint, setShowSizeHint] = useState(false);
+  const hasShownSizeHintRef = useRef(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
@@ -496,6 +498,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       onDesignUploaded();
     }
   }, [activeImageInfo, onDesignUploaded]);
+
+  // Show a one-time resize hint the first time a design is placed
+  useEffect(() => {
+    if (designs.length > 0 && !hasShownSizeHintRef.current) {
+      hasShownSizeHintRef.current = true;
+      setShowSizeHint(true);
+      const t = setTimeout(() => setShowSizeHint(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [designs.length]);
 
   const handleSelectDesign = useCallback((id: string | null) => {
     flushSync(() => {
@@ -4010,10 +4022,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <div className="w-px h-5 bg-gray-100 flex-shrink-0 hidden lg:block" />
                 <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0">
                   <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
+                    {/* Size label — makes the resize control obvious to new users */}
+                    <Maximize2 className="w-3 h-3 text-gray-500 mr-0.5 flex-shrink-0" />
+                    <span className="text-[10px] font-semibold text-gray-500 mr-1 flex-shrink-0">Size</span>
                     <span className="text-[10px] text-gray-600">W</span>
                     <SizeInput
                       value={activeResizeSettings.widthInches * activeDesignTransform.s}
-                      onCommit={(v) => handleEffectiveSizeChange("width", v)}
+                      onCommit={(v) => { handleEffectiveSizeChange("width", v); setShowSizeHint(false); }}
                       title={useMetric(lang) ? t("editor.widthTitleCm") : t("editor.widthTitle")}
                       max={artboardWidth}
                       lang={lang}
@@ -4029,12 +4044,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     <span className="text-[10px] text-gray-600">H</span>
                     <SizeInput
                       value={activeResizeSettings.heightInches * activeDesignTransform.s}
-                      onCommit={(v) => handleEffectiveSizeChange("height", v)}
+                      onCommit={(v) => { handleEffectiveSizeChange("height", v); setShowSizeHint(false); }}
                       title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")}
                       max={artboardHeight}
                       lang={lang}
                     />
                     <span className={`text-gray-600 ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`}>{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>
+                    {/* First-upload hint — fades after 5s */}
+                    {showSizeHint && (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-cyan-700 bg-cyan-50 border border-cyan-300 rounded-full px-2 py-0.5 animate-pulse ml-1 flex-shrink-0">
+                        ← Click to resize
+                        <button onClick={() => setShowSizeHint(false)} className="text-cyan-400 hover:text-cyan-600 leading-none"><X className="w-2.5 h-2.5" /></button>
+                      </span>
+                    )}
                   </div>
                   <span
                     className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
