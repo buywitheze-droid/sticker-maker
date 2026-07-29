@@ -829,9 +829,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const handleEffectiveSizeChange = useCallback((axis: 'width' | 'height', value: number) => {
     // Fall back to lastActiveDesignIdRef when selectedDesignId is null.
-    // This handles the case where the canvas mousedown (capture phase) fires
-    // flushSync-deselect BEFORE the SizeInput blur commit, so the id is gone
-    // by the time we get here.
     const targetId = selectedDesignId ?? lastActiveDesignIdRef.current;
     if (!targetId || value <= 0) return;
     const design = designs.find(d => d.id === targetId);
@@ -842,6 +839,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     if (currentW <= 0 || currentH <= 0 || currentS <= 0) return;
     saveSnapshot();
 
+    // When multiple designs are selected, apply the same effective size to every one of them.
+    // Each design keeps its own aspect ratio (proportional lock on) or raw dimensions (off).
+    const idsToResize = selectedDesignIds.size > 1 ? selectedDesignIds : new Set([targetId]);
+
+    // Clamp target against the primary design's rotation-aware max
     const rad = (design.transform.rotation * Math.PI) / 180;
     const cosR = Math.abs(Math.cos(rad));
     const sinR = Math.abs(Math.sin(rad));
@@ -852,28 +854,45 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       : Math.min(value, maxEffH);
 
     if (proportionalLock) {
+      // Each selected design gets a new s so its effective W (or H) = clampedValue.
+      setDesigns(prev => prev.map(d => {
+        if (!idsToResize.has(d.id)) return d;
+        const dW = d.widthInches, dH = d.heightInches;
+        if (dW <= 0 || dH <= 0) return d;
+        const newS = axis === 'width' ? clampedValue / dW : clampedValue / dH;
+        const updated = { ...d, transform: { ...d.transform, s: newS } };
+        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+        return { ...d, transform: { ...d.transform, s: newS, nx, ny } };
+      }));
+      // Keep designTransform in sync with primary for display
       const newS = axis === 'width' ? clampedValue / currentW : clampedValue / currentH;
-      const updated = { ...design, transform: { ...design.transform, s: newS } };
-      const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
-      const newTransform = { ...design.transform, s: newS, nx, ny };
-      setDesignTransform(newTransform);
-      setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, transform: newTransform } : d));
+      const primaryUpdated = { ...design, transform: { ...design.transform, s: newS } };
+      const { nx: pnx, ny: pny } = clampDesignToArtboard(primaryUpdated, artboardWidth, artboardHeight);
+      setDesignTransform({ ...design.transform, s: newS, nx: pnx, ny: pny });
     } else {
       if (axis === 'width') {
+        setDesigns(prev => prev.map(d => {
+          if (!idsToResize.has(d.id)) return d;
+          const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / d.transform.s));
+          const updated = { ...d, widthInches: newW };
+          const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+          return { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } };
+        }));
         const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / currentS));
-        const updated = { ...design, widthInches: newW };
-        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, widthInches: newW }));
-        setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } } : d));
       } else {
+        setDesigns(prev => prev.map(d => {
+          if (!idsToResize.has(d.id)) return d;
+          const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / d.transform.s));
+          const updated = { ...d, heightInches: newH };
+          const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+          return { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } };
+        }));
         const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / currentS));
-        const updated = { ...design, heightInches: newH };
-        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         setResizeSettings(prev => ({ ...prev, heightInches: newH }));
-        setDesigns(prev => prev.map(d => d.id === targetId ? { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } } : d));
       }
     }
-  }, [selectedDesignId, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight]);
+  }, [selectedDesignId, selectedDesignIds, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight]);
 
   const isArtboardFull = useCallback((extraDesigns?: DesignItem[]) => {
     if (designs.length === 0) return false;
@@ -4087,6 +4106,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     {/* Size label — makes the resize control obvious to new users */}
                     <Maximize2 className="w-3 h-3 text-gray-500 mr-0.5 flex-shrink-0" />
                     <span className="text-[10px] font-semibold text-gray-500 mr-1 flex-shrink-0">Size</span>
+                    {selectedDesignIds.size > 1 && (
+                      <span className="text-[9px] font-bold text-cyan-600 bg-cyan-50 border border-cyan-300 rounded-full px-1 py-px mr-1 flex-shrink-0 tabular-nums" title={`Resize applies to all ${selectedDesignIds.size} selected designs`}>
+                        ×{selectedDesignIds.size}
+                      </span>
+                    )}
                     <span className="text-[10px] text-gray-600">W</span>
                     <SizeInput
                       value={activeResizeSettings.widthInches * activeDesignTransform.s}
