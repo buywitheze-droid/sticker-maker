@@ -1,0 +1,109 @@
+Fix the oversized transparent PNG upload bug without shrinking normal designs.
+
+Root cause:
+Some transparent PNGs are exported at print-resolution pixel dimensions but contain no real PNG pHYs DPI metadata. Sharp reports synthetic density: 72, causing the app to calculate the design much too large.
+
+Example:
+- Transparent boat PNG: 3417×4923 pixels, no pHYs chunk
+- At 72 DPI: 47.46×68.38 inches
+- Correct at 300 DPI: 11.39×16.41 inches
+
+Do NOT globally change the server PNG fallback from 72 DPI to 300 DPI. This app already clamps oversized uploads with:
+
+const maxSx = artboardWidth / widthInches;
+const maxSy = artboardHeight / heightInches;
+const initialS = Math.min(1, maxSx, maxSy);
+
+A global 72→300 change would make normal designs open four times smaller.
+
+Implement a targeted fallback:
+
+Use 300 DPI only when all conditions are true:
+1. The file is a PNG.
+2. The PNG has no real pHYs DPI chunk.
+3. The image contains meaningful transparency.
+
+Keep existing behavior for:
+- JPEGs
+- Opaque PNGs
+- Files with valid embedded DPI metadata
+
+Add or reuse a PNG header parser that detects real pHYs metadata:
+
+function isPngWithoutEmbeddedDpi(file: File): Promise<boolean> {
+  // Read the first 64 KB.
+  // Confirm the PNG signature.
+  // Scan PNG chunks until IDAT/IEND.
+  // Return true only when no valid pHYs chunk exists.
+}
+
+Use the existing DPI fetch/parser for normal files, then resolve upload DPI like this:
+
+async function resolveUploadDpi(
+  file: File,
+  image: HTMLImageElement,
+  suppliedDpi?: number,
+): Promise<number> {
+  if (suppliedDpi !== undefined) {
+    return normalizeRasterDpiForInches(suppliedDpi, image);
+  }
+
+  const reportedDpi = await fetchImageDpi(file).catch(() => 300);
+
+  const pngWithoutEmbeddedDpi = await isPngWithoutEmbeddedDpi(file);
+
+  // Do not rely only on the presence of an alpha channel.
+  // Confirm that the image has meaningful transparent pixels.
+  const hasMeaningfulTransparency = !isOpaqueRasterUpload(image);
+
+  const useTransparentPngFallback =
+    pngWithoutEmbeddedDpi && hasMeaningfulTransparency;
+
+  const effectiveDpi = useTransparentPngFallback
+    ? 300
+    : reportedDpi;
+
+  return normalizeRasterDpiForInches(effectiveDpi, image);
+}
+
+Use resolveUploadDpi() everywhere raster uploads are converted into inches, including the normal upload path and fallback upload path:
+
+const dpi = await resolveUploadDpi(file, image);
+
+const widthInches =
+  (image.naturalWidth || image.width) / dpi;
+
+const heightInches =
+  (image.naturalHeight || image.height) / dpi;
+
+Do not modify the server endpoint globally. Keep it like this if artboard clamping exists:
+
+res.json({
+  width: metadata.width,
+  height: metadata.height,
+  format: metadata.format,
+  channels: metadata.channels,
+  density: metadata.density || 72,
+  size: req.file.size,
+});
+
+Expected results:
+
+- Transparent PNG without pHYs:
+  3417×4923 at 300 DPI = approximately 11.39×16.41 inches
+- Normal 1080×1080 JPEG:
+  remains 15×15 inches at the existing 72-DPI behavior
+- Transparent PNG with valid pHYs:
+  preserve the embedded DPI
+- Opaque PNG without pHYs:
+  do not automatically switch to 300 DPI
+- Oversized uploads:
+  continue using the existing artboard clamp
+
+Acceptance tests:
+1. The boat PNG opens around 11.39×16.41 inches.
+2. The normal JPEG design remains around 15×15 inches.
+3. A transparent PNG with valid pHYs preserves its DPI.
+4. An opaque PNG without pHYs is not automatically treated as 300 DPI.
+5. The existing artboard clamp still prevents overflow.
+6. PNG/PDF export uses the stored physical dimensions and does not unexpectedly rescale the artwork.
