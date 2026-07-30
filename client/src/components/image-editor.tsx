@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Maximize2, AlignCenterVertical, AlignCenterHorizontal, WandSparkles, Eraser } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Maximize2, AlignCenterVertical, AlignCenterHorizontal, WandSparkles, Eraser, Download, Archive, Pencil } from "lucide-react";
 
 // ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
 const SRGB_LINEAR_LUT = (() => {
@@ -423,7 +423,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [activeSheetId, setActiveSheetId] = useState<string>(sheetInit.id);
   const [addSheetPopover, setAddSheetPopover] = useState(false);
   const [sendToSheetMenu, setSendToSheetMenu] = useState<string | null>(null);
-  const [exportSheetModal, setExportSheetModal] = useState<{ open: boolean; selectedIds: Set<string>; downloadType: string; format: string; spotColorsByDesign?: Record<string, any[]> } | null>(null);
+  const [showDownloadOptions, setShowDownloadOptions] = useState(false);
+  const pendingSpotColorsRef = useRef<Record<string, any[]> | undefined>(undefined);
+  const [renamingSheetId, setRenamingSheetId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const activeSheetIndex = Math.max(0, sheets.findIndex(s => s.id === activeSheetId));
   const activeSheet = sheets[activeSheetIndex];
   // Derived per-sheet values — shadow what were formerly standalone useState vars
@@ -3797,6 +3800,201 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [imageInfo, designs, artboardWidth, artboardHeight, toast]);
 
   // ── Multi-sheet export helpers ─────────────────────────────────────────────
+
+  /** Build a PDF Blob from a sheet's designs. Spot-color channels are included
+   *  when spotColorsByDesign is provided (fluorescent profile only). */
+  const exportSheetToPdf = useCallback(async (
+    sheetDesigns: DesignItem[],
+    shWidth: number,
+    shHeight: number,
+    spotColorsByDesign?: Record<string, any[]>
+  ): Promise<Blob> => {
+    const { PDFDocument, degrees } = await import('pdf-lib');
+    const exportDpi = 300;
+    const pageWidthPt  = shWidth  * 72;
+    const pageHeightPt = shHeight * 72;
+    const pdfDoc = await PDFDocument.create();
+    const page   = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
+
+    for (const design of sheetDesigns) {
+      const img  = design.imageInfo.image;
+      const cvs  = document.createElement('canvas');
+      const drawW = Math.round(design.widthInches  * design.transform.s * exportDpi);
+      const drawH = Math.round(design.heightInches * design.transform.s * exportDpi);
+      cvs.width = drawW; cvs.height = drawH;
+      const cctx = cvs.getContext('2d');
+      if (!cctx) continue;
+      if (design.transform.flipX || design.transform.flipY) {
+        cctx.save();
+        cctx.translate(design.transform.flipX ? drawW : 0, design.transform.flipY ? drawH : 0);
+        cctx.scale(design.transform.flipX ? -1 : 1, design.transform.flipY ? -1 : 1);
+        cctx.drawImage(img, 0, 0, drawW, drawH);
+        cctx.restore();
+      } else {
+        cctx.drawImage(img, 0, 0, drawW, drawH);
+      }
+
+      const designSpotColors = spotColorsByDesign?.[design.id];
+      const hasFluor = !!(designSpotColors?.some((c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange));
+      let spotVectorData: {
+        masks: Record<string, Uint8Array>; channelNames: Record<string, string>;
+        maskWidth: number; maskHeight: number; widthInches: number; heightInches: number;
+      } | null = null;
+
+      if (hasFluor && designSpotColors && designSpotColors.length > 0) {
+        try {
+          const colors    = designSpotColors as any[];
+          const centroids = colors.map((c: any) => c.rgb as { r: number; g: number; b: number });
+          const hasRegionLevel = colors.some((c: any) =>
+            c.regions && c.regions.length > 1 && c.regionMap &&
+            c.regions.some((r: any) => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange)
+          );
+          let lowResMap: { pixelMap: Int16Array; width: number; height: number } | null = null;
+          if (hasRegionLevel) {
+            const { buildPixelMapFromImage } = await import('@/lib/color-extractor');
+            lowResMap = buildPixelMapFromImage(img as any, designSpotColors as any) ?? null;
+          }
+          const n = drawW * drawH;
+          const mFY = new Uint8Array(n), mFM = new Uint8Array(n);
+          const mFG = new Uint8Array(n), mFO = new Uint8Array(n);
+          const sfFY = new Uint8Array(n), sfFM = new Uint8Array(n);
+          const sfFG = new Uint8Array(n), sfFO = new Uint8Array(n);
+          const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
+          const pixels = imgDataFull.data;
+          const lrW = lowResMap?.width ?? 1, lrH = lowResMap?.height ?? 1;
+          for (let py = 0; py < drawH; py++) {
+            for (let px = 0; px < drawW; px++) {
+              const pi    = py * drawW + px;
+              const alpha = pixels[pi * 4 + 3];
+              if (alpha < 10) continue;
+              const r = pixels[pi * 4], g = pixels[pi * 4 + 1], b = pixels[pi * 4 + 2];
+              let bestDist = Infinity, bestIdx = -1, secDist = Infinity, secIdx = -1;
+              for (let ki = 0; ki < centroids.length; ki++) {
+                const c = centroids[ki];
+                const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+                if (d < bestDist) { secDist = bestDist; secIdx = bestIdx; bestDist = d; bestIdx = ki; }
+                else if (d < secDist) { secDist = d; secIdx = ki; }
+              }
+              if (bestIdx < 0) continue;
+              const color = colors[bestIdx];
+              if (!color) continue;
+              let confidence = 1.0;
+              if (secIdx >= 0) {
+                const cA = centroids[bestIdx], cB = centroids[secIdx];
+                const vR = cB.r - cA.r, vG = cB.g - cA.g, vBc = cB.b - cA.b;
+                const dotVV = vR*vR + vG*vG + vBc*vBc;
+                if (dotVV > 0) {
+                  const t = ((r - cA.r)*vR + (g - cA.g)*vG + (b - cA.b)*vBc) / dotVV;
+                  confidence = Math.max(0, Math.min(1, 1 - t));
+                }
+              }
+              const isInk = confidence >= 0.5 && alpha >= 10;
+              const softV = Math.round(alpha * confidence);
+              const assignInk = (fy: boolean, fm: boolean, fg: boolean, fo: boolean) => {
+                if (fy) { if (isInk) mFY[pi] = 255; sfFY[pi] = softV; }
+                if (fm) { if (isInk) mFM[pi] = 255; sfFM[pi] = softV; }
+                if (fg) { if (isInk) mFG[pi] = 255; sfFG[pi] = softV; }
+                if (fo) { if (isInk) mFO[pi] = 255; sfFO[pi] = softV; }
+              };
+              if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
+                const mx = Math.min(Math.floor(px * lrW / drawW), lrW - 1);
+                const my = Math.min(Math.floor(py * lrH / drawH), lrH - 1);
+                const mpi = my * lrW + mx;
+                const ri  = (color.regionMap as Int16Array)[mpi] ?? -1;
+                if (ri < 0 || !color.regions[ri]) continue;
+                const region = color.regions[ri];
+                assignInk(region.spotFluorY, region.spotFluorM, region.spotFluorG, region.spotFluorOrange);
+              } else {
+                assignInk(color.spotFluorY, color.spotFluorM, color.spotFluorG, color.spotFluorOrange);
+              }
+            }
+          }
+          for (let pi = 0; pi < n; pi++) {
+            if (mFY[pi] || mFM[pi] || mFG[pi] || mFO[pi]) imgDataFull.data[pi * 4 + 3] = 0;
+          }
+          cctx.putImageData(imgDataFull, 0, 0);
+          const cNames = {
+            FY: (colors[0]?.spotFluorYName      as string) || 'FY',
+            FM: (colors[0]?.spotFluorMName      as string) || 'FM',
+            FG: (colors[0]?.spotFluorGName      as string) || 'FG',
+            FO: (colors[0]?.spotFluorOrangeName as string) || 'FO',
+          };
+          const allChannelMasks: Record<string, Uint8Array> = { FY: mFY, FM: mFM, FG: mFG, FO: mFO };
+          const activeMasks: Record<string, Uint8Array> = {};
+          for (const [ch, m] of Object.entries(allChannelMasks)) {
+            if (m.some(v => v > 0)) activeMasks[ch] = m;
+          }
+          if (Object.keys(activeMasks).length > 0) {
+            spotVectorData = {
+              masks: activeMasks,
+              channelNames: { FY: cNames.FY, FM: cNames.FM, FG: cNames.FG, FO: cNames.FO },
+              maskWidth: drawW, maskHeight: drawH,
+              widthInches:  design.widthInches  * design.transform.s,
+              heightInches: design.heightInches * design.transform.s,
+            };
+          }
+        } catch (koErr) {
+          console.warn('[exportSheetToPdf] mask build failed, skipping:', koErr);
+        }
+      }
+
+      let pngDataUrl: string;
+      try { pngDataUrl = cvs.toDataURL('image/png'); }
+      catch (err) { console.warn('Canvas toDataURL failed for design', design.id, err); continue; }
+      const base64 = pngDataUrl.split(',')[1];
+      if (!base64) continue;
+      const pngBytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+      const pdfImage = await pdfDoc.embedPng(pngBytes);
+
+      const designWidthPt  = design.widthInches  * design.transform.s * 72;
+      const designHeightPt = design.heightInches * design.transform.s * 72;
+      const centerXPt = design.transform.nx * pageWidthPt;
+      const centerYPt = pageHeightPt - design.transform.ny * pageHeightPt;
+      const rotDeg = design.transform.rotation ?? 0;
+      const rotRad = (-rotDeg * Math.PI) / 180;
+      const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+      page.drawImage(pdfImage, {
+        x: centerXPt - (designWidthPt / 2) * cosR + (designHeightPt / 2) * sinR,
+        y: centerYPt - (designWidthPt / 2) * sinR - (designHeightPt / 2) * cosR,
+        width: designWidthPt, height: designHeightPt,
+        rotate: degrees(-rotDeg),
+      });
+
+      if (design.printFileName) {
+        const { StandardFonts } = await import('pdf-lib');
+        const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        const displayName = design.name.replace(/\.[^/.]+$/, '');
+        const fontSize = Math.max(4, Math.round(0.08 * 72));
+        const textWidth = font.widthOfTextAtSize(displayName, fontSize);
+        const margin = 0.02 * 72;
+        const textX = centerXPt + (designWidthPt / 2) * cosR - (designHeightPt / 2) * sinR - textWidth - margin;
+        const textY = centerYPt - (designWidthPt / 2) * sinR - (designHeightPt / 2) * cosR + margin;
+        page.drawText(displayName, { x: textX, y: textY, size: fontSize, font, rotate: degrees(-rotDeg) });
+      }
+
+      if (spotVectorData) {
+        const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
+        const designWidthIn  = design.widthInches  * design.transform.s;
+        const designHeightIn = design.heightInches * design.transform.s;
+        const centerXIn = design.transform.nx * shWidth;
+        const centerYIn = design.transform.ny * shHeight;
+        await addSpotColorVectorsFromMasksToPDF(
+          pdfDoc, page,
+          spotVectorData.masks, spotVectorData.maskWidth, spotVectorData.maskHeight,
+          spotVectorData.channelNames,
+          designWidthIn, designHeightIn, shHeight,
+          centerXIn - designWidthIn  / 2,
+          centerYIn - designHeightIn / 2,
+          design.transform.rotation ?? 0,
+        );
+      }
+      cvs.width = 0; cvs.height = 0;
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    return new Blob([pdfBytes], { type: 'application/pdf' });
+  }, []);
+
   const exportSheetToPng = useCallback(async (sheetDesigns: DesignItem[], shWidth: number, shHeight: number): Promise<Blob> => {
     const exportDpi = 300;
     const outW = Math.max(1, Math.round(shWidth * exportDpi));
@@ -3844,60 +4042,80 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }
   }, []);
 
-  const handleMultiSheetZipExport = useCallback(async () => {
-    if (!exportSheetModal) return;
-    const { selectedIds } = exportSheetModal;
-    const sheetsToExport = sheets.filter(s => selectedIds.has(s.id) && s.designs.length > 0);
-    if (sheetsToExport.length === 0) {
+  const handleRenameSheet = useCallback((id: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (trimmed) {
+      setSheets(prev => prev.map(s => s.id === id ? { ...s, name: trimmed } : s));
+    }
+    setRenamingSheetId(null);
+    setRenameValue('');
+  }, []);
+
+  const handleDownloadGate = useCallback((downloadType?: string, format?: string, spotColorsByDesign?: Record<string, any[]>) => {
+    pendingSpotColorsRef.current = spotColorsByDesign;
+    setShowDownloadOptions(true);
+  }, []);
+
+  const handleDownloadCurrentSheet = useCallback(async () => {
+    setShowDownloadOptions(false);
+    await handleDownload('standard', profile.enableFluorescent ? 'pdf' : 'png', pendingSpotColorsRef.current);
+  }, [handleDownload, profile.enableFluorescent]);
+
+  const handleDownloadAllSheetsZip = useCallback(async () => {
+    setShowDownloadOptions(false);
+    const sheetsWithDesigns = sheets.filter(s => s.designs.length > 0);
+    if (sheetsWithDesigns.length === 0) {
       toast({ title: 'No designs to export', variant: 'destructive' });
-      setExportSheetModal(null);
       return;
     }
-    if (sheetsToExport.length === 1) {
-      setExportSheetModal(null);
-      const sh = sheetsToExport[0];
-      const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight).catch(() => null);
-      if (!blob) { toast({ title: 'Export failed', variant: 'destructive' }); return; }
+    const isFluor = profile.enableFluorescent;
+    const triggerDownload = (blob: Blob, filename: string) => {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = url; link.download = `${sh.name.replace(/\s+/g, '-').toLowerCase()}.png`;
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-      return;
-    }
-    setIsProcessing(true);
-    setExportSheetModal(null);
-    try {
-      const { default: JSZip } = await import('jszip');
-      const zip = new JSZip();
-      for (let i = 0; i < sheetsToExport.length; i++) {
-        const sh = sheetsToExport[i];
-        const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight);
-        const safeName = sh.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-        zip.file(`sheet-${i + 1}-${safeName}.png`, blob);
-      }
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(zipBlob);
-      const link = document.createElement('a');
-      link.href = url; link.download = 'gangsheet-export.zip';
+      link.href = url; link.download = filename;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      toast({ title: 'Export complete', description: `${sheetsToExport.length} sheets downloaded as ZIP.` });
+    };
+    setIsProcessing(true);
+    try {
+      if (sheetsWithDesigns.length === 1) {
+        const sh = sheetsWithDesigns[0];
+        const safeName = sh.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        if (isFluor) {
+          const blob = await exportSheetToPdf(sh.designs, artboardWidth, sh.artboardHeight, pendingSpotColorsRef.current);
+          triggerDownload(blob, `${safeName}.pdf`);
+        } else {
+          const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight);
+          triggerDownload(blob, `${safeName}.png`);
+        }
+        return;
+      }
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      for (let i = 0; i < sheetsWithDesigns.length; i++) {
+        const sh = sheetsWithDesigns[i];
+        const safeName = sh.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        const isActiveSheet = sh.id === activeSheetId;
+        if (isFluor) {
+          const blob = await exportSheetToPdf(
+            sh.designs, artboardWidth, sh.artboardHeight,
+            isActiveSheet ? pendingSpotColorsRef.current : undefined
+          );
+          zip.file(`sheet-${i + 1}-${safeName}.pdf`, blob);
+        } else {
+          const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight);
+          zip.file(`sheet-${i + 1}-${safeName}.png`, blob);
+        }
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      triggerDownload(zipBlob, 'gangsheet-export.zip');
+      toast({ title: 'Export complete', description: `${sheetsWithDesigns.length} sheets downloaded as ZIP.` });
     } catch (err) {
       toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
     } finally {
       setIsProcessing(false);
     }
-  }, [exportSheetModal, sheets, artboardWidth, exportSheetToPng, toast]);
-
-  const handleDownloadGate = useCallback((downloadType?: string, format?: string, spotColorsByDesign?: Record<string, any[]>) => {
-    const sheetsWithDesigns = sheets.filter(s => s.designs.length > 0);
-    if (sheetsWithDesigns.length > 1) {
-      setExportSheetModal({ open: true, selectedIds: new Set(sheetsWithDesigns.map(s => s.id)), downloadType: downloadType ?? '', format: format ?? '', spotColorsByDesign });
-    } else {
-      handleDownload(downloadType, format, spotColorsByDesign);
-    }
-  }, [sheets, handleDownload]);
+  }, [sheets, artboardWidth, activeSheetId, profile.enableFluorescent, exportSheetToPdf, exportSheetToPng, toast]);
 
   // In multi-sheet mode, always show the editor shell (even for empty sheets) so that
   // the carousel navigation and ADD Gangsheet button remain accessible.
@@ -5041,20 +5259,44 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               style={{ background: 'rgba(156,163,175,0.5)', boxShadow: '3px 0 10px rgba(0,0,0,0.07)' }}
             />
           )}
-          {/* Sheet label + delete strip */}
-          {sheets.length > 1 && (
-            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-gray-900/80 backdrop-blur-sm text-white text-[11px] px-2.5 py-1 rounded-full shadow-lg select-none pointer-events-auto">
-              <span className="font-semibold">{activeSheet.name}</span>
-              <span className="text-gray-400 text-[9px]">{activeSheetIndex + 1}/{sheets.length}</span>
+          {/* Sheet label + rename + delete strip */}
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-gray-900/80 backdrop-blur-sm text-white text-[11px] px-2.5 py-1 rounded-full shadow-lg pointer-events-auto">
+            {renamingSheetId === activeSheetId ? (
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={e => setRenameValue(e.target.value)}
+                onBlur={() => handleRenameSheet(activeSheetId, renameValue)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleRenameSheet(activeSheetId, renameValue);
+                  if (e.key === 'Escape') { setRenamingSheetId(null); setRenameValue(''); }
+                }}
+                className="bg-transparent text-white font-semibold outline-none border-b border-white/60 min-w-0 w-28 text-[11px] leading-tight"
+                maxLength={40}
+              />
+            ) : (
               <button
-                onClick={() => deleteSheet(activeSheetId)}
-                className="ml-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-400 hover:bg-red-500/20 transition-colors leading-none"
-                title="Delete this sheet"
+                onClick={() => { setRenamingSheetId(activeSheetId); setRenameValue(activeSheet.name); }}
+                className="flex items-center gap-1 font-semibold hover:text-gray-300 transition-colors select-none group"
+                title="Click to rename"
               >
-                ×
+                <span>{activeSheet.name}</span>
+                <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" />
               </button>
-            </div>
-          )}
+            )}
+            {sheets.length > 1 && (
+              <>
+                <span className="text-gray-400 text-[9px] select-none">{activeSheetIndex + 1}/{sheets.length}</span>
+                <button
+                  onClick={() => deleteSheet(activeSheetId)}
+                  className="ml-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-400 hover:bg-red-500/20 transition-colors leading-none"
+                  title="Delete this sheet"
+                >
+                  ×
+                </button>
+              </>
+            )}
+          </div>
           {/* Left nav arrow */}
           {sheets.length > 1 && activeSheetIndex > 0 && (
             <button
@@ -5173,67 +5415,60 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         ) : null;
       })()}
 
-      {/* Multi-sheet Export Modal */}
-      {exportSheetModal?.open && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+      {/* Download Options Modal */}
+      {showDownloadOptions && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowDownloadOptions(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-900">Export Gangsheets</h2>
-              <p className="text-sm text-gray-500 mt-0.5">Select which sheets to include in the ZIP download.</p>
+              <h2 className="text-lg font-bold text-gray-900">Download Gangsheet</h2>
+              <p className="text-sm text-gray-500 mt-0.5">Choose how to download your work.</p>
             </div>
-            <div className="p-5 space-y-2.5 max-h-72 overflow-y-auto">
-              {sheets.map(sheet => {
-                const hasDesigns = sheet.designs.length > 0;
-                const isChecked = exportSheetModal.selectedIds.has(sheet.id);
+            <div className="p-5 space-y-3">
+              {/* Download current sheet */}
+              <button
+                onClick={handleDownloadCurrentSheet}
+                disabled={designs.length === 0}
+                className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-black hover:bg-gray-50 transition-all text-left group disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <div className="w-10 h-10 rounded-xl bg-gray-100 group-hover:bg-black flex items-center justify-center flex-shrink-0 transition-colors">
+                  <Download className="w-5 h-5 text-gray-600 group-hover:text-white transition-colors" />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-gray-900">Download Current Sheet</div>
+                  <div className="text-xs text-gray-500">
+                    {profile.enableFluorescent ? 'PDF with spot-color channels' : 'High-res PNG at 300 DPI'}
+                  </div>
+                </div>
+              </button>
+
+              {/* Download all sheets as ZIP */}
+              {(() => {
+                const exportable = sheets.filter(s => s.designs.length > 0);
                 return (
-                  <label
-                    key={sheet.id}
-                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${!hasDesigns ? 'opacity-40 cursor-not-allowed' : isChecked ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-gray-300'}`}
+                  <button
+                    onClick={handleDownloadAllSheetsZip}
+                    disabled={exportable.length === 0}
+                    className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-fuchsia-500 hover:bg-fuchsia-50 transition-all text-left group disabled:opacity-40 disabled:pointer-events-none"
                   >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      disabled={!hasDesigns}
-                      onChange={() => {
-                        if (!hasDesigns) return;
-                        setExportSheetModal(prev => {
-                          if (!prev) return prev;
-                          const next = new Set(prev.selectedIds);
-                          if (next.has(sheet.id)) next.delete(sheet.id);
-                          else next.add(sheet.id);
-                          return { ...prev, selectedIds: next };
-                        });
-                      }}
-                      className="w-4 h-4 rounded accent-green-500"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-gray-900 truncate">{sheet.name}</div>
+                    <div className="w-10 h-10 rounded-xl bg-fuchsia-100 group-hover:bg-fuchsia-500 flex items-center justify-center flex-shrink-0 transition-colors">
+                      <Archive className="w-5 h-5 text-fuchsia-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-gray-900">Download All Sheets as ZIP</div>
                       <div className="text-xs text-gray-500">
-                        {hasDesigns ? `${sheet.designs.length} design${sheet.designs.length !== 1 ? 's' : ''} · ${sheet.artboardHeight}" height` : 'No designs'}
+                        {exportable.length} sheet{exportable.length !== 1 ? 's' : ''} · {profile.enableFluorescent ? 'PDF files' : 'PNG files'} bundled together
                       </div>
                     </div>
-                  </label>
+                  </button>
                 );
-              })}
+              })()}
             </div>
-            <div className="p-5 border-t border-gray-100 flex items-center gap-3">
+            <div className="px-5 pb-5">
               <button
-                onClick={() => setExportSheetModal(null)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
+                onClick={() => setShowDownloadOptions(false)}
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
               >
                 Cancel
-              </button>
-              <button
-                onClick={handleMultiSheetZipExport}
-                disabled={exportSheetModal.selectedIds.size === 0}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-black transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98]"
-                style={{
-                  background: 'linear-gradient(135deg, #39ff14 0%, #22c55e 100%)',
-                  color: '#000',
-                  boxShadow: exportSheetModal.selectedIds.size > 0 ? '0 0 14px rgba(57,255,20,0.35)' : 'none',
-                }}
-              >
-                Export {exportSheetModal.selectedIds.size > 0 ? `${exportSheetModal.selectedIds.size} Sheet${exportSheetModal.selectedIds.size !== 1 ? 's' : ''}` : 'Selected'}
               </button>
             </div>
           </div>
