@@ -2768,7 +2768,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     // effective DPI is capped at 300.  Images already below 300 DPI keep
     // their native DPI (no upscale).  This gives the correct physical 35 LPI
     // dot pitch after resize.
-    const nativeDpi    = design.widthInches > 0 ? w / design.widthInches : 300;
+    //
+    // IMPORTANT: use the *effective* printed width (widthInches × transform.s)
+    // not the raw widthInches.  Without this, resizing the design changes
+    // how dense the halftone dots look — a design scaled to half size would
+    // get dots computed at full scale, making them appear twice as small/dense.
+    const effectiveWidthInches = design.widthInches > 0
+      ? design.widthInches * (design.transform?.s ?? 1)
+      : 0;
+    const nativeDpi    = effectiveWidthInches > 0 ? w / effectiveWidthInches : 300;
     const effectiveDpi = Math.min(nativeDpi, 300);
     const LPI          = 35;
     const ANGLE        = 22.5 * Math.PI / 180;
@@ -2815,10 +2823,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     // five O(N) loops take 10–30 s, freezing the main thread ("glitch storm").
     // We cap at 300 DPI (downscale only; never upscale).  300 DPI gives
     // cell = 300/35 ≈ 8.57 px — the same as the reference app at full quality.
+    //
+    // Use effectiveWidthInches (= widthInches × scale) so the processing canvas
+    // is sized for the actual printed dimensions, not the native image size.
     const TARGET_DPI = 300;
     let procW: number, procH: number;
-    if (design.widthInches > 0) {
-      procW = Math.min(w, Math.max(1, Math.round(design.widthInches * TARGET_DPI)));
+    if (effectiveWidthInches > 0) {
+      procW = Math.min(w, Math.max(1, Math.round(effectiveWidthInches * TARGET_DPI)));
       procH = Math.min(h, Math.max(1, Math.round(procW * h / w)));
     } else {
       // No physical size info — cap at 2 000 px on the long side to stay responsive
