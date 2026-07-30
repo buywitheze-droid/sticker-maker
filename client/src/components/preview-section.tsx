@@ -2485,8 +2485,24 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
         const ny = 0.5 - py / Math.max(1, dims.height);
         return { nx: Math.max(0.05, Math.min(0.95, nx)), ny: Math.max(0.05, Math.min(0.95, ny)) };
       };
+      // Multi-sheet zoom memory: parent saves/restores per-sheet zoom via these methods
+      (canvas as any).fitToView = fitToView;
+      (canvas as any).getZoomState = () => ({
+        zoom: zoomRef.current,
+        panX: panXRef.current,
+        panY: panYRef.current,
+      });
+      (canvas as any).setZoomState = (z: number, px: number, py: number) => {
+        const clamped = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, z));
+        setZoom(clamped);
+        setPanX(px);
+        setPanY(py);
+        zoomRef.current = clamped;
+        panXRef.current = px;
+        panYRef.current = py;
+      };
       return canvas;
-    }, []);
+    }, [fitToView]);
 
     const getCheckerboardPattern = (ctx: CanvasRenderingContext2D, w: number, h: number): CanvasPattern | null => {
       if (checkerboardPatternRef.current?.width === w && checkerboardPatternRef.current?.height === h) {
@@ -2704,7 +2720,14 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
     }, [artboardWidth, artboardHeight]);
 
     useEffect(() => {
-      if (!canvasRef.current || (!imageInfo && designs.length === 0)) return;
+      if (!canvasRef.current) return;
+      // When switching to an empty sheet, explicitly clear so no stale pixels from the previous sheet remain
+      if (!imageInfo && designs.length === 0) {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
 
       const doRender = () => {
       try {

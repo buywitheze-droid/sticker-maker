@@ -24,12 +24,15 @@ interface UploadSectionProps {
   onBatchStart?: (fileCount: number) => void;
   imageInfo?: ImageInfo | null;
   resizeSettings?: ResizeSettings | null;
+  /** Force the compact button style even when imageInfo is null (e.g. empty sheet in multi-sheet mode) */
+  compact?: boolean;
 }
 
 export default function UploadSection({
   onImageUpload,
   onBatchStart,
   imageInfo,
+  compact = false,
 }: UploadSectionProps) {
   const { toast } = useToast();
   const { t, lang } = useLanguage();
@@ -166,7 +169,7 @@ export default function UploadSection({
     [handleFileUpload, onBatchStart],
   );
 
-  const isEmptyState = !imageInfo;
+  const isEmptyState = !imageInfo && !compact;
 
   const [colorIndex, setColorIndex] = useState(0);
 

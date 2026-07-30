@@ -391,6 +391,14 @@ function clampDesignToArtboard(
   return { nx, ny };
 }
 
+// ── Per-sheet state type ───────────────────────────────────────────────────
+interface SheetState {
+  id: string;
+  name: string;
+  designs: DesignItem[];
+  artboardHeight: number;
+}
+
 export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFILE }: { onDesignUploaded?: () => void; profile?: ProfileConfig } = {}) {
   const { toast } = useToast();
   const { t, lang } = useLanguage();
@@ -406,12 +414,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [artboardWidth, setArtboardWidth] = useState(profile.artboardWidth);
-  const [artboardHeight, setArtboardHeight] = useState(profile.gangsheetHeights[0] ?? 12);
+  // ── Multi-sheet state ──────────────────────────────────────────────────────
+  const [sheetInit] = useState(() => {
+    const id = crypto.randomUUID();
+    return { id, sheet: { id, name: 'Sheet 1', designs: [] as DesignItem[], artboardHeight: profile.gangsheetHeights[0] ?? 12 } as SheetState };
+  });
+  const [sheets, setSheets] = useState<SheetState[]>([sheetInit.sheet]);
+  const [activeSheetId, setActiveSheetId] = useState<string>(sheetInit.id);
+  const [addSheetPopover, setAddSheetPopover] = useState(false);
+  const [sendToSheetMenu, setSendToSheetMenu] = useState<string | null>(null);
+  const [exportSheetModal, setExportSheetModal] = useState<{ open: boolean; selectedIds: Set<string>; downloadType: string; format: string; spotColorsByDesign?: Record<string, any[]> } | null>(null);
+  const activeSheetIndex = Math.max(0, sheets.findIndex(s => s.id === activeSheetId));
+  const activeSheet = sheets[activeSheetIndex];
+  // Derived per-sheet values — shadow what were formerly standalone useState vars
+  const designs: DesignItem[] = activeSheet.designs;
+  const artboardHeight: number = activeSheet.artboardHeight;
   const [designGap, setDesignGap] = useState<number | undefined>(0.25);
   const [duplicateCount, setDuplicateCount] = useState(1);
   const [mobilePanel, setMobilePanel] = useState<"controls" | "preview">("controls");
   const [designTransform, setDesignTransform] = useState<ImageTransform>({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
-  const [designs, setDesigns] = useState<DesignItem[]>([]);
   const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
   const [selectedDesignIds, setSelectedDesignIds] = useState<Set<string>>(new Set());
   const [showDesignInfo, setShowDesignInfo] = useState(true);
@@ -447,8 +468,29 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; designId: string } | null>(null);
   const [cropModalDesignId, setCropModalDesignId] = useState<string | null>(null);
 
-  // Undo/Redo history
-  const { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo } = useHistory();
+  // Undo/Redo history (per-sheet stacks)
+  const { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo, deleteSheetHistory } = useHistory();
+  // Stable ref for active sheet ID — allows setDesigns / setArtboardHeight to have [] deps
+  const activeSheetIdRef = useRef(activeSheetId);
+  activeSheetIdRef.current = activeSheetId;
+  // Stable ref for sheets array — lets navigateToSheet read current designs without closure capture
+  const sheetsRef = useRef(sheets);
+  sheetsRef.current = sheets;
+  // Per-sheet zoom memory: saved before navigating away, restored on return
+  const sheetZoomStates = useRef<Map<string, { zoom: number; panX: number; panY: number }>>(new Map());
+  // Stable wrappers that route writes through the active sheet
+  const setDesigns = useCallback((updater: DesignItem[] | ((prev: DesignItem[]) => DesignItem[])) => {
+    const id = activeSheetIdRef.current;
+    setSheets(prev => prev.map(s => s.id !== id ? s : {
+      ...s, designs: typeof updater === 'function' ? updater(s.designs) : updater,
+    }));
+  }, []);
+  const setArtboardHeight = useCallback((updater: number | ((prev: number) => number)) => {
+    const id = activeSheetIdRef.current;
+    setSheets(prev => prev.map(s => s.id !== id ? s : {
+      ...s, artboardHeight: typeof updater === 'function' ? updater(s.artboardHeight) : updater,
+    }));
+  }, []);
   const mountedRef = useRef(true);
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const designsRef = useRef(designs);
@@ -478,7 +520,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [selectedDesignId]);
 
   const saveSnapshot = useCallback(() => {
-    pushSnapshot(getSnapshot());
+    pushSnapshot(getSnapshot(), activeSheetIdRef.current);
   }, [pushSnapshot, getSnapshot]);
 
   const applySnapshot = useCallback((snap: HistorySnapshot) => {
@@ -515,7 +557,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       restoredIds = new Set(restored.map(d => d.id));
       return restored;
     });
-    const validSelectedId = restoredIds.has(snap.selectedDesignId) ? snap.selectedDesignId : null;
+    const validSelectedId = snap.selectedDesignId && restoredIds.has(snap.selectedDesignId) ? snap.selectedDesignId : null;
     setSelectedDesignId(validSelectedId);
     if (validSelectedId) {
       const sel = parsed.find(p => p.id === validSelectedId);
@@ -530,12 +572,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   }, [clearIsUndoRedo]);
 
   const handleUndo = useCallback(() => {
-    const snap = undo(getSnapshot());
+    const snap = undo(getSnapshot(), activeSheetIdRef.current);
     if (snap) applySnapshot(snap);
   }, [undo, getSnapshot, applySnapshot]);
 
   const handleRedo = useCallback(() => {
-    const snap = redo(getSnapshot());
+    const snap = redo(getSnapshot(), activeSheetIdRef.current);
     if (snap) applySnapshot(snap);
   }, [redo, getSnapshot, applySnapshot]);
 
@@ -564,30 +606,54 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     return activeImageInfo.dpi;
   }, [activeImageInfo]);
 
-  const layerRows = useMemo(() => {
+  // Unified layer rows across ALL sheets.
+  // activeSheetDesigns = copies on the currently-active sheet (may be empty when
+  // the image only lives on another sheet — those rows show "Add here").
+  const allLayerRows = useMemo(() => {
     const baseNameOf = (name: string) => name.replace(/ copy( \d+)?$/, '');
-    const sizeKeyOf = (d: DesignItem) => `${(d.widthInches * d.transform.s).toFixed(2)}x${(d.heightInches * d.transform.s).toFixed(2)}`;
-    const firstSizeByBase = new Map<string, string>();
-    const groups = new Map<string, DesignItem[]>();
-    for (const d of designs) {
-      const base = baseNameOf(d.name);
-      const sk = sizeKeyOf(d);
-      if (!firstSizeByBase.has(base)) firstSizeByBase.set(base, sk);
-      const key = `${base}::${sk}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(d);
+    const sizeKeyOf = (d: DesignItem) =>
+      `${(d.widthInches * d.transform.s).toFixed(2)}x${(d.heightInches * d.transform.s).toFixed(2)}`;
+    type RowData = {
+      key: string;
+      baseName: string;
+      sizeKey: string;
+      representative: DesignItem;
+      activeSheetDesigns: DesignItem[];
+      isResized: boolean;
+      sheetsWithThis: Array<{ id: string; name: string; count: number }>;
+    };
+    const rowMap = new Map<string, RowData>();
+    const firstSizeBySrc = new Map<string, string>();
+    for (const s of sheets) {
+      for (const d of s.designs) {
+        const base = baseNameOf(d.name);
+        const sk = sizeKeyOf(d);
+        const src = d.imageInfo.image.src;
+        const key = `${src}::${sk}`;
+        if (!firstSizeBySrc.has(src)) firstSizeBySrc.set(src, sk);
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            key,
+            baseName: base,
+            sizeKey: sk,
+            representative: d,
+            activeSheetDesigns: [],
+            isResized: sk !== (firstSizeBySrc.get(src) ?? sk),
+            sheetsWithThis: [],
+          });
+        }
+        const row = rowMap.get(key)!;
+        if (s.id === activeSheetId) {
+          row.activeSheetDesigns.push(d);
+          row.baseName = base; // prefer the active-sheet name
+        }
+        const ex = row.sheetsWithThis.find(x => x.id === s.id);
+        if (ex) ex.count++;
+        else row.sheetsWithThis.push({ id: s.id, name: s.name, count: 1 });
+      }
     }
-    return Array.from(groups.entries()).map(([key, designsInGroup]) => {
-      const [baseName, sizeKey] = key.split('::');
-      const origSize = firstSizeByBase.get(baseName) ?? sizeKey;
-      return {
-        baseName,
-        sizeKey,
-        designs: designsInGroup,
-        isResized: sizeKey !== origSize,
-      };
-    });
-  }, [designs]);
+    return Array.from(rowMap.values());
+  }, [sheets, activeSheetId]);
 
   useEffect(() => {
     if (activeImageInfo && onDesignUploaded) {
@@ -1519,6 +1585,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const currentDesigns = designsRef.current;
     if (currentDesigns.length === 0) { console.warn('[autoArrange] no designs'); return; }
     if (!opts?.skipSnapshot) saveSnapshot();
+    // Capture the sheet we are arranging NOW — the async worker may return after the
+    // user has navigated to a different sheet, so we must write to the original sheet.
+    const targetSheetId = activeSheetIdRef.current;
 
     const usableW = artboardWidthRef.current;
     const usableH = artboardHeightRef.current;
@@ -1592,7 +1661,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         // Try advancing to the next configured gangsheet height before giving up
         const nextH = GANGSHEET_HEIGHTS.find(h => h > artboardHeightRef.current);
         if (nextH) {
-          setArtboardHeight(nextH);
+          // Target the specific sheet even if the user has navigated away
+          setSheets(prev => prev.map(s => s.id !== targetSheetId ? s : { ...s, artboardHeight: nextH }));
+          artboardHeightRef.current = nextH;  // keep ref in sync so recursive RAF sees the new height
           requestAnimationFrame(() => {
             handleAutoArrangeRef.current({
               skipSnapshot: true,
@@ -1608,21 +1679,28 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       }
       const abW = artboardWidthRef.current;
       const abH = artboardHeightRef.current;
-      setDesigns(prev => prev.map(d => {
-        const p = bestResult.find(r => r.id === d.id);
-        if (!p) return d;
-        const finalRotation = p.rotation % 360;
-        const stampExtra = getStampExtra(d);
-        let adjustedNx = p.nx;
-        let adjustedNy = p.ny;
-        if (stampExtra > 0) {
-          const rad = (finalRotation * Math.PI) / 180;
-          adjustedNx -= (stampExtra / 2) * Math.sin(rad) / abW;
-          adjustedNy -= (stampExtra / 2) * Math.cos(rad) / abH;
-        }
-        const newTransform = { ...d.transform, nx: adjustedNx, ny: adjustedNy, rotation: finalRotation };
-        const { nx, ny } = clampDesignToArtboard({ ...d, transform: newTransform }, abW, abH);
-        return { ...d, transform: { ...newTransform, nx, ny } };
+      // Write to the sheet that triggered the arrange — not necessarily the currently active one
+      setSheets(prev => prev.map(s => {
+        if (s.id !== targetSheetId) return s;
+        return {
+          ...s,
+          designs: s.designs.map(d => {
+            const p = bestResult.find(r => r.id === d.id);
+            if (!p) return d;
+            const finalRotation = p.rotation % 360;
+            const stampExtra = getStampExtra(d);
+            let adjustedNx = p.nx;
+            let adjustedNy = p.ny;
+            if (stampExtra > 0) {
+              const rad = (finalRotation * Math.PI) / 180;
+              adjustedNx -= (stampExtra / 2) * Math.sin(rad) / abW;
+              adjustedNy -= (stampExtra / 2) * Math.cos(rad) / abH;
+            }
+            const newTransform = { ...d.transform, nx: adjustedNx, ny: adjustedNy, rotation: finalRotation };
+            const { nx, ny } = clampDesignToArtboard({ ...d, transform: newTransform }, abW, abH);
+            return { ...d, transform: { ...newTransform, nx, ny } };
+          }),
+        };
       }));
       if (!opts?.preserveSelection) {
         setSelectedDesignId(null);
@@ -1926,6 +2004,128 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const nextHeight = GANGSHEET_HEIGHTS.find(h => h > artboardHeight) ?? MAX_ARTBOARD_HEIGHT;
     handleArtboardResize(artboardWidth, nextHeight);
   }, [artboardHeight, artboardWidth, handleArtboardResize]);
+
+  // ── Sheet navigation ───────────────────────────────────────────────────────
+  const navigateToSheet = useCallback((targetSheetId: string) => {
+    if (targetSheetId === activeSheetIdRef.current) return;
+
+    // Save current zoom state before leaving this sheet
+    const currentCanvas = canvasRef.current as any;
+    if (currentCanvas?.getZoomState) {
+      sheetZoomStates.current.set(activeSheetIdRef.current, currentCanvas.getZoomState());
+    }
+
+    // Auto-select the first design in the target sheet so activeImageInfo stays non-null
+    // (the editor is gated on activeImageInfo; clearing it unconditionally collapses to upload view)
+    const targetSheet = sheetsRef.current.find(s => s.id === targetSheetId);
+    const firstDesign = targetSheet?.designs[0] ?? null;
+    setActiveSheetId(targetSheetId);
+    setSelectedDesignId(firstDesign?.id ?? null);
+    setImageInfo(firstDesign?.imageInfo ?? null);
+    setDesignTransform(firstDesign?.transform ?? { nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
+    setSelectedDesignIds(new Set());
+    setContextMenu(null);
+    setEditingLayerName(null);
+    setEditingCountKey(null);
+    setAddSheetPopover(false);
+    setSendToSheetMenu(null);
+
+    // After the new sheet renders, restore saved zoom or fit the whole sheet into view
+    const savedZoom = sheetZoomStates.current.get(targetSheetId);
+    requestAnimationFrame(() => {
+      const c = canvasRef.current as any;
+      if (!c) return;
+      if (savedZoom) {
+        c.setZoomState?.(savedZoom.zoom, savedZoom.panX, savedZoom.panY);
+      } else {
+        c.fitToView?.();
+      }
+    });
+  }, []);
+
+  const addSheet = useCallback((mode: 'blank' | 'copy-layout' | 'copy-layers' = 'blank') => {
+    setSheets(prevSheets => {
+      if (prevSheets.length >= 10) {
+        toast({ title: 'Maximum sheets reached', description: 'You can have up to 10 gangsheets.', variant: 'destructive' });
+        return prevSheets;
+      }
+      const newId = crypto.randomUUID();
+      const sheetNum = prevSheets.length + 1;
+      const srcSheet = prevSheets.find(s => s.id === activeSheetIdRef.current) ?? prevSheets[0];
+      let newDesigns: DesignItem[] = [];
+      if (mode === 'copy-layout') {
+        newDesigns = srcSheet.designs.map(d => ({ ...d, id: crypto.randomUUID() }));
+      } else if (mode === 'copy-layers') {
+        // One representative per unique image, counts preserved, positions reset
+        const seen = new Set<string>();
+        newDesigns = srcSheet.designs
+          .filter(d => { const key = d.imageInfo.image.src; if (seen.has(key)) return false; seen.add(key); return true; })
+          .map(d => ({ ...d, id: crypto.randomUUID(), transform: { ...d.transform, nx: 0.5, ny: 0.5 } }));
+      }
+      const newSheet: SheetState = {
+        id: newId,
+        name: `Sheet ${sheetNum}`,
+        designs: newDesigns,
+        artboardHeight: srcSheet.artboardHeight,
+      };
+      // Navigate to the new sheet after state update
+      setTimeout(() => {
+        navigateToSheet(newId);
+        if (mode === 'copy-layers' && newDesigns.length >= 2) {
+          requestAnimationFrame(() => handleAutoArrangeRef.current({ skipSnapshot: true }));
+        }
+      }, 0);
+      toast({ title: `${newSheet.name} added` });
+      return [...prevSheets, newSheet];
+    });
+    setAddSheetPopover(false);
+  }, [navigateToSheet, toast]);
+
+  const deleteSheet = useCallback((sheetId: string) => {
+    setSheets(prevSheets => {
+      if (prevSheets.length <= 1) {
+        toast({ title: 'Cannot delete', description: 'At least one sheet is required.', variant: 'destructive' });
+        return prevSheets;
+      }
+      const idx = prevSheets.findIndex(s => s.id === sheetId);
+      const newSheets = prevSheets.filter(s => s.id !== sheetId);
+      if (sheetId === activeSheetIdRef.current) {
+        const newActive = newSheets[Math.min(idx, newSheets.length - 1)];
+        if (newActive) setTimeout(() => navigateToSheet(newActive.id), 0);
+      }
+      deleteSheetHistory(sheetId);
+      toast({ title: 'Sheet deleted' });
+      return newSheets;
+    });
+  }, [navigateToSheet, deleteSheetHistory, toast]);
+
+  const sendDesignGroupToSheet = useCallback((designIds: string[], targetSheetId: string) => {
+    const targetSheet = sheets.find(s => s.id === targetSheetId);
+    if (!targetSheet) return;
+    const toCopy = designs.filter(d => designIds.includes(d.id));
+    if (toCopy.length === 0) return;
+    const newDesigns: DesignItem[] = toCopy.map(d => ({
+      ...d, id: crypto.randomUUID(), transform: { ...d.transform, nx: 0.5, ny: 0.5 },
+    }));
+    setSheets(prev => prev.map(s => s.id !== targetSheetId ? s : { ...s, designs: [...s.designs, ...newDesigns] }));
+    setSendToSheetMenu(null);
+    toast({ title: `Added to ${targetSheet.name}`, description: `${toCopy.length} design${toCopy.length !== 1 ? 's' : ''} copied.` });
+  }, [sheets, designs, toast]);
+
+  /** Copy a design from any sheet onto the active sheet (the "Add here" action). */
+  const addDesignToActiveSheet = useCallback((sourceDesign: DesignItem) => {
+    const newDesign: DesignItem = {
+      ...sourceDesign,
+      id: crypto.randomUUID(),
+      name: sourceDesign.name.replace(/ copy( \d+)?$/, ''),
+      transform: { ...sourceDesign.transform, nx: 0.5, ny: 0.5 },
+      printFileName: false,
+    };
+    setDesigns(prev => [...prev, newDesign]);
+    setSelectedDesignId(newDesign.id);
+    setImageInfo(newDesign.imageInfo);
+    toast({ title: 'Added to this sheet' });
+  }, [toast, setDesigns]);
 
   // Stable refs for keyboard handler to avoid frequent re-registration
   const handleUndoRef = useRef(handleUndo);
@@ -3596,7 +3796,112 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     }
   }, [imageInfo, designs, artboardWidth, artboardHeight, toast]);
 
-  if (!activeImageInfo) {
+  // ── Multi-sheet export helpers ─────────────────────────────────────────────
+  const exportSheetToPng = useCallback(async (sheetDesigns: DesignItem[], shWidth: number, shHeight: number): Promise<Blob> => {
+    const exportDpi = 300;
+    const outW = Math.max(1, Math.round(shWidth * exportDpi));
+    const outH = Math.max(1, Math.round(shHeight * exportDpi));
+    const worker = getExportWorker();
+    if (worker && typeof OffscreenCanvas !== 'undefined') {
+      const bitmaps = await Promise.all(sheetDesigns.map(d => createImageBitmap(d.imageInfo.image)));
+      const exportDesigns = sheetDesigns.map((d, i) => ({
+        widthInches: d.widthInches, heightInches: d.heightInches,
+        nx: d.transform.nx, ny: d.transform.ny, s: d.transform.s,
+        rotation: d.transform.rotation, flipX: d.transform.flipX, flipY: d.transform.flipY,
+        bitmap: bitmaps[i], alphaThresholded: d.alphaThresholded, printFileName: false, name: d.name,
+      }));
+      const requestId = ++_exportReqCounter;
+      return new Promise<Blob>((resolve, reject) => {
+        const cleanup = () => { worker.removeEventListener('message', handler); clearTimeout(timer); };
+        const handler = (e: MessageEvent) => {
+          if (e.data.requestId !== requestId) return;
+          cleanup();
+          if (e.data.type === 'error') reject(new Error(e.data.error));
+          else resolve(e.data.blob);
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('Export timed out')); }, 120_000);
+        worker.addEventListener('message', handler);
+        worker.postMessage({ type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi }, bitmaps);
+      });
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.width = outW; canvas.height = outH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.clearRect(0, 0, outW, outH);
+      for (const d of sheetDesigns) {
+        const drawW = Math.max(1, Math.round(d.widthInches * d.transform.s * exportDpi));
+        const drawH = Math.max(1, Math.round(d.heightInches * d.transform.s * exportDpi));
+        ctx.save();
+        ctx.translate(d.transform.nx * outW, d.transform.ny * outH);
+        ctx.rotate((d.transform.rotation * Math.PI) / 180);
+        ctx.scale(d.transform.flipX ? -1 : 1, d.transform.flipY ? -1 : 1);
+        ctx.drawImage(d.imageInfo.image, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.restore();
+      }
+      const rawBlob = await new Promise<Blob>((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'));
+      canvas.width = 0; canvas.height = 0;
+      return injectPngDpi(rawBlob, exportDpi);
+    }
+  }, []);
+
+  const handleMultiSheetZipExport = useCallback(async () => {
+    if (!exportSheetModal) return;
+    const { selectedIds } = exportSheetModal;
+    const sheetsToExport = sheets.filter(s => selectedIds.has(s.id) && s.designs.length > 0);
+    if (sheetsToExport.length === 0) {
+      toast({ title: 'No designs to export', variant: 'destructive' });
+      setExportSheetModal(null);
+      return;
+    }
+    if (sheetsToExport.length === 1) {
+      setExportSheetModal(null);
+      const sh = sheetsToExport[0];
+      const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight).catch(() => null);
+      if (!blob) { toast({ title: 'Export failed', variant: 'destructive' }); return; }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `${sh.name.replace(/\s+/g, '-').toLowerCase()}.png`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return;
+    }
+    setIsProcessing(true);
+    setExportSheetModal(null);
+    try {
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      for (let i = 0; i < sheetsToExport.length; i++) {
+        const sh = sheetsToExport[i];
+        const blob = await exportSheetToPng(sh.designs, artboardWidth, sh.artboardHeight);
+        const safeName = sh.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        zip.file(`sheet-${i + 1}-${safeName}.png`, blob);
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url; link.download = 'gangsheet-export.zip';
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast({ title: 'Export complete', description: `${sheetsToExport.length} sheets downloaded as ZIP.` });
+    } catch (err) {
+      toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [exportSheetModal, sheets, artboardWidth, exportSheetToPng, toast]);
+
+  const handleDownloadGate = useCallback((downloadType?: string, format?: string, spotColorsByDesign?: Record<string, any[]>) => {
+    const sheetsWithDesigns = sheets.filter(s => s.designs.length > 0);
+    if (sheetsWithDesigns.length > 1) {
+      setExportSheetModal({ open: true, selectedIds: new Set(sheetsWithDesigns.map(s => s.id)), downloadType: downloadType ?? '', format: format ?? '', spotColorsByDesign });
+    } else {
+      handleDownload(downloadType, format, spotColorsByDesign);
+    }
+  }, [sheets, handleDownload]);
+
+  // In multi-sheet mode, always show the editor shell (even for empty sheets) so that
+  // the carousel navigation and ADD Gangsheet button remain accessible.
+  if (!activeImageInfo && sheets.length <= 1) {
     return (
       <div
         className="h-full flex items-center justify-center bg-gray-50 relative"
@@ -3672,6 +3977,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 onImageUpload={handleFileUploadUnified}
                 onBatchStart={handleBatchStart}
                 imageInfo={activeImageInfo}
+                compact={sheets.length > 1 && !activeImageInfo}
               />
               {isUploading && (
                 <div className="flex items-center gap-1 text-cyan-400">
@@ -3755,8 +4061,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 )}
               </div>}
               <div className="flex items-center gap-0.5 ml-auto">
-                <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
-                <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
+                <button onClick={handleUndo} disabled={!canUndo(activeSheetId)} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
+                <button onClick={handleRedo} disabled={!canRedo(activeSheetId)} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
                 <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId && selectedDesignIds.size === 0} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
                 <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold min-h-[36px] shadow-md ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-pink-500/25' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
               </div>
@@ -3852,7 +4158,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           <ControlsSection
             resizeSettings={activeResizeSettings}
             onResizeChange={handleResizeChange}
-            onDownload={handleDownload}
+            onDownload={handleDownloadGate}
             isProcessing={isProcessing}
             imageInfo={activeImageInfo}
             artboardWidth={artboardWidth}
@@ -3882,8 +4188,70 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           {/* Fluorescent panel portal target */}
           {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
 
+          {/* ── ADD Gangsheet — neon green call-to-action ────────────────── */}
+          {sheets.length < 10 && (
+            <div className="relative">
+              <button
+                onClick={() => setAddSheetPopover(prev => !prev)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-black text-sm border transition-all duration-200 active:scale-[0.98]"
+                style={{
+                  background: 'linear-gradient(135deg, #39ff14 0%, #22c55e 100%)',
+                  color: '#000',
+                  boxShadow: '0 0 18px rgba(57,255,20,0.45), 0 2px 8px rgba(0,0,0,0.18)',
+                  borderColor: 'rgba(57,255,20,0.5)',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                <Plus className="w-4 h-4 flex-shrink-0" strokeWidth={3} />
+                ADD Gangsheet
+                {sheets.length > 1 && (
+                  <span className="ml-1 text-[10px] font-bold opacity-60 bg-black/10 px-1.5 py-0.5 rounded-full">
+                    {sheets.length}/10
+                  </span>
+                )}
+              </button>
+              {addSheetPopover && (
+                <div className="absolute top-full mt-1.5 left-0 right-0 z-50 bg-white border border-gray-200 rounded-xl shadow-2xl py-1 overflow-hidden">
+                  <button
+                    onClick={() => addSheet('blank')}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-lg">📄</span>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Blank sheet</div>
+                      <div className="text-xs text-gray-500">Start with an empty canvas</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => addSheet('copy-layout')}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-lg">📋</span>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Copy layout</div>
+                      <div className="text-xs text-gray-500">Same designs &amp; positions</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => addSheet('copy-layers')}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-lg">🔀</span>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Copy &amp; re-arrange</div>
+                      <div className="text-xs text-gray-500">Same designs, auto-packed fresh</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {addSheetPopover && (
+            <div className="fixed inset-0 z-40" onClick={() => setAddSheetPopover(false)} />
+          )}
+
           {/* Layers Panel */}
-          {designs.length > 0 && (
+          {allLayerRows.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
                 <div className="flex flex-1 min-w-0 items-center gap-3 overflow-hidden rounded-md px-1.5 py-1 text-base font-semibold text-gray-800">
@@ -3910,10 +4278,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               </div>
               {showDesignInfo && (
                 <div
-                  className={`layers-scroll border-t border-gray-200 overflow-y-scroll ${layerRows.length > 2 ? 'max-h-[400px]' : 'max-h-[180px]'}`}
+                  className="layers-scroll border-t border-gray-200 overflow-y-auto"
                   style={{
                     scrollbarWidth: 'thin',
                     scrollbarColor: '#9ca3af transparent',
+                    maxHeight: `${Math.min(allLayerRows.length, 10) * 96}px`,
                   }}
                 >
                   <style>{`
@@ -3922,24 +4291,34 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     .layers-scroll::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
                     .layers-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                   `}</style>
-                  {layerRows.map((row) => {
-                    const first = row.designs[0];
-                    const count = row.designs.length;
-                    const isSelected = row.designs.some(d => d.id === selectedDesignId || selectedDesignIds.has(d.id));
+                  {allLayerRows.map((row) => {
+                    const isOnActiveSheet = row.activeSheetDesigns.length > 0;
+                    const first = isOnActiveSheet ? row.activeSheetDesigns[0] : row.representative;
+                    const count = row.activeSheetDesigns.length;
+                    const isSelected = row.activeSheetDesigns.some(d => d.id === selectedDesignId || selectedDesignIds.has(d.id));
+                    const otherSheets = row.sheetsWithThis.filter(s => s.id !== activeSheetId);
+                    const rowKey = row.key;
                     return (
                     <div
-                      key={`${row.baseName}::${row.sizeKey}`}
-                      className={`relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-2.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-2 border-cyan-400' : 'hover:bg-gray-100/70 border-l-2 border-transparent'}`}
+                      key={rowKey}
+                      className={`relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-2.5 transition-colors ${
+                        !isOnActiveSheet
+                          ? 'opacity-60 cursor-default border-l-2 border-transparent bg-gray-50/60'
+                          : isSelected
+                            ? 'bg-cyan-50 border-l-2 border-cyan-400 cursor-pointer'
+                            : 'hover:bg-gray-100/70 border-l-2 border-transparent cursor-pointer'
+                      }`}
                       onClick={(e) => {
+                        if (!isOnActiveSheet) return;
                         if (e.ctrlKey || e.metaKey) {
                           setSelectedDesignIds(prev => {
                             const next = new Set(prev);
-                            const allSelected = row.designs.every(d => next.has(d.id));
-                            if (allSelected) {
-                              for (const d of row.designs) next.delete(d.id);
+                            const allSel = row.activeSheetDesigns.every(d => next.has(d.id));
+                            if (allSel) {
+                              for (const d of row.activeSheetDesigns) next.delete(d.id);
                               setSelectedDesignId(next.size > 0 ? Array.from(next)[next.size - 1] : null);
                             } else {
-                              for (const d of row.designs) next.add(d.id);
+                              for (const d of row.activeSheetDesigns) next.add(d.id);
                               setSelectedDesignId(first.id);
                             }
                             return next;
@@ -3961,7 +4340,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       </div>
                       {/* Col 2 Row 1: name + size */}
                       <div className="min-w-0 overflow-hidden pr-7">
-                        {editingLayerName === `${row.baseName}::${row.sizeKey}` ? (
+                        {isOnActiveSheet && editingLayerName === rowKey ? (
                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <input
                               autoFocus
@@ -3971,11 +4350,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   const trimmed = editingNameValue.trim();
-                                  if (trimmed) {
-                                    setDesigns(prev => prev.map(d =>
-                                      row.designs.some(rd => rd.id === d.id) ? { ...d, name: trimmed } : d
-                                    ));
-                                  }
+                                  if (trimmed) setDesigns(prev => prev.map(d => row.activeSheetDesigns.some(rd => rd.id === d.id) ? { ...d, name: trimmed } : d));
                                   setEditingLayerName(null);
                                 } else if (e.key === 'Escape') {
                                   setEditingLayerName(null);
@@ -3983,22 +4358,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                               }}
                               onBlur={() => {
                                 const trimmed = editingNameValue.trim();
-                                if (trimmed) {
-                                  setDesigns(prev => prev.map(d =>
-                                    row.designs.some(rd => rd.id === d.id) ? { ...d, name: trimmed } : d
-                                  ));
-                                }
+                                if (trimmed) setDesigns(prev => prev.map(d => row.activeSheetDesigns.some(rd => rd.id === d.id) ? { ...d, name: trimmed } : d));
                                 setEditingLayerName(null);
                               }}
                             />
                           </div>
                         ) : (
                           <p
-                            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors"
-                            title={t("editor.renameDesign")}
+                            className={`text-[11px] text-gray-900 truncate transition-colors ${isOnActiveSheet ? 'cursor-text hover:text-cyan-600' : 'cursor-default'}`}
+                            title={isOnActiveSheet ? t("editor.renameDesign") : row.baseName}
                             onClick={(e) => {
+                              if (!isOnActiveSheet) return;
                               e.stopPropagation();
-                              setEditingLayerName(`${row.baseName}::${row.sizeKey}`);
+                              setEditingLayerName(rowKey);
                               setEditingNameValue(first.name);
                             }}
                           >
@@ -4008,97 +4380,97 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         )}
                         <p className={`text-gray-600 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}>
                           {formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}
+                          {!isOnActiveSheet && otherSheets.length > 0 && (
+                            <span className="ml-1.5 text-[9px] text-violet-500 font-medium"> · {otherSheets.map(s => s.name).join(', ')}</span>
+                          )}
+                          {isOnActiveSheet && otherSheets.length > 0 && (
+                            <span className="ml-1.5 text-[9px] text-gray-400">+{otherSheets.map(s => s.name).join(', ')}</span>
+                          )}
                         </p>
                       </div>
-                      {/* Col 2 Row 2: count input+arrows + Duplicate & Arrange */}
+                      {/* Col 2 Row 2: controls */}
                       <div className="col-start-2 flex min-w-0 items-center gap-1.5">
-                        <div className="flex items-center gap-px shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            readOnly={editingCountKey !== `${row.baseName}::${row.sizeKey}`}
-                            autoFocus={editingCountKey === `${row.baseName}::${row.sizeKey}`}
-                            className={`h-6 w-14 rounded border-2 bg-white text-center text-[11px] font-semibold tabular-nums text-gray-800 outline-none shadow-sm transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${editingCountKey === `${row.baseName}::${row.sizeKey}` ? 'border-cyan-500' : 'cursor-pointer border-gray-300 hover:border-cyan-400 hover:bg-cyan-50'}`}
-                            value={editingCountKey === `${row.baseName}::${row.sizeKey}` ? editingCountValue : String(count)}
-                            onChange={(e) => setEditingCountValue(e.target.value.replace(/\D/g, '').slice(0, 3))}
-                            onFocus={() => {
-                              if (editingCountKey !== `${row.baseName}::${row.sizeKey}`) {
-                                setEditingCountKey(`${row.baseName}::${row.sizeKey}`);
-                                setEditingCountValue(String(count));
-                              }
-                            }}
-                            onBlur={() => {
-                              handleSetGroupCount(row, parseInt(editingCountValue || String(count), 10));
-                              setEditingCountKey(null);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleSetGroupCount(row, parseInt(editingCountValue || String(count), 10));
-                                setEditingCountKey(null);
-                              } else if (e.key === 'Escape') {
-                                setEditingCountKey(null);
-                              }
-                              e.stopPropagation();
-                            }}
-                            title="Click to set exact copy count"
-                          />
-                          <div className="flex flex-col gap-px">
+                        {isOnActiveSheet ? (
+                          <>
+                            {/* Count input + arrows */}
+                            <div className="flex items-center gap-px shrink-0" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                readOnly={editingCountKey !== rowKey}
+                                autoFocus={editingCountKey === rowKey}
+                                className={`h-6 w-14 rounded border-2 bg-white text-center text-[11px] font-semibold tabular-nums text-gray-800 outline-none shadow-sm transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${editingCountKey === rowKey ? 'border-cyan-500' : 'cursor-pointer border-gray-300 hover:border-cyan-400 hover:bg-cyan-50'}`}
+                                value={editingCountKey === rowKey ? editingCountValue : String(count)}
+                                onChange={(e) => setEditingCountValue(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                                onFocus={() => { if (editingCountKey !== rowKey) { setEditingCountKey(rowKey); setEditingCountValue(String(count)); } }}
+                                onBlur={() => { handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, parseInt(editingCountValue || String(count), 10)); setEditingCountKey(null); }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') { handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, parseInt(editingCountValue || String(count), 10)); setEditingCountKey(null); }
+                                  else if (e.key === 'Escape') setEditingCountKey(null);
+                                  e.stopPropagation();
+                                }}
+                                title="Click to set exact copy count"
+                              />
+                              <div className="flex flex-col gap-px">
+                                <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => { e.stopPropagation(); handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, count + 1); }}
+                                  disabled={count >= 200}
+                                  className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                                  title="Increase copies">
+                                  <ChevronUp className="h-2.5 w-2.5" strokeWidth={3} />
+                                </button>
+                                <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => { e.stopPropagation(); handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, count - 1); }}
+                                  disabled={count <= 1}
+                                  className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                                  title="Decrease copies">
+                                  <ChevronDown className="h-2.5 w-2.5" strokeWidth={3} />
+                                </button>
+                              </div>
+                            </div>
+                            {/* Duplicate & Arrange */}
                             <button
-                              type="button"
-                              tabIndex={-1}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => { e.stopPropagation(); handleSetGroupCount(row, count + 1); }}
-                              disabled={count >= 200}
-                              className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
-                              title="Increase copies"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const targetCount = editingCountKey === rowKey ? parseInt(editingCountValue, 10) : count;
+                                setSelectedDesignIds(new Set(row.activeSheetDesigns.map(d => d.id)));
+                                setSelectedDesignId(first.id);
+                                if (Number.isInteger(targetCount) && targetCount !== count) {
+                                  handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, targetCount);
+                                } else if (Number.isInteger(targetCount)) {
+                                  setTimeout(() => handleAutoArrangeRef.current({ preserveSelection: true }), 0);
+                                }
+                                setEditingCountKey(null);
+                              }}
+                              className="inline-flex h-7 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-fuchsia-400 bg-fuchsia-100 px-1.5 text-[9px] font-bold text-fuchsia-800 shadow-sm shadow-fuchsia-500/20 transition-colors hover:bg-fuchsia-200"
+                              title="Duplicate & Arrange"
                             >
-                              <ChevronUp className="h-2.5 w-2.5" strokeWidth={3} />
+                              <Copy className="h-3 w-3" strokeWidth={2.5} />
+                              <span className="whitespace-nowrap">Duplicate &amp; Arrange</span>
                             </button>
-                            <button
-                              type="button"
-                              tabIndex={-1}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => { e.stopPropagation(); handleSetGroupCount(row, count - 1); }}
-                              disabled={count <= 1}
-                              className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
-                              title="Decrease copies"
-                            >
-                              <ChevronDown className="h-2.5 w-2.5" strokeWidth={3} />
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const targetCount = editingCountKey === `${row.baseName}::${row.sizeKey}`
-                              ? parseInt(editingCountValue, 10)
-                              : count;
-                            const groupIds = new Set(row.designs.map(d => d.id));
-                            setSelectedDesignIds(groupIds);
-                            setSelectedDesignId(first.id);
-                            if (Number.isInteger(targetCount) && targetCount !== count) {
-                              handleSetGroupCount(row, targetCount);
-                            } else if (Number.isInteger(targetCount)) {
-                              setTimeout(() => handleAutoArrangeRef.current({ preserveSelection: true }), 0);
-                            }
-                            setEditingCountKey(null);
-                          }}
-                          className="inline-flex h-7 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-fuchsia-400 bg-fuchsia-100 px-1.5 text-[9px] font-bold text-fuchsia-800 shadow-sm shadow-fuchsia-500/20 transition-colors hover:bg-fuchsia-200"
-                          title="Duplicate & Arrange"
-                        >
-                          <Copy className="h-3 w-3" strokeWidth={2.5} />
-                          <span className="whitespace-nowrap">Duplicate &amp; Arrange</span>
-                        </button>
+                          </>
+                        ) : (
+                          /* Design lives on another sheet — "Add here" copies it to the active sheet */
+                          <button type="button"
+                            onClick={(e) => { e.stopPropagation(); addDesignToActiveSheet(row.representative); }}
+                            className="inline-flex h-7 items-center gap-1 rounded-md border border-emerald-400 bg-emerald-50 px-2 text-[9px] font-bold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 whitespace-nowrap"
+                            title="Add one copy of this design to the current sheet">
+                            <Plus className="h-3 w-3" strokeWidth={2.5} />
+                            Add here
+                          </button>
+                        )}
                       </div>
-                      {/* Absolute delete button top-right */}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDeleteGroup(row.designs.map(d => d.id)); }}
-                        className="absolute right-2.5 top-2.5 p-0.5 rounded hover:bg-gray-200 text-red-500 hover:text-red-600 transition-colors flex-shrink-0"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                      {/* Delete button — only for designs on the active sheet */}
+                      {isOnActiveSheet && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteGroup(row.activeSheetDesigns.map(d => d.id)); }}
+                          className="absolute right-2.5 top-2.5 p-0.5 rounded hover:bg-gray-200 text-red-500 hover:text-red-600 transition-colors flex-shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
-                  ); })}
+                    ); })}
                 </div>
               )}
             </div>
@@ -4117,6 +4489,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 onImageUpload={handleFileUploadUnified}
                 onBatchStart={handleBatchStart}
                 imageInfo={activeImageInfo}
+                compact={sheets.length > 1 && !activeImageInfo}
               />
               {isUploading && (
                 <div className="flex items-center gap-1.5 text-cyan-400">
@@ -4325,7 +4698,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             <div className="flex min-w-0 items-center justify-end gap-0.5 flex-wrap">
               <button
                 onClick={handleUndo}
-                disabled={!canUndo()}
+                disabled={!canUndo(activeSheetId)}
                 className="flex h-10 min-w-[76px] lg:h-11 lg:min-w-[92px] items-center justify-center gap-1.5 rounded-lg border-2 border-black bg-black px-2.5 text-white transition-colors hover:bg-white hover:text-black disabled:opacity-30 disabled:pointer-events-none shadow-sm"
                 title={t("editor.undo")}
               >
@@ -4334,7 +4707,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               </button>
               <button
                 onClick={handleRedo}
-                disabled={!canRedo()}
+                disabled={!canRedo(activeSheetId)}
                 className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
                 title={t("editor.redo")}
               >
@@ -4653,8 +5026,57 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           </div>
         </div>}
 
-        {/* Preview Canvas */}
+        {/* Preview Canvas — wrapped with ghost sheets + navigation */}
         <div className="flex-1 min-h-0 relative">
+          {/* Ghost shadow strips for adjacent sheets */}
+          {sheets.length > 1 && activeSheetIndex > 0 && (
+            <div
+              className="absolute left-0 top-8 bottom-0 w-2.5 z-10 pointer-events-none rounded-l-sm"
+              style={{ background: 'rgba(156,163,175,0.5)', boxShadow: '-3px 0 10px rgba(0,0,0,0.07)' }}
+            />
+          )}
+          {sheets.length > 1 && activeSheetIndex < sheets.length - 1 && (
+            <div
+              className="absolute right-0 top-8 bottom-0 w-2.5 z-10 pointer-events-none rounded-r-sm"
+              style={{ background: 'rgba(156,163,175,0.5)', boxShadow: '3px 0 10px rgba(0,0,0,0.07)' }}
+            />
+          )}
+          {/* Sheet label + delete strip */}
+          {sheets.length > 1 && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-gray-900/80 backdrop-blur-sm text-white text-[11px] px-2.5 py-1 rounded-full shadow-lg select-none pointer-events-auto">
+              <span className="font-semibold">{activeSheet.name}</span>
+              <span className="text-gray-400 text-[9px]">{activeSheetIndex + 1}/{sheets.length}</span>
+              <button
+                onClick={() => deleteSheet(activeSheetId)}
+                className="ml-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-400 hover:bg-red-500/20 transition-colors leading-none"
+                title="Delete this sheet"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {/* Left nav arrow */}
+          {sheets.length > 1 && activeSheetIndex > 0 && (
+            <button
+              onClick={() => navigateToSheet(sheets[activeSheetIndex - 1].id)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-xl hover:bg-gray-700 active:scale-95 transition-all select-none"
+              title={sheets[activeSheetIndex - 1].name}
+              style={{ fontSize: 28, lineHeight: 1 }}
+            >
+              ‹
+            </button>
+          )}
+          {/* Right nav arrow */}
+          {sheets.length > 1 && activeSheetIndex < sheets.length - 1 && (
+            <button
+              onClick={() => navigateToSheet(sheets[activeSheetIndex + 1].id)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-xl hover:bg-gray-700 active:scale-95 transition-all select-none"
+              title={sheets[activeSheetIndex + 1].name}
+              style={{ fontSize: 28, lineHeight: 1 }}
+            >
+              ›
+            </button>
+          )}
           <PreviewSection
             ref={canvasRef}
             imageInfo={activeImageInfo}
@@ -4750,6 +5172,73 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           />
         ) : null;
       })()}
+
+      {/* Multi-sheet Export Modal */}
+      {exportSheetModal?.open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-5 border-b border-gray-100">
+              <h2 className="text-lg font-bold text-gray-900">Export Gangsheets</h2>
+              <p className="text-sm text-gray-500 mt-0.5">Select which sheets to include in the ZIP download.</p>
+            </div>
+            <div className="p-5 space-y-2.5 max-h-72 overflow-y-auto">
+              {sheets.map(sheet => {
+                const hasDesigns = sheet.designs.length > 0;
+                const isChecked = exportSheetModal.selectedIds.has(sheet.id);
+                return (
+                  <label
+                    key={sheet.id}
+                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${!hasDesigns ? 'opacity-40 cursor-not-allowed' : isChecked ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-gray-300'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      disabled={!hasDesigns}
+                      onChange={() => {
+                        if (!hasDesigns) return;
+                        setExportSheetModal(prev => {
+                          if (!prev) return prev;
+                          const next = new Set(prev.selectedIds);
+                          if (next.has(sheet.id)) next.delete(sheet.id);
+                          else next.add(sheet.id);
+                          return { ...prev, selectedIds: next };
+                        });
+                      }}
+                      className="w-4 h-4 rounded accent-green-500"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-gray-900 truncate">{sheet.name}</div>
+                      <div className="text-xs text-gray-500">
+                        {hasDesigns ? `${sheet.designs.length} design${sheet.designs.length !== 1 ? 's' : ''} · ${sheet.artboardHeight}" height` : 'No designs'}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="p-5 border-t border-gray-100 flex items-center gap-3">
+              <button
+                onClick={() => setExportSheetModal(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMultiSheetZipExport}
+                disabled={exportSheetModal.selectedIds.size === 0}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-black transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98]"
+                style={{
+                  background: 'linear-gradient(135deg, #39ff14 0%, #22c55e 100%)',
+                  color: '#000',
+                  boxShadow: exportSheetModal.selectedIds.size > 0 ? '0 0 14px rgba(57,255,20,0.35)' : 'none',
+                }}
+              >
+                Export {exportSheetModal.selectedIds.size > 0 ? `${exportSheetModal.selectedIds.size} Sheet${exportSheetModal.selectedIds.size !== 1 ? 's' : ''}` : 'Selected'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Processing Modal */}
       {isProcessing && (
