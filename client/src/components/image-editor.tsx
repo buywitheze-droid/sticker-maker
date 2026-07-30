@@ -427,6 +427,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const pendingSpotColorsRef = useRef<Record<string, any[]> | undefined>(undefined);
   const [renamingSheetId, setRenamingSheetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // Safety net: if the active sheet changes while a rename is in progress (e.g.
+  // a programmatic navigation that doesn't trigger the input's onBlur), clear the
+  // rename state so the stale input never appears on the newly-active sheet.
+  useEffect(() => {
+    if (renamingSheetId && renamingSheetId !== activeSheetId) {
+      setRenamingSheetId(null);
+      setRenameValue('');
+    }
+  }, [activeSheetId]); // eslint-disable-line react-hooks/exhaustive-deps
   const activeSheetIndex = Math.max(0, sheets.findIndex(s => s.id === activeSheetId));
   const activeSheet = sheets[activeSheetIndex];
   // Derived per-sheet values — shadow what were formerly standalone useState vars
@@ -2343,7 +2352,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         if (firstDesign) {
           setImageInfo(firstDesign.imageInfo);
           setSelectedDesignId(null);
-          setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
+          setDesignTransform(firstDesign.transform);
         }
       }).catch(() => {
         // Silently ignore restore failures (corrupt data, image load errors, etc.)

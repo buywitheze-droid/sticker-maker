@@ -571,12 +571,10 @@ export default function ControlsSection({
   const dlTitle = !canDownload ? t("controls.uploadFirst") : isProcessing ? t("editor.processing") : dlLabel;
 
   const handleDownloadClick = useCallback(() => {
-    if (isPdf && enableFluorescent) {
-      const spotColors = getAllDesignSpotColors();
-      onDownload('standard', 'pdf', spotColors);
-    } else {
-      onDownload('standard', 'png');
-    }
+    // Always collect spot-color assignments for fluorescent profiles so the
+    // download-options modal can use them when the user picks PDF export.
+    const spotColors = enableFluorescent ? getAllDesignSpotColors() : undefined;
+    onDownload('standard', isPdf ? 'pdf' : 'png', spotColors);
   }, [isPdf, enableFluorescent, getAllDesignSpotColors, onDownload]);
 
   const assignedCount = extractedColors.filter(c => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange).length;
