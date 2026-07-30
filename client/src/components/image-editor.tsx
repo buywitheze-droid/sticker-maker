@@ -22,7 +22,7 @@ import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLanguage } from "@/lib/i18n";
 import { formatDimensions, formatLength, useMetric, cmToInches, getUnitSuffix } from "@/lib/format-length";
-import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Maximize2, AlignCenterVertical, AlignCenterHorizontal, WandSparkles, Eraser, Download, Archive, Pencil } from "lucide-react";
+import { Trash2, Copy, ChevronDown, ChevronUp, Undo2, Redo2, RotateCw, ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, LayoutGrid, Layers, Loader2, Plus, Minus, Droplets, Link, Unlink, FlipHorizontal2, FlipVertical2, MousePointerClick, XCircle, Check, X, ScanSearch, Maximize2, AlignCenterVertical, AlignCenterHorizontal, WandSparkles, Eraser, Download, Archive, Pencil, Expand } from "lucide-react";
 
 // ── OKLab perceptual color space (ported from the buywitheze halftone app) ──
 const SRGB_LINEAR_LUT = (() => {
@@ -1195,6 +1195,67 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       handleAutoArrangeRef.current({ skipSnapshot: true, preserveSelection: true });
     });
   }, [selectedDesignId, designs, saveSnapshot, artboardWidth, artboardHeight, selectedDesignIds, handleDuplicateSelected]);
+
+  // ── Fill Empty Space ──────────────────────────────────────────────────────
+  // Picks the selected (or smallest) design as a reference, estimates how many
+  // copies fit in the remaining area at ~72% packing efficiency, adds them, then
+  // runs auto-arrange so the worker places everything optimally.
+  const canFill = useMemo(() => {
+    if (designs.length === 0) return false;
+    const gap = designGap ?? 0.25;
+    const ref = (selectedDesignId ? designs.find(d => d.id === selectedDesignId) : null)
+      ?? designs.reduce((a, b) =>
+        a.widthInches * a.transform.s * a.heightInches * a.transform.s
+          <= b.widthInches * b.transform.s * b.heightInches * b.transform.s ? a : b
+      );
+    const refArea = (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
+    if (refArea <= 0) return false;
+    const usedArea = designs.reduce((acc, d) =>
+      acc + (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap), 0);
+    const remaining = Math.max(0, artboardWidth * artboardHeight - usedArea);
+    return Math.floor(remaining / refArea * 0.72) >= 1;
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap]);
+
+  const handleFillEmptySpace = useCallback(() => {
+    if (designs.length === 0) return;
+    const gap = designGap ?? 0.25;
+    const ref = (selectedDesignId ? designs.find(d => d.id === selectedDesignId) : null)
+      ?? designs.reduce((a, b) =>
+        a.widthInches * a.transform.s * a.heightInches * a.transform.s
+          <= b.widthInches * b.transform.s * b.heightInches * b.transform.s ? a : b
+      );
+    const refArea = (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
+    const usedArea = designs.reduce((acc, d) =>
+      acc + (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap), 0);
+    const remaining = Math.max(0, artboardWidth * artboardHeight - usedArea);
+    const fillCount = Math.min(
+      Math.floor(remaining / refArea * 0.72),
+      Math.max(0, 500 - designs.length)
+    );
+    if (fillCount < 1) {
+      toast({ title: 'Sheet is full', description: 'No space left to fill.', variant: 'destructive' });
+      return;
+    }
+    const baseName = ref.name.replace(/ copy( \d+)?$/, '');
+    const copies: DesignItem[] = Array.from({ length: fillCount }, () => ({
+      ...ref,
+      id: crypto.randomUUID(),
+      name: baseName,
+      transform: { ...ref.transform },
+      printFileName: false,
+    }));
+    saveSnapshot();
+    setDesigns(prev => [...prev, ...copies]);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true });
+      });
+    });
+    toast({
+      title: `Adding ${fillCount} cop${fillCount === 1 ? 'y' : 'ies'}`,
+      description: 'Filling empty space and re-arranging…',
+    });
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, saveSnapshot, toast]);
 
   const handleDuplicateById = useCallback((designId: string) => {
     const design = designs.find(d => d.id === designId);
@@ -4481,6 +4542,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button onClick={handleRedo} disabled={!canRedo(activeSheetId)} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
                 <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId && selectedDesignIds.size === 0} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
                 <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold min-h-[36px] shadow-md ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-pink-500/25' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
+                <button onClick={() => { handleFillEmptySpace(); setMobilePanel("preview"); }} disabled={!canFill} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold min-h-[36px] shadow-md ${canFill ? 'bg-cyan-500 hover:bg-cyan-600 text-white border border-cyan-600 shadow-cyan-500/25' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title="Fill all empty space with copies of the selected (or smallest) design"><Expand className="w-3 h-3" />Fill</button>
               </div>
             </div>
             {/* Row 2: W/H + DPI + Duplicate (when design present) */}
@@ -5145,19 +5207,34 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <Trash2 className="w-4 h-4 lg:w-5 lg:h-5" />
               </button>
               {isMobile && (
-                <button
-                  onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
-                  disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-semibold shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} ml-auto ${
-                    designs.length >= 2 || selectedDesignIds.size >= 2
-                      ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-md shadow-pink-500/25'
-                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-                  }`}
-                  title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
-                >
-                  <LayoutGrid className="w-3 h-3 flex-shrink-0" />
-                  {t("editor.autoArrange")}
-                </button>
+                <>
+                  <button
+                    onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
+                    disabled={designs.length < 2 && selectedDesignIds.size < 2}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-semibold shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} ml-auto ${
+                      designs.length >= 2 || selectedDesignIds.size >= 2
+                        ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-md shadow-pink-500/25'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
+                  >
+                    <LayoutGrid className="w-3 h-3 flex-shrink-0" />
+                    {t("editor.autoArrange")}
+                  </button>
+                  <button
+                    onClick={handleFillEmptySpace}
+                    disabled={!canFill}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-semibold shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} ${
+                      canFill
+                        ? 'bg-cyan-500 hover:bg-cyan-600 text-white border border-cyan-600 shadow-md shadow-cyan-500/25'
+                        : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                    }`}
+                    title="Fill all empty space with copies of the selected (or smallest) design"
+                  >
+                    <Expand className="w-3 h-3 flex-shrink-0" />
+                    Fill Sheet
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -5226,7 +5303,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 </div>
               </>
             )}
-            {/* Desktop Auto-Arrange — ml-auto pushes it to the right */}
+            {/* Desktop Auto-Arrange + Fill Sheet — ml-auto pushes group to the right */}
             {!isMobile && (
               <div className="ml-auto flex items-center gap-1">
                 <button
@@ -5241,6 +5318,19 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 >
                   <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
                   {t("editor.autoArrange")}
+                </button>
+                <button
+                  onClick={handleFillEmptySpace}
+                  disabled={!canFill}
+                  className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium min-h-[36px] ${
+                    canFill
+                      ? 'bg-cyan-500 hover:bg-cyan-600 text-white border border-cyan-600 shadow-md shadow-cyan-500/25'
+                      : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+                  }`}
+                  title="Fill all empty space with copies of the selected (or smallest) design"
+                >
+                  <Expand className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+                  Fill Sheet
                 </button>
               </div>
             )}
