@@ -2068,37 +2068,44 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       handleInteractionEnd();
     }, [handleInteractionEnd]);
     
-    // Fit to View: calculate zoom to fit canvas within container and reset pan
+    // Fit to View: calculate zoom to fit canvas within container and reset pan.
+    // Uses previewDimsRef.current (not the state value) so it always reads the
+    // latest dimensions even when called from a stale closure — e.g. when the
+    // artboardHeight effect fires a double-rAF after the sheet expands and
+    // previewDims has already been updated by the concurrent updateSize effect.
     const fitToView = useCallback(() => {
       if (!containerRef.current) return;
-      const viewPadding = Math.max(4, Math.round(Math.min(previewDims.width, previewDims.height) * 0.03));
+      const dims = previewDimsRef.current;
+      const viewPadding = Math.max(4, Math.round(Math.min(dims.width, dims.height) * 0.03));
       const containerWidth = containerRef.current.clientWidth - viewPadding * 2;
       const containerHeight = containerRef.current.clientHeight - viewPadding * 2;
-      const scaleX = containerWidth / previewDims.width;
-      const scaleY = containerHeight / previewDims.height;
+      const scaleX = containerWidth / dims.width;
+      const scaleY = containerHeight / dims.height;
       const fitZoom = Math.min(scaleX, scaleY);
       setZoom(Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, Math.round(fitZoom * 20) / 20)));
       setPanX(0);
       setPanY(0);
-    }, [previewDims.height, previewDims.width]);
+    }, []); // stable — reads dims via ref, never stale
 
-    // Fit Width: zoom so the full artboard width fills the viewport, pan to top
+    // Fit Width: zoom so the full artboard width fills the viewport, pan to top.
+    // Also uses previewDimsRef.current for the same reason as fitToView above.
     const fitWidth = useCallback(() => {
       const el = canvasAreaRef.current;
       if (!el) return;
+      const dims = previewDimsRef.current;
       const availW = el.clientWidth - 24;
       const vh = el.clientHeight;
-      const widthZoom = availW / Math.max(1, previewDims.width);
+      const widthZoom = availW / Math.max(1, dims.width);
       const newZoom = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, Math.round(widthZoom * 20) / 20));
       // Pan so artboard top aligns with viewport top:
       // (-h/2 + panY) * zoom = -vh/2  →  panY = h/2 - vh/(2*zoom)
-      const topPanY = previewDims.height / 2 - vh / (2 * newZoom);
-      const maxPanY = Math.max(0, previewDims.height / 2 - vh / (2 * newZoom));
+      const topPanY = dims.height / 2 - vh / (2 * newZoom);
+      const maxPanY = Math.max(0, dims.height / 2 - vh / (2 * newZoom));
       const clampedPanY = Math.max(-maxPanY, Math.min(maxPanY, topPanY));
       setZoom(newZoom);
       setPanX(0);
       setPanY(clampedPanY);
-    }, [previewDims.width, previewDims.height]);
+    }, []); // stable — reads dims via ref, never stale
 
     // Reset view to fit the full gangsheet in view
     const resetView = useCallback(() => {
