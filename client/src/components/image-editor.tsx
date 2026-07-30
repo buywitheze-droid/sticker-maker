@@ -223,6 +223,58 @@ async function fetchImageDpi(file: File): Promise<number> {
   }
 }
 
+/**
+ * Returns true when the file is a PNG that has no real pHYs DPI chunk.
+ * Reads only the first 64 KB and scans chunks until pHYs / IDAT / IEND.
+ * Non-PNG files always return false so the fallback never fires for JPEGs etc.
+ */
+async function isPngWithoutEmbeddedDpi(file: File): Promise<boolean> {
+  try {
+    const buf = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+    // Verify PNG signature
+    const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+    for (let i = 0; i < sig.length; i++) if (buf[i] !== sig[i]) return false;
+    // Scan chunks
+    let offset = 8;
+    while (offset + 12 <= buf.length) {
+      const dataLen = readU32(buf, offset);
+      const type = String.fromCharCode(buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7]);
+      if (type === 'pHYs') return false; // real DPI metadata present
+      if (type === 'IDAT' || type === 'IEND') return true;  // no pHYs before pixel data
+      offset += 12 + dataLen;
+    }
+    return true; // exhausted the 64 KB slice — no pHYs found
+  } catch {
+    return false; // on any error, do not apply the 300-DPI fallback
+  }
+}
+
+/**
+ * Resolves the effective DPI for a raster upload.
+ *
+ * Applies 300 DPI only when ALL three conditions hold:
+ *   1. File is a PNG without an embedded pHYs chunk.
+ *   2. The image has meaningful transparent pixels.
+ *   3. No caller-supplied DPI override is provided.
+ *
+ * All other cases (JPEG, opaque PNG, PNG with valid pHYs, supplied DPI)
+ * fall through to the server-reported or supplied value unchanged.
+ */
+async function resolveUploadDpi(
+  file: File,
+  image: HTMLImageElement,
+  suppliedDpi?: number,
+): Promise<number> {
+  if (suppliedDpi !== undefined) return suppliedDpi;
+
+  const reportedDpi = await fetchImageDpi(file).catch(() => 300);
+  const pngWithoutEmbeddedDpi = await isPngWithoutEmbeddedDpi(file);
+  const hasMeaningfulTransparency = imageHasCleanAlpha(image);
+
+  const useTransparentPngFallback = pngWithoutEmbeddedDpi && hasMeaningfulTransparency;
+  return useTransparentPngFallback ? 300 : reportedDpi;
+}
+
 let _exportReqCounter = 0;
 let _arrangeReqCounter = 0;
 
@@ -2186,7 +2238,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     image: HTMLImageElement,
     opts?: { dpi?: number; skipCrop?: boolean }
   ) => {
-    const dpi = opts?.dpi ?? (await fetchImageDpi(file).catch((err) => { console.warn('[fetchImageDpi] failed, using 300:', err); return 300; }));
+    const dpi = await resolveUploadDpi(file, image, opts?.dpi);
     
     let croppedCanvas: HTMLCanvasElement | null = null;
     if (opts?.skipCrop) {
@@ -2261,7 +2313,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       await new Promise(r => setTimeout(r, 0));
       setUploadProgress(25);
       
-      const dpi = await fetchImageDpi(file).catch((err) => { console.warn('[fetchImageDpi] failed, using 300:', err); return 300; });
+      const dpi = await resolveUploadDpi(file, image);
       const imgWidthInches = image.width / dpi;
       const imgHeightInches = image.height / dpi;
       const ARTBOARD_MATCH_TOLERANCE = 0.05;
@@ -2375,7 +2427,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         setIsUploading(false);
         setUploadProgress(0);
         try {
-          const dpiFallback = await fetchImageDpi(file).catch((err) => { console.warn('[fetchImageDpi] failed, using 300:', err); return 300; });
+          const dpiFallback = await resolveUploadDpi(file, image);
           const wIn = image.width / dpiFallback;
           const hIn = image.height / dpiFallback;
           const match = Math.abs(wIn - artboardWidth) / Math.max(artboardWidth, 0.1) <= 0.05 &&
