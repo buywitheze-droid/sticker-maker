@@ -501,6 +501,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const nudgeSnapshotSavedRef = useRef(false);
   const nudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thumbnailCacheRef = useRef<Map<string, string>>(new Map());
+  // ── Session-persistence caches ─────────────────────────────────────────────
+  // Maps image element src (blob / data URL) → stable storage key (UUID)
+  const imageStableKeyRef = useRef<Map<string, string>>(new Map());
+  // Maps image element src → data URL already rendered to canvas (avoid re-drawing)
+  const imageDataUrlCacheRef = useRef<Map<string, string>>(new Map());
   const multiDragAccumRef = useRef<{ totalDnx: number; totalDny: number; starts: Map<string, {nx: number; ny: number}> } | null>(null);
   const multiResizeStartRef = useRef<Map<string, { nx: number; ny: number; s: number }> | null>(null);
   const multiRotateStartRef = useRef<Map<string, { nx: number; ny: number; rotation: number }> | null>(null);
@@ -2163,6 +2168,190 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   artboardHeightRef.current = artboardHeight;
   const selectedDesignIdsRef = useRef(selectedDesignIds);
   selectedDesignIdsRef.current = selectedDesignIds;
+
+  // ── Session persistence: save ──────────────────────────────────────────────
+  // Debounce-saves sheets + artboard config to sessionStorage whenever they change.
+  // Images are rendered to canvas → data URL and cached so repeat saves are cheap.
+  useEffect(() => {
+    if (sheets.every(s => s.designs.length === 0)) return;
+    const timer = setTimeout(() => {
+      try {
+        const imageDataRecord: Record<string, string> = {};
+        const srcToKey = imageStableKeyRef.current;
+        const dataUrlCache = imageDataUrlCacheRef.current;
+
+        const sheetsToSave = sheets.map(sheet => ({
+          id: sheet.id,
+          name: sheet.name,
+          artboardHeight: sheet.artboardHeight,
+          designs: sheet.designs.map(d => {
+            const src = d.imageInfo.image.src;
+            if (!srcToKey.has(src)) {
+              srcToKey.set(src, `img_${crypto.randomUUID()}`);
+            }
+            const key = srcToKey.get(src)!;
+            if (!dataUrlCache.has(src)) {
+              try {
+                const MAX_STORE_DIM = 2000;
+                const img = d.imageInfo.image;
+                const scale = Math.min(1, MAX_STORE_DIM / Math.max(img.width, img.height, 1));
+                const sw = Math.max(1, Math.round(img.width * scale));
+                const sh = Math.max(1, Math.round(img.height * scale));
+                const c = document.createElement('canvas');
+                c.width = sw; c.height = sh;
+                const ctx = c.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0, sw, sh);
+                  dataUrlCache.set(src, c.toDataURL('image/png'));
+                }
+              } catch { /* skip if canvas draw fails */ }
+            }
+            const dataUrl = dataUrlCache.get(src);
+            if (dataUrl) imageDataRecord[key] = dataUrl;
+            return {
+              id: d.id,
+              name: d.name,
+              imageKey: key,
+              widthInches: d.widthInches,
+              heightInches: d.heightInches,
+              transform: d.transform,
+              originalWidth: d.imageInfo.originalWidth,
+              originalHeight: d.imageInfo.originalHeight,
+              dpi: d.imageInfo.dpi,
+              originalDPI: d.originalDPI,
+              alphaThresholded: d.alphaThresholded,
+              halftoned: d.halftoned,
+              printFileName: d.printFileName,
+            };
+          }),
+        }));
+
+        sessionStorage.setItem('gangsheet_session', JSON.stringify({
+          version: 1,
+          sheets: sheetsToSave,
+          activeSheetId,
+          artboardWidth,
+          imageData: imageDataRecord,
+        }));
+      } catch {
+        // Silently ignore QuotaExceededError and other storage failures
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [sheets, activeSheetId, artboardWidth]);
+
+  // ── Session persistence: restore on mount ─────────────────────────────────
+  // Runs once after mount. If sessionStorage holds a valid session, rebuilds all
+  // sheets and designs from the stored data URLs, then updates component state.
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem('gangsheet_session');
+      if (!stored) return;
+      const data = JSON.parse(stored) as {
+        version: number;
+        sheets: Array<{
+          id: string; name: string; artboardHeight: number;
+          designs: Array<{
+            id: string; name: string; imageKey: string;
+            widthInches: number; heightInches: number;
+            transform: ImageTransform;
+            originalWidth: number; originalHeight: number; dpi: number;
+            originalDPI: number;
+            alphaThresholded?: boolean; halftoned?: boolean; printFileName?: boolean;
+          }>;
+        }>;
+        activeSheetId: string;
+        artboardWidth: number;
+        imageData: Record<string, string>;
+      };
+      if (data.version !== 1 || !Array.isArray(data.sheets)) return;
+
+      const loadImg = (src: string): Promise<HTMLImageElement> =>
+        new Promise((res, rej) => {
+          const img = new Image();
+          img.onload = () => res(img);
+          img.onerror = rej;
+          img.src = src;
+        });
+
+      Promise.all(
+        Object.entries(data.imageData).map(async ([key, dataUrl]) =>
+          [key, await loadImg(dataUrl)] as [string, HTMLImageElement]
+        )
+      ).then(entries => {
+        const imgMap = new Map<string, HTMLImageElement>(entries);
+
+        const restoredSheets: SheetState[] = data.sheets.map(sheet => ({
+          id: sheet.id,
+          name: sheet.name,
+          artboardHeight: sheet.artboardHeight,
+          designs: sheet.designs.map(d => {
+            const img = imgMap.get(d.imageKey);
+            if (!img) return null;
+            const dataUrl = data.imageData[d.imageKey];
+            // Pre-populate caches so the first re-save reuses stored data
+            if (dataUrl) {
+              imageDataUrlCacheRef.current.set(img.src, dataUrl);
+              imageStableKeyRef.current.set(img.src, d.imageKey);
+            }
+            // Build a minimal File stub for ImageInfo compatibility
+            let file: File;
+            try {
+              const b64 = dataUrl.split(',')[1];
+              const mime = dataUrl.split(';')[0].slice(5);
+              const byteStr = atob(b64);
+              const ab = new Uint8Array(byteStr.length);
+              for (let i = 0; i < byteStr.length; i++) ab[i] = byteStr.charCodeAt(i);
+              file = new File([ab], (d.name || 'design') + '.png', { type: mime });
+            } catch {
+              file = new File([], (d.name || 'design') + '.png', { type: 'image/png' });
+            }
+            const imageInfo: ImageInfo = {
+              file,
+              image: img,
+              originalWidth: d.originalWidth ?? img.width,
+              originalHeight: d.originalHeight ?? img.height,
+              dpi: d.dpi ?? 300,
+            };
+            return {
+              id: d.id,
+              name: d.name,
+              widthInches: d.widthInches,
+              heightInches: d.heightInches,
+              transform: d.transform,
+              originalDPI: d.originalDPI ?? d.dpi ?? 300,
+              alphaThresholded: d.alphaThresholded,
+              halftoned: d.halftoned,
+              printFileName: d.printFileName,
+              imageInfo,
+            } as DesignItem;
+          }).filter((x): x is DesignItem => x !== null),
+        }));
+
+        const validSheets = restoredSheets.filter(s => s.designs.length > 0);
+        if (validSheets.length === 0) return;
+
+        setSheets(validSheets);
+        const restoredActiveId = validSheets.some(s => s.id === data.activeSheetId)
+          ? data.activeSheetId
+          : validSheets[0].id;
+        setActiveSheetId(restoredActiveId);
+        if (data.artboardWidth) setArtboardWidth(data.artboardWidth);
+
+        const activeS = validSheets.find(s => s.id === restoredActiveId) ?? validSheets[0];
+        const firstDesign = activeS.designs[0] ?? null;
+        if (firstDesign) {
+          setImageInfo(firstDesign.imageInfo);
+          setSelectedDesignId(null);
+          setDesignTransform({ nx: 0.5, ny: 0.5, s: 1, rotation: 0 });
+        }
+      }).catch(() => {
+        // Silently ignore restore failures (corrupt data, image load errors, etc.)
+      });
+    } catch {
+      // Silently ignore JSON parse errors or missing sessionStorage
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts — registered once, uses refs for latest handlers
   useEffect(() => {
