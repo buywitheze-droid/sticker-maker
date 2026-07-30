@@ -362,7 +362,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [designs, setDesigns] = useState<DesignItem[]>([]);
   const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
   const [selectedDesignIds, setSelectedDesignIds] = useState<Set<string>>(new Set());
-  const [showDesignInfo, setShowDesignInfo] = useState(false);
+  const [showDesignInfo, setShowDesignInfo] = useState(true);
   const [selectionZoomActive, setSelectionZoomActive] = useState(false);
   const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
@@ -2025,7 +2025,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       }
 
       if (e.key === 'Escape') {
-        if (showDesignInfoRef.current) setShowDesignInfo(false);
         setSelectedDesignId(null);
         setSelectedDesignIds(new Set());
       }
@@ -3835,15 +3834,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           {designs.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
-                <button
-                  onClick={() => setShowDesignInfo(!showDesignInfo)}
-                  className="flex flex-1 min-w-0 items-center gap-3 overflow-hidden rounded-md px-1.5 py-1 text-base font-semibold text-gray-800 transition-colors hover:bg-gray-50"
-                >
+                <div className="flex flex-1 min-w-0 items-center gap-3 overflow-hidden rounded-md px-1.5 py-1 text-base font-semibold text-gray-800">
                   <Layers className="h-7 w-7 flex-shrink-0 text-cyan-500" strokeWidth={2.25} />
                   <span className="truncate">{t("editor.layers")}</span>
                   <span className="flex-shrink-0 rounded-full bg-cyan-100 px-2.5 py-1 text-sm font-bold tabular-nums text-cyan-700">{designs.length}</span>
-                  {showDesignInfo ? <ChevronUp className="w-4 h-4 text-gray-500 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />}
-                </button>
+                </div>
                 <button
                   onClick={() => sidebarFileRef.current?.click()}
                   className="flex min-h-10 flex-shrink-0 items-center gap-1.5 rounded-lg border border-cyan-600 bg-cyan-500 px-4 py-2 text-sm font-bold text-white shadow-md shadow-cyan-500/25 transition-all hover:bg-cyan-600 hover:shadow-lg hover:shadow-cyan-500/30 active:scale-[0.98] whitespace-nowrap"
@@ -3882,7 +3877,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     return (
                     <div
                       key={`${row.baseName}::${row.sizeKey}`}
-                      className={`relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1 px-2.5 py-2.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-2 border-cyan-400' : 'hover:bg-gray-100/70 border-l-2 border-transparent'}`}
+                      className={`relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-2.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-2 border-cyan-400' : 'hover:bg-gray-100/70 border-l-2 border-transparent'}`}
                       onClick={(e) => {
                         if (e.ctrlKey || e.metaKey) {
                           setSelectedDesignIds(prev => {
@@ -3913,7 +3908,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         />
                       </div>
                       {/* Col 2 Row 1: name + size */}
-                      <div className="min-w-0 overflow-hidden pr-8">
+                      <div className="min-w-0 overflow-hidden pr-7">
                         {editingLayerName === `${row.baseName}::${row.sizeKey}` ? (
                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <input
@@ -3947,7 +3942,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           </div>
                         ) : (
                           <p
-                            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors font-medium"
+                            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors"
                             title={t("editor.renameDesign")}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3959,62 +3954,96 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                             {row.isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">{t("editor.resized")}</span>}
                           </p>
                         )}
-                        <p className={`text-gray-500 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}>
+                        <p className={`text-gray-600 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}>
                           {formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}
                         </p>
                       </div>
-                      {/* Col 2 Row 2: count stepper + Duplicate & Arrange */}
-                      <div className="col-start-2 flex min-w-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleRemoveOneCopy(row.baseName, row.sizeKey); }}
-                          disabled={count <= 1}
-                          className={`flex h-5 w-5 items-center justify-center rounded-full transition-colors flex-shrink-0 ${count > 1 ? 'bg-gray-200 hover:bg-red-100 text-gray-600 hover:text-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
-                          title={t("editor.removeOne")}
-                        >
-                          <Minus className="w-2.5 h-2.5" strokeWidth={3} />
-                        </button>
-                        {editingCountKey === `${row.baseName}::${row.sizeKey}` ? (
+                      {/* Col 2 Row 2: count input+arrows + Duplicate & Arrange */}
+                      <div className="col-start-2 flex min-w-0 items-center gap-1.5">
+                        <div className="flex items-center gap-px shrink-0" onClick={(e) => e.stopPropagation()}>
                           <input
-                            type="number"
-                            min="1"
-                            max="200"
-                            autoFocus
-                            className="w-14 h-6 text-[11px] text-gray-900 font-semibold text-center border-2 border-cyan-400 rounded bg-white outline-none tabular-nums"
-                            value={editingCountValue}
-                            onChange={(e) => setEditingCountValue(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            onBlur={() => { handleSetGroupCount(row, parseInt(editingCountValue)); setEditingCountKey(null); }}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { handleSetGroupCount(row, parseInt(editingCountValue)); setEditingCountKey(null); } else if (e.key === 'Escape') setEditingCountKey(null); e.stopPropagation(); }}
+                            type="text"
+                            inputMode="numeric"
+                            readOnly={editingCountKey !== `${row.baseName}::${row.sizeKey}`}
+                            autoFocus={editingCountKey === `${row.baseName}::${row.sizeKey}`}
+                            className={`h-6 w-14 rounded border-2 bg-white text-center text-[11px] font-semibold tabular-nums text-gray-800 outline-none shadow-sm transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${editingCountKey === `${row.baseName}::${row.sizeKey}` ? 'border-cyan-500' : 'cursor-pointer border-gray-300 hover:border-cyan-400 hover:bg-cyan-50'}`}
+                            value={editingCountKey === `${row.baseName}::${row.sizeKey}` ? editingCountValue : String(count)}
+                            onChange={(e) => setEditingCountValue(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                            onFocus={() => {
+                              if (editingCountKey !== `${row.baseName}::${row.sizeKey}`) {
+                                setEditingCountKey(`${row.baseName}::${row.sizeKey}`);
+                                setEditingCountValue(String(count));
+                              }
+                            }}
+                            onBlur={() => {
+                              handleSetGroupCount(row, parseInt(editingCountValue || String(count), 10));
+                              setEditingCountKey(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleSetGroupCount(row, parseInt(editingCountValue || String(count), 10));
+                                setEditingCountKey(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingCountKey(null);
+                              }
+                              e.stopPropagation();
+                            }}
+                            title="Click to set exact copy count"
                           />
-                        ) : (
-                          <span
-                            className="w-14 h-6 inline-flex items-center justify-center text-[11px] font-semibold text-gray-700 border-2 border-gray-300 rounded bg-white tabular-nums cursor-pointer hover:border-cyan-400 hover:text-cyan-700 transition-colors"
-                            title="Click to set exact count"
-                            onClick={(e) => { e.stopPropagation(); setEditingCountKey(`${row.baseName}::${row.sizeKey}`); setEditingCountValue(String(count)); }}
-                          >{count}</span>
-                        )}
+                          <div className="flex flex-col gap-px">
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => { e.stopPropagation(); handleSetGroupCount(row, count + 1); }}
+                              disabled={count >= 200}
+                              className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                              title="Increase copies"
+                            >
+                              <ChevronUp className="h-2.5 w-2.5" strokeWidth={3} />
+                            </button>
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => { e.stopPropagation(); handleSetGroupCount(row, count - 1); }}
+                              disabled={count <= 1}
+                              className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                              title="Decrease copies"
+                            >
+                              <ChevronDown className="h-2.5 w-2.5" strokeWidth={3} />
+                            </button>
+                          </div>
+                        </div>
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleDuplicateById(first.id); }}
-                          className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 hover:bg-cyan-100 text-gray-600 hover:text-cyan-600 transition-colors flex-shrink-0"
-                          title={t("editor.addOneMore")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const targetCount = editingCountKey === `${row.baseName}::${row.sizeKey}`
+                              ? parseInt(editingCountValue, 10)
+                              : count;
+                            const groupIds = new Set(row.designs.map(d => d.id));
+                            setSelectedDesignIds(groupIds);
+                            setSelectedDesignId(first.id);
+                            if (Number.isInteger(targetCount) && targetCount !== count) {
+                              handleSetGroupCount(row, targetCount);
+                            } else if (Number.isInteger(targetCount)) {
+                              setTimeout(() => handleAutoArrangeRef.current({ preserveSelection: true }), 0);
+                            }
+                            setEditingCountKey(null);
+                          }}
+                          className="inline-flex h-7 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-fuchsia-400 bg-fuchsia-100 px-1.5 text-[9px] font-bold text-fuchsia-800 shadow-sm shadow-fuchsia-500/20 transition-colors hover:bg-fuchsia-200"
+                          title="Duplicate & Arrange"
                         >
-                          <Plus className="w-2.5 h-2.5" strokeWidth={3} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDuplicateAndArrange(count); }}
-                          className="flex items-center gap-1 rounded-md border border-fuchsia-400 bg-fuchsia-100 px-1.5 py-0.5 text-[9px] font-bold text-fuchsia-800 hover:bg-fuchsia-200 transition-colors whitespace-nowrap"
-                          title={t("editor.duplicateArrange")}
-                        >
-                          <Copy className="w-2.5 h-2.5" strokeWidth={2.5} />
-                          Dup &amp; Arrange
+                          <Copy className="h-3 w-3" strokeWidth={2.5} />
+                          <span className="whitespace-nowrap">Duplicate &amp; Arrange</span>
                         </button>
                       </div>
                       {/* Absolute delete button top-right */}
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteGroup(row.designs.map(d => d.id)); }}
-                        className="absolute right-2.5 top-2.5 p-0.5 rounded hover:bg-gray-200 text-red-400 hover:text-red-600 transition-colors"
+                        className="absolute right-2.5 top-2.5 p-0.5 rounded hover:bg-gray-200 text-red-500 hover:text-red-600 transition-colors flex-shrink-0"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
                   ); })}
