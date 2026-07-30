@@ -118,27 +118,55 @@ function SizeInput({
   // Step size: 0.1" imperial, ~0.25 cm metric
   const stepInches = metric ? cmToInches(0.25) : 0.1;
 
+  const arrows = (
+    <div className="flex flex-col" style={{ gap: 1 }}>
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onCommit(Math.max(min, Math.min(max, value + stepInches)))}
+        className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
+        title="Increase size"
+      >
+        <ChevronUp className="w-2.5 h-2.5" strokeWidth={3} />
+      </button>
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onCommit(Math.max(min, Math.min(max, value - stepInches)))}
+        className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
+        title="Decrease size"
+      >
+        <ChevronDown className="w-2.5 h-2.5" strokeWidth={3} />
+      </button>
+    </div>
+  );
+
   if (editing) {
     return (
-      <input
-        type="text"
-        inputMode="decimal"
-        className={`h-5 bg-gray-100 border border-cyan-500 rounded font-semibold text-gray-900 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
-        value={draft}
-        autoFocus
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          commit(draft, onCommitAtFocusRef.current);
-          setEditing(false);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
+      <div className="flex items-center gap-px">
+        <input
+          type="text"
+          inputMode="decimal"
+          className={`h-7 bg-white border-2 border-cyan-500 rounded font-bold text-gray-900 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${metric ? 'w-16 text-[10px]' : 'w-14 text-[12px]'}`}
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
             commit(draft, onCommitAtFocusRef.current);
             setEditing(false);
-          } else if (e.key === "Escape") setEditing(false);
-        }}
-        title={title}
-      />
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              commit(draft, onCommitAtFocusRef.current);
+              setEditing(false);
+            } else if (e.key === "Escape") setEditing(false);
+          }}
+          title={title}
+        />
+        {arrows}
+      </div>
     );
   }
 
@@ -147,7 +175,7 @@ function SizeInput({
       <input
         type="text"
         readOnly
-        className={`h-6 bg-white border-2 border-gray-300 rounded font-semibold text-gray-800 text-center outline-none cursor-pointer hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 transition-colors shadow-sm ${metric ? 'w-16 text-[10px]' : 'w-14 text-[11px]'}`}
+        className={`h-7 bg-white border-2 border-gray-300 rounded font-bold text-gray-900 text-center outline-none cursor-pointer hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 transition-colors shadow-sm ${metric ? 'w-16 text-[10px]' : 'w-14 text-[12px]'}`}
         value={display}
         onFocus={() => {
           onCommitAtFocusRef.current = onCommit;
@@ -156,28 +184,7 @@ function SizeInput({
         }}
         title={title + " — click to edit"}
       />
-      <div className="flex flex-col" style={{ gap: 1 }}>
-        <button
-          type="button"
-          tabIndex={-1}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => onCommit(Math.max(min, Math.min(max, value + stepInches)))}
-          className="w-3.5 h-[10px] flex items-center justify-center bg-gray-100 hover:bg-cyan-100 border border-gray-300 rounded-t text-gray-400 hover:text-cyan-600 transition-colors"
-          title="Increase size"
-        >
-          <ChevronUp className="w-2.5 h-2.5" strokeWidth={3} />
-        </button>
-        <button
-          type="button"
-          tabIndex={-1}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => onCommit(Math.max(min, Math.min(max, value - stepInches)))}
-          className="w-3.5 h-[10px] flex items-center justify-center bg-gray-100 hover:bg-cyan-100 border border-gray-300 border-t-0 rounded-b text-gray-400 hover:text-cyan-600 transition-colors"
-          title="Decrease size"
-        >
-          <ChevronDown className="w-2.5 h-2.5" strokeWidth={3} />
-        </button>
-      </div>
+      {arrows}
     </div>
   );
 }
@@ -3700,7 +3707,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button onClick={handleUndo} disabled={!canUndo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.undo")}><Undo2 className="w-4 h-4" /></button>
                 <button onClick={handleRedo} disabled={!canRedo()} className="w-8 h-8 rounded border border-gray-300 bg-white text-gray-600 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.redo")}><Redo2 className="w-4 h-4" /></button>
                 <button onClick={() => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else if (selectedDesignId) handleDeleteDesign(selectedDesignId); }} disabled={!selectedDesignId && selectedDesignIds.size === 0} className="w-8 h-8 rounded border border-red-200 bg-white text-red-500 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center" title={t("editor.delete")}><Trash2 className="w-4 h-4" /></button>
-                <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-[#F1F5F9] text-[#0891B2] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
+                <button onClick={() => { handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 }); setMobilePanel("preview"); }} disabled={designs.length < 2 && selectedDesignIds.size < 2} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold min-h-[36px] shadow-md ${designs.length >= 2 || selectedDesignIds.size >= 2 ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-pink-500/25' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.autoArrangeAll")}><LayoutGrid className="w-3 h-3" />{t("editor.autoArrange")}</button>
               </div>
             </div>
             {/* Row 2: W/H + DPI + Duplicate (when design present) */}
@@ -3712,7 +3719,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <button onClick={() => setProportionalLock(prev => !prev)} className={`p-0.5 rounded ${proportionalLock ? 'text-cyan-400' : 'text-gray-600'}`}>{proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}</button>
                   <span className="text-[10px] text-gray-600">H</span>
                   <SizeInput value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={artboardHeight} lang={lang} />
-                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${effectiveDPI < 198 ? 'text-amber-600 bg-amber-100 border border-amber-400' : effectiveDPI < 277 ? 'text-green-700 bg-green-100 border border-green-500' : 'bg-black border border-green-400'}`} style={effectiveDPI >= 277 ? { color: '#39FF14' } : undefined}>{effectiveDPI} DPI</span>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${effectiveDPI < 198 ? 'text-amber-700 bg-amber-100 border border-amber-400' : effectiveDPI < 277 ? 'text-amber-700 bg-amber-100 border border-amber-400' : 'text-emerald-700 bg-emerald-100 border border-emerald-500'}`}>{effectiveDPI} DPI <span className="text-[8px] font-medium opacity-90">{effectiveDPI < 198 ? 'Low Res' : effectiveDPI < 277 ? 'Okay' : 'Excellent'}</span></span>
                 </div>
                 <div className="flex items-center gap-1 ml-auto">
                   <button onClick={() => { handleDuplicateDesign(duplicateCount); setDuplicateCount(1); }} disabled={!selectedDesignId} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium min-h-[36px] ${selectedDesignId ? 'bg-[#F1F5F9] text-[#7C3AED] border border-[#CBD5E1]' : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'}`} title={t("editor.duplicate")}><Copy className="w-3 h-3" />{t("editor.duplicate").replace(/ \(.*/, '')}</button>
@@ -3827,23 +3834,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           {/* Layers Panel */}
           {designs.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
+              <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
                 <button
                   onClick={() => setShowDesignInfo(!showDesignInfo)}
-                  className="flex items-center gap-2 flex-1 min-w-0 text-sm text-gray-700 hover:text-gray-900 transition-colors overflow-hidden"
+                  className="flex flex-1 min-w-0 items-center gap-3 overflow-hidden rounded-md px-1.5 py-1 text-base font-semibold text-gray-800 transition-colors hover:bg-gray-50"
                 >
-                  <Layers className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-                  <span className="font-medium text-xs truncate">{t("editor.layers")}</span>
-                  <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded-full flex-shrink-0">{designs.length}</span>
-                  {showDesignInfo ? <ChevronUp className="w-3 h-3 text-gray-600 flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-600 flex-shrink-0" />}
+                  <Layers className="h-7 w-7 flex-shrink-0 text-cyan-500" strokeWidth={2.25} />
+                  <span className="truncate">{t("editor.layers")}</span>
+                  <span className="flex-shrink-0 rounded-full bg-cyan-100 px-2.5 py-1 text-sm font-bold tabular-nums text-cyan-700">{designs.length}</span>
+                  {showDesignInfo ? <ChevronUp className="w-4 h-4 text-gray-500 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />}
                 </button>
                 <button
                   onClick={() => sidebarFileRef.current?.click()}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 font-medium transition-colors flex-shrink-0 whitespace-nowrap"
+                  className="flex min-h-10 flex-shrink-0 items-center gap-1.5 rounded-lg border border-cyan-600 bg-cyan-500 px-4 py-2 text-sm font-bold text-white shadow-md shadow-cyan-500/25 transition-all hover:bg-cyan-600 hover:shadow-lg hover:shadow-cyan-500/30 active:scale-[0.98] whitespace-nowrap"
                   title={t("editor.addDesignTitle")}
                 >
-                  <Plus className="w-3 h-3 flex-shrink-0" />
-                  <span className={lang !== 'en' ? 'text-[10px]' : 'text-[11px]'}>{t("editor.addDesigns")}</span>
+                  <Plus className="h-5 w-5 flex-shrink-0" strokeWidth={2.5} />
+                  <span>{t("editor.addDesigns")}</span>
                 </button>
                 <input
                   ref={sidebarFileRef}
@@ -3875,7 +3882,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     return (
                     <div
                       key={`${row.baseName}::${row.sizeKey}`}
-                      className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-2 border-cyan-400' : 'hover:bg-gray-100/70 border-l-2 border-transparent'}`}
+                      className={`relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1 px-2.5 py-2.5 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-2 border-cyan-400' : 'hover:bg-gray-100/70 border-l-2 border-transparent'}`}
                       onClick={(e) => {
                         if (e.ctrlKey || e.metaKey) {
                           setSelectedDesignIds(prev => {
@@ -3895,7 +3902,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                         }
                       }}
                     >
-                      <div className="w-7 h-7 rounded bg-gray-100 border border-gray-300 flex-shrink-0 overflow-hidden flex items-center justify-center">
+                      {/* Col 1: thumbnail, spans 2 rows */}
+                      <div className="row-span-2 h-9 w-9 rounded bg-gray-100 border border-gray-300 flex-shrink-0 overflow-hidden flex items-center justify-center">
                         <img
                           src={getLayerThumbnail(first)}
                           alt=""
@@ -3904,7 +3912,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           style={{ transform: `${first.transform.flipX ? 'scaleX(-1)' : ''} ${first.transform.flipY ? 'scaleY(-1)' : ''}` }}
                         />
                       </div>
-                      <div className="min-w-0 flex-1 overflow-hidden">
+                      {/* Col 2 Row 1: name + size */}
+                      <div className="min-w-0 overflow-hidden pr-8">
                         {editingLayerName === `${row.baseName}::${row.sizeKey}` ? (
                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <input
@@ -3938,7 +3947,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           </div>
                         ) : (
                           <p
-                            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors"
+                            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors font-medium"
                             title={t("editor.renameDesign")}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3950,15 +3959,16 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                             {row.isResized && <span className="ml-1 text-[9px] text-amber-400/80 font-medium">{t("editor.resized")}</span>}
                           </p>
                         )}
-                        <p className={`text-gray-600 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}>
+                        <p className={`text-gray-500 truncate tabular-nums ${lang !== 'en' ? 'text-[9px]' : 'text-[10px]'}`} title={formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}>
                           {formatDimensions(first.widthInches * first.transform.s, first.heightInches * first.transform.s, lang)}
                         </p>
                       </div>
-                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                      {/* Col 2 Row 2: count stepper + Duplicate & Arrange */}
+                      <div className="col-start-2 flex min-w-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleRemoveOneCopy(row.baseName, row.sizeKey); }}
                           disabled={count <= 1}
-                          className={`w-4 h-4 rounded-full flex items-center justify-center transition-colors ${count > 1 ? 'bg-gray-200 hover:bg-red-100 text-gray-600 hover:text-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                          className={`flex h-5 w-5 items-center justify-center rounded-full transition-colors flex-shrink-0 ${count > 1 ? 'bg-gray-200 hover:bg-red-100 text-gray-600 hover:text-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                           title={t("editor.removeOne")}
                         >
                           <Minus className="w-2.5 h-2.5" strokeWidth={3} />
@@ -3969,7 +3979,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                             min="1"
                             max="200"
                             autoFocus
-                            className="w-8 h-4 text-[10px] text-cyan-600 font-semibold text-center border border-cyan-400 rounded bg-white outline-none tabular-nums"
+                            className="w-14 h-6 text-[11px] text-gray-900 font-semibold text-center border-2 border-cyan-400 rounded bg-white outline-none tabular-nums"
                             value={editingCountValue}
                             onChange={(e) => setEditingCountValue(e.target.value)}
                             onClick={(e) => e.stopPropagation()}
@@ -3978,24 +3988,33 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                           />
                         ) : (
                           <span
-                            className="text-[10px] text-cyan-400 font-semibold min-w-[18px] text-center tabular-nums cursor-pointer hover:text-cyan-600"
+                            className="w-14 h-6 inline-flex items-center justify-center text-[11px] font-semibold text-gray-700 border-2 border-gray-300 rounded bg-white tabular-nums cursor-pointer hover:border-cyan-400 hover:text-cyan-700 transition-colors"
                             title="Click to set exact count"
                             onClick={(e) => { e.stopPropagation(); setEditingCountKey(`${row.baseName}::${row.sizeKey}`); setEditingCountValue(String(count)); }}
-                          >x{count}</span>
+                          >{count}</span>
                         )}
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDuplicateById(first.id); }}
-                          className="w-4 h-4 rounded-full bg-gray-200 hover:bg-cyan-100 text-gray-600 hover:text-cyan-600 flex items-center justify-center transition-colors"
+                          className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 hover:bg-cyan-100 text-gray-600 hover:text-cyan-600 transition-colors flex-shrink-0"
                           title={t("editor.addOneMore")}
                         >
                           <Plus className="w-2.5 h-2.5" strokeWidth={3} />
                         </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDuplicateAndArrange(count); }}
+                          className="flex items-center gap-1 rounded-md border border-fuchsia-400 bg-fuchsia-100 px-1.5 py-0.5 text-[9px] font-bold text-fuchsia-800 hover:bg-fuchsia-200 transition-colors whitespace-nowrap"
+                          title={t("editor.duplicateArrange")}
+                        >
+                          <Copy className="w-2.5 h-2.5" strokeWidth={2.5} />
+                          Dup &amp; Arrange
+                        </button>
                       </div>
+                      {/* Absolute delete button top-right */}
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteGroup(row.designs.map(d => d.id)); }}
-                        className="p-0.5 rounded hover:bg-gray-200 text-red-500 hover:text-red-600 transition-colors flex-shrink-0"
+                        className="absolute right-2.5 top-2.5 p-0.5 rounded hover:bg-gray-200 text-red-400 hover:text-red-600 transition-colors"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ); })}
@@ -4166,11 +4185,11 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleUndo}
                 disabled={!canUndo()}
-                className="flex items-center gap-1 px-2 py-1 lg:px-3 lg:py-2 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none shadow-sm min-h-[36px]"
+                className="flex h-10 min-w-[76px] lg:h-11 lg:min-w-[92px] items-center justify-center gap-1.5 rounded-lg border-2 border-black bg-black px-2.5 text-white transition-colors hover:bg-white hover:text-black disabled:opacity-30 disabled:pointer-events-none shadow-sm"
                 title={t("editor.undo")}
               >
-                <Undo2 className="w-4 h-4" />
-                <span className="text-[11px] lg:text-sm font-medium">Undo</span>
+                <Undo2 className="w-5 h-5 lg:w-6 lg:h-6" strokeWidth={2.5} />
+                <span className="text-[13px] lg:text-[15px] font-black tracking-wide">UNDO</span>
               </button>
               <button
                 onClick={handleRedo}
@@ -4220,14 +4239,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0">
                   <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
                     {/* Size label — makes the resize control obvious to new users */}
-                    <Maximize2 className="w-3 h-3 text-gray-500 mr-0.5 flex-shrink-0" />
-                    <span className="text-[10px] font-semibold text-gray-500 mr-1 flex-shrink-0">Size</span>
+                    <span className="mr-1 text-[13px] font-bold leading-none tracking-tight text-gray-800 flex-shrink-0">Size</span>
                     {selectedDesignIds.size > 1 && (
-                      <span className="text-[9px] font-bold text-cyan-600 bg-cyan-50 border border-cyan-300 rounded-full px-1 py-px mr-1 flex-shrink-0 tabular-nums" title={`Resize applies to all ${selectedDesignIds.size} selected designs`}>
+                      <span className="mr-1 flex-shrink-0 rounded-full border border-cyan-300 bg-cyan-50 px-1 py-px text-[9px] font-bold tabular-nums text-cyan-600" title={`Resize applies to all ${selectedDesignIds.size} selected designs`}>
                         ×{selectedDesignIds.size}
                       </span>
                     )}
-                    <span className="text-[10px] text-gray-600">W</span>
+                    <span className="text-[12px] font-bold leading-none text-gray-800">W</span>
                     <SizeInput
                       value={activeResizeSettings.widthInches * activeDesignTransform.s}
                       onCommit={(v) => { handleEffectiveSizeChange("width", v); setShowSizeHint(false); }}
@@ -4243,7 +4261,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     >
                       {proportionalLock ? <Link className="w-3 h-3 lg:w-4 lg:h-4" /> : <Unlink className="w-3 h-3 lg:w-4 lg:h-4" />}
                     </button>
-                    <span className="text-[10px] text-gray-600">H</span>
+                    <span className="text-[12px] font-bold leading-none text-gray-800">H</span>
                     <SizeInput
                       value={activeResizeSettings.heightInches * activeDesignTransform.s}
                       onCommit={(v) => { handleEffectiveSizeChange("height", v); setShowSizeHint(false); }}
@@ -4261,19 +4279,18 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     )}
                   </div>
                   <span
-                    className={`text-[9px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
+                    className={`text-[11px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
                       effectiveDPI < 198
-                        ? 'text-amber-600 bg-amber-100 border border-amber-400'
+                        ? 'text-amber-700 bg-amber-100 border border-amber-400'
                         : effectiveDPI < 277
-                          ? 'text-green-700 bg-green-100 border border-green-500'
-                          : 'bg-black border border-green-400'
+                          ? 'text-amber-700 bg-amber-100 border border-amber-400'
+                          : 'text-emerald-700 bg-emerald-100 border border-emerald-500'
                     }`}
-                    style={effectiveDPI >= 277 ? { color: '#39FF14' } : undefined}
                     title={t("editor.effectiveRes", { dpi: effectiveDPI })}
                   >
                     <span>{effectiveDPI} DPI</span>
-                    <span className="text-[8px] font-medium opacity-90 hidden sm:inline">
-                      {effectiveDPI < 198 ? 'Low Res' : effectiveDPI < 277 ? 'Medium' : 'Excellent'}
+                    <span className="text-[9px] font-medium opacity-90 hidden sm:inline">
+                      {effectiveDPI < 198 ? 'Low Res' : effectiveDPI < 277 ? 'Okay to print' : 'Excellent'}
                     </span>
                   </span>
                 </div>
@@ -4282,9 +4299,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <button
                     onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2 })}
                     disabled={designs.length < 2 && selectedDesignIds.size < 2}
-                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-semibold shadow-md min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} lg:text-sm ${
+                    className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap font-semibold min-h-[36px] ${lang !== 'en' ? 'text-[10px]' : 'text-[11px]'} lg:text-sm ${
                       designs.length >= 2 || selectedDesignIds.size >= 2
-                        ? 'bg-pink-500 hover:bg-pink-600 text-white border border-pink-600'
+                        ? 'bg-pink-500 hover:bg-pink-600 text-black border border-pink-600 shadow-md shadow-pink-500/25'
                         : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
                     }`}
                     title={selectedDesignIds.size >= 2 ? t("editor.autoArrangeSelected") : t("editor.autoArrangeAll")}
@@ -4372,16 +4389,68 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <button
                 onClick={handleRotate90}
                 disabled={!selectedDesignId}
-                className="w-8 h-8 lg:w-10 lg:h-10 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
+                className="w-10 h-10 lg:w-9 lg:h-9 rounded-lg border-2 border-black bg-black text-white hover:bg-white hover:text-black transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center shadow-sm"
                 title={t("editor.rotate")}
               >
                 <RotateCw className="w-4 h-4" />
               </button>
-              <div className="grid grid-cols-4 gap-0.5 lg:contents">
+              {/* Desktop: Align + Rotation panel — inline after rotate button, desktop only */}
+              {!isMobile && (selectedDesignId || selectedDesignIds.size > 0) && (
+                <div className="flex items-center gap-1 rounded-xl border-2 border-black bg-white px-1.5 py-1 shadow-sm flex-shrink-0 ml-1">
+                  {/* ── Center align ── */}
+                  <button
+                    onClick={() => handleAlignEdge('center-h')}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-black bg-black text-white hover:bg-white hover:text-black transition-colors"
+                    title={selectedDesignIds.size > 1 ? 'Align all selected to the same vertical axis' : 'Center horizontally on canvas'}
+                  >
+                    <AlignCenterVertical className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleAlignEdge('center-v')}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-black bg-black text-white hover:bg-white hover:text-black transition-colors"
+                    title={selectedDesignIds.size > 1 ? 'Align all selected to the same horizontal axis' : 'Center vertically on canvas'}
+                  >
+                    <AlignCenterHorizontal className="w-4 h-4" />
+                  </button>
+                  <div className="w-px h-5 bg-gray-300 mx-0.5" />
+                  {/* ── Rotation display + presets ── */}
+                  <input
+                    type="number"
+                    min={0}
+                    max={359}
+                    value={activeDesignTransform.rotation}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value);
+                      if (!isNaN(v)) handleSetRotation(v);
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                    className="min-w-[52px] w-14 rounded-lg border-2 border-black bg-white px-1.5 py-1 text-center text-[15px] font-bold tabular-nums text-black outline-none focus:border-gray-600 disabled:opacity-30 disabled:pointer-events-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    title="Rotation (degrees)"
+                  />
+                  <span className="text-[11px] font-bold text-gray-500">°</span>
+                  {([0, 90, 180, 270] as const).map(deg => (
+                    <button
+                      key={deg}
+                      onClick={() => handleSetRotation(deg)}
+                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                      className={`flex h-9 min-w-[40px] items-center justify-center rounded-lg border px-1.5 text-[12px] font-bold tabular-nums transition-colors disabled:opacity-30 disabled:pointer-events-none ${
+                        activeDesignTransform.rotation === deg
+                          ? 'border-black bg-black text-white'
+                          : 'border-black bg-white text-black hover:bg-black hover:text-white'
+                      }`}
+                      title={`Set rotation to ${deg}°`}
+                    >
+                      {deg}°
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-4 gap-0.5 lg:contents lg:ml-1">
                 <button
                   onClick={() => handleAlignCorner('tl')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
+                  className="flex min-w-[42px] min-h-[42px] items-center justify-center rounded-lg border border-black bg-white text-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:pointer-events-none lg:min-w-0 lg:min-h-0 lg:w-10 lg:h-10 lg:p-0"
                   title={t("editor.alignTL")}
                 >
                   <ArrowUpLeft className="w-4 h-4 lg:w-5 lg:h-5" />
@@ -4389,7 +4458,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button
                   onClick={() => handleAlignCorner('tr')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
+                  className="flex min-w-[42px] min-h-[42px] items-center justify-center rounded-lg border border-black bg-white text-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:pointer-events-none lg:min-w-0 lg:min-h-0 lg:w-10 lg:h-10 lg:p-0"
                   title={t("editor.alignTR")}
                 >
                   <ArrowUpRight className="w-4 h-4 lg:w-5 lg:h-5" />
@@ -4397,7 +4466,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button
                   onClick={() => handleAlignCorner('bl')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
+                  className="flex min-w-[42px] min-h-[42px] items-center justify-center rounded-lg border border-black bg-white text-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:pointer-events-none lg:min-w-0 lg:min-h-0 lg:w-10 lg:h-10 lg:p-0"
                   title={t("editor.alignBL")}
                 >
                   <ArrowDownLeft className="w-4 h-4 lg:w-5 lg:h-5" />
@@ -4405,13 +4474,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <button
                   onClick={() => handleAlignCorner('br')}
                   disabled={!selectedDesignId}
-                  className="p-2 lg:p-1.5 rounded-md hover:bg-gray-200/80 text-gray-600 hover:text-cyan-400 transition-colors disabled:opacity-30 disabled:pointer-events-none min-w-[40px] min-h-[40px] lg:min-w-0 flex items-center justify-center"
+                  className="flex min-w-[42px] min-h-[42px] items-center justify-center rounded-lg border border-black bg-white text-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:pointer-events-none lg:min-w-0 lg:min-h-0 lg:w-10 lg:h-10 lg:p-0"
                   title={t("editor.alignBR")}
                 >
                   <ArrowDownRight className="w-4 h-4 lg:w-5 lg:h-5" />
                 </button>
               </div>
-              {/* Desktop Duplicate + count + Dup-Arrange — right of rotate/align icons */}
+              {/* Desktop Duplicate + count + Dup-Arrange */}
               {!isMobile && (
                 <div className="flex items-center gap-1 ml-1">
                   <div className="w-px h-5 bg-gray-200 mr-0.5" />
@@ -4451,71 +4520,6 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
                     {t("editor.duplicateArrange")}
                   </button>
-                </div>
-              )}
-              {/* Desktop: Align + Rotation panel — right of Duplicate group, desktop only */}
-              {!isMobile && (selectedDesignId || selectedDesignIds.size > 0) && (
-                <div className="flex items-center gap-1.5 ml-1 flex-shrink-0">
-                  <div className="w-px h-5 bg-gray-200 flex-shrink-0" />
-
-                  {/* ── Alignment ── */}
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      onClick={() => handleAlignEdge('center-h')}
-                      className="flex flex-col items-center justify-center gap-0.5 px-1.5 py-1 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-600 transition-colors"
-                      title={selectedDesignIds.size > 1 ? 'Align all selected to the same vertical axis' : 'Center horizontally on canvas'}
-                    >
-                      <AlignCenterVertical className="w-4 h-4" />
-                      <span className="text-[8px] leading-none font-medium">Vert</span>
-                    </button>
-                    <button
-                      onClick={() => handleAlignEdge('center-v')}
-                      className="flex flex-col items-center justify-center gap-0.5 px-1.5 py-1 rounded hover:bg-gray-100 text-gray-500 hover:text-cyan-600 transition-colors"
-                      title={selectedDesignIds.size > 1 ? 'Align all selected to the same horizontal axis' : 'Center vertically on canvas'}
-                    >
-                      <AlignCenterHorizontal className="w-4 h-4" />
-                      <span className="text-[8px] leading-none font-medium">Horiz</span>
-                    </button>
-                  </div>
-
-                  <div className="w-px h-5 bg-gray-200 flex-shrink-0" />
-
-                  {/* ── Rotation ── */}
-                  <div className="flex items-center gap-1">
-                    <RotateCw className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    {/* Editable degree input */}
-                    <input
-                      type="number"
-                      min={0}
-                      max={359}
-                      value={activeDesignTransform.rotation}
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value);
-                        if (!isNaN(v)) handleSetRotation(v);
-                      }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                      className="w-10 h-7 text-center text-[11px] font-mono border border-gray-300 rounded bg-white outline-none focus:border-cyan-500 disabled:opacity-30 disabled:pointer-events-none"
-                      title="Rotation (degrees)"
-                    />
-                    <span className="text-[10px] text-gray-400">°</span>
-                    {/* Quick-set presets */}
-                    {([0, 90, 180, 270] as const).map(deg => (
-                      <button
-                        key={deg}
-                        onClick={() => handleSetRotation(deg)}
-                        disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                        className={`h-7 px-1.5 rounded text-[10px] font-semibold transition-colors border disabled:opacity-30 disabled:pointer-events-none ${
-                          activeDesignTransform.rotation === deg
-                            ? 'bg-cyan-500 text-white border-cyan-600'
-                            : 'bg-gray-100 text-gray-600 border-gray-300 hover:bg-cyan-50 hover:text-cyan-700 hover:border-cyan-400'
-                        }`}
-                        title={`Set rotation to ${deg}°`}
-                      >
-                        {deg}°
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
               {isMobile && (
