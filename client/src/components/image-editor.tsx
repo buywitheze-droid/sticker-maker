@@ -988,19 +988,27 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     // Each design keeps its own aspect ratio (proportional lock on) or raw dimensions (off).
     const idsToResize = selectedDesignIds.size > 1 ? selectedDesignIds : new Set([targetId]);
 
-    // Clamp target against the primary design's rotation-aware max
+    // Clamp target against the primary design's rotation-aware max.
+    // For height: clamp to the largest *configured* gangsheet height, not the current artboard
+    // height — this allows entering a value that triggers automatic sheet expansion.
     const rad = (design.transform.rotation * Math.PI) / 180;
     const cosR = Math.abs(Math.cos(rad));
     const sinR = Math.abs(Math.sin(rad));
     const maxEffW = artboardWidth / Math.max(0.001, cosR + (currentH / currentW) * sinR);
-    const maxEffH = artboardHeight / Math.max(0.001, sinR * (currentW / currentH) + cosR);
+    const gangsheetHeights = profile.gangsheetHeights;
+    const maxConfiguredH = gangsheetHeights.length > 0 ? Math.max(...gangsheetHeights) : artboardHeight;
+    const maxEffH = maxConfiguredH / Math.max(0.001, sinR * (currentW / currentH) + cosR);
     const clampedValue = axis === 'width'
       ? Math.min(value, maxEffW)
       : Math.min(value, maxEffH);
 
+    // Compute the full updated design list before committing so we can check
+    // whether the artboard needs to expand before calling setDesigns.
+    let updatedDesigns: DesignItem[];
+
     if (proportionalLock) {
       // Each selected design gets a new s so its effective W (or H) = clampedValue.
-      setDesigns(prev => prev.map(d => {
+      updatedDesigns = designs.map(d => {
         if (!idsToResize.has(d.id)) return d;
         const dW = d.widthInches, dH = d.heightInches;
         if (dW <= 0 || dH <= 0) return d;
@@ -1008,36 +1016,67 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         const updated = { ...d, transform: { ...d.transform, s: newS } };
         const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
         return { ...d, transform: { ...d.transform, s: newS, nx, ny } };
-      }));
+      });
       // Keep designTransform in sync with primary for display
       const newS = axis === 'width' ? clampedValue / currentW : clampedValue / currentH;
       const primaryUpdated = { ...design, transform: { ...design.transform, s: newS } };
       const { nx: pnx, ny: pny } = clampDesignToArtboard(primaryUpdated, artboardWidth, artboardHeight);
       setDesignTransform({ ...design.transform, s: newS, nx: pnx, ny: pny });
+    } else if (axis === 'width') {
+      updatedDesigns = designs.map(d => {
+        if (!idsToResize.has(d.id)) return d;
+        const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / d.transform.s));
+        const updated = { ...d, widthInches: newW };
+        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+        return { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } };
+      });
+      const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / currentS));
+      setResizeSettings(prev => ({ ...prev, widthInches: newW }));
     } else {
-      if (axis === 'width') {
-        setDesigns(prev => prev.map(d => {
-          if (!idsToResize.has(d.id)) return d;
-          const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / d.transform.s));
-          const updated = { ...d, widthInches: newW };
-          const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
-          return { ...d, widthInches: newW, transform: { ...d.transform, nx, ny } };
-        }));
-        const newW = Math.max(0.01, Math.min(artboardWidth, clampedValue / currentS));
-        setResizeSettings(prev => ({ ...prev, widthInches: newW }));
-      } else {
-        setDesigns(prev => prev.map(d => {
-          if (!idsToResize.has(d.id)) return d;
-          const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / d.transform.s));
-          const updated = { ...d, heightInches: newH };
-          const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
-          return { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } };
-        }));
-        const newH = Math.max(0.01, Math.min(artboardHeight, clampedValue / currentS));
-        setResizeSettings(prev => ({ ...prev, heightInches: newH }));
-      }
+      // Height axis, unlocked: do NOT clamp to artboardHeight — allow sheet expansion.
+      updatedDesigns = designs.map(d => {
+        if (!idsToResize.has(d.id)) return d;
+        const newH = Math.max(0.01, clampedValue / d.transform.s);
+        const updated = { ...d, heightInches: newH };
+        const { nx, ny } = clampDesignToArtboard(updated, artboardWidth, artboardHeight);
+        return { ...d, heightInches: newH, transform: { ...d.transform, nx, ny } };
+      });
+      const newH = Math.max(0.01, clampedValue / currentS);
+      setResizeSettings(prev => ({ ...prev, heightInches: newH }));
     }
-  }, [selectedDesignId, selectedDesignIds, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight]);
+
+    // Determine whether the artboard needs to grow to contain the resized designs.
+    const requiredHeight = updatedDesigns.reduce((maxH, d) => {
+      const bounds = getRotatedBounds(d);
+      return Math.max(maxH, bounds.maxY - bounds.minY);
+    }, artboardHeight);
+    const nextHeight = gangsheetHeights.find(h => h >= requiredHeight) ?? maxConfiguredH;
+    const expanded = nextHeight > artboardHeight;
+
+    // If expanding, re-clamp all designs to the new (larger) artboard so none end up
+    // outside bounds after the height increase.
+    const positionedDesigns = expanded
+      ? updatedDesigns.map(d => {
+          const absCy = d.transform.ny * artboardHeight;
+          const newNy = absCy / nextHeight;
+          const { nx, ny } = clampDesignToArtboard(
+            { ...d, transform: { ...d.transform, ny: newNy } },
+            artboardWidth, nextHeight,
+          );
+          return { ...d, transform: { ...d.transform, nx, ny } };
+        })
+      : updatedDesigns;
+
+    setDesigns(positionedDesigns);
+    if (expanded) {
+      setArtboardHeight(nextHeight);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          handleAutoArrangeRef.current?.({ skipSnapshot: true, preserveSelection: true, arrangeAll: true });
+        });
+      });
+    }
+  }, [selectedDesignId, selectedDesignIds, designs, proportionalLock, saveSnapshot, artboardWidth, artboardHeight, profile.gangsheetHeights]);
 
   const isArtboardFull = useCallback((extraDesigns?: DesignItem[]) => {
     if (designs.length === 0) return false;
@@ -4553,7 +4592,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <SizeInput value={activeResizeSettings.widthInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("width", v)} title={useMetric(lang) ? t("editor.widthTitleCm") : t("editor.widthTitle")} max={artboardWidth} lang={lang} />
                   <button onClick={() => setProportionalLock(prev => !prev)} className={`p-0.5 rounded ${proportionalLock ? 'text-cyan-400' : 'text-gray-600'}`}>{proportionalLock ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}</button>
                   <span className="text-[10px] text-gray-600">H</span>
-                  <SizeInput value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={artboardHeight} lang={lang} />
+                  <SizeInput value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={MAX_ARTBOARD_HEIGHT} lang={lang} />
                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${effectiveDPI < 198 ? 'text-amber-700 bg-amber-100 border border-amber-400' : effectiveDPI < 277 ? 'text-amber-700 bg-amber-100 border border-amber-400' : 'text-emerald-700 bg-emerald-100 border border-emerald-500'}`}>{effectiveDPI} DPI <span className="text-[8px] font-medium opacity-90">{effectiveDPI < 198 ? 'Low Res' : effectiveDPI < 277 ? 'Okay' : 'Excellent'}</span></span>
                 </div>
                 <div className="flex items-center gap-1 ml-auto">
@@ -5273,7 +5312,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       value={activeResizeSettings.heightInches * activeDesignTransform.s}
                       onCommit={(v) => { handleEffectiveSizeChange("height", v); setShowSizeHint(false); }}
                       title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")}
-                      max={artboardHeight}
+                      max={MAX_ARTBOARD_HEIGHT}
                       lang={lang}
                     />
                     <span className={`text-gray-600 ${lang === 'en' ? 'text-[10px]' : 'text-[9px]'}`}>{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>

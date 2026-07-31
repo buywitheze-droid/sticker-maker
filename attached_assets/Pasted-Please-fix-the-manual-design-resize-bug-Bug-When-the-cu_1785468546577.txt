@@ -1,0 +1,168 @@
+Please fix the manual design resize bug.
+
+Bug:
+When the current gangsheet is 12 inches high and the user edits a design to 14 inches high, the value does not save. The resize input is currently capped to the current artboard height, so the requested value is silently reduced back to 12 inches.
+
+Desired behavior:
+Manual design resizing should work like copy-count expansion:
+
+1. The user enters a larger width or height.
+2. Do not clamp the entered height to the current gangsheet height.
+3. Determine the smallest configured gangsheet height that can contain the resized design.
+4. Automatically expand the gangsheet to that next available bound.
+5. Preserve the requested design dimensions.
+6. Keep the design positioned safely inside the expanded artboard.
+7. After expanding, run full-sheet Auto-Arrange for all designs, not selected-only arrangement.
+8. Preserve the current selection.
+9. Keep proportional-lock behavior working:
+   - If locked, changing width or height should update scale proportionally.
+   - If unlocked, only the edited axis should change.
+10. Do not change upload DPI behavior, handle sizing, or unrelated editor behavior.
+
+Likely files:
+- client/src/components/image-editor/useImageEditorModelStateDesign.ts
+- client/src/components/image-editor/editor-action-toolbar.tsx
+- Existing expansion logic is in:
+  client/src/components/image-editor/useImageEditorModelArrangeKeyboard.ts
+
+Implementation details:
+
+A. Fix the input max value
+
+In editor-action-toolbar.tsx, the height SizeInput currently uses:
+
+  max={artboardHeight}
+
+That prevents values larger than the current sheet height from reaching the resize handler.
+
+Change it to use the largest configured gangsheet height:
+
+  const maxGangsheetHeight = GANGSHEET_HEIGHTS.length > 0
+    ? Math.max(...GANGSHEET_HEIGHTS)
+    : artboardHeight;
+
+Then use:
+
+  max={maxGangsheetHeight}
+
+Do not remove the max entirely; it should still respect the product’s largest configured sheet size.
+
+B. Update handleEffectiveSizeChange
+
+In useImageEditorModelStateDesign.ts, update handleEffectiveSizeChange so it does not do this for height:
+
+  next.heightInches = Math.min(artboardHeight, requested / currentS);
+
+Instead, preserve the requested value:
+
+  next.heightInches = requested / currentS;
+
+For proportional lock, continue calculating scale from the requested value:
+
+  const newS = axis === "width"
+    ? requested / currentW
+    : requested / currentH;
+
+C. Determine the next gangsheet bound
+
+Use the configured gangsheet heights already passed into the editor:
+- initialGangsheetHeights when available
+- otherwise profile.gangsheetHeights
+- include initialHeight if it is not already in the list
+- sort numerically
+
+Find the smallest available height that contains the resized design.
+
+Use getRotatedBounds() when calculating the required size so rotated designs are handled correctly:
+
+  const requiredHeight = resizedDesigns.reduce((maxHeight, design) => {
+    const bounds = getRotatedBounds(design);
+    return Math.max(maxHeight, bounds.maxY - bounds.minY);
+  }, artboardHeight);
+
+Then:
+
+  const nextHeight =
+    availableGangsheetHeights.find(h => h >= requiredHeight)
+    ?? artboardHeight;
+
+Only expand when nextHeight is greater than the current artboardHeight.
+
+D. Preserve positions when the artboard height changes
+
+When expanding from old height to nextHeight, preserve the design’s absolute Y position before normalizing it to the new artboard:
+
+  const absCy = design.transform.ny * artboardHeight;
+
+  const resizedTransform = expanded
+    ? { ...design.transform, ny: absCy / nextHeight }
+    : design.transform;
+
+Then call clampDesignToArtboard() using the new dimensions:
+
+  const clamped = clampDesignToArtboard(
+    { ...design, transform: resizedTransform },
+    artboardWidth,
+    nextHeight,
+  );
+
+Store the clamped nx/ny values.
+
+E. Apply the resized designs and expand the sheet
+
+After calculating the resized designs:
+
+  setDesigns(() => positionedDesigns);
+
+If the sheet expanded:
+
+  setArtboardHeight(nextHeight);
+
+Then wait for React to commit the new dimensions and run full-sheet arrangement:
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      handleAutoArrangeRef.current({
+        skipSnapshot: true,
+        preserveSelection: true,
+        arrangeAll: true,
+      });
+    });
+  });
+
+This must use arrangeAll: true so other designs are not treated as fixed obstacles.
+
+F. Keep the displayed resize value accurate
+
+For unlocked resizing, do not clamp the height value back to artboardHeight:
+
+  setResizeSettings(prev =>
+    axis === "width"
+      ? { ...prev, widthInches: Math.min(artboardWidth, value / active.transform.s) }
+      : { ...prev, heightInches: value / active.transform.s }
+  );
+
+G. Safety behavior
+
+If the requested size is larger than the largest configured gangsheet bound, do not silently pretend it fit. Either:
+- show the existing no-space/maximum-size toast, or
+- use the maximum configured bound and clearly notify the user.
+
+For the normal case, such as resizing from 12 inches to 14 inches when a 14-inch or larger bound exists, the value must apply successfully.
+
+Verification:
+1. Run npm run build.
+2. Restart the application workflow.
+3. Check browser logs for errors.
+4. Test:
+   - Current sheet: 12 inches.
+   - Enter design height: 14 inches.
+   - Confirm the height field remains 14 inches.
+   - Confirm the gangsheet expands to the next configured height.
+   - Confirm the design remains inside the sheet.
+   - Confirm multiple designs are fully rearranged after expansion.
+   - Test unlocked width/height resizing.
+   - Test proportional-lock resizing.
+5. Run git diff --check.
+
+Do not modify unrelated DPI, upload, selection-handle, or preview behavior.
