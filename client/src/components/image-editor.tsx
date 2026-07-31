@@ -3323,10 +3323,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     if (!w || !h) return;
 
     // ── Screen params ──────────────────────────────────────────────────────
-    // We resize to 300 DPI before processing (see step 1 below), so the
-    // effective DPI is capped at 300.  Images already below 300 DPI keep
-    // their native DPI (no upscale).  This gives the correct physical 35 LPI
-    // dot pitch after resize.
+    // We always resize to exactly 300 DPI before processing (step 1 below).
+    // This matches the reference app and is critical for correctness:
+    //  • High-res images (e.g. 1063 DPI) are downscaled — avoids 10 M+ pixel
+    //    loops that would freeze the main thread for 10–30 s.
+    //  • Low-res images (e.g. 72 DPI) are UPSCALED — without this, cell size
+    //    collapses to ≈2 px (72/35) giving almost no intermediate dot sizes,
+    //    so halftone gradients look chunky/broken rather than smooth.
+    // Processing at a fixed 300 DPI gives cell = 300/35 ≈ 8.57 px, matching
+    // the reference app and allowing smooth dot-size gradients at any source DPI.
     //
     // IMPORTANT: use the *effective* printed width (widthInches × transform.s)
     // not the raw widthInches.  Without this, resizing the design changes
@@ -3335,8 +3340,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const effectiveWidthInches = design.widthInches > 0
       ? design.widthInches * (design.transform?.s ?? 1)
       : 0;
-    const nativeDpi    = effectiveWidthInches > 0 ? w / effectiveWidthInches : 300;
-    const effectiveDpi = Math.min(nativeDpi, 300);
+    const effectiveDpi = 300; // always process at 300 DPI (up- or down-scale)
     const LPI          = 35;
     const ANGLE        = 22.5 * Math.PI / 180;
     const MIN_DOT      = (0.20 / 25.4) * effectiveDpi; // 0.20 mm in native px
@@ -3376,20 +3380,21 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const FEATHER= featherUI / 200;
     const UPPER  = TOL + FEATHER;
 
-    // ── 1. Resize to 300 DPI then read pixels ─────────────────────────────
-    // The reference app always resizes to 300 DPI before processing.
-    // Without this, a 1063 DPI image (3189 px @ 3") has 10 M+ pixels and the
-    // five O(N) loops take 10–30 s, freezing the main thread ("glitch storm").
-    // We cap at 300 DPI (downscale only; never upscale).  300 DPI gives
-    // cell = 300/35 ≈ 8.57 px — the same as the reference app at full quality.
+    // ── 1. Resize to exactly 300 DPI then read pixels ────────────────────
+    // Resize both up (low-res) and down (high-res) to a fixed 300 DPI canvas.
+    // Downscaling prevents multi-second freezes on high-resolution source files.
+    // Upscaling is equally important: a 72 DPI source without upscaling would
+    // give cell ≈ 2 px (72/35) with almost no intermediate dot radii, making
+    // halftone gradients collapse into solid/nothing with no smooth transition.
+    // At 300 DPI, cell ≈ 8.57 px — the same as the reference app.
     //
     // Use effectiveWidthInches (= widthInches × scale) so the processing canvas
     // is sized for the actual printed dimensions, not the native image size.
     const TARGET_DPI = 300;
     let procW: number, procH: number;
     if (effectiveWidthInches > 0) {
-      procW = Math.min(w, Math.max(1, Math.round(effectiveWidthInches * TARGET_DPI)));
-      procH = Math.min(h, Math.max(1, Math.round(procW * h / w)));
+      procW = Math.max(1, Math.round(effectiveWidthInches * TARGET_DPI)); // up OR down to 300 DPI
+      procH = Math.max(1, Math.round(procW * h / w));
     } else {
       // No physical size info — cap at 2 000 px on the long side to stay responsive
       const scale = Math.min(1, 2000 / Math.max(w, h));
