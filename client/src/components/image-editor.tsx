@@ -425,6 +425,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [sendToSheetMenu, setSendToSheetMenu] = useState<string | null>(null);
   const [showDownloadOptions, setShowDownloadOptions] = useState(false);
   const pendingSpotColorsRef = useRef<Record<string, any[]> | undefined>(undefined);
+  // White underbase options — stored in a ref so both handleDownload and
+  // exportSheetToPdf can read them without adding to their useCallback dep arrays.
+  const [whiteUnderbase, setWhiteUnderbase] = useState(false);
+  const [thinChokeIn,    setThinChokeIn]    = useState(0.002);
+  const [thickChokeIn,   setThickChokeIn]   = useState(0.07);
+  const underbbaseOptsRef = useRef({ enabled: false, thinChoke: 0.002, thickChoke: 0.07 });
   const [renamingSheetId, setRenamingSheetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   // Safety net: if the active sheet changes while a rename is in progress (e.g.
@@ -3925,6 +3931,46 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           cvs.height = 0;
         }
 
+        // ── White underbase layer (RDG_WHITE) ─────────────────────────────────
+        const _ub = underbbaseOptsRef.current;
+        if (_ub.enabled) {
+          try {
+            const { buildWhiteUnderbaseMask, EDT_DPI } = await import('@/lib/white-underbase');
+            const ubResult = buildWhiteUnderbaseMask(
+              designs.map(d => ({
+                imageInfo: d.imageInfo,
+                widthInches: d.widthInches,
+                heightInches: d.heightInches,
+                transform: d.transform,
+              })),
+              artboardWidth,
+              artboardHeight,
+              { enabled: true, thinChoke: _ub.thinChoke, thickChoke: _ub.thickChoke },
+            );
+            if (ubResult) {
+              const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
+              await addSpotColorRastersToPDF(
+                pdfDoc, page,
+                [{
+                  name: 'RDG_WHITE',
+                  tintCMYK: [0, 1, 0, 0] as [number,number,number,number], // magenta for PDF preview visibility
+                  mask: ubResult.mask,
+                  maskWidth:  ubResult.width,
+                  maskHeight: ubResult.height,
+                }],
+                artboardWidth  * 72,  // designWidthPt  — full sheet
+                artboardHeight * 72,  // designHeightPt — full sheet
+                0,                    // bottomLeftX (PDF pts, Y-up)
+                0,                    // bottomLeftY
+                0,                    // rotRad
+              );
+              console.log(`[WhiteUnderbase] Added RDG_WHITE layer ${ubResult.width}×${ubResult.height} px @ ${EDT_DPI} DPI`);
+            }
+          } catch (ubErr) {
+            console.warn('[WhiteUnderbase] Failed to add white underbase layer:', ubErr);
+          }
+        }
+
         const pdfBytes = await pdfDoc.save();
         const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
         const url = URL.createObjectURL(pdfBlob);
@@ -4292,6 +4338,43 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         );
       }
       cvs.width = 0; cvs.height = 0;
+    }
+
+    // ── White underbase layer (RDG_WHITE) ───────────────────────────────────
+    const _ubE = underbbaseOptsRef.current;
+    if (_ubE.enabled) {
+      try {
+        const { buildWhiteUnderbaseMask, EDT_DPI: _edtDpi } = await import('@/lib/white-underbase');
+        const ubResult = buildWhiteUnderbaseMask(
+          sheetDesigns.map(d => ({
+            imageInfo: d.imageInfo,
+            widthInches: d.widthInches,
+            heightInches: d.heightInches,
+            transform: d.transform,
+          })),
+          shWidth, shHeight,
+          { enabled: true, thinChoke: _ubE.thinChoke, thickChoke: _ubE.thickChoke },
+        );
+        if (ubResult) {
+          const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
+          await addSpotColorRastersToPDF(
+            pdfDoc, page,
+            [{
+              name: 'RDG_WHITE',
+              tintCMYK: [0, 1, 0, 0] as [number,number,number,number],
+              mask: ubResult.mask,
+              maskWidth:  ubResult.width,
+              maskHeight: ubResult.height,
+            }],
+            shWidth  * 72,
+            shHeight * 72,
+            0, 0, 0,
+          );
+          console.log(`[WhiteUnderbase] exportSheetToPdf: RDG_WHITE ${ubResult.width}×${ubResult.height} @ ${_edtDpi} DPI`);
+        }
+      } catch (ubErr) {
+        console.warn('[WhiteUnderbase] exportSheetToPdf failed:', ubErr);
+      }
     }
 
     const pdfBytes = await pdfDoc.save();
@@ -5756,6 +5839,69 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               <p className="text-sm text-gray-500 mt-0.5">Choose how to download your work.</p>
             </div>
             <div className="p-5 space-y-3">
+              {/* White underbase option — only shown for fluorescent PDF exports */}
+              {profile.enableFluorescent && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-gray-800">White Underbase (RDG_WHITE)</div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">Adds a variable-choke white layer to the PDF</div>
+                    </div>
+                    {/* Toggle */}
+                    <button
+                      type="button"
+                      aria-pressed={whiteUnderbase}
+                      onClick={() => {
+                        const next = !whiteUnderbase;
+                        setWhiteUnderbase(next);
+                        underbbaseOptsRef.current.enabled = next;
+                      }}
+                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${whiteUnderbase ? 'bg-black' : 'bg-gray-300'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${whiteUnderbase ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+                  {whiteUnderbase && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-600 mb-1">Thin choke (in)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={0.05}
+                          step={0.001}
+                          value={thinChokeIn}
+                          onChange={e => {
+                            const v = Math.max(0, Math.min(0.05, parseFloat(e.target.value) || 0));
+                            setThinChokeIn(v);
+                            underbbaseOptsRef.current.thinChoke = v;
+                          }}
+                          className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
+                        />
+                        <div className="text-[9px] text-gray-400 mt-0.5 text-center">fine details / dots</div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-600 mb-1">Thick choke (in)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={0.2}
+                          step={0.005}
+                          value={thickChokeIn}
+                          onChange={e => {
+                            const v = Math.max(0, Math.min(0.2, parseFloat(e.target.value) || 0));
+                            setThickChokeIn(v);
+                            underbbaseOptsRef.current.thickChoke = v;
+                          }}
+                          className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
+                        />
+                        <div className="text-[9px] text-gray-400 mt-0.5 text-center">solid fills / edges</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Download current sheet */}
               <button
                 onClick={handleDownloadCurrentSheet}
@@ -5768,7 +5914,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 <div>
                   <div className="text-sm font-bold text-gray-900">Download Current Sheet</div>
                   <div className="text-xs text-gray-500">
-                    {profile.enableFluorescent ? 'PDF with spot-color channels' : 'High-res PNG at 300 DPI'}
+                    {profile.enableFluorescent ? `PDF with spot-color channels${whiteUnderbase ? ' + white underbase' : ''}` : 'High-res PNG at 300 DPI'}
                   </div>
                 </div>
               </button>
