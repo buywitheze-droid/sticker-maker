@@ -1,0 +1,42 @@
+Here's the complete white underbase (RDG_WHITE) pipeline, start to finish — written so another agent can replicate it exactly.
+
+1. Color extraction & tagging (UI side)
+When an image is uploaded, client/src/lib/color-extractor.ts extracts the dominant colors into ExtractedColor[] and builds two rasters at the extraction resolution:
+pixelMap (Int16Array, mapWidth × mapHeight): each pixel stores the index of its extracted color, or -1 for transparent/unmatched.
+Per-color regionMap (Int32Array, same dims): connected-region IDs within that color, or -1.
+In client/src/components/controls-section.tsx the user tags colors (or individual regions of a color) as White. Tagging a region sets region.spotWhite; the color-level spotWhite flag is set to anyWhite (true if any region is tagged) — so color-level flags alone can't be trusted for "all tagged" decisions.
+The separation name is user-editable state spotWhiteName (default RDG_WHITE). New in Task #6: per-separation edge adjust state (whiteEdgeMode off/choke/spread + whiteEdgeDistance inches, default off / 0.010").
+All of this is pushed to the rest of the app via SpotPreviewData (enabled, colors, pixelMap, mapWidth/Height, spotWhiteName, spotGlossName, whiteEdgeAdjust, glossEdgeAdjust).
+2. Live preview overlay
+client/src/components/preview-section.tsx → createSpotOverlayCanvas() paints an RGBA overlay: orange (249,115,22) = white-only, teal (20,184,166) = gloss-only, yellow (234,179,8) = both.
+Three paint paths, in priority order:
+All-tagged shortcut: if every color (and every region) is tagged white, paint the full image alpha silhouette (alpha ≥ 1) — matches what export does.
+pixelMap path (normal): per pixel, look up color index → regionMap → region flags. Fallback rule: if no region of a color has explicit flags, use color-level flags.
+Tolerance fallback: RGB match within ±30 when no pixelMap exists.
+After painting, applyEdgeAdjustToOverlayData() splits the overlay back into white/gloss binary masks by exact color, applies the same choke/spread morphology as export (pixels-per-inch = overlayWidth / resizeSettings.widthInches), and recomposites. The overlay cache key includes the tag state + edge-adjust settings + width inches.
+3. Export: building the trace canvas
+All three PDF exports (contour PDF, design-only, gang sheet) converge on traceColorRegionsAsync() in client/src/lib/spot-color-vectors.ts:
+
+Canvas size = widthInches × 300 DPI (SPOT_COLOR_DPI), clamped by MAX_CANVAS_DIM/MAX_CANVAS_PIXELS. Always compute effective PPI as cW / widthInches, never assume 300.
+Staleness guard: if the pixelMap's aspect ratio differs from the current image's by >2% (image was cropped/resized since tagging), discard the pixelMap and fall back to live color matching.
+Exact-selection path (preferred): paint a synthetic canvas directly from pixelMap + region selection — selected pixels get the exact extracted RGB, everything else transparent. Sets exactSelection: true so the worker skips morphological closing and uses tiny noise floors (the selection IS the truth; closing would blob fine detail).
+All-tagged path: if every color/region is white-tagged, build a fullAlphaMask from the real image's alpha (threshold ≥ 1) — full silhouette coverage, no color-matching gaps.
+Edge adjust settings are read off the first color carrying spotWhiteEdgeAdjust, converted to pixel radii at effective PPI, and sent to the worker.
+4. Worker: mask → vector paths
+client/src/lib/spot-color-worker.ts:
+
+Build the white mask: fullAlphaMask if all-tagged, else closest-color matching (tolerance 60, direct tolerance 80, alpha ≥ 240).
+Morphological close (radius ≈ dpi/75) only in fallback mode — skipped for exact-selection and all-tagged masks.
+Detail-safe choke/spread (client/src/lib/spot-morphology.ts): exact Euclidean distance transform. Spread = dilate by r. Choke = full erosion, but features farther than 2r from the eroded core (genuinely thin — strokes, small text) fall back to a minimal 0.002" choke instead of vanishing. (2r, not a strict opening — an opening rounds corners and leaves disconnected corner islands.) Masks >64M px are processed downsampled and recomposited.
+Marching squares trace → collapse collinear → area filters (holes get lower thresholds so counters like the inside of an "o" survive) → convert to inches → Douglas-Peucker → Chaikin smoothing on outer contours only (Chaikin shrinks holes, flooding them).
+Returns SpotColorRegion[]: { name: "RDG_WHITE", paths (inch coords), tintCMYK }.
+5. PDF writing
+addSpotColorRegionToPage / addSpotColorVectorsToPDF in spot-color-vectors.ts:
+
+Defines a PDF Separation color space named exactly the user's separation name (RDG_WHITE by default) with a tint transform.
+Writes all of the separation's paths as one fill using f* (even-odd) so holes knock out correctly.
+Layer structure: white/gloss stay as separate top-level content (see memory: the contour PDF groups bg+art+cut into one Form XObject; spot layers are intentionally outside it).
+6. Gang sheet
+When adding to a gang sheet (image-editor.tsx ~line 505), the item snapshots deep copies of: spotColors (with names + spotWhiteEdgeAdjust/spotGlossEdgeAdjust baked onto each color), and spotPixelMap. Export re-runs the same trace per item and remaps paths into sheet coordinates (remapSpotPathToSheet), so each item keeps the settings it was previewed with.
+
+The invariant that matters most: preview and print must always agree — same masks, same all-tagged rules, same morphology, same inch distances regardless of raster resolution. Any change to one side must be mirrored on the other.

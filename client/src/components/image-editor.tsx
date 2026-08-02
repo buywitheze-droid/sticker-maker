@@ -428,9 +428,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   // White underbase options — stored in a ref so both handleDownload and
   // exportSheetToPdf can read them without adding to their useCallback dep arrays.
   const [whiteUnderbase, setWhiteUnderbase] = useState(false);
-  const [thinChokeIn,    setThinChokeIn]    = useState(0.002);
-  const [thickChokeIn,   setThickChokeIn]   = useState(0.07);
-  const underbbaseOptsRef = useRef({ enabled: false, thinChoke: 0.002, thickChoke: 0.07 });
+  const [chokeIn,        setChokeIn]        = useState(0.010);
+  const underbbaseOptsRef = useRef({ enabled: false, choke: 0.010 });
   const [renamingSheetId, setRenamingSheetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   // Safety net: if the active sheet changes while a rename is in progress (e.g.
@@ -3945,7 +3944,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               })),
               artboardWidth,
               artboardHeight,
-              { enabled: true, thinChoke: _ub.thinChoke, thickChoke: _ub.thickChoke },
+              { enabled: true, choke: _ub.choke },
             );
             if (ubResult) {
               const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
@@ -4355,7 +4354,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             transform: d.transform,
           })),
           shWidth, shHeight,
-          { enabled: true, thinChoke: _ubE.thinChoke, thickChoke: _ubE.thickChoke },
+          { enabled: true, choke: _ubE.choke },
         );
         if (ubResult) {
           const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
@@ -5847,7 +5846,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-xs font-bold text-gray-800">White Underbase (RDG_WHITE)</div>
-                      <div className="text-[11px] text-gray-500 mt-0.5">Adds a variable-choke white layer to the PDF</div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">Adds a white base layer to the PDF for DTF printing</div>
                     </div>
                     {/* Toggle */}
                     <button
@@ -5864,41 +5863,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     </button>
                   </div>
                   {whiteUnderbase && (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-gray-600 mb-1">Thin choke (in)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={0.05}
-                          step={0.001}
-                          value={thinChokeIn}
-                          onChange={e => {
-                            const v = Math.max(0, Math.min(0.05, parseFloat(e.target.value) || 0));
-                            setThinChokeIn(v);
-                            underbbaseOptsRef.current.thinChoke = v;
-                          }}
-                          className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
-                        />
-                        <div className="text-[9px] text-gray-400 mt-0.5 text-center">fine details / dots</div>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-gray-600 mb-1">Thick choke (in)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={0.2}
-                          step={0.005}
-                          value={thickChokeIn}
-                          onChange={e => {
-                            const v = Math.max(0, Math.min(0.2, parseFloat(e.target.value) || 0));
-                            setThickChokeIn(v);
-                            underbbaseOptsRef.current.thickChoke = v;
-                          }}
-                          className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
-                        />
-                        <div className="text-[9px] text-gray-400 mt-0.5 text-center">solid fills / edges</div>
-                      </div>
+                    <div className="pt-1">
+                      <label className="block text-[10px] font-semibold text-gray-600 mb-1">Choke (in)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={0.1}
+                        step={0.001}
+                        value={chokeIn}
+                        onChange={e => {
+                          const v = Math.max(0, Math.min(0.1, parseFloat(e.target.value) || 0));
+                          setChokeIn(v);
+                          underbbaseOptsRef.current.choke = v;
+                        }}
+                        className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
+                      />
+                      <div className="text-[9px] text-gray-400 mt-0.5 text-center">thin features auto-protected · min 0.002"</div>
                     </div>
                   )}
                 </div>
