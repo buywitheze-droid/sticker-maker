@@ -472,10 +472,14 @@ self.onmessage = function(e: MessageEvent<WorkerMessage | WorkerMessagePremask>)
       const outH = Math.round(heightInches * dpi);
 
       const FLUOR_TINTS: Record<string, [number, number, number, number]> = {
-        FY: [0,   0,   1, 0],
-        FM: [0,   1,   0, 0],
-        FG: [1,   0,   1, 0],
-        FO: [0, 0.5,   1, 0],
+        FY:    [0,   0,   1, 0],
+        FM:    [0,   1,   0, 0],
+        FG:    [1,   0,   1, 0],
+        FO:    [0, 0.5,   1, 0],
+        // White underbase: [0,0,0,0] renders as invisible in standard PDF viewers
+        // so the design image is visible through it.  RIP software identifies the
+        // channel by name (RDG_WHITE), not by the CMYK tint.
+        WHITE: [0,   0,   0, 0],
       };
 
       const regions: SpotColorRegionWorker[] = [];

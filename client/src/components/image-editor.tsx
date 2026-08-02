@@ -3948,23 +3948,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               { enabled: true, thinChoke: _ub.thinChoke, thickChoke: _ub.thickChoke },
             );
             if (ubResult) {
-              const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
-              await addSpotColorRastersToPDF(
+              const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
+              // Full-sheet mask: offset (0,0) top-left, no rotation.
+              // tintCMYK [0,0,0,0] keeps the layer invisible in standard PDF
+              // viewers so the design image shows through; RIP software identifies
+              // the channel by name (RDG_WHITE) rather than the CMYK tint.
+              await addSpotColorVectorsFromMasksToPDF(
                 pdfDoc, page,
-                [{
-                  name: 'RDG_WHITE',
-                  tintCMYK: [0, 1, 0, 0] as [number,number,number,number], // magenta for PDF preview visibility
-                  mask: ubResult.mask,
-                  maskWidth:  ubResult.width,
-                  maskHeight: ubResult.height,
-                }],
-                artboardWidth  * 72,  // designWidthPt  — full sheet
-                artboardHeight * 72,  // designHeightPt — full sheet
-                0,                    // bottomLeftX (PDF pts, Y-up)
-                0,                    // bottomLeftY
-                0,                    // rotRad
+                { WHITE: ubResult.mask },
+                ubResult.width,
+                ubResult.height,
+                { WHITE: 'RDG_WHITE' },
+                artboardWidth,    // widthInches  — full sheet
+                artboardHeight,   // heightInches — full sheet
+                artboardHeight,   // pageHeightInches
+                0,                // imageOffsetXInches (left edge, Y-down)
+                0,                // imageOffsetYInches (top edge, Y-down)
+                0,                // rotationDeg
               );
-              console.log(`[WhiteUnderbase] Added RDG_WHITE layer ${ubResult.width}×${ubResult.height} px @ ${EDT_DPI} DPI`);
+              console.log(`[WhiteUnderbase] Added RDG_WHITE vector layer @ ${EDT_DPI} DPI (${ubResult.width}×${ubResult.height} source mask)`);
             }
           } catch (ubErr) {
             console.warn('[WhiteUnderbase] Failed to add white underbase layer:', ubErr);
@@ -4356,21 +4358,21 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           { enabled: true, thinChoke: _ubE.thinChoke, thickChoke: _ubE.thickChoke },
         );
         if (ubResult) {
-          const { addSpotColorRastersToPDF } = await import('@/lib/spot-color-vectors');
-          await addSpotColorRastersToPDF(
+          const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
+          await addSpotColorVectorsFromMasksToPDF(
             pdfDoc, page,
-            [{
-              name: 'RDG_WHITE',
-              tintCMYK: [0, 1, 0, 0] as [number,number,number,number],
-              mask: ubResult.mask,
-              maskWidth:  ubResult.width,
-              maskHeight: ubResult.height,
-            }],
-            shWidth  * 72,
-            shHeight * 72,
-            0, 0, 0,
+            { WHITE: ubResult.mask },
+            ubResult.width,
+            ubResult.height,
+            { WHITE: 'RDG_WHITE' },
+            shWidth,    // widthInches
+            shHeight,   // heightInches
+            shHeight,   // pageHeightInches
+            0,          // imageOffsetXInches
+            0,          // imageOffsetYInches
+            0,          // rotationDeg
           );
-          console.log(`[WhiteUnderbase] exportSheetToPdf: RDG_WHITE ${ubResult.width}×${ubResult.height} @ ${_edtDpi} DPI`);
+          console.log(`[WhiteUnderbase] exportSheetToPdf: RDG_WHITE vector layer (${ubResult.width}×${ubResult.height} @ ${_edtDpi} DPI)`);
         }
       } catch (ubErr) {
         console.warn('[WhiteUnderbase] exportSheetToPdf failed:', ubErr);
