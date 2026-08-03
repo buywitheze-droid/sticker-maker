@@ -466,6 +466,21 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [downloadContainer, setDownloadContainer] = useState<HTMLDivElement | null>(null);
   const [spotPreviewDataMap, setSpotPreviewDataMap] = useState<Map<string, SpotPreviewData>>(new Map());
+  // Stable reference so ControlsSection's useEffect (which lists onSpotPreviewChange as a
+  // dependency) doesn't re-fire on every parent render, which would create an infinite loop.
+  const handleSpotPreviewChange = useCallback((data: SpotPreviewData) => {
+    // Use selectedDesignId ?? '' as the key so it always matches the read side
+    // (spotPreviewDataMap.get(selectedDesignId ?? '')).  Previously this bailed out
+    // when selectedDesignId was null, leaving the overlay stuck at { enabled: false }.
+    setSpotPreviewDataMap(prev => {
+      const key = selectedDesignId ?? '';
+      const existing = prev.get(key);
+      // Avoid a needless re-render when nothing changed (same enabled flag and same
+      // color/mask reference from the previous call).
+      if (existing === data) return prev;
+      return new Map(prev).set(key, data);
+    });
+  }, [selectedDesignId]);
   const [fluorPanelContainer, setFluorPanelContainer] = useState<HTMLDivElement | null>(null);
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
   const [activeSpotChannel, setActiveSpotChannel] = useState<string | null>(null);
@@ -4778,10 +4793,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             downloadFormat={profile.downloadFormat}
             enableFluorescent={profile.enableFluorescent}
             selectedDesignId={selectedDesignId}
-            onSpotPreviewChange={(data) => {
-              if (!selectedDesignId) return;
-              setSpotPreviewDataMap(prev => new Map(prev).set(selectedDesignId, data));
-            }}
+            onSpotPreviewChange={handleSpotPreviewChange}
             fluorPanelContainer={fluorPanelContainer}
             copySpotSelectionsRef={copySpotSelectionsRef}
             onActiveChannelChange={(ch) => { setActiveSpotChannel(ch); setPanModeActive(false); if (ch) setWandDeleteModeActive(false); }}
