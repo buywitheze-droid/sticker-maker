@@ -87,7 +87,7 @@ function createClosestColorMask(
     hex: c.hex
   }));
 
-  const directTolerance = 100;
+  const directTolerance = 80;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -133,6 +133,78 @@ function createClosestColorMask(
   }
 
   return mask;
+}
+
+/**
+ * Morphological dilation with a square structuring element (Chebyshev distance).
+ * Two separable passes (H then V) for O(w·h·r) cost.
+ */
+function dilate(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  if (radius <= 0) return mask;
+  const tmp = new Uint8Array(width * height);
+  // Horizontal pass
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width - 1, x + radius);
+      let v = 0;
+      for (let i = x0; i <= x1; i++) { if (mask[row + i]) { v = 1; break; } }
+      tmp[row + x] = v;
+    }
+  }
+  // Vertical pass
+  const out = new Uint8Array(width * height);
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      const y0 = Math.max(0, y - radius);
+      const y1 = Math.min(height - 1, y + radius);
+      let v = 0;
+      for (let j = y0; j <= y1; j++) { if (tmp[j * width + x]) { v = 1; break; } }
+      out[y * width + x] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Morphological erosion (inverse of dilate).
+ */
+function erode(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  if (radius <= 0) return mask;
+  const tmp = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width - 1, x + radius);
+      let v = 1;
+      for (let i = x0; i <= x1; i++) { if (!mask[row + i]) { v = 0; break; } }
+      tmp[row + x] = v;
+    }
+  }
+  const out = new Uint8Array(width * height);
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      const y0 = Math.max(0, y - radius);
+      const y1 = Math.min(height - 1, y + radius);
+      let v = 1;
+      for (let j = y0; j <= y1; j++) { if (!tmp[j * width + x]) { v = 0; break; } }
+      out[y * width + x] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Morphological closing: dilate then erode. Bridges sub-pixel gaps caused
+ * by anti-aliased boundary pixels failing the closest-color match, so a
+ * full spot-color region produces one solid coverage area instead of one
+ * riddled with pinhole gaps. Net shape change is ~0; only holes ≤ 2*radius
+ * wide get filled.
+ */
+function morphologicalClose(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  return erode(dilate(mask, width, height, radius), width, height, radius);
 }
 
 function marchingSquaresTrace(mask: Uint8Array, width: number, height: number): Point[][] {
@@ -281,45 +353,50 @@ function polygonArea(path: Point[]): number {
   return Math.abs(area) / 2;
 }
 
-// Pre-filter: skip any raw contour whose pixel-space area is below this.
-// Applied before DP/Chaikin so we never run expensive processing on noise.
-// 200 sq-pixels ≈ a 14×14 region at any DPI — clearly below any real detail.
+// Pre-filter in pixel space before any expensive processing.
+// 200 sq-px ≈ a 14×14 region — anything smaller is noise.
 const MIN_PIXEL_AREA = 200;
+// Holes get a much lower floor: dropping a small hole while its outer
+// contour survives would flood the counter solid under even-odd fill
+// (e.g. the inside of a small "o" or "e" at 300 DPI).
+const MIN_HOLE_PIXEL_AREA = 25;
 
-// Post-filter: sanity check in inch space after smoothing.
-// 2e-4 sq in ≈ 18 pixels at 300 DPI — catches anything that shrank below threshold.
+// Post-filter sanity check in inch space after smoothing.
 const MIN_CONTOUR_AREA_SQ_IN = 2e-4;
+const MIN_HOLE_AREA_SQ_IN = 2.5e-5;
 
 /**
- * Douglas-Peucker polyline simplification.
- * Removes points that deviate less than `epsilon` from the straight line
- * between their neighbours.  Collapses staircase pixel-runs into single
- * diagonal segments before Chaikin smoothing, keeping the point count low.
+ * Douglas-Peucker polyline simplification — iterative (explicit stack) to
+ * avoid deep recursion on long jagged contours.
  */
 function douglasPeucker(pts: Point[], epsilon: number): Point[] {
   if (pts.length < 3) return pts;
-
-  // Find the point with the greatest perpendicular distance from the
-  // line segment pts[0] → pts[last].
-  const last = pts.length - 1;
-  const ax = pts[0].x, ay = pts[0].y;
-  const bx = pts[last].x, by = pts[last].y;
-  const abLen = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2);
-
-  let maxDist = 0, maxIdx = 0;
-  for (let i = 1; i < last; i++) {
-    const dist = abLen === 0
-      ? Math.sqrt((pts[i].x - ax) ** 2 + (pts[i].y - ay) ** 2)
-      : Math.abs((by - ay) * pts[i].x - (bx - ax) * pts[i].y + bx * ay - by * ax) / abLen;
-    if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+  const n = pts.length;
+  const keep = new Uint8Array(n);
+  keep[0] = 1;
+  keep[n - 1] = 1;
+  const stack: [number, number][] = [[0, n - 1]];
+  while (stack.length > 0) {
+    const [start, end] = stack.pop()!;
+    if (end - start < 2) continue;
+    const ax = pts[start].x, ay = pts[start].y;
+    const bx = pts[end].x,   by = pts[end].y;
+    const abLen = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2);
+    let maxDist = 0, maxIdx = start;
+    for (let i = start + 1; i < end; i++) {
+      const dist = abLen === 0
+        ? Math.sqrt((pts[i].x - ax) ** 2 + (pts[i].y - ay) ** 2)
+        : Math.abs((by - ay) * pts[i].x - (bx - ax) * pts[i].y + bx * ay - by * ax) / abLen;
+      if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+    }
+    if (maxDist > epsilon) {
+      keep[maxIdx] = 1;
+      stack.push([start, maxIdx], [maxIdx, end]);
+    }
   }
-
-  if (maxDist > epsilon) {
-    const left  = douglasPeucker(pts.slice(0, maxIdx + 1), epsilon);
-    const right = douglasPeucker(pts.slice(maxIdx), epsilon);
-    return [...left.slice(0, -1), ...right];
-  }
-  return [pts[0], pts[last]];
+  const result: Point[] = [];
+  for (let i = 0; i < n; i++) if (keep[i]) result.push(pts[i]);
+  return result;
 }
 
 /**
@@ -359,9 +436,10 @@ function signedArea(pts: Point[]): number {
 }
 
 function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, pixelsPerInch: number): Point[][] {
-  // DP epsilon: 1 pixel in inch space — aggressively collapses staircase runs
-  // into diagonal segments so Chaikin has clean corners to smooth.
+  // DP epsilon: 1 pixel in inch space — collapses staircase pixel-grid runs
+  // into single diagonal segments before Chaikin smoothing.
   const dpEpsilon = 1.0 / pixelsPerInch;
+  const pxToSqIn = 1 / (pixelsPerInch * pixelsPerInch);
 
   const rawPaths = marchingSquaresTrace(mask, width, height);
   const result: Point[][] = [];
@@ -370,28 +448,28 @@ function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, p
     const collapsed = collapseCollinear(rawPath);
     if (collapsed.length < 3) continue;
 
-    // ── Pre-filter in pixel space (cheap, before any costly processing).
-    //    signedArea on integer pixel coords gives the exact pixel area.
-    //    Skip anything smaller than MIN_PIXEL_AREA — pure noise.
-    const pxSA = signedArea(collapsed);
-    if (Math.abs(pxSA) < MIN_PIXEL_AREA) continue;
+    // Pre-filter in pixel space (cheap). Holes (negative signed area) use a
+    // lower threshold — dropping a small hole while its outer contour
+    // survives would flood the interior solid under even-odd fill.
+    const rawSa = signedArea(collapsed);
+    const minPxArea = rawSa < 0 ? MIN_HOLE_PIXEL_AREA : MIN_PIXEL_AREA;
+    if (Math.abs(rawSa) < minPxArea) continue;
 
-    // ── Convert to inches.
+    // Convert to inches.
     const inchPts = collapsed.map(p => ({ x: p.x / pixelsPerInch, y: p.y / pixelsPerInch }));
 
-    // ── Simplify staircase runs into diagonal segments.
+    // Simplify staircase runs into diagonal segments.
     const simplified = douglasPeucker(inchPts, dpEpsilon);
     if (simplified.length < 3) continue;
 
-    // ── Smooth outer contours only (2 Chaikin passes = 4× point multiplication).
-    //    Inner (hole) contours keep the DP-simplified polygon unchanged.
-    //    Chaikin cuts corners inward; applied to a hole it shrinks it — collapsing
-    //    thin ink rings and flooding the enclosed white area with ink.
-    //    Winding: positive signed area = CW in Y-down = outer; negative = hole.
+    // Outer contours (CW, positive signed area) get 2 Chaikin passes.
+    // Hole contours (CCW, negative) stay unsmoothed — Chaikin shrinks
+    // polygons inward, collapsing thin ink rings into blobs.
     const sa = signedArea(simplified);
     const smoothed = sa > 0 ? chaikinSmooth(simplified, 2) : simplified;
 
-    if (smoothed.length >= 3 && polygonArea(smoothed) >= MIN_CONTOUR_AREA_SQ_IN) {
+    const minSqIn = sa < 0 ? MIN_HOLE_AREA_SQ_IN : MIN_CONTOUR_AREA_SQ_IN;
+    if (smoothed.length >= 3 && polygonArea(smoothed) >= minSqIn) {
       result.push(smoothed);
     }
   }
@@ -413,8 +491,16 @@ function processSpotColors(
 
   const regions: SpotColorRegionWorker[] = [];
 
+  // Morphological closing radius: at 300 DPI, 4 px ≈ 0.013" — bridges
+  // anti-aliased boundary pixels that fail closest-color matching so each
+  // selection produces one solid region instead of many tiny isolated dots.
+  // Closing only fills holes ≤ 2*radius wide so distinct design elements
+  // (intentional gaps) are preserved.
+  const closingRadius = Math.max(2, Math.round(dpi / 75));
+
   if (whiteColors.length > 0) {
-    const mask = createClosestColorMask(pixelData, width, height, whiteColors, spotColors, 80, 128);
+    const raw = createClosestColorMask(pixelData, width, height, whiteColors, spotColors, 60, 240);
+    const mask = morphologicalClose(raw, width, height, closingRadius);
     const paths = traceMaskToInchPaths(mask, width, height, dpi);
     if (paths.length > 0) {
       regions.push({ name: whiteName, paths, tintCMYK: [0, 1, 0, 0] });
@@ -422,15 +508,14 @@ function processSpotColors(
   }
 
   if (glossColors.length > 0) {
-    const mask = createClosestColorMask(pixelData, width, height, glossColors, spotColors, 80, 128);
+    const raw = createClosestColorMask(pixelData, width, height, glossColors, spotColors, 60, 240);
+    const mask = morphologicalClose(raw, width, height, closingRadius);
     const paths = traceMaskToInchPaths(mask, width, height, dpi);
     if (paths.length > 0) {
       regions.push({ name: glossName, paths, tintCMYK: [0, 1, 0, 0] });
     }
   }
 
-  // Per-channel CMYK tints so RIP software can distinguish channels visually.
-  // FY = Yellow, FM = Magenta, FG = Green (C+Y), FO = Orange (M+Y)
   const fluorTypes: Array<{
     field: keyof SpotColorInputWorker;
     nameField: keyof SpotColorInputWorker;
@@ -447,7 +532,8 @@ function processSpotColors(
     const matchingColors = spotColors.filter(c => c[ft.field as keyof SpotColorInputWorker]);
     if (matchingColors.length > 0) {
       const fluorName = (matchingColors[0][ft.nameField as keyof SpotColorInputWorker] as string) || ft.defaultName;
-      const mask = createClosestColorMask(pixelData, width, height, matchingColors, spotColors, 80, 128);
+      const raw = createClosestColorMask(pixelData, width, height, matchingColors, spotColors, 60, 240);
+      const mask = morphologicalClose(raw, width, height, closingRadius);
       const paths = traceMaskToInchPaths(mask, width, height, dpi);
       if (paths.length > 0) {
         regions.push({ name: fluorName, paths, tintCMYK: ft.tintCMYK });

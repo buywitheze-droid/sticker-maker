@@ -35,11 +35,21 @@ y_pdf = (pageH - designCy) + relX*sinR - relY*cosR  ← NOTE: -relY*cosR (not pl
 
 1. **Marching squares** — comparisons MUST use `> 0` not `=== 1` (fluorescent masks use 255, not 1).
 2. **collapseCollinear** — merges same-direction pixel steps.
-3. **Pre-filter ≥ 200 px²** — drop noise before expensive processing.
-4. **Douglas-Peucker ε=1px** — collapses staircase runs into diagonal segments.
+3. **Pre-filter** — outer ≥ 200 px², holes ≥ 25 px² (lower floor preserves small holes like the inside of an "o").
+4. **Douglas-Peucker ε=1px** — iterative (explicit stack), never recursive — collapses staircase runs into diagonal segments.
 5. **Winding detection** — `signedArea`: positive = CW = outer; negative = CCW = hole.
 6. **Chaikin ×2 (outer only)** — **Never apply Chaikin to hole contours** — shrinks holes, floods enclosed white areas with ink.
-7. **Post-filter ≥ 2e-4 sq in** — sanity check after smoothing.
+7. **Post-filter** — outer ≥ 2e-4 sq in, holes ≥ 2.5e-5 sq in.
+
+## Mask building thresholds (createClosestColorMask in the `trace` path)
+
+**Correct values from the reference app (anycontour):**
+- `colorTolerance = 60` (not 80 — tighter prevents cross-color bleed)
+- `alphaThreshold = 240` (not 128 — excludes semi-transparent edge pixels that create ragged boundaries)
+- `directTolerance = 80` (not 100)
+- Morphological closing radius = `max(2, round(dpi/75))` pixels — bridges anti-alias gaps that would otherwise produce hundreds of tiny disconnected contours. Applied after `createClosestColorMask`, before tracing.
+
+**Why:** Without morphological closing, anti-aliased pixels at color boundaries fail the color match and leave gaps → marching squares emits dozens of tiny isolated contours per color instead of one solid region.
 
 ---
 
