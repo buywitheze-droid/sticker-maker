@@ -1,0 +1,41 @@
+Stage 1 — Upload & intake (client/src/components/image-editor.tsx)
+Accepted input: image/* and application/pdf. PDFs go through handleImageUpload, which also checks the PDF for an existing CutContour spot (pdfCutContourInfo.hasCutContour) — if the customer's PDF already has a cut line, it can be locked/reused instead of re-traced.
+Auto-crop (lib/image-crop.ts): the design is cropped to visible content using alpha > 10 for the bounding box, plus a fixed 3px edge pad. Skipped for images over 16 megapixels (performance).
+Working-copy cap: image stored at max 4000px longest side (MAX_STORED_DIMENSION).
+Defaults set on upload:
+Size: 5.0" × 3.8", aspect locked, 300 DPI output (dims rounded to 1 decimal).
+Stroke/contour: margin 0.14", color #ffffff, alphaThreshold 128, autoBridging on with threshold 0.02", includeHoles false, corners rounded.
+Shape offset: 0.25".
+Shape detection runs immediately (alphaThreshold 128) to see if the design is really a circle/oval/square/rect — if so, a perfect geometric outline overrides freeform tracing.
+QR detection is manual only (user-triggered), not part of upload.
+Stage 2 — Contour worker dispatch (lib/contour-worker-manager.ts)
+Debounced 100ms; stale runs invalidated by a processing ID.
+Worker downsamples to max 4000px (main-thread fallback: 1500px).
+Results cached; cache key = src|WxH|strokeWidth|enabled|alphaThreshold|bgColor|autoBridging|autoBridgingThreshold|contourMode|cornerMode|widthInches|heightInches|shapeType|includeHoles. Cache cleared on design swap.
+Stage 3 — Silhouette & tracing (lib/silhouette-contour.ts)
+Mask resolution: full res under 400,000px (HIGH_DETAIL_THRESHOLD); larger images process at max 600px dimension.
+Silhouette mask: alpha > 10 → 1, else 0.
+Auto-bridging (pre-trace): Minkowski closing (dilate by half the gap, fill, erode). Constants: baseOffset 0.015", autoBridge 0.02", user gap threshold from settings (default 0.02").
+Hole fill: fillSilhouette fills internal holes (holes only kept if includeHoles is on).
+Component selection: components ≥50% of the main component's area are design peers and always kept (exempt from the orphan area budget); smaller orphans are dropped by area budget. Debug via [ZH:Component] logs. Touching components get bridged when gaps ≤ 0.03" and geometry agrees (opposing sides, diagonal touches, or 3+ content directions).
+Boundary trace: 8-connected boundary crawler on the binary mask.
+Stage 4 — Smoothing & cleanup (lib/clipper-path.ts)
+Applied in order:
+
+Moving average, window 5
+Gaussian smoothing, sigma 2 (13-point kernel)
+Chaikin corner cutting, 2 iterations
+Douglas-Peucker, epsilon 2.0 (die-cut simplification)
+ClipperLib CleanPolygon (tolerance derived from DPI + offset)
+Backtrack removal at turn angles > 140°; acute corners < 30° beveled with 8px radius
+Final gap weld: Minkowski closing at 1.5px
+The margin (stroke width, default 0.14") is applied as a Clipper offset in inches→px at the effective DPI.
+
+Stage 5 — Shape override (lib/shape-outline.ts)
+If a geometric shape was detected: circle/oval at 256 points (Bezier k = 0.5522847498), oval requires aspect ratio ≥ 1.2, rounded corners default 0.25" with 16 segments per corner.
+
+Stage 6 — Curve conversion & PDF output
+convertPolygonToCurves: minDistance 70px, minChord 10px, maxArcSpan 400px; arcs accepted at deviation ratio ≥ 0.03 with >60% curvature consistency (50% for large arcs).
+Output paths in inches → PDF points (×72).
+Cut line written as a Separation spot color named CutContour (user-renamable), tint transform to CMYK [0,1,0,0], stroke width 0.5pt, never filled.
+Layer structure: background + art + cut line are wrapped in one Form XObject (opens as a single group in Illustrator); RDG_WHITE/RDG_GLOSS separations stay outside it as separate layers.
