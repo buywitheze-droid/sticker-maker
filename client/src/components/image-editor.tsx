@@ -17,6 +17,7 @@ function imageHasCleanAlpha(img: HTMLImageElement): boolean {
   return hasCleanAlpha(data, width, height);
 }
 import { parsePDF, type ParsedPDFData } from "@/lib/pdf-parser";
+import { saveDraft, loadDraft, clearDraft, type DraftMeta } from "@/lib/draft-storage";
 import { useToast } from "@/hooks/use-toast";
 import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -455,6 +456,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const [showDesignInfo, setShowDesignInfo] = useState(true);
   const [selectionZoomActive, setSelectionZoomActive] = useState(false);
   const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
+  // Draft recovery prompt
+  const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false);
+  const [recoveryInfo, setRecoveryInfo] = useState<{ savedAt: number; designCount: number; sheetCount: number } | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
   const [editingCountKey, setEditingCountKey] = useState<string | null>(null);
   const [editingCountValue, setEditingCountValue] = useState('');
@@ -530,11 +534,13 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const nudgeSnapshotSavedRef = useRef(false);
   const nudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thumbnailCacheRef = useRef<Map<string, string>>(new Map());
-  // ── Session-persistence caches ─────────────────────────────────────────────
+  // ── Draft-persistence caches ───────────────────────────────────────────────
   // Maps image element src (blob / data URL) → stable storage key (UUID)
   const imageStableKeyRef = useRef<Map<string, string>>(new Map());
-  // Maps image element src → data URL already rendered to canvas (avoid re-drawing)
-  const imageDataUrlCacheRef = useRef<Map<string, string>>(new Map());
+  // Maps image element src → PNG Blob already rendered to canvas (avoid re-drawing on re-saves)
+  const draftBlobCacheRef = useRef<Map<string, Blob>>(new Map());
+  // Holds the loaded draft while the recovery prompt is shown; null at all other times
+  const pendingDraftRef = useRef<Awaited<ReturnType<typeof loadDraft>>>(null);
   const multiDragAccumRef = useRef<{ totalDnx: number; totalDny: number; starts: Map<string, {nx: number; ny: number}> } | null>(null);
   const multiResizeStartRef = useRef<Map<string, { nx: number; ny: number; s: number }> | null>(null);
   const multiRotateStartRef = useRef<Map<string, { nx: number; ny: number; rotation: number }> | null>(null);
@@ -2305,16 +2311,58 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   const selectedDesignIdsRef = useRef(selectedDesignIds);
   selectedDesignIdsRef.current = selectedDesignIds;
 
-  // ── Session persistence: save ──────────────────────────────────────────────
-  // Debounce-saves sheets + artboard config to sessionStorage whenever they change.
-  // Images are rendered to canvas → data URL and cached so repeat saves are cheap.
+  // ── Draft persistence: autosave to IndexedDB ──────────────────────────────
+  // Debounce-saves sheets + artboard config to IndexedDB whenever they change.
+  // Images are rendered to canvas → Blob at up to 4096 px and cached per-src so
+  // repeat saves of unchanged images are cheap.  IndexedDB survives tab closes
+  // and browser crashes; the user is offered a recovery prompt on next open.
   useEffect(() => {
     if (sheets.every(s => s.designs.length === 0)) return;
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       try {
-        const imageDataRecord: Record<string, string> = {};
         const srcToKey = imageStableKeyRef.current;
-        const dataUrlCache = imageDataUrlCacheRef.current;
+        const blobCache = draftBlobCacheRef.current;
+
+        // Collect all unique images and build blobs for new/changed srcs
+        const allDesigns = sheets.flatMap(s => s.designs);
+        const seenSrcs = new Set<string>();
+        const blobMap = new Map<string, Blob>();
+
+        await Promise.all(allDesigns.map(async (d) => {
+          const src = d.imageInfo.image.src;
+          if (seenSrcs.has(src)) return;
+          seenSrcs.add(src);
+
+          if (!srcToKey.has(src)) {
+            srcToKey.set(src, `img_${crypto.randomUUID()}`);
+          }
+          const key = srcToKey.get(src)!;
+
+          // Reuse cached blob if the src hasn't changed
+          if (blobCache.has(src)) {
+            blobMap.set(key, blobCache.get(src)!);
+            return;
+          }
+
+          // Render current (processed) image state to a PNG Blob.
+          // Cap at 4096 px — large enough for high-DPI print recovery while
+          // keeping IndexedDB writes fast.
+          const img = d.imageInfo.image;
+          const MAX_DIM = 4096;
+          const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height, 1));
+          const sw = Math.max(1, Math.round(img.width * scale));
+          const sh = Math.max(1, Math.round(img.height * scale));
+          const cvs = document.createElement('canvas');
+          cvs.width = sw; cvs.height = sh;
+          const ctx = cvs.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, sw, sh);
+          const blob = await new Promise<Blob | null>(res => cvs.toBlob(res, 'image/png'));
+          if (blob) {
+            blobCache.set(src, blob);
+            blobMap.set(key, blob);
+          }
+        }));
 
         const sheetsToSave = sheets.map(sheet => ({
           id: sheet.id,
@@ -2322,28 +2370,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           artboardHeight: sheet.artboardHeight,
           designs: sheet.designs.map(d => {
             const src = d.imageInfo.image.src;
-            if (!srcToKey.has(src)) {
-              srcToKey.set(src, `img_${crypto.randomUUID()}`);
-            }
-            const key = srcToKey.get(src)!;
-            if (!dataUrlCache.has(src)) {
-              try {
-                const MAX_STORE_DIM = 2000;
-                const img = d.imageInfo.image;
-                const scale = Math.min(1, MAX_STORE_DIM / Math.max(img.width, img.height, 1));
-                const sw = Math.max(1, Math.round(img.width * scale));
-                const sh = Math.max(1, Math.round(img.height * scale));
-                const c = document.createElement('canvas');
-                c.width = sw; c.height = sh;
-                const ctx = c.getContext('2d');
-                if (ctx) {
-                  ctx.drawImage(img, 0, 0, sw, sh);
-                  dataUrlCache.set(src, c.toDataURL('image/png'));
-                }
-              } catch { /* skip if canvas draw fails */ }
-            }
-            const dataUrl = dataUrlCache.get(src);
-            if (dataUrl) imageDataRecord[key] = dataUrl;
+            const key = srcToKey.get(src) ?? `img_${crypto.randomUUID()}`;
             return {
               id: d.id,
               name: d.name,
@@ -2362,132 +2389,127 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           }),
         }));
 
-        sessionStorage.setItem('gangsheet_session', JSON.stringify({
-          version: 1,
-          sheets: sheetsToSave,
-          activeSheetId,
-          artboardWidth,
-          imageData: imageDataRecord,
-        }));
+        await saveDraft({ sheets: sheetsToSave, activeSheetId, artboardWidth, blobKeys: [...blobMap.keys()] }, blobMap);
       } catch {
-        // Silently ignore QuotaExceededError and other storage failures
+        // Silently ignore save failures (storage quota, permission errors, etc.)
       }
-    }, 500);
+    }, 1000);
     return () => clearTimeout(timer);
   }, [sheets, activeSheetId, artboardWidth]);
 
-  // ── Session persistence: restore on mount ─────────────────────────────────
-  // Runs once after mount. If sessionStorage holds a valid session, rebuilds all
-  // sheets and designs from the stored data URLs, then updates component state.
+  // ── Draft persistence: check for saved draft on mount ─────────────────────
+  // Reads IndexedDB once.  If a draft with designs exists, shows the recovery
+  // prompt instead of silently auto-restoring (gives the user control).
+  // Also requests persistent storage so the browser won't silently evict data.
   useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem('gangsheet_session');
-      if (!stored) return;
-      const data = JSON.parse(stored) as {
-        version: number;
-        sheets: Array<{
-          id: string; name: string; artboardHeight: number;
-          designs: Array<{
-            id: string; name: string; imageKey: string;
-            widthInches: number; heightInches: number;
-            transform: ImageTransform;
-            originalWidth: number; originalHeight: number; dpi: number;
-            originalDPI: number;
-            alphaThresholded?: boolean; halftoned?: boolean; printFileName?: boolean;
-          }>;
-        }>;
-        activeSheetId: string;
-        artboardWidth: number;
-        imageData: Record<string, string>;
-      };
-      if (data.version !== 1 || !Array.isArray(data.sheets)) return;
+    // Ask the browser to keep our IndexedDB data across eviction sweeps.
+    navigator.storage?.persist?.().catch(() => {});
 
-      const loadImg = (src: string): Promise<HTMLImageElement> =>
-        new Promise((res, rej) => {
-          const img = new Image();
-          img.onload = () => res(img);
-          img.onerror = rej;
-          img.src = src;
-        });
+    loadDraft().then(draft => {
+      if (!draft) return;
+      const totalDesigns = draft.meta.sheets.reduce((n, s) => n + s.designs.length, 0);
+      if (totalDesigns === 0) { clearDraft().catch(() => {}); return; }
 
-      Promise.all(
-        Object.entries(data.imageData).map(async ([key, dataUrl]) =>
-          [key, await loadImg(dataUrl)] as [string, HTMLImageElement]
-        )
-      ).then(entries => {
-        const imgMap = new Map<string, HTMLImageElement>(entries);
-
-        const restoredSheets: SheetState[] = data.sheets.map(sheet => ({
-          id: sheet.id,
-          name: sheet.name,
-          artboardHeight: sheet.artboardHeight,
-          designs: sheet.designs.map(d => {
-            const img = imgMap.get(d.imageKey);
-            if (!img) return null;
-            const dataUrl = data.imageData[d.imageKey];
-            // Pre-populate caches so the first re-save reuses stored data
-            if (dataUrl) {
-              imageDataUrlCacheRef.current.set(img.src, dataUrl);
-              imageStableKeyRef.current.set(img.src, d.imageKey);
-            }
-            // Build a minimal File stub for ImageInfo compatibility
-            let file: File;
-            try {
-              const b64 = dataUrl.split(',')[1];
-              const mime = dataUrl.split(';')[0].slice(5);
-              const byteStr = atob(b64);
-              const ab = new Uint8Array(byteStr.length);
-              for (let i = 0; i < byteStr.length; i++) ab[i] = byteStr.charCodeAt(i);
-              file = new File([ab], (d.name || 'design') + '.png', { type: mime });
-            } catch {
-              file = new File([], (d.name || 'design') + '.png', { type: 'image/png' });
-            }
-            const imageInfo: ImageInfo = {
-              file,
-              image: img,
-              originalWidth: d.originalWidth ?? img.width,
-              originalHeight: d.originalHeight ?? img.height,
-              dpi: d.dpi ?? 300,
-            };
-            return {
-              id: d.id,
-              name: d.name,
-              widthInches: d.widthInches,
-              heightInches: d.heightInches,
-              transform: d.transform,
-              originalDPI: d.originalDPI ?? d.dpi ?? 300,
-              alphaThresholded: d.alphaThresholded,
-              halftoned: d.halftoned,
-              printFileName: d.printFileName,
-              imageInfo,
-            } as DesignItem;
-          }).filter((x): x is DesignItem => x !== null),
-        }));
-
-        const validSheets = restoredSheets.filter(s => s.designs.length > 0);
-        if (validSheets.length === 0) return;
-
-        setSheets(validSheets);
-        const restoredActiveId = validSheets.some(s => s.id === data.activeSheetId)
-          ? data.activeSheetId
-          : validSheets[0].id;
-        setActiveSheetId(restoredActiveId);
-        if (data.artboardWidth) setArtboardWidth(data.artboardWidth);
-
-        const activeS = validSheets.find(s => s.id === restoredActiveId) ?? validSheets[0];
-        const firstDesign = activeS.designs[0] ?? null;
-        if (firstDesign) {
-          setImageInfo(firstDesign.imageInfo);
-          setSelectedDesignId(null);
-          setDesignTransform(firstDesign.transform);
-        }
-      }).catch(() => {
-        // Silently ignore restore failures (corrupt data, image load errors, etc.)
+      pendingDraftRef.current = draft;
+      setRecoveryInfo({
+        savedAt: draft.meta.savedAt,
+        designCount: totalDesigns,
+        sheetCount: draft.meta.sheets.length,
       });
-    } catch {
-      // Silently ignore JSON parse errors or missing sessionStorage
-    }
+      setShowRecoveryPrompt(true);
+    }).catch(() => {
+      // IndexedDB unavailable (private browsing, quota error, etc.) — silent fail
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Draft recovery: apply the loaded draft after user confirms ─────────────
+  const handleRestoreDraft = useCallback(() => {
+    const draft = pendingDraftRef.current;
+    if (!draft) return;
+    setShowRecoveryPrompt(false);
+    setRecoveryInfo(null);
+    pendingDraftRef.current = null;
+
+    const loadImgFromBlob = (blob: Blob): Promise<HTMLImageElement> =>
+      new Promise((res, rej) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => res(img); // object URL stays alive via img.src
+        img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('img load failed')); };
+        img.src = url;
+      });
+
+    const { meta, blobs } = draft;
+
+    Promise.all(
+      [...blobs.entries()].map(async ([key, blob]) =>
+        [key, await loadImgFromBlob(blob)] as [string, HTMLImageElement]
+      )
+    ).then(entries => {
+      const imgMap = new Map<string, HTMLImageElement>(entries);
+
+      // Pre-populate stable-key map so the first re-save reuses the same keys
+      for (const [key, img] of imgMap) {
+        imageStableKeyRef.current.set(img.src, key);
+      }
+
+      const restoredSheets: SheetState[] = meta.sheets.map(sheet => ({
+        id: sheet.id,
+        name: sheet.name,
+        artboardHeight: sheet.artboardHeight,
+        designs: sheet.designs.map(d => {
+          const img = imgMap.get(d.imageKey);
+          if (!img) return null;
+          const imageInfo: ImageInfo = {
+            file: new File([], (d.name || 'design') + '.png', { type: 'image/png' }),
+            image: img,
+            originalWidth: d.originalWidth ?? img.width,
+            originalHeight: d.originalHeight ?? img.height,
+            dpi: d.dpi ?? 300,
+          };
+          return {
+            id: d.id,
+            name: d.name,
+            widthInches: d.widthInches,
+            heightInches: d.heightInches,
+            transform: d.transform,
+            originalDPI: d.originalDPI ?? d.dpi ?? 300,
+            alphaThresholded: d.alphaThresholded,
+            halftoned: d.halftoned,
+            printFileName: d.printFileName,
+            imageInfo,
+          } as DesignItem;
+        }).filter((x): x is DesignItem => x !== null),
+      }));
+
+      const validSheets = restoredSheets.filter(s => s.designs.length > 0);
+      if (validSheets.length === 0) return;
+
+      setSheets(validSheets);
+      const restoredActiveId = validSheets.some(s => s.id === meta.activeSheetId)
+        ? meta.activeSheetId
+        : validSheets[0].id;
+      setActiveSheetId(restoredActiveId);
+      if (meta.artboardWidth) setArtboardWidth(meta.artboardWidth);
+
+      const activeS = validSheets.find(s => s.id === restoredActiveId) ?? validSheets[0];
+      const firstDesign = activeS.designs[0] ?? null;
+      if (firstDesign) {
+        setImageInfo(firstDesign.imageInfo);
+        setSelectedDesignId(null);
+        setDesignTransform(firstDesign.transform);
+      }
+    }).catch(() => {
+      // Silently ignore image-load failures (corrupt blob, etc.)
+    });
+  }, []);
+
+  const handleDiscardDraft = useCallback(() => {
+    setShowRecoveryPrompt(false);
+    setRecoveryInfo(null);
+    pendingDraftRef.current = null;
+    clearDraft().catch(() => {});
+  }, []);
 
   // Keyboard shortcuts — registered once, uses refs for latest handlers
   useEffect(() => {
@@ -4525,6 +4547,53 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       setIsProcessing(false);
     }
   }, [sheets, artboardWidth, activeSheetId, profile.enableFluorescent, exportSheetToPdf, exportSheetToPng, toast]);
+
+  // ── Draft recovery prompt ─────────────────────────────────────────────────
+  // Shown instead of the upload view when IndexedDB has a saved draft.
+  if (showRecoveryPrompt && recoveryInfo) {
+    const savedDate = new Date(recoveryInfo.savedAt);
+    const timeStr = savedDate.toLocaleString(undefined, {
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+    const designLabel = recoveryInfo.designCount === 1 ? '1 design' : `${recoveryInfo.designCount} designs`;
+    const sheetLabel  = recoveryInfo.sheetCount  === 1 ? '1 sheet'  : `${recoveryInfo.sheetCount} sheets`;
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50">
+        <div className="w-full max-w-sm mx-auto px-6">
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 px-6 py-5 text-white">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center mb-3">
+                <RotateCw className="w-5 h-5 text-white" />
+              </div>
+              <h2 className="text-lg font-semibold leading-tight">Recover previous session?</h2>
+              <p className="text-blue-100 text-sm mt-1">
+                {designLabel} across {sheetLabel} — saved {timeStr}
+              </p>
+            </div>
+            {/* Body */}
+            <div className="px-6 py-5 space-y-3">
+              <button
+                onClick={handleRestoreDraft}
+                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl px-4 py-3 transition-colors shadow-sm"
+              >
+                <RotateCw className="w-4 h-4" />
+                Restore my work
+              </button>
+              <button
+                onClick={handleDiscardDraft}
+                className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl px-4 py-3 transition-colors text-sm"
+              >
+                <X className="w-4 h-4" />
+                Discard and start fresh
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // In multi-sheet mode, always show the editor shell (even for empty sheets) so that
   // the carousel navigation and ADD Gangsheet button remain accessible.

@@ -1,0 +1,181 @@
+Highest-value changes that should be invisible to users
+1. Add automatic local draft recovery
+This should be the first priority because it protects customers from browser resets.
+
+Use IndexedDB, not localStorage, because large PNGs will exceed localStorage limits.
+
+Save automatically:
+
+Gangsheet width and height
+Design positions, sizes, rotations, flips, and layer order
+Selected design IDs
+Product/profile settings
+Original uploaded image files as Blobs
+Current image-processing state
+Save after meaningful changes with a short debounce, such as 500–1,000 ms:
+
+Uploading a design
+Moving or resizing a design
+Rotating or flipping
+Changing the sheet size
+Auto-arranging
+Applying alpha cleanup or background removal
+When the editor opens:
+
+Check for an unfinished draft.
+If one exists, show a small “Recover previous work?” prompt.
+Restore the design state and image files.
+Keep a “Discard recovered draft” option.
+This would protect against:
+
+Browser tab crashes
+Accidental refreshes
+Laptop sleep/restarts
+Browser reloads caused by memory pressure
+Network interruptions
+A beforeunload handler alone is not sufficient because it may never run during a crash. The draft must be written continuously while the editor is active.
+
+It would also be useful to call:
+
+navigator.storage.persist()
+
+when available, so the browser is less likely to evict the saved draft.
+
+2. Add low-resolution preview assets
+Keep the original image untouched for export, but create a separate preview version for editing.
+
+Each design would have:
+
+original image → used for export/cart/download
+preview image  → used for normal canvas rendering
+
+At full-sheet view or low zoom:
+
+Render the preview image.
+Use a capped maximum dimension, for example 1,024–1,536 pixels.
+Avoid drawing a 5,000–10,000 pixel PNG repeatedly.
+When the user zooms in sufficiently:
+
+Load or switch to the original full-resolution image.
+Use the original only for the selected design or designs currently visible.
+This should be visually unnoticeable because a tiny design in a full-sheet view cannot display the extra source pixels anyway. It would actually look sharper and respond faster when zoomed in because the editor can use the appropriate asset for each zoom level.
+
+Important safety rule: never replace the original imageInfo.image used by export. Add a separate preview image reference instead.
+
+3. Render only visible designs
+For a 300+ inch sheet, many designs may be outside the current viewport.
+
+The preview renderer can calculate each design’s bounding box and skip designs that are not currently visible.
+
+At full-sheet zoom, there may still be many visible designs, but when the customer pans or zooms into one portion of the sheet, the editor only needs to draw that portion.
+
+This should not affect:
+
+Export
+Cart submission
+Arrangement
+Design coordinates
+Layer order
+It only changes what is painted in the preview.
+
+4. Add a cached base preview and separate selection overlay
+Currently, selection changes can cause a large canvas redraw. A safer rendering structure would be:
+
+Base canvas:
+  gangsheet background
+  designs
+  image previews
+Overlay canvas:
+  selection outlines
+  handles
+  rotation controls
+  marquee selection
+
+Then selecting a design only redraws the overlay instead of repainting every image on the sheet.
+
+The base canvas would be invalidated only when something actually changes:
+
+A design moves
+A design resizes
+An image changes
+The sheet size changes
+A design is added or deleted
+This is likely one of the best fixes specifically for “selecting a design feels slow.”
+
+Where web workers help
+There is definitely room for more worker usage. The project already has workers for several operations, including contour, color extraction, overlap, arrangement, export, and background removal.
+
+However, workers should be used selectively.
+
+Good worker candidates
+Thumbnail generation
+Preview image resizing
+Visible-design/bounding-box calculations
+Large-sheet arrangement calculations
+Contour generation
+Color extraction
+Alpha analysis
+Halftone preparation
+Less useful worker candidates
+Simply moving canvas drawing to a worker will not automatically solve everything. A worker can still consume a large amount of memory if it holds full-resolution images for every design.
+
+The best combination is:
+
+low-resolution preview assets
++ visible-design culling
++ cached base rendering
++ workers for expensive CPU processing
+
+That is more effective than only adding a worker.
+
+Recommended implementation order
+Phase 1: Recovery protection
+Lowest risk and highest customer value:
+
+IndexedDB draft storage
+Debounced autosave
+Recovery prompt after reload/crash
+Store original image Blobs separately from editor state
+Add draft cleanup after successful completion or explicit discard
+This does not change the current UI behavior except when recovering a previous session.
+
+Phase 2: Invisible preview optimization
+Generate capped preview images
+Keep originals for export only
+Use previews at low zoom
+Switch to full resolution for selected/zoomed designs
+Add visible-design culling
+This should make large sheets much more responsive without changing the customer workflow.
+
+Phase 3: Rendering optimization
+Split base rendering from selection controls
+Add dirty flags so unchanged layers are not redrawn
+Cache the base preview
+Move preview resizing and heavy calculations into workers
+Add progressive loading for designs
+What I would avoid initially
+I would not begin by:
+
+Replacing the entire canvas renderer
+Moving all rendering to OffscreenCanvas
+Changing the export pipeline
+Changing the underlying coordinate model
+Rewriting the arrangement algorithm
+Storing everything in localStorage
+Uploading every keystroke or mouse movement to the server
+Those changes have higher regression risk and are not necessary to get meaningful improvements.
+
+Main recommendation
+The best safe package is:
+
+IndexedDB autosave/recovery + low-resolution preview assets + visible-layer culling + selective web workers.
+
+That addresses both problems:
+
+The editor becomes significantly lighter on 300–344 inch sheets.
+If the browser still crashes, the customer can recover nearly all of her work instead of starting over.
+The first feature I would implement is IndexedDB recovery because it protects customers immediately, even before the rendering work is finished.
+
+
+Worked for 33 seconds
+ok lets proceed
