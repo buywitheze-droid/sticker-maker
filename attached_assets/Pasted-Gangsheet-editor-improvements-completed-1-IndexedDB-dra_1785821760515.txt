@@ -1,0 +1,95 @@
+Gangsheet editor improvements completed
+1. IndexedDB draft recovery
+Added browser-local draft persistence so customer work can survive:
+
+Browser refreshes
+Tab closures
+Browser crashes
+Temporary file reference failures
+Reopening the editor later
+Draft metadata and uploaded image blobs are stored separately in IndexedDB. Remote saved designs remain authoritative over older local drafts, and starting fresh work clears abandoned drafts.
+
+2. Automatic image rehydration and retry
+Added recovery when a design’s browser File or image reference becomes invalid.
+
+Before Auto-Arrange, export, or Add to Cart:
+
+Invalid designs are detected.
+Their original blobs are restored from IndexedDB.
+New File and Image objects are created.
+Live editor state is updated.
+Image-derived caches are invalidated.
+The operation retries automatically once.
+There is also a targeted retry around FileReader failures, since a File can appear valid even when the underlying temporary browser reference is unavailable.
+
+If recovery fails:
+
+The draft is preserved.
+The operation stops safely.
+The user receives a clear recovery message instead of a generic file-system error.
+Retry attempts are bounded so missing backups cannot cause an infinite loop.
+A temporary object URL leak found during review was also fixed by revoking the URL after successful image loading.
+
+3. Preview performance workers
+Preview-only heavy work was moved away from the UI thread where possible:
+
+Layer thumbnail generation uses a worker.
+Color extraction uses a worker.
+Request IDs prevent stale worker results from replacing newer results.
+Generated thumbnail URLs are revoked.
+Main-thread fallbacks remain available for browser compatibility.
+Export, cart rendering, production PNG generation, and PDF output were intentionally left on their existing paths to avoid changing output geometry or print behavior.
+
+4. High-quality halftone zoom preview
+Added a focused high-quality detail layer for halftones and alpha-thresholded designs.
+
+When the user zooms to 300% or higher and selects a halftone:
+
+Only the selected design is rendered into a separate detail canvas.
+Pixel-preserving rendering is used.
+Image smoothing is disabled.
+The detail layer uses pixelated interpolation.
+The raster is capped at 4 million pixels and a 4096px maximum edge.
+This avoids rendering the entire tall gangsheet at full resolution, keeping normal preview performance unchanged while making solid halftone pixels easier to inspect.
+
+The detail layer is:
+
+Pointer-transparent
+Aligned with the existing pan/zoom transform
+Clipped slightly at the edges so resize and rotation controls remain visible
+Preview-only, with no changes to export or cart output
+5. Gangsheet dimension-label bug fix
+Fixed the issue shown in the uploaded screenshot where the gangsheet dimensions appeared over the artwork after zooming.
+
+The width and height labels now appear only when:
+
+The entire sheet is fitted in the viewport.
+The view is reset to the center.
+The zoom is at the fitted minimum.
+They hide automatically when the user:
+
+Zooms in
+Zooms out from the fitted state
+Pans
+Focuses on a selected design
+6. Verification completed
+For the recent preview and label changes:
+
+Production build passes.
+Workflow restarts completed successfully.
+Preview loads without browser console errors.
+git diff --check passes.
+The high-quality preview update was pushed to GitHub in commit:
+
+9e7e11c Update preview section implementation and documentation
+
+The later dimension-label fix is currently a local uncommitted change and has not been pushed yet. The uploaded customer screenshot remains untracked and was not included in the code changes.
+
+7. Important architecture note
+Moving customer files to server/object storage will improve recovery and cross-device loading, but it will not automatically eliminate active-session preview lag. The best future architecture is:
+
+Original high-resolution file in storage for export and production.
+Optimized preview derivative for normal editing.
+Focused high-resolution derivative for zoom inspection.
+Original source and halftone settings retained for accurate rebuilds.
+IndexedDB kept as a local recovery/offline fallback.
