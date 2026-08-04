@@ -51,6 +51,65 @@ async function findGhostscript(): Promise<string | null> {
 // Kick off discovery at startup
 findGhostscript().catch(() => {});
 
+// ── SVG dimension parser ──────────────────────────────────────────────────────
+// Sharp/librsvg renders SVG at "density" DPI using pt (1/72 in) semantics for
+// all coordinate values — including px. So a width="900" SVG at density:300
+// produces 900×(300/72)=3750 px, not 900 px. The reported inches (px/300)
+// would then be wrong for anything not in physical units (in/cm/mm/pt).
+//
+// Fix: parse the SVG root element's width/height/viewBox and compute inches
+// directly from the attribute values, bypassing the pixel count entirely.
+
+/** Parse one SVG length value to inches. Returns null for unresolvable units. */
+function parseSvgLengthToInches(raw: string): number | null {
+  const m = raw.trim().match(/^([\d.]+(?:e[+-]?\d+)?)\s*(in|cm|mm|pt|px|)?$/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (isNaN(n) || n <= 0) return null;
+  switch ((m[2] ?? "").toLowerCase()) {
+    case "in": return n;
+    case "cm": return n / 2.54;
+    case "mm": return n / 25.4;
+    case "pt": return n / 72;
+    case "px": return n / 96;   // CSS spec: 1 CSS px = 1/96 inch
+    default:   return n / 96;   // no unit = user units = CSS px
+  }
+}
+
+/**
+ * Extract physical dimensions from an SVG buffer by parsing the root element's
+ * width/height attributes and, as a fallback, its viewBox.
+ * Returns null if dimensions cannot be determined.
+ */
+function getSvgDimensions(svgBuffer: Buffer): { widthInches: number; heightInches: number } | null {
+  // Only scan the first 8 KB — the root <svg> tag is always at the start
+  const src = svgBuffer.slice(0, 8192).toString("utf8");
+
+  // Extract the opening <svg ...> tag (may span multiple lines)
+  const svgTagMatch = src.match(/<svg\b([^>]*(?:>[^<]*<(?!\/svg))*?)>/is) ??
+                      src.match(/<svg\b([^>]*)/i);
+  const attrs = svgTagMatch?.[1] ?? "";
+
+  const wm  = attrs.match(/\bwidth=["']([^"']+)["']/i);
+  const hm  = attrs.match(/\bheight=["']([^"']+)["']/i);
+  const vbm = attrs.match(/\bviewBox=["']([^"']+)["']/i);
+
+  const w = wm ? parseSvgLengthToInches(wm[1]) : null;
+  const h = hm ? parseSvgLengthToInches(hm[1]) : null;
+
+  if (w !== null && h !== null) return { widthInches: w, heightInches: h };
+
+  // Fallback: viewBox user-unit dimensions treated as CSS px (1/96 in)
+  if (vbm) {
+    const parts = vbm[1].trim().split(/[\s,]+/).map(Number);
+    if (parts.length >= 4 && parts.slice(2).every(n => !isNaN(n) && n > 0)) {
+      return { widthInches: parts[2] / 96, heightInches: parts[3] / 96 };
+    }
+  }
+
+  return null; // cannot determine physical size
+}
+
 import sgMail from "@sendgrid/mail";
 
 function escapeHtml(s: string): string {
@@ -333,8 +392,10 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
 
       // ── SVG ─────────────────────────────────────────────────────────────────
       else if (isSvg) {
-        // Sharp/libvips uses librsvg natively — respects in/mm/pt/px/cm/em units.
-        // density:300 means "render at 300 DPI", so pixel / 300 = inches.
+        // Sharp/libvips uses librsvg natively. density:300 renders at 300 DPI,
+        // but librsvg treats *all* coordinate values as pt (1/72 in), including px.
+        // Physical-unit SVGs (width="3in") are correct; px-unit SVGs are not —
+        // see getSvgDimensions() which parses the true physical size from XML.
         pngPath = `${tmpOut}.png`;
         const pngBuf = await sharp(file.buffer, { density: TARGET_DPI })
           .png()
@@ -372,13 +433,28 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
       const widthPx  = meta.width  ?? 0;
       const heightPx = meta.height ?? 0;
 
+      // For SVG: librsvg uses pt (1/72 in) semantics for all units, including px.
+      // Parse the SVG's own width/height/viewBox to get the true physical size.
+      // For PDF/EPS: pdftocairo and GhostScript already produce correct DPI output,
+      // so widthPx / TARGET_DPI is exact.
+      let widthInches  = widthPx  / TARGET_DPI;
+      let heightInches = heightPx / TARGET_DPI;
+      if (isSvg) {
+        const parsed = getSvgDimensions(file.buffer);
+        if (parsed) {
+          widthInches  = parsed.widthInches;
+          heightInches = parsed.heightInches;
+        }
+        // If parsing fails (e.g., malformed SVG), widthPx/300 is the best we have.
+      }
+
       res.json({
-        pngBase64:    pngBuf.toString("base64"),
+        pngBase64: pngBuf.toString("base64"),
         widthPx,
         heightPx,
         dpi:          TARGET_DPI,
-        widthInches:  parseFloat((widthPx  / TARGET_DPI).toFixed(4)),
-        heightInches: parseFloat((heightPx / TARGET_DPI).toFixed(4)),
+        widthInches:  parseFloat(widthInches.toFixed(4)),
+        heightInches: parseFloat(heightInches.toFixed(4)),
       });
     } catch (err) {
       console.error("[convert-file]", err);

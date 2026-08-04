@@ -246,7 +246,7 @@ export default function UploadSection({
           type="file"
           ref={fileInputRef}
           className="hidden"
-          accept=".png,.jpg,.jpeg,.webp,.pdf,.svg,.eps,image/png,image/jpeg,image/webp,application/pdf,image/svg+xml,application/postscript"
+          accept=".png,.jpg,.jpeg,.webp,.pdf,.svg,.eps,image/png,image/jpeg,image/webp,application/pdf,image/svg+xml,application/postscript,application/eps,application/x-eps"
           multiple
           onChange={handleFileInputChange}
         />

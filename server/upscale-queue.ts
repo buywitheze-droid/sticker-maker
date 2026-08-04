@@ -21,7 +21,18 @@ import { fileURLToPath } from "url";
 const __filename      = fileURLToPath(import.meta.url);
 const __dirname       = path.dirname(__filename);
 const PYTHON_BIN      = "python3";
-const WORKER_SCRIPT   = path.join(__dirname, "upscale_worker.py");
+
+// In dev, __dirname is server/ and the script sits next to this file.
+// In production the compiled bundle lands in dist/, but the Python file
+// is never copied there — so fall back to <project-root>/server/upscale_worker.py.
+const WORKER_SCRIPT = (() => {
+  const candidates = [
+    path.join(__dirname,          "upscale_worker.py"),           // dev
+    path.join(process.cwd(), "server", "upscale_worker.py"),      // prod
+    path.join(process.cwd(), "dist",   "upscale_worker.py"),      // future: if copied by build
+  ];
+  return candidates.find(p => fs.existsSync(p)) ?? candidates[0];
+})();
 const TMP_DIR         = os.tmpdir();
 const MAX_CACHE_ENTRIES = 20;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request (large 4× on CPU)
@@ -154,10 +165,29 @@ function handleWorkerMessage(msg: Record<string, unknown>): void {
   }
 }
 
+const WORKER_READY_TIMEOUT_MS = 60_000; // 60 s — covers model download on first boot
+
 function waitForReady(): Promise<void> {
   if (workerReady) return Promise.resolve();
-  return new Promise((resolve) => {
-    pendingReady.push(resolve);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // Remove from pendingReady so it doesn't fire later
+      const idx = pendingReady.indexOf(done);
+      if (idx !== -1) pendingReady.splice(idx, 1);
+      reject(new Error("Upscale worker did not become ready within 60 s"));
+    }, WORKER_READY_TIMEOUT_MS);
+
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+
+    pendingReady.push(done);
     spawnWorker();
   });
 }
