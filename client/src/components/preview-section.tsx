@@ -2350,19 +2350,6 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
     }, []);
 
-    const prevArtboardHeightRef = useRef(artboardHeight);
-    useEffect(() => {
-      if (prevArtboardHeightRef.current !== artboardHeight) {
-        prevArtboardHeightRef.current = artboardHeight;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (artboardHeight > artboardWidth * 2) {
-            fitWidth();
-          } else {
-            fitToView();
-          }
-        }));
-      }
-    }, [artboardHeight, artboardWidth, fitToView, fitWidth]);
 
     useEffect(() => {
       const el = canvasAreaRef.current;
