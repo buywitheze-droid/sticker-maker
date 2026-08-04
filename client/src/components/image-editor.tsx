@@ -527,6 +527,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const designsRef = useRef(designs);
   designsRef.current = designs;
+  const pendingFillArrangeRef = useRef(false);
   const nudgeSnapshotSavedRef = useRef(false);
   const nudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thumbnailCacheRef = useRef<Map<string, string>>(new Map());
@@ -1311,12 +1312,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       printFileName: false,
     }));
     saveSnapshot();
+    pendingFillArrangeRef.current = true;
     setDesigns(prev => [...prev, ...copies]);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true });
-      });
-    });
     toast({
       title: `Adding ${fillCount} cop${fillCount === 1 ? 'y' : 'ies'}`,
       description: 'Filling empty space and re-arranging…',
@@ -2304,6 +2301,15 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   artboardHeightRef.current = artboardHeight;
   const selectedDesignIdsRef = useRef(selectedDesignIds);
   selectedDesignIdsRef.current = selectedDesignIds;
+
+  // ── Fill-sheet post-commit arrange ────────────────────────────────────────
+  // useEffect fires after React commits the new designs to the DOM and updates
+  // designsRef.current, so handleAutoArrange sees the full updated list.
+  useEffect(() => {
+    if (!pendingFillArrangeRef.current) return;
+    pendingFillArrangeRef.current = false;
+    handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true });
+  }, [designs]);
 
   // ── Session persistence: save ──────────────────────────────────────────────
   // Debounce-saves sheets + artboard config to sessionStorage whenever they change.
