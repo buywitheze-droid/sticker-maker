@@ -4,6 +4,7 @@ import multer from "multer";
 import sharp from "sharp";
 import path from "path";
 import express from "express";
+import { upscale, getWorkerBackend } from "./upscale-queue";
 
 import sgMail from "@sendgrid/mail";
 
@@ -232,6 +233,48 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
       res.status(500).json({
         error: "Failed to send design",
         details: errorMessage,
+      });
+    }
+  });
+
+  // ── Upscale image (waifu2x cunet ONNX, CPU) ────────────────────────────────
+  // POST /api/upscale-image
+  // Body (multipart): image (PNG), scale (2|4, default 4)
+  // Returns: PNG binary
+  app.post("/api/upscale-image", upload.single("image"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No image file provided" });
+      }
+
+      const scale = parseInt(req.body?.scale ?? "4") as 2 | 4;
+      if (scale !== 2 && scale !== 4) {
+        return res.status(400).json({ error: "scale must be 2 or 4" });
+      }
+
+      // Guard against enormous inputs (model runs on CPU)
+      const meta = await sharp(req.file.buffer).metadata();
+      const w = meta.width  ?? 0;
+      const h = meta.height ?? 0;
+      if (w * h > 16_000_000) {
+        return res.status(400).json({ error: "Input image too large (max ~16 MP)" });
+      }
+
+      const inputPng = await sharp(req.file.buffer).png().toBuffer();
+      const outputPng = await upscale(inputPng, scale);
+
+      res.set({
+        "Content-Type": "image/png",
+        "Content-Disposition": `attachment; filename="upscaled_${scale}x.png"`,
+        "Content-Length": outputPng.length.toString(),
+        "X-Upscale-Backend": getWorkerBackend(),
+      });
+      res.send(outputPng);
+    } catch (err) {
+      console.error("[upscale route]", err);
+      res.status(500).json({
+        error: "Upscale failed",
+        details: err instanceof Error ? err.message : String(err),
       });
     }
   });
