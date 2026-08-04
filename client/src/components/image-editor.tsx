@@ -119,26 +119,26 @@ function SizeInput({
   const stepInches = metric ? cmToInches(0.25) : 0.1;
 
   const arrows = (
-    <div className="flex flex-col" style={{ gap: 1 }}>
+    <div className="flex flex-col" style={{ gap: 2 }}>
       <button
         type="button"
         tabIndex={-1}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onCommit(Math.max(min, Math.min(max, value + stepInches)))}
-        className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
+        className="flex h-[13px] w-4 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
         title="Increase size"
       >
-        <ChevronUp className="w-2.5 h-2.5" strokeWidth={3} />
+        <ChevronUp className="w-3 h-3" strokeWidth={3} />
       </button>
       <button
         type="button"
         tabIndex={-1}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onCommit(Math.max(min, Math.min(max, value - stepInches)))}
-        className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
+        className="flex h-[13px] w-4 items-center justify-center rounded-b border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600"
         title="Decrease size"
       >
-        <ChevronDown className="w-2.5 h-2.5" strokeWidth={3} />
+        <ChevronDown className="w-3 h-3" strokeWidth={3} />
       </button>
     </div>
   );
@@ -1722,7 +1722,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const contentFillCacheRef = useRef<Map<string, number>>(new Map());
 
-  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; arrangeAll?: boolean }) => {
+  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; arrangeAll?: boolean; trimOverflow?: boolean }) => {
     const currentDesigns = designsRef.current;
     if (currentDesigns.length === 0) { console.warn('[autoArrange] no designs'); return; }
     if (!opts?.skipSnapshot) saveSnapshot();
@@ -1810,8 +1810,45 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               skipSnapshot: true,
               preserveSelection: opts?.preserveSelection ?? true,
               arrangeAll: opts?.arrangeAll,
+              trimOverflow: opts?.trimOverflow,
             });
           });
+          return;
+        }
+        // Fill-sheet path: silently drop items that didn't fit instead of showing an error
+        if (opts?.trimOverflow) {
+          const overflowIds = new Set(bestResult.filter(p => p.overflows).map(p => p.id));
+          const trimCount = overflowIds.size;
+          const abW = artboardWidthRef.current;
+          const abH = artboardHeightRef.current;
+          setSheets(prev => prev.map(s => {
+            if (s.id !== targetSheetId) return s;
+            return {
+              ...s,
+              designs: s.designs
+                .filter(d => !overflowIds.has(d.id))
+                .map(d => {
+                  const p = bestResult.find(r => r.id === d.id);
+                  if (!p) return d;
+                  const finalRotation = p.rotation % 360;
+                  const stampExtra = getStampExtra(d);
+                  let adjustedNx = p.nx;
+                  let adjustedNy = p.ny;
+                  if (stampExtra > 0) {
+                    const rad = (finalRotation * Math.PI) / 180;
+                    adjustedNx -= (stampExtra / 2) * Math.sin(rad) / abW;
+                    adjustedNy -= (stampExtra / 2) * Math.cos(rad) / abH;
+                  }
+                  const newTransform = { ...d.transform, nx: adjustedNx, ny: adjustedNy, rotation: finalRotation };
+                  const { nx, ny } = clampDesignToArtboard({ ...d, transform: newTransform }, abW, abH);
+                  return { ...d, transform: { ...newTransform, nx, ny } };
+                }),
+            };
+          }));
+          if (trimCount > 0) {
+            toast({ title: 'Sheet filled', description: `Removed ${trimCount} cop${trimCount === 1 ? 'y' : 'ies'} that didn't fit.` });
+          }
+          if (!opts?.preserveSelection) { setSelectedDesignId(null); setSelectedDesignIds(new Set()); }
           return;
         }
         toast({ title: t("toast.noSpace"), description: t("toast.noSpaceDesc"), variant: "destructive" });
@@ -2308,7 +2345,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   useEffect(() => {
     if (!pendingFillArrangeRef.current) return;
     pendingFillArrangeRef.current = false;
-    handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true });
+    handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true, trimOverflow: true });
   }, [designs]);
 
   // ── Session persistence: save ──────────────────────────────────────────────
@@ -5042,20 +5079,20 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                                 }}
                                 title="Click to set exact copy count"
                               />
-                              <div className="flex flex-col gap-px">
+                              <div className="flex flex-col" style={{ gap: 2 }}>
                                 <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
                                   onClick={(e) => { e.stopPropagation(); handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, count + 1); }}
                                   disabled={count >= 200}
-                                  className="flex h-[10px] w-3.5 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                                  className="flex h-[13px] w-4 items-center justify-center rounded-t border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
                                   title="Increase copies">
-                                  <ChevronUp className="h-2.5 w-2.5" strokeWidth={3} />
+                                  <ChevronUp className="h-3 w-3" strokeWidth={3} />
                                 </button>
                                 <button type="button" tabIndex={-1} onMouseDown={(e) => e.preventDefault()}
                                   onClick={(e) => { e.stopPropagation(); handleSetGroupCount({ baseName: row.baseName, sizeKey: row.sizeKey, designs: row.activeSheetDesigns }, count - 1); }}
                                   disabled={count <= 1}
-                                  className="flex h-[10px] w-3.5 items-center justify-center rounded-b border border-t-0 border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
+                                  className="flex h-[13px] w-4 items-center justify-center rounded-b border border-gray-300 bg-gray-100 text-gray-400 transition-colors hover:bg-cyan-100 hover:text-cyan-600 disabled:opacity-30"
                                   title="Decrease copies">
-                                  <ChevronDown className="h-2.5 w-2.5" strokeWidth={3} />
+                                  <ChevronDown className="h-3 w-3" strokeWidth={3} />
                                 </button>
                               </div>
                             </div>
@@ -5288,24 +5325,24 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                       className="w-full h-full text-center text-[11px] leading-none p-0 pr-3 bg-white outline-none disabled:opacity-30 disabled:pointer-events-none"
                       title="Number of copies"
                     />
-                    <div className="absolute right-0 top-0 h-full w-3 border-l border-gray-300 overflow-hidden rounded-r">
+                    <div className="absolute right-0 top-0 h-full w-4 border-l border-gray-300 flex flex-col rounded-r overflow-hidden" style={{ gap: 2 }}>
                       <button
                         type="button"
                         onClick={() => setDuplicateCount(prev => Math.min(200, prev + 1))}
                         disabled={!selectedDesignId || duplicateCount >= 200}
-                        className="h-1/2 w-full flex items-center justify-center border-b border-gray-300 bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                        className="flex-1 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
                         title="Increase copies"
                       >
-                        <ChevronUp className="w-2.5 h-2.5 text-gray-600" />
+                        <ChevronUp className="w-3 h-3 text-gray-600" />
                       </button>
                       <button
                         type="button"
                         onClick={() => setDuplicateCount(prev => Math.max(1, prev - 1))}
                         disabled={!selectedDesignId || duplicateCount <= 1}
-                        className="h-1/2 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                        className="flex-1 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
                         title="Decrease copies"
                       >
-                        <ChevronDown className="w-2.5 h-2.5 text-gray-600" />
+                        <ChevronDown className="w-3 h-3 text-gray-600" />
                       </button>
                     </div>
                   </div>
@@ -5513,22 +5550,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                     className="w-full h-full text-center text-[11px] leading-none p-0 pr-3 bg-white outline-none disabled:opacity-30 disabled:pointer-events-none"
                     title="Number of copies"
                   />
-                  <div className="absolute right-0 top-0 h-full w-3 border-l border-gray-300 overflow-hidden rounded-r">
+                  <div className="absolute right-0 top-0 h-full w-4 border-l border-gray-300 flex flex-col rounded-r overflow-hidden" style={{ gap: 2 }}>
                     <button
                       type="button"
                       onClick={() => setDuplicateCount(prev => Math.min(200, prev + 1))}
                       disabled={!selectedDesignId || duplicateCount >= 200}
-                      className="h-1/2 w-full flex items-center justify-center border-b border-gray-300 bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                      className="flex-1 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
                     >
-                      <ChevronUp className="w-2.5 h-2.5 text-gray-600" />
+                      <ChevronUp className="w-3 h-3 text-gray-600" />
                     </button>
                     <button
                       type="button"
                       onClick={() => setDuplicateCount(prev => Math.max(1, prev - 1))}
                       disabled={!selectedDesignId || duplicateCount <= 1}
-                      className="h-1/2 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                      className="flex-1 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
                     >
-                      <ChevronDown className="w-2.5 h-2.5 text-gray-600" />
+                      <ChevronDown className="w-3 h-3 text-gray-600" />
                     </button>
                   </div>
                 </div>
