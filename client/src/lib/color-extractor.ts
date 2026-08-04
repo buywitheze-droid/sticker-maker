@@ -723,6 +723,7 @@ export function detectColorRegionsAsync(
 }
 
 let _colorWorker: Worker | null = null;
+let _colorRequestCounter = 0;
 function getColorWorker(): Worker | null {
   if (!_colorWorker) {
     try { _colorWorker = new ColorExtractionWorker(); }
@@ -760,8 +761,9 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
       if (!worker) { resolve(extractDominantColors(imageData, maxColors)); return; }
 
       const buffer = imageData.data.buffer.slice(0);
+      const requestId = ++_colorRequestCounter;
       const handler = (e: MessageEvent) => {
-        if (e.data.type === 'result') {
+        if (e.data.type === 'result' && e.data.requestId === requestId) {
           clearTimeout(timeout);
           worker.removeEventListener('message', handler);
           resolve(e.data.colors);
@@ -776,7 +778,7 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
         }
       }, 10000);
       worker.addEventListener('message', handler);
-      worker.postMessage({ type: 'extract', pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
+      worker.postMessage({ type: 'extract', requestId, pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
     } catch (e) {
       console.warn('[ColorExtractor] extractColorsFromImageAsync failed:', e);
       resolve([]);
