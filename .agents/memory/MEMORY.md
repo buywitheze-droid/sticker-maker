@@ -1,3 +1,4 @@
 - [Gangsheet spot color pipeline](spot-color-pipeline.md) — full vectorization pipeline: mask build, trace_premask worker, Y-down→Y-up transform, Chaikin outer-only, hole detection.
 - [GitHub reference repo](github-reference-repo.md) — https://github.com/buywitheze-droid/sticker-maker; color list UI parity target (w-8 swatch, hex+%, 1% threshold, always visible).
 - [White underbase pipeline](white-underbase-pipeline.md) — silhouette at 50 DPI (halftone averages), upscale to 150 DPI, detail-safe standard choke (single distance, 0.010" default, thin fallback 0.002").
+- [Vector file import tools](vector-import-tools.md) — PDF/SVG/EPS server-side conversion stack; GhostScript nix path; waifu2x upscale worker.

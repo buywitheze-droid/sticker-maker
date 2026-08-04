@@ -5,6 +5,51 @@ import sharp from "sharp";
 import path from "path";
 import express from "express";
 import { upscale, getWorkerBackend } from "./upscale-queue";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
+import * as os from "os";
+import * as crypto from "crypto";
+
+const execFileAsync = promisify(execFile);
+
+// ── GhostScript discovery (not in PATH on NixOS, lives in /nix/store) ───────
+let _gsPath: string | null | undefined = undefined; // undefined = not yet searched
+
+// Known Nix store locations — checked in order before the slow find fallback
+const KNOWN_GS_PATHS = [
+  "/nix/store/00vaqa30dvhxr9308xldc5hmf3z3m37v-ghostscript-10.04.0/bin/gs",
+];
+
+async function findGhostscript(): Promise<string | null> {
+  if (_gsPath !== undefined) return _gsPath;
+  // 1. Try PATH
+  try {
+    await execFileAsync("gs", ["--version"]);
+    _gsPath = "gs";
+    return _gsPath;
+  } catch { /* not in PATH */ }
+  // 2. Try well-known Nix store paths
+  for (const candidate of KNOWN_GS_PATHS) {
+    if (fs.existsSync(candidate)) {
+      _gsPath = candidate;
+      return _gsPath;
+    }
+  }
+  // 3. Walk /nix/store (slow fallback — 10 s cap)
+  try {
+    const { stdout } = await execFileAsync("find", [
+      "/nix/store", "-maxdepth", "3", "-name", "gs", "-type", "f",
+      "-path", "*/ghostscript*/bin/gs",
+    ], { timeout: 10_000 });
+    const found = stdout.trim().split("\n").filter(Boolean)[0];
+    if (found) { _gsPath = found; return _gsPath; }
+  } catch { /* ignore */ }
+  _gsPath = null;
+  return null;
+}
+// Kick off discovery at startup
+findGhostscript().catch(() => {});
 
 import sgMail from "@sendgrid/mail";
 
@@ -25,6 +70,12 @@ const upload = multer({
       cb(new Error('Only PNG files are allowed'));
     }
   },
+});
+
+// Separate multer for the convert-file endpoint — accepts PDF/SVG/EPS + images
+const uploadAny = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 },
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -234,6 +285,111 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
         error: "Failed to send design",
         details: errorMessage,
       });
+    }
+  });
+
+  // ── Vector/PDF → PNG conversion ──────────────────────────────────────────────
+  // POST /api/convert-file
+  // Body (multipart): file (PDF | SVG | EPS)
+  // Returns JSON: { pngBase64, widthPx, heightPx, dpi, widthInches, heightInches }
+  app.post("/api/convert-file", uploadAny.single("file"), async (req, res) => {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "No file provided" });
+
+    const origName  = file.originalname.toLowerCase();
+    const mime      = file.mimetype.toLowerCase();
+    const isPdf     = origName.endsWith(".pdf") || mime === "application/pdf";
+    const isSvg     = origName.endsWith(".svg") || mime === "image/svg+xml";
+    const isEps     = origName.endsWith(".eps") || mime.includes("postscript") || mime.includes("/eps");
+
+    if (!isPdf && !isSvg && !isEps) {
+      return res.status(400).json({ error: "Unsupported format. Send PDF, SVG, or EPS." });
+    }
+
+    const TARGET_DPI = 300;
+    const id         = crypto.randomUUID();
+    const tmpIn      = path.join(os.tmpdir(), `cvt_in_${id}${isPdf ? ".pdf" : isSvg ? ".svg" : ".eps"}`);
+    const tmpOut     = path.join(os.tmpdir(), `cvt_out_${id}`); // tool appends extension
+
+    try {
+      fs.writeFileSync(tmpIn, file.buffer);
+      let pngPath: string;
+
+      // ── PDF ─────────────────────────────────────────────────────────────────
+      if (isPdf) {
+        // pdftocairo: uses cairo for high-quality rendering with proper transparency.
+        // -cropbox trims to CropBox (= artboard in design tools, excludes bleed marks).
+        // -singlefile writes <tmpOut>.png (not <tmpOut>-1.png).
+        await execFileAsync("pdftocairo", [
+          "-png",
+          "-r", String(TARGET_DPI),
+          "-singlefile",
+          "-cropbox",
+          tmpIn,
+          tmpOut,
+        ], { maxBuffer: 200 * 1024 * 1024 });
+        pngPath = `${tmpOut}.png`;
+      }
+
+      // ── SVG ─────────────────────────────────────────────────────────────────
+      else if (isSvg) {
+        // Sharp/libvips uses librsvg natively — respects in/mm/pt/px/cm/em units.
+        // density:300 means "render at 300 DPI", so pixel / 300 = inches.
+        pngPath = `${tmpOut}.png`;
+        const pngBuf = await sharp(file.buffer, { density: TARGET_DPI })
+          .png()
+          .toBuffer();
+        fs.writeFileSync(pngPath, pngBuf);
+      }
+
+      // ── EPS ─────────────────────────────────────────────────────────────────
+      else {
+        const gsPath = await findGhostscript();
+        if (!gsPath) {
+          return res.status(500).json({
+            error: "GhostScript not available in this environment. EPS conversion requires gs.",
+          });
+        }
+        pngPath = `${tmpOut}.png`;
+        // pngalpha device preserves the EPS background as transparent.
+        // -dEPSCrop crops to the %%BoundingBox exactly.
+        await execFileAsync(gsPath, [
+          "-dNOPAUSE", "-dBATCH", "-dSAFER",
+          "-sDEVICE=pngalpha",
+          `-r${TARGET_DPI}`,
+          "-dEPSCrop",
+          `-sOutputFile=${pngPath}`,
+          tmpIn,
+        ], { maxBuffer: 200 * 1024 * 1024, timeout: 60_000 });
+      }
+
+      // ── Read rendered PNG + compute physical dimensions ─────────────────────
+      if (!fs.existsSync(pngPath)) {
+        return res.status(500).json({ error: "Conversion produced no output" });
+      }
+      const pngBuf = fs.readFileSync(pngPath);
+      const meta   = await sharp(pngBuf).metadata();
+      const widthPx  = meta.width  ?? 0;
+      const heightPx = meta.height ?? 0;
+
+      res.json({
+        pngBase64:    pngBuf.toString("base64"),
+        widthPx,
+        heightPx,
+        dpi:          TARGET_DPI,
+        widthInches:  parseFloat((widthPx  / TARGET_DPI).toFixed(4)),
+        heightInches: parseFloat((heightPx / TARGET_DPI).toFixed(4)),
+      });
+    } catch (err) {
+      console.error("[convert-file]", err);
+      res.status(500).json({
+        error:   "Conversion failed",
+        details: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      for (const f of [tmpIn, `${tmpOut}.png`]) {
+        try { fs.unlinkSync(f); } catch { /* ignore */ }
+      }
     }
   });
 

@@ -10,8 +10,12 @@ const ACCEPTED_TYPES = [
   "image/jpeg",
   "image/webp",
   "application/pdf",
+  "image/svg+xml",
+  "application/postscript",
+  "application/eps",
+  "application/x-eps",
 ];
-const ACCEPTED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".pdf"];
+const ACCEPTED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".pdf", ".svg", ".eps"];
 const GRADIENT_COLORS = [
   { bg: "rgb(34, 197, 94)", glow: "rgba(34, 197, 94, 0.5)" },
   { bg: "rgb(234, 179, 8)", glow: "rgba(234, 179, 8, 0.5)" },
@@ -43,11 +47,13 @@ export default function UploadSection({
     async (file: File) => {
       const ext = file.name.toLowerCase();
       const isPdf = file.type === "application/pdf" || ext.endsWith(".pdf");
+      const isSvg = file.type === "image/svg+xml" || ext.endsWith(".svg");
+      const isEps = ext.endsWith(".eps") || file.type.includes("postscript") || file.type.includes("/eps");
       const isImage =
         ACCEPTED_TYPES.includes(file.type) ||
         ACCEPTED_EXTENSIONS.some((e) => ext.endsWith(e));
 
-      if (!isImage && !isPdf) {
+      if (!isImage && !isPdf && !isSvg && !isEps) {
         toast({
           title: t("toast.unsupportedFormat"),
           description: t("toast.unsupportedFormatDesc"),
@@ -56,7 +62,7 @@ export default function UploadSection({
         return;
       }
 
-      if (isPdf) {
+      if (isPdf || isSvg || isEps) {
         onImageUpload(file, null as unknown as HTMLImageElement);
         return;
       }
@@ -240,7 +246,7 @@ export default function UploadSection({
           type="file"
           ref={fileInputRef}
           className="hidden"
-          accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf"
+          accept=".png,.jpg,.jpeg,.webp,.pdf,.svg,.eps,image/png,image/jpeg,image/webp,application/pdf,image/svg+xml,application/postscript"
           multiple
           onChange={handleFileInputChange}
         />

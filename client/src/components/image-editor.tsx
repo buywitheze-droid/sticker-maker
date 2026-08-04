@@ -17,6 +17,7 @@ function imageHasCleanAlpha(img: HTMLImageElement): boolean {
   return hasCleanAlpha(data, width, height);
 }
 import { parsePDF, type ParsedPDFData } from "@/lib/pdf-parser";
+import { parseVectorFile, isVectorFile } from "@/lib/vector-file-parser";
 import { useToast } from "@/hooks/use-toast";
 import { useHistory, type HistorySnapshot } from "@/hooks/use-history";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -3111,40 +3112,85 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
   const handleFileUploadUnified = useCallback(async (file: File, image: HTMLImageElement | null) => {
     const ext = file.name.toLowerCase();
-    const isPdf = file.type === 'application/pdf' || ext.endsWith('.pdf');
-    if (isPdf) {
+    // PDF, SVG, and EPS all go through server-side conversion for correct dimensions
+    if (isVectorFile(file)) {
       try {
         setIsUploading(true);
-        const pdfData = await parsePDF(file);
-        handlePDFUpload(file, pdfData);
+        const result = await parseVectorFile(file);
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+        const newImageInfo: ImageInfo = {
+          file: result.pngFile,
+          image: result.image,
+          originalWidth: result.widthPx,
+          originalHeight: result.heightPx,
+          dpi: result.dpi,
+          isPDF: isPdfFile,
+        };
+        applyImageDirectly(newImageInfo, Math.max(0.01, result.widthInches), Math.max(0.01, result.heightInches));
+        if (isMobile) setMobilePanel("preview");
       } catch (err) {
-        console.error('PDF parse error:', err);
-        toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedDesc"), variant: "destructive" });
+        console.error('[vector] Server conversion failed, trying fallback:', err);
+        // Fallback: pdfjs in-browser for PDFs only
+        const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+        if (isPdfFile) {
+          try {
+            const pdfData = await parsePDF(file);
+            handlePDFUpload(file, pdfData);
+          } catch (fallbackErr) {
+            console.error('[vector] PDF fallback also failed:', fallbackErr);
+            toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedDesc"), variant: "destructive" });
+          }
+        } else {
+          toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedDesc"), variant: "destructive" });
+        }
       } finally {
         setIsUploading(false);
       }
       return;
     }
     if (image) handleImageUpload(file, image);
-  }, [handleImageUpload, handlePDFUpload, toast]);
+  }, [handleImageUpload, handlePDFUpload, applyImageDirectly, isMobile, setMobilePanel, toast, t]);
 
   const processSidebarFile = useCallback((file: File): Promise<void> => {
     const ext = file.name.toLowerCase();
-    const isPdf = file.type === 'application/pdf' || ext.endsWith('.pdf');
+    const isVec = isVectorFile(file);
     const isImage = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || ['.png', '.jpg', '.jpeg', '.webp'].some(x => ext.endsWith(x));
-    if (!isImage && !isPdf) {
+    if (!isImage && !isVec) {
       toast({ title: t("toast.unsupportedFormat"), description: t("toast.formatOnly"), variant: "destructive" });
       return Promise.resolve();
     }
-    if (isPdf) {
+    if (isVec) {
       return (async () => {
         try {
           setIsUploading(true);
-          const pdfData = await parsePDF(file);
-          handlePDFUpload(file, pdfData);
+          const result = await parseVectorFile(file);
+          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+          const newImageInfo: ImageInfo = {
+            file: result.pngFile,
+            image: result.image,
+            originalWidth: result.widthPx,
+            originalHeight: result.heightPx,
+            dpi: result.dpi,
+            isPDF: isPdfFile,
+          };
+          applyImageDirectly(newImageInfo, Math.max(0.01, result.widthInches), Math.max(0.01, result.heightInches));
+          if (isMobile) setMobilePanel("preview");
         } catch (err) {
-          console.error('PDF parse error:', err);
-          toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedShort"), variant: "destructive" });
+          console.error('[vector] Sidebar server conversion failed, trying fallback:', err);
+          const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+          if (isPdfFile) {
+            try {
+              const pdfData = await parsePDF(file);
+              handlePDFUpload(file, pdfData);
+            } catch (fallbackErr) {
+              console.error('[vector] PDF sidebar fallback also failed:', fallbackErr);
+              toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedShort"), variant: "destructive" });
+            }
+          } else {
+            toast({ title: t("toast.pdfFailed"), description: t("toast.pdfFailedShort"), variant: "destructive" });
+          }
         } finally {
           setIsUploading(false);
         }
@@ -3181,7 +3227,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       };
       img.src = url;
     });
-  }, [handleImageUpload, handlePDFUpload, toast]);
+  }, [handleImageUpload, handlePDFUpload, applyImageDirectly, isMobile, setMobilePanel, toast, t]);
 
   const handleSidebarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
