@@ -527,7 +527,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const designsRef = useRef(designs);
   designsRef.current = designs;
-  const pendingFillArrangeRef = useRef(false);
+  // Stores IDs of designs added by the most recent "Fill Sheet" click.
+  // Non-null = fill arrange is pending; null = no fill in flight.
+  const pendingFillIdsRef = useRef<Set<string> | null>(null);
   const nudgeSnapshotSavedRef = useRef(false);
   const nudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thumbnailCacheRef = useRef<Map<string, string>>(new Map());
@@ -1267,6 +1269,66 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   // Picks the selected (or smallest) design as a reference, estimates how many
   // copies fit in the remaining area at ~72% packing efficiency, adds them, then
   // runs auto-arrange so the worker places everything optimally.
+  const contentFillCacheRef = useRef<Map<string, number>>(new Map());
+
+  // Sample how much of the reference image is opaque (same 64×64 approach the packer uses).
+  // Returns a value 0–1; cached in contentFillCacheRef so the packer doesn't redo the work.
+  const sampleContentFill = useCallback((design: DesignItem): number => {
+    const key = design.imageInfo.image.src;
+    const cached = contentFillCacheRef.current.get(key);
+    if (cached !== undefined) return cached;
+    try {
+      const sampleSize = 64;
+      const c = document.createElement('canvas');
+      c.width = sampleSize; c.height = sampleSize;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return 1;
+      ctx.drawImage(design.imageInfo.image, 0, 0, sampleSize, sampleSize);
+      const data = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
+      let opaque = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 20) opaque++;
+      const fill = opaque / (sampleSize * sampleSize);
+      contentFillCacheRef.current.set(key, fill);
+      return fill;
+    } catch { return 1; }
+  }, []);
+
+  // Compute the fill count estimate.
+  // Uses the actual lowest unoccupied Y on the sheet (from current design positions)
+  // combined with the image's opaque-pixel ratio so sparse designs don't over-fill.
+  const computeFillCount = useCallback((
+    ref: DesignItem,
+    currentDesigns: DesignItem[],
+    gap: number,
+    abW: number,
+    abH: number,
+  ): number => {
+    const rw = ref.widthInches * ref.transform.s;
+    const rh = ref.heightInches * ref.transform.s;
+    const refArea = (rw + gap) * (rh + gap);
+    if (refArea <= 0) return 0;
+
+    // Find the actual bottom edge of all placed designs (in inches) to get true remaining height.
+    const occupiedBottom = currentDesigns.reduce((maxY, d) => {
+      const cy = d.transform.ny * abH;
+      const hw = (d.widthInches * d.transform.s) / 2;
+      const hh = (d.heightInches * d.transform.s) / 2;
+      // Approximate rotated bounding box half-height
+      const rad = ((d.transform.rotation ?? 0) * Math.PI) / 180;
+      const boundH = Math.abs(hw * Math.sin(rad)) + Math.abs(hh * Math.cos(rad));
+      return Math.max(maxY, cy + boundH);
+    }, 0);
+
+    const remaining = Math.max(0, abW * abH - abW * occupiedBottom)
+      + Math.max(0, abW * occupiedBottom - currentDesigns.reduce((acc, d) =>
+        acc + (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap), 0));
+
+    // Conservative packing factor: 0.58 base × content-fill ratio (sparse images pack worse).
+    const contentFill = sampleContentFill(ref);
+    const factor = Math.max(0.35, Math.min(0.58, 0.58 * contentFill));
+    return Math.floor(remaining / refArea * factor);
+  }, [sampleContentFill]);
+
   const canFill = useMemo(() => {
     if (designs.length === 0) return false;
     const gap = designGap ?? 0.25;
@@ -1277,11 +1339,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       );
     const refArea = (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
     if (refArea <= 0) return false;
-    const usedArea = designs.reduce((acc, d) =>
-      acc + (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap), 0);
-    const remaining = Math.max(0, artboardWidth * artboardHeight - usedArea);
-    return Math.floor(remaining / refArea * 0.72) >= 1;
-  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap]);
+    return computeFillCount(ref, designs, gap, artboardWidth, artboardHeight) >= 1;
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, computeFillCount]);
 
   const handleFillEmptySpace = useCallback(() => {
     if (designs.length === 0) return;
@@ -1291,12 +1350,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         a.widthInches * a.transform.s * a.heightInches * a.transform.s
           <= b.widthInches * b.transform.s * b.heightInches * b.transform.s ? a : b
       );
-    const refArea = (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
-    const usedArea = designs.reduce((acc, d) =>
-      acc + (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap), 0);
-    const remaining = Math.max(0, artboardWidth * artboardHeight - usedArea);
     const fillCount = Math.min(
-      Math.floor(remaining / refArea * 0.72),
+      computeFillCount(ref, designs, gap, artboardWidth, artboardHeight),
       Math.max(0, 500 - designs.length)
     );
     if (fillCount < 1) {
@@ -1312,13 +1367,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       printFileName: false,
     }));
     saveSnapshot();
-    pendingFillArrangeRef.current = true;
+    pendingFillIdsRef.current = new Set(copies.map(c => c.id));
     setDesigns(prev => [...prev, ...copies]);
-    toast({
-      title: `Adding ${fillCount} cop${fillCount === 1 ? 'y' : 'ies'}`,
-      description: 'Filling empty space and re-arranging…',
-    });
-  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, saveSnapshot, toast]);
+    toast({ title: 'Filling sheet…', description: `Placing up to ${fillCount} cop${fillCount === 1 ? 'y' : 'ies'} and arranging.` });
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, computeFillCount, saveSnapshot, toast]);
 
   const handleDuplicateById = useCallback((designId: string) => {
     const design = designs.find(d => d.id === designId);
@@ -1720,9 +1772,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     if (targetId) setDesignTransform(prev => ({ ...prev, rotation: normalized }));
   }, [selectedDesignId, selectedDesignIds, saveSnapshot, artboardWidth, artboardHeight]);
 
-  const contentFillCacheRef = useRef<Map<string, number>>(new Map());
-
-  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; arrangeAll?: boolean; trimOverflow?: boolean }) => {
+  const handleAutoArrange = useCallback((opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; arrangeAll?: boolean; trimOverflow?: boolean; fillIds?: Set<string> }) => {
     const currentDesigns = designsRef.current;
     if (currentDesigns.length === 0) { console.warn('[autoArrange] no designs'); return; }
     if (!opts?.skipSnapshot) saveSnapshot();
@@ -1811,6 +1861,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               preserveSelection: opts?.preserveSelection ?? true,
               arrangeAll: opts?.arrangeAll,
               trimOverflow: opts?.trimOverflow,
+              fillIds: opts?.fillIds,
             });
           });
           return;
@@ -1818,9 +1869,12 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         // Fill-sheet path: silently drop items that didn't fit instead of showing an error
         if (opts?.trimOverflow) {
           const overflowIds = new Set(bestResult.filter(p => p.overflows).map(p => p.id));
-          const trimCount = overflowIds.size;
           const abW = artboardWidthRef.current;
           const abH = artboardHeightRef.current;
+          const fillIds = opts.fillIds;
+          // Count how many fill copies actually survived vs were trimmed
+          const trimmedFillCount = fillIds ? [...overflowIds].filter(id => fillIds.has(id)).length : overflowIds.size;
+          const keptFillCount = fillIds ? fillIds.size - trimmedFillCount : 0;
           setSheets(prev => prev.map(s => {
             if (s.id !== targetSheetId) return s;
             return {
@@ -1845,15 +1899,25 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
                 }),
             };
           }));
-          if (trimCount > 0) {
-            toast({ title: 'Sheet filled', description: `Removed ${trimCount} cop${trimCount === 1 ? 'y' : 'ies'} that didn't fit.` });
-          }
+          const kept = keptFillCount || (fillIds ? fillIds.size - trimmedFillCount : 0);
+          toast({
+            title: 'Sheet filled',
+            description: kept > 0
+              ? `${kept} cop${kept === 1 ? 'y' : 'ies'} fit. ${trimmedFillCount > 0 ? `${trimmedFillCount} removed — sheet is full.` : ''}`
+              : 'Sheet is full — no extras fit.',
+          });
           if (!opts?.preserveSelection) { setSelectedDesignId(null); setSelectedDesignIds(new Set()); }
           return;
         }
         toast({ title: t("toast.noSpace"), description: t("toast.noSpaceDesc"), variant: "destructive" });
-      } else if (anyRotated) {
-        toast({ title: t("toast.autoArranged"), description: t("toast.autoArrangedDesc") });
+      } else {
+        // No overflow — if this was a fill operation, show a success toast
+        if (opts?.fillIds && opts.fillIds.size > 0) {
+          const n = opts.fillIds.size;
+          toast({ title: 'Sheet filled', description: `${n} cop${n === 1 ? 'y' : 'ies'} added — all fit perfectly.` });
+        } else if (anyRotated) {
+          toast({ title: t("toast.autoArranged"), description: t("toast.autoArrangedDesc") });
+        }
       }
       const abW = artboardWidthRef.current;
       const abH = artboardHeightRef.current;
@@ -2343,9 +2407,10 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
   // useEffect fires after React commits the new designs to the DOM and updates
   // designsRef.current, so handleAutoArrange sees the full updated list.
   useEffect(() => {
-    if (!pendingFillArrangeRef.current) return;
-    pendingFillArrangeRef.current = false;
-    handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true, trimOverflow: true });
+    if (!pendingFillIdsRef.current) return;
+    const fillIds = pendingFillIdsRef.current;
+    pendingFillIdsRef.current = null;
+    handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true, trimOverflow: true, fillIds });
   }, [designs]);
 
   // ── Session persistence: save ──────────────────────────────────────────────
