@@ -1849,22 +1849,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean) => {
       if (hasOverflow) {
-        // Try advancing to the next configured gangsheet height before giving up
-        const nextH = GANGSHEET_HEIGHTS.find(h => h > artboardHeightRef.current);
-        if (nextH) {
-          // Target the specific sheet even if the user has navigated away
-          setSheets(prev => prev.map(s => s.id !== targetSheetId ? s : { ...s, artboardHeight: nextH }));
-          artboardHeightRef.current = nextH;  // keep ref in sync so recursive RAF sees the new height
-          requestAnimationFrame(() => {
-            handleAutoArrangeRef.current({
-              skipSnapshot: true,
-              preserveSelection: opts?.preserveSelection ?? true,
-              arrangeAll: opts?.arrangeAll,
-              trimOverflow: opts?.trimOverflow,
-              fillIds: opts?.fillIds,
+        // Fill-sheet path: never expand the sheet — only trim what doesn't fit.
+        // Sheet expansion is only for regular Auto-Arrange, not Fill.
+        if (!opts?.trimOverflow) {
+          // Try advancing to the next configured gangsheet height before giving up
+          const nextH = GANGSHEET_HEIGHTS.find(h => h > artboardHeightRef.current);
+          if (nextH) {
+            setSheets(prev => prev.map(s => s.id !== targetSheetId ? s : { ...s, artboardHeight: nextH }));
+            artboardHeightRef.current = nextH;
+            requestAnimationFrame(() => {
+              handleAutoArrangeRef.current({
+                skipSnapshot: true,
+                preserveSelection: opts?.preserveSelection ?? true,
+                arrangeAll: opts?.arrangeAll,
+              });
             });
-          });
-          return;
+            return;
+          }
         }
         // Fill-sheet path: silently drop items that didn't fit instead of showing an error
         if (opts?.trimOverflow) {
