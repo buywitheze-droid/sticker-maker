@@ -149,6 +149,8 @@ export const es: Record<string, string> = {
   "toast.pdfFailed": "Error al leer PDF",
   "toast.pdfFailedDesc": "No se pudo leer el archivo. Por favor intenta con otro PDF.",
   "toast.pdfFailedShort": "No se pudo leer este archivo.",
+  "toast.pdfMultipage": "PDF de varias páginas — solo se importó la página 1",
+  "toast.pdfMultipageDesc": "Tu PDF tiene {{count}} páginas. Solo se añadió la primera página. Sube las páginas restantes por separado si es necesario.",
   "toast.formatOnly": "Solo PNG, JPEG, WebP o PDF.",
   "toast.failedLoadFile": "No se pudo cargar {name}.",
   "toast.alphaFailed": "Error en umbral de transparencia",

@@ -9,7 +9,36 @@ Protocol (stdin → stdout, one JSON object per line):
   Ready:    {"ready": true, "backend": "waifu2x"|"lanczos"}  written once on startup
 """
 
-import sys, os, json, traceback, hashlib, tempfile
+import sys, os, json, traceback, hashlib, tempfile, subprocess
+
+
+def _ensure_packages() -> None:
+    """Auto-install required Python packages if missing (e.g. after env reprovision)."""
+    required = {"numpy": "numpy", "PIL": "pillow", "onnxruntime": "onnxruntime"}
+    missing = []
+    for mod, pkg in required.items():
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+    if missing:
+        sys.stderr.write(f"[upscale_worker] Installing missing packages: {missing}\n")
+        sys.stderr.flush()
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--user",
+                 "--break-system-packages", "--quiet", *missing],
+                stderr=subprocess.DEVNULL,
+            )
+            sys.stderr.write("[upscale_worker] Packages installed.\n")
+            sys.stderr.flush()
+        except Exception as e:
+            sys.stderr.write(f"[upscale_worker] pip install failed: {e}\n")
+            sys.stderr.flush()
+
+
+_ensure_packages()
+
 import numpy as np
 from PIL import Image
 

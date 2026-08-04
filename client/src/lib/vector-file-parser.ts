@@ -26,6 +26,11 @@ export interface VectorParseResult {
   widthPx: number;
   /** Pixel height of the rendered PNG. */
   heightPx: number;
+  /**
+   * Only present for PDF files. Total page count in the source document.
+   * When > 1, the server only imported page 1 — callers should warn the user.
+   */
+  pageCount?: number;
 }
 
 function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
@@ -54,7 +59,7 @@ export async function parseVectorFile(file: File): Promise<VectorParseResult> {
     throw new Error(`Server conversion failed (${res.status}): ${detail}`);
   }
 
-  const { pngBase64, widthPx, heightPx, dpi, widthInches, heightInches } =
+  const { pngBase64, widthPx, heightPx, dpi, widthInches, heightInches, pageCount } =
     await res.json() as {
       pngBase64: string;
       widthPx: number;
@@ -62,6 +67,8 @@ export async function parseVectorFile(file: File): Promise<VectorParseResult> {
       dpi: number;
       widthInches: number;
       heightInches: number;
+      /** Only present for PDFs; total page count in the document. */
+      pageCount?: number;
     };
 
   // Decode the base64 PNG
@@ -78,7 +85,7 @@ export async function parseVectorFile(file: File): Promise<VectorParseResult> {
 
   const image = await loadImageFromBlob(blob);
 
-  return { image, pngFile, widthInches, heightInches, dpi, widthPx, heightPx };
+  return { image, pngFile, widthInches, heightInches, dpi, widthPx, heightPx, pageCount };
 }
 
 /** Returns true for the three vector formats we support. */

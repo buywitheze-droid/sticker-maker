@@ -807,6 +807,38 @@ function floodFillRegion(
   return { minX, maxX, minY, maxY, pixels };
 }
 
+/**
+ * Flood-fill transparent pixels starting at (startX, startY) using a Uint8Array
+ * visited map and an alpha threshold. Used for interior-gap detection.
+ * Separate from floodFillRegion which uses Set<string> and no threshold.
+ */
+function floodFillTransparentPixels(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  startX: number,
+  startY: number,
+  threshold: number,
+  visited: Uint8Array,
+): Array<{ x: number; y: number }> {
+  const stack: Array<{ x: number; y: number }> = [{ x: startX, y: startY }];
+  const pixels: Array<{ x: number; y: number }> = [];
+
+  while (stack.length > 0) {
+    const { x, y } = stack.pop()!;
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+    const pixelIdx = y * width + x;
+    if (visited[pixelIdx]) continue;
+    const alpha = data[pixelIdx * 4 + 3];
+    if (alpha >= threshold) continue; // not transparent
+    visited[pixelIdx] = 1;
+    pixels.push({ x, y });
+    stack.push({ x: x + 1, y }, { x: x - 1, y }, { x, y: y + 1 }, { x, y: y - 1 });
+  }
+
+  return pixels;
+}
+
 function mergeRegionsWithIntelligentOutlines(
   regions: ImageRegion[], 
   strokeSettings: StrokeSettings, 
@@ -1195,14 +1227,14 @@ function fillTransparentHoles(image: HTMLImageElement, threshold: number): HTMLC
       
       if (currentAlpha < threshold && !visited[pixelIdx]) {
         // Found an unvisited transparent region - flood fill to analyze it
-        const region = floodFillRegion(data, width, height, x, y, threshold, visited);
+        const regionPixels = floodFillTransparentPixels(data, width, height, x, y, threshold, visited);
         
         // Check if this region is an interior gap (surrounded by solid content)
-        const isSurrounded = isRegionSurrounded(region, data, width, height, threshold);
+        const isSurrounded = isRegionSurrounded(regionPixels, data, width, height, threshold);
         
         if (isSurrounded) {
           // Mark all pixels in this region as interior gaps
-          for (const pixel of region) {
+          for (const pixel of regionPixels) {
             isInteriorGap[pixel.y * width + pixel.x] = 1;
           }
         }
@@ -2461,6 +2493,30 @@ function findHoleBoundary(
   }
   
   return sortBoundaryPixels(boundary);
+}
+
+function douglasPeuckerSimplify(points: ContourPoint[], epsilon: number): ContourPoint[] {
+  if (points.length <= 2) return points;
+  const p1 = points[0];
+  const p2 = points[points.length - 1];
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  let maxDist = 0;
+  let maxIdx = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    const dist = len === 0
+      ? Math.sqrt((p.x - p1.x) ** 2 + (p.y - p1.y) ** 2)
+      : Math.abs(dy * p.x - dx * p.y + p2.x * p1.y - p2.y * p1.x) / len;
+    if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+  }
+  if (maxDist > epsilon) {
+    const left  = douglasPeuckerSimplify(points.slice(0, maxIdx + 1), epsilon);
+    const right = douglasPeuckerSimplify(points.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [p1, p2];
 }
 
 function optimizeVectorPath(path: ContourPoint[]): ContourPoint[] {

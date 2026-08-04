@@ -71,7 +71,7 @@ const HalftoneIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
+export type { ImageInfo, ResizeSettings, ImageTransform, DesignItem, StrokeSettings, ShapeSettings } from "@/lib/types";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import { type ProfileConfig, HOT_PEEL_PROFILE } from "@/lib/profiles";
 
@@ -2792,8 +2792,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const scaledH = heightInches * initialS;
     const gap = 0.25;
 
-    let baseNx: number;
-    let baseNy: number;
+    let baseNx = 0.5;
+    let baseNy = 0.5;
     const existingDesigns = designsRef.current;
     if (existingDesigns.length === 0) {
       baseNx = (scaledW / 2) / currentAbW;
@@ -3119,6 +3119,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         const result = await parseVectorFile(file);
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+        if (isPdfFile && result.pageCount && result.pageCount > 1) {
+          toast({ title: t("toast.pdfMultipage"), description: t("toast.pdfMultipageDesc", { count: result.pageCount }), variant: "warning" });
+        }
         const newImageInfo: ImageInfo = {
           file: result.pngFile,
           image: result.image,
@@ -3167,6 +3170,9 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
           const result = await parseVectorFile(file);
           if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           const isPdfFile = file.type === 'application/pdf' || ext.endsWith('.pdf');
+          if (isPdfFile && result.pageCount && result.pageCount > 1) {
+            toast({ title: t("toast.pdfMultipage"), description: t("toast.pdfMultipageDesc", { count: result.pageCount }), variant: "warning" });
+          }
           const newImageInfo: ImageInfo = {
             file: result.pngFile,
             image: result.image,

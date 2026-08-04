@@ -15,6 +15,31 @@ export interface ResizeSettings {
   outputDPI: number;
 }
 
+export interface StrokeSettings {
+  enabled: boolean;
+  width: number;
+  color: string;
+  alphaThreshold: number;
+  autoBridging: boolean;
+  autoBridgingThreshold: number;
+  backgroundColor: string;
+}
+
+export interface ShapeSettings {
+  enabled?: boolean;
+  type: string;
+  widthInches: number;
+  heightInches: number;
+  fillColor: string;
+  cornerRadius: number;
+  offset: number;
+  offsetX: number;
+  offsetY: number;
+  strokeEnabled: boolean;
+  strokeColor: string;
+  strokeWidth: number;
+}
+
 export interface ImageTransform {
   nx: number;
   ny: number;

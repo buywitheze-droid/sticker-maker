@@ -376,9 +376,20 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
 
       // ── PDF ─────────────────────────────────────────────────────────────────
       if (isPdf) {
+        // Detect page count before rendering so we can warn the client.
+        // pdfinfo -l 1 reads only the first page descriptor — very fast.
+        let pageCount = 1;
+        try {
+          const { stdout: infoOut } = await execFileAsync(
+            "pdfinfo", [tmpIn], { timeout: 10_000 },
+          );
+          const m = infoOut.match(/^Pages:\s*(\d+)/m);
+          if (m) pageCount = parseInt(m[1], 10);
+        } catch { /* pdfinfo failure is non-fatal */ }
+
         // pdftocairo: uses cairo for high-quality rendering with proper transparency.
         // -cropbox trims to CropBox (= artboard in design tools, excludes bleed marks).
-        // -singlefile writes <tmpOut>.png (not <tmpOut>-1.png).
+        // -singlefile renders only page 1 and writes <tmpOut>.png (not <tmpOut>-1.png).
         await execFileAsync("pdftocairo", [
           "-png",
           "-r", String(TARGET_DPI),
@@ -388,6 +399,9 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
           tmpOut,
         ], { maxBuffer: 200 * 1024 * 1024 });
         pngPath = `${tmpOut}.png`;
+
+        // Attach page count so the client can warn when > 1 page is present.
+        (req as { _pdfPageCount?: number })._pdfPageCount = pageCount;
       }
 
       // ── SVG ─────────────────────────────────────────────────────────────────
@@ -449,12 +463,14 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
       }
 
       res.json({
-        pngBase64: pngBuf.toString("base64"),
+        pngBase64:    pngBuf.toString("base64"),
         widthPx,
         heightPx,
         dpi:          TARGET_DPI,
         widthInches:  parseFloat(widthInches.toFixed(4)),
         heightInches: parseFloat(heightInches.toFixed(4)),
+        // Only present for PDFs; tells the client if additional pages were not imported
+        pageCount:    (req as { _pdfPageCount?: number })._pdfPageCount,
       });
     } catch (err) {
       console.error("[convert-file]", err);

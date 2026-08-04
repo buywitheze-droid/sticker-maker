@@ -2845,6 +2845,7 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       if (selectedDesignIds.size > 1) {
         const z = Math.max(0.25, zoomRef.current);
         const inv = dpiScaleRef.current / z;
+        const actualDpi = dpiScaleRef.current;
         for (const d of designs) {
           if (!selectedDesignIds.has(d.id)) continue;
           const r = computeLayerRect(

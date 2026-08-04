@@ -149,6 +149,8 @@ export const fr: Record<string, string> = {
   "toast.pdfFailed": "Échec de lecture du PDF",
   "toast.pdfFailedDesc": "Le fichier n'a pas pu être lu. Veuillez essayer un autre PDF.",
   "toast.pdfFailedShort": "Ce fichier n'a pas pu être lu.",
+  "toast.pdfMultipage": "PDF multi-pages — seule la page 1 a été importée",
+  "toast.pdfMultipageDesc": "Votre PDF contient {{count}} pages. Seule la première page a été ajoutée. Importez les pages restantes séparément si nécessaire.",
   "toast.formatOnly": "PNG, JPEG, WebP ou PDF uniquement.",
   "toast.failedLoadFile": "Impossible de charger {name}.",
   "toast.alphaFailed": "Échec du seuil de transparence",

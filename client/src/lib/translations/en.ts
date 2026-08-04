@@ -149,6 +149,8 @@ export const en: Record<string, string> = {
   "toast.pdfFailed": "Failed to parse PDF",
   "toast.pdfFailedDesc": "The file could not be read. Please try a different PDF.",
   "toast.pdfFailedShort": "Could not read this file.",
+  "toast.pdfMultipage": "Multi-page PDF — only page 1 imported",
+  "toast.pdfMultipageDesc": "Your PDF has {{count}} pages. Only the first page was added. Upload the remaining pages separately if needed.",
   "toast.formatOnly": "PNG, JPEG, WebP, or PDF only.",
   "toast.failedLoadFile": "Could not load {name}.",
   "toast.alphaFailed": "Alpha threshold failed",
