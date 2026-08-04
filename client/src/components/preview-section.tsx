@@ -2436,8 +2436,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
       };
     }, []);
     
-    // Reset zoom only on the very first design (empty → 1 design transition)
-    const hasEverHadDesignRef = useRef(false);
+    // Reset zoom only on the very first design (empty → 1 design transition).
+    // Initialise to true when designs already exist on mount so that a remount
+    // caused by activeImageInfo briefly going null (session restore, deselect while
+    // global imageInfo is stale) does NOT trigger an unwanted fitToView().
+    const hasEverHadDesignRef = useRef(designs.length > 0);
     useEffect(() => {
       if (!imageInfo) {
         lastImageRef.current = null;

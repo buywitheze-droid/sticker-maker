@@ -628,7 +628,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
 
 
   const selectedDesign = useMemo(() => designs.find(d => d.id === selectedDesignId) || null, [designs, selectedDesignId]);
-  const activeImageInfo = useMemo(() => selectedDesign?.imageInfo ?? imageInfo, [selectedDesign, imageInfo]);
+  // Prefer selectedDesign's imageInfo, then the last explicitly-set global imageInfo, then
+  // the first design on the sheet as a last resort.  This prevents activeImageInfo from
+  // becoming null while designs still exist (which would unmount PreviewSection and reset zoom
+  // every time the user clicks a design after deselecting or after session restore).
+  const activeImageInfo = useMemo(
+    () => selectedDesign?.imageInfo ?? imageInfo ?? designs[0]?.imageInfo ?? null,
+    [selectedDesign, imageInfo, designs],
+  );
   const activeDesignTransform = useMemo(() => selectedDesign?.transform ?? designTransform, [selectedDesign, designTransform]);
   const activeWidthInches = useMemo(() => selectedDesign?.widthInches ?? resizeSettings.widthInches, [selectedDesign, resizeSettings.widthInches]);
   const activeHeightInches = useMemo(() => selectedDesign?.heightInches ?? resizeSettings.heightInches, [selectedDesign, resizeSettings.heightInches]);
