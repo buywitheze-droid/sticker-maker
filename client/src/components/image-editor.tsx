@@ -412,6 +412,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     outputDPI: 300,
   });
   const [isProcessing, setIsProcessing] = useState(false);
+  const [exportProgress, setExportProgress] = useState<number | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [artboardWidth, setArtboardWidth] = useState(profile.artboardWidth);
@@ -4191,6 +4192,22 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         const outW = Math.max(1, Math.round(artboardWidth * exportDpi));
         const outH = Math.max(1, Math.round(artboardHeight * exportDpi));
 
+        // ── OOM guard (Chrome only — performance.memory is non-standard) ───────
+        if (useWorker) {
+          const mem = (performance as any).memory;
+          if (mem) {
+            const freeMB  = (mem.jsHeapSizeLimit - mem.usedJSHeapSize) / 1048576;
+            const sheetMB = (outW * outH * 4) / 1048576;
+            if (freeMB < 500 || freeMB < sheetMB * 0.5) {
+              toast({
+                title: t("toast.exportMemoryWarning"),
+                description: t("toast.exportMemoryWarningDesc", { sheet: Math.round(sheetMB), free: Math.round(freeMB) }),
+                variant: "warning",
+              });
+            }
+          }
+        }
+
         // ── Pre-clean halftoned designs ────────────────────────────────────────
         // Halftoned designs always have binary alpha (0 or 255). However, any
         // time the image is drawn at a scaled or rotated size on a canvas, the
@@ -4219,10 +4236,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
         let pngBlob: Blob;
 
         if (useWorker) {
-          const bitmaps = await Promise.all(
-            exportSrc.map(d => createImageBitmap(d.imageInfo.image))
-          );
-          const exportDesigns = exportSrc.map((d, i) => ({
+          // Pass blob references — worker decodes bitmaps lazily per strip.
+          const exportDesigns = exportSrc.map((d) => ({
             widthInches: d.widthInches,
             heightInches: d.heightInches,
             nx: d.transform.nx,
@@ -4231,7 +4246,7 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             rotation: d.transform.rotation,
             flipX: d.transform.flipX,
             flipY: d.transform.flipY,
-            bitmap: bitmaps[i],
+            blob: d.imageInfo.file,
             alphaThresholded: d.alphaThresholded,
             printFileName: d.printFileName,
             name: d.name,
@@ -4244,9 +4259,14 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
               worker.removeEventListener('message', handler);
               worker.removeEventListener('error', errorHandler);
               clearTimeout(timer);
+              setExportProgress(null);
             };
             const handler = (e: MessageEvent) => {
               if (e.data.requestId !== requestId) return;
+              if (e.data.type === 'progress') {
+                setExportProgress(Math.round((e.data.strip / e.data.totalStrips) * 100));
+                return;
+              }
               settled = true;
               cleanup();
               if (e.data.type === 'error') reject(new Error(e.data.error));
@@ -4266,10 +4286,8 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
             }, EXPORT_TIMEOUT_MS);
             worker.addEventListener('message', handler);
             worker.addEventListener('error', errorHandler);
-            worker.postMessage(
-              { type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi },
-              bitmaps,
-            );
+            // No transferables — blobs are structured-cloneable references.
+            worker.postMessage({ type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi });
           });
         } else {
           const exportCanvas = document.createElement('canvas');
@@ -4571,25 +4589,47 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
     const outH = Math.max(1, Math.round(shHeight * exportDpi));
     const worker = getExportWorker();
     if (worker && typeof OffscreenCanvas !== 'undefined') {
-      const bitmaps = await Promise.all(sheetDesigns.map(d => createImageBitmap(d.imageInfo.image)));
-      const exportDesigns = sheetDesigns.map((d, i) => ({
+      // OOM guard (Chrome only).
+      const mem = (performance as any).memory;
+      if (mem) {
+        const freeMB  = (mem.jsHeapSizeLimit - mem.usedJSHeapSize) / 1048576;
+        const sheetMB = (outW * outH * 4) / 1048576;
+        if (freeMB < 500 || freeMB < sheetMB * 0.5) {
+          toast({
+            title: t("toast.exportMemoryWarning"),
+            description: t("toast.exportMemoryWarningDesc", { sheet: Math.round(sheetMB), free: Math.round(freeMB) }),
+            variant: "warning",
+          });
+        }
+      }
+      // Pass blob references — worker decodes bitmaps lazily per strip.
+      const exportDesigns = sheetDesigns.map((d) => ({
         widthInches: d.widthInches, heightInches: d.heightInches,
         nx: d.transform.nx, ny: d.transform.ny, s: d.transform.s,
         rotation: d.transform.rotation, flipX: d.transform.flipX, flipY: d.transform.flipY,
-        bitmap: bitmaps[i], alphaThresholded: d.alphaThresholded, printFileName: false, name: d.name,
+        blob: d.imageInfo.file, alphaThresholded: d.alphaThresholded, printFileName: false, name: d.name,
       }));
       const requestId = ++_exportReqCounter;
       return new Promise<Blob>((resolve, reject) => {
-        const cleanup = () => { worker.removeEventListener('message', handler); clearTimeout(timer); };
+        const cleanup = () => {
+          worker.removeEventListener('message', handler);
+          clearTimeout(timer);
+          setExportProgress(null);
+        };
         const handler = (e: MessageEvent) => {
           if (e.data.requestId !== requestId) return;
+          if (e.data.type === 'progress') {
+            setExportProgress(Math.round((e.data.strip / e.data.totalStrips) * 100));
+            return;
+          }
           cleanup();
           if (e.data.type === 'error') reject(new Error(e.data.error));
           else resolve(e.data.blob);
         };
         const timer = setTimeout(() => { cleanup(); reject(new Error('Export timed out')); }, 120_000);
         worker.addEventListener('message', handler);
-        worker.postMessage({ type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi }, bitmaps);
+        // No transferables — blobs are structured-cloneable references.
+        worker.postMessage({ type: 'export', requestId, designs: exportDesigns, outW, outH, exportDpi });
       });
     } else {
       const canvas = document.createElement('canvas');
@@ -6118,11 +6158,23 @@ export default function ImageEditor({ onDesignUploaded, profile = HOT_PEEL_PROFI
       {/* Processing Modal */}
       {isProcessing && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-sm mx-4">
-            <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-5 w-5 border-2 border-cyan-500 border-t-transparent"></div>
-              <span className="text-white">{t("editor.processing")}</span>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-sm mx-4 w-72">
+            <div className="flex items-center space-x-3 mb-3">
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-cyan-500 border-t-transparent flex-shrink-0"></div>
+              <span className="text-white text-sm">
+                {exportProgress !== null
+                  ? t("editor.exportingProgress", { pct: exportProgress })
+                  : t("editor.processing")}
+              </span>
             </div>
+            {exportProgress !== null && (
+              <div className="w-full bg-slate-700 rounded-full h-1.5">
+                <div
+                  className="bg-cyan-500 h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

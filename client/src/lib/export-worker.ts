@@ -7,7 +7,8 @@ interface DesignExportData {
   rotation: number;
   flipX?: boolean;
   flipY?: boolean;
-  bitmap: ImageBitmap;
+  /** Blob (File) reference — decoded lazily inside the worker per-strip. */
+  blob: Blob;
   alphaThresholded?: boolean;
   printFileName?: boolean;
   name?: string;
@@ -20,6 +21,15 @@ interface ExportInput {
   outW: number;
   outH: number;
   exportDpi: number;
+}
+
+interface DrawInfo {
+  design: DesignExportData;
+  drawW: number;
+  drawH: number;
+  centerX: number;
+  centerY: number;
+  radius: number;
 }
 
 const STRIP_HEIGHT = 4096;
@@ -48,25 +58,33 @@ function makePngChunk(type: string, data: Uint8Array): Uint8Array {
   return chunk;
 }
 
-function drawDesignsOnCtx(
+/**
+ * Draw a subset of designs onto ctx.
+ * bitmaps: decoded ImageBitmaps keyed by design object reference.
+ * Only designs in `infos` are drawn; caller filters to strip-visible ones.
+ */
+function drawOnCtx(
   ctx: OffscreenCanvasRenderingContext2D,
-  drawInfos: Array<{ design: DesignExportData; drawW: number; drawH: number; centerX: number; centerY: number; radius: number; exportDpi: number }>,
+  infos: DrawInfo[],
+  bitmaps: Map<DesignExportData, ImageBitmap>,
   stripY: number,
   stripH: number,
+  exportDpi: number,
 ) {
-  for (const info of drawInfos) {
-    if (info.centerY + info.radius < stripY || info.centerY - info.radius > stripY + stripH) continue;
-
+  for (const info of infos) {
     const d = info.design;
+    const bitmap = bitmaps.get(d);
+    if (!bitmap) continue;
+
     if (d.alphaThresholded) ctx.imageSmoothingEnabled = false;
     ctx.save();
     ctx.translate(info.centerX, info.centerY - stripY);
     ctx.rotate((d.rotation * Math.PI) / 180);
     ctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
-    ctx.drawImage(d.bitmap, -info.drawW / 2, -info.drawH / 2, info.drawW, info.drawH);
+    ctx.drawImage(bitmap, -info.drawW / 2, -info.drawH / 2, info.drawW, info.drawH);
     if (d.printFileName && d.name) {
       ctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
-      const marginPx = 0.1 * info.exportDpi;
+      const marginPx = 0.1 * exportDpi;
       const fontSize = Math.max(8, Math.round(info.drawH * 0.045));
       ctx.font = `bold ${fontSize}px sans-serif`;
       const displayName = d.name.replace(/\.[^/.]+$/, '');
@@ -85,7 +103,7 @@ function drawDesignsOnCtx(
 }
 
 async function buildPngStreaming(input: ExportInput): Promise<Blob> {
-  const { designs, outW, outH, exportDpi } = input;
+  const { designs, outW, outH, exportDpi, requestId } = input;
 
   const ppm = Math.round(exportDpi / 0.0254);
 
@@ -109,13 +127,14 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   physData[8] = 1;
   const physChunk = makePngChunk('pHYs', physData);
 
-  const drawInfos = designs.map(d => {
+  // Pre-compute geometry for all designs — no bitmaps decoded yet.
+  const allInfos: DrawInfo[] = designs.map(d => {
     const drawW = Math.max(1, Math.round(d.widthInches * d.s * exportDpi));
     const drawH = Math.max(1, Math.round(d.heightInches * d.s * exportDpi));
     const centerX = d.nx * outW;
     const centerY = d.ny * outH;
     const radius = Math.sqrt(drawW * drawW + drawH * drawH) / 2;
-    return { design: d, drawW, drawH, centerX, centerY, radius, exportDpi };
+    return { design: d, drawW, drawH, centerX, centerY, radius };
   });
 
   const cs = new CompressionStream('deflate');
@@ -134,8 +153,23 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   const rowBytes = outW * 4;
   const filteredRowLen = 1 + rowBytes;
 
-  for (let stripY = 0; stripY < outH; stripY += STRIP_HEIGHT) {
+  const totalStrips = Math.ceil(outH / STRIP_HEIGHT);
+
+  for (let si = 0; si < totalStrips; si++) {
+    const stripY = si * STRIP_HEIGHT;
     const stripH = Math.min(STRIP_HEIGHT, outH - stripY);
+
+    // Filter to designs whose bounding circle intersects this strip.
+    const visible = allInfos.filter(info =>
+      info.centerY + info.radius >= stripY && info.centerY - info.radius <= stripY + stripH
+    );
+
+    // Decode only the bitmaps needed for this strip.
+    const bitmaps = new Map<DesignExportData, ImageBitmap>();
+    await Promise.all(visible.map(async info => {
+      const bm = await createImageBitmap(info.design.blob);
+      bitmaps.set(info.design, bm);
+    }));
 
     const canvas = new OffscreenCanvas(outW, stripH);
     const ctx = canvas.getContext('2d');
@@ -145,7 +179,11 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    drawDesignsOnCtx(ctx, drawInfos, stripY, stripH);
+    drawOnCtx(ctx, visible, bitmaps, stripY, stripH, exportDpi);
+
+    // Release bitmaps for this strip immediately — do not hold across strips.
+    for (const bm of bitmaps.values()) bm.close();
+    bitmaps.clear();
 
     const imageData = ctx.getImageData(0, 0, outW, stripH);
     const pixels = imageData.data;
@@ -167,6 +205,9 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
 
     canvas.width = 0;
     canvas.height = 0;
+
+    // Report strip progress to the main thread.
+    self.postMessage({ type: 'progress', requestId, strip: si + 1, totalStrips });
   }
 
   await writer.close();
@@ -185,12 +226,11 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
 
   const iendChunk = makePngChunk('IEND', new Uint8Array(0));
 
-  for (const d of designs) d.bitmap.close();
-
   return new Blob([signature, ihdrChunk, physChunk, ...idatChunks, iendChunk], { type: 'image/png' });
 }
 
-// Legacy single-canvas export for browsers without CompressionStream
+// Legacy single-canvas export for browsers without CompressionStream.
+// Decodes one bitmap at a time to limit peak memory usage.
 async function runExportLegacy(input: ExportInput): Promise<Blob> {
   const { designs, outW, outH, exportDpi } = input;
 
@@ -203,6 +243,7 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
   ctx.imageSmoothingQuality = 'high';
 
   for (const design of designs) {
+    const bitmap = await createImageBitmap(design.blob);
     const drawW = Math.max(1, Math.round(design.widthInches * design.s * exportDpi));
     const drawH = Math.max(1, Math.round(design.heightInches * design.s * exportDpi));
     const centerX = design.nx * outW;
@@ -213,7 +254,7 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
     ctx.translate(centerX, centerY);
     ctx.rotate((design.rotation * Math.PI) / 180);
     ctx.scale(design.flipX ? -1 : 1, design.flipY ? -1 : 1);
-    ctx.drawImage(design.bitmap, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.drawImage(bitmap, -drawW / 2, -drawH / 2, drawW, drawH);
     if (design.printFileName && design.name) {
       ctx.scale(design.flipX ? -1 : 1, design.flipY ? -1 : 1);
       const marginPx = 0.1 * exportDpi;
@@ -231,6 +272,9 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
     }
+
+    // Release bitmap immediately after drawing — don't hold all in memory.
+    bitmap.close();
   }
 
   const rawBlob = await canvas.convertToBlob({ type: 'image/png' });
@@ -262,7 +306,6 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
 
   canvas.width = 0;
   canvas.height = 0;
-  for (const d of designs) d.bitmap.close();
 
   return new Blob(parts, { type: 'image/png' });
 }
@@ -271,14 +314,13 @@ const hasStreaming = typeof CompressionStream !== 'undefined';
 
 self.onmessage = async function(e: MessageEvent) {
   if (e.data.type === 'export') {
-    const designs = e.data.designs as ExportInput['designs'] | undefined;
     try {
       const blob = hasStreaming
         ? await buildPngStreaming(e.data)
         : await runExportLegacy(e.data);
       self.postMessage({ type: 'result', requestId: e.data.requestId, blob });
     } catch (err: any) {
-      if (designs) for (const d of designs) { try { d.bitmap.close(); } catch {} }
+      // Blobs don't need explicit cleanup — just report the error.
       self.postMessage({ type: 'error', requestId: e.data.requestId, error: err?.message || 'Export failed' });
     }
   }
