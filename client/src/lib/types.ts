@@ -6,6 +6,16 @@ export interface ImageInfo {
   dpi: number;
   isPDF?: boolean;
   originalPdfData?: ArrayBuffer;
+  /**
+   * Optional full-resolution PNG blob captured at upload time.
+   *
+   * The in-memory `image` field is downsampled to `MAX_STORED_IMAGE_DIMENSION`
+   * so we don't hold multi-hundred-MP decoded rasters in RAM for every
+   * layer. Export needs the un-degraded pixels — this blob is that
+   * source. Decode on demand (`createImageBitmap` / `<img>.src=objectURL`)
+   * at print time and free right after.
+   */
+  exportBlob?: Blob;
 }
 
 export interface ResizeSettings {
@@ -60,6 +70,17 @@ export interface DesignItem {
   alphaThresholded?: boolean;
   halftoned?: boolean;
   printFileName?: boolean;
+  /**
+   * Optional group id. Designs sharing the same `groupId` are treated
+   * as a single "super-item" by auto-arrange (their internal layout is
+   * preserved and the whole cluster is packed as one bounding box).
+   *
+   * Reserved forward-compat field — the sticker-maker monolith does
+   * not yet consume it, but we accept it in the data model so imported
+   * / migrated designs from the Shopify build don't lose their
+   * grouping information on round-trip.
+   */
+  groupId?: string;
 }
 
 export function computeLayerRect(
