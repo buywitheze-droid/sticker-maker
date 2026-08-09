@@ -18,7 +18,7 @@ import { formatVariantPriceForDisplay } from "@/lib/variant-price";
 import { useWandTolerance, useToolActions } from "@/state/tool-store";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowUpLeft, ArrowUpRight, Copy,
-  Droplets, Eraser, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
+  Download, Droplets, Eraser, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
   SlidersHorizontal, Sparkles, Trash2, Ungroup, Unlink, WandSparkles, X, XCircle,
 } from "lucide-react";
 import { useImageEditorContext } from "./image-editor-context";
@@ -893,8 +893,11 @@ export default function ImageEditorView() {
       {/* Right area - Canvas workspace */}
       <div className={`min-w-0 flex flex-col ${mobileLayout ? "w-full flex-shrink-0" : "flex-1 h-full overflow-hidden"}`}>
         {/* The toolbar's own mobile/desktop arms have to match the layout it is
-            rendered into, so the bag's device-level `isMobile` is overridden. */}
-        {!mobileLayout && <EditorActionToolbar {...actionToolbarProps} isMobile={mobileLayout} />}
+            rendered into, so the bag's device-level `isMobile` is overridden.
+            On the phone layout the toolbar uses its compact mobile arm (Row 1:
+            Upload / Clean-Alpha / Undo-Redo-Delete / Auto-Arrange / Fill;
+            Row 2: size inputs + Duplicate). */}
+        <EditorActionToolbar {...actionToolbarProps} isMobile={mobileLayout} />
 
         {/* Preview Canvas */}
         {mobileLayout ? (
@@ -964,6 +967,23 @@ export default function ImageEditorView() {
                     `PreviewSection` owns the colour and portals the swatches
                     into this box. */}
                 <div ref={setBackdropSwatchHost} className="flex flex-shrink-0 items-center pl-1" />
+                {/* Compact download trigger at the top-right of the view bar,
+                    always reachable without scrolling to the bottom. Hidden in
+                    Shopify-embed mode where the bottom bar's Add-to-Cart is the
+                    primary action. */}
+                {!(initialVariantId || shopifyVariants?.length) && (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadGate()}
+                    disabled={isProcessing || (designs.length === 0 && !activeImageInfo)}
+                    className="ml-1 flex h-9 flex-shrink-0 items-center gap-1 whitespace-nowrap rounded border border-cyan-600 bg-gradient-to-r from-cyan-500 to-blue-500 px-2 text-[11px] font-bold text-white shadow-sm disabled:pointer-events-none disabled:opacity-40 coarse:h-11 coarse:px-3"
+                    title={t("controls.downloadGangsheet")}
+                    data-testid="mobile-download-btn"
+                  >
+                    <Download className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="max-[360px]:hidden">{t("controls.downloadGangsheet").split(" ")[0]}</span>
+                  </button>
+                )}
               </div>
 
               {/* Full-bleed canvas. The sheet below overlays it rather than
