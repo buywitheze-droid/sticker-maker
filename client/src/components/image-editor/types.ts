@@ -27,6 +27,22 @@ export interface InitialDesignState {
 }
 
 import type { ProfileConfig } from "@/lib/profiles";
+import type { DesignItem } from "@/lib/types";
+
+/**
+ * One gangsheet in the session. A customer can build several at once and
+ * download them together, so designs and sheet height belong to a sheet
+ * rather than to the editor.
+ */
+export interface SheetState {
+  id: string;
+  name: string;
+  designs: DesignItem[];
+  artboardHeight: number;
+}
+
+/** Sheets a customer can hold open at once. */
+export const MAX_SHEETS = 10;
 
 export interface ImageEditorProps {
   onDesignUploaded?: () => void;

@@ -254,6 +254,34 @@ function collapseCollinear(contour: Point[]): Point[] {
   return result.length >= 3 ? result : contour;
 }
 
+/** Scale a 1-bit mask to a new resolution, nearest-neighbour. */
+function scaleMask(src: Uint8Array, srcW: number, srcH: number, dstW: number, dstH: number): Uint8Array {
+  const dst = new Uint8Array(dstW * dstH);
+  for (let dy = 0; dy < dstH; dy++) {
+    const sy = Math.min(Math.floor((dy * srcH) / dstH), srcH - 1);
+    for (let dx = 0; dx < dstW; dx++) {
+      const sx = Math.min(Math.floor((dx * srcW) / dstW), srcW - 1);
+      dst[dy * dstW + dx] = src[sy * srcW + sx];
+    }
+  }
+  return dst;
+}
+
+/**
+ * Tints for channels that arrive as a ready-made mask.
+ *
+ * White is deliberately an empty tint: it must not show in a normal PDF viewer,
+ * because the artwork has to be visible through it. A RIP identifies the
+ * separation by its name (`RDG_WHITE`), never by these numbers.
+ */
+const PREMASK_TINTS: Record<string, [number, number, number, number]> = {
+  FY: [0, 0, 1, 0],
+  FM: [0, 1, 0, 0],
+  FG: [1, 0, 1, 0],
+  FO: [0, 0.5, 1, 0],
+  WHITE: [0, 0, 0, 0],
+};
+
 function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, pixelsPerInch: number): Point[][] {
   const rawPaths = marchingSquaresTrace(mask, width, height);
   return rawPaths.map(rawPath => {
@@ -265,18 +293,62 @@ function traceMaskToInchPaths(mask: Uint8Array, width: number, height: number, p
   }).filter(p => p.length >= 3);
 }
 
-self.onmessage = function(e: MessageEvent<WorkerMessage>) {
+/**
+ * Trace separations whose masks were built by the caller.
+ *
+ * The white underbase arrives this way: it is derived from the silhouette of
+ * the whole sheet rather than from any one design's colours, so there is
+ * nothing here to match against and only the outline is needed.
+ */
+interface WorkerMessagePremask {
+  type: 'trace_premask';
+  masks: Record<string, ArrayBuffer>;
+  maskWidth: number;
+  maskHeight: number;
+  widthInches: number;
+  heightInches: number;
+  dpi: number;
+  channelNames: Record<string, string>;
+}
+
+interface WorkerResponsePremask {
+  type: 'result';
+  regions: SpotColorRegionWorker[];
+}
+
+self.onmessage = function(e: MessageEvent<WorkerMessage | WorkerMessagePremask>) {
   try {
-    if (e.data.type !== 'trace') return;
-    const { imageBuffer, imageWidth, imageHeight, markedColors, spotColors, regionName, dpi } = e.data;
-    const pixelData = new Uint8ClampedArray(imageBuffer);
-    const mask = createClosestColorMask(pixelData, imageWidth, imageHeight, markedColors, spotColors, 80, 128);
-    const paths = traceMaskToInchPaths(mask, imageWidth, imageHeight, dpi);
-    const response: WorkerResponse = {
-      type: 'result',
-      region: paths.length > 0 ? { name: regionName, paths, tintCMYK: [0, 1, 0, 0] } : null,
-    };
-    self.postMessage(response);
+    if (e.data.type === 'trace') {
+      const { imageBuffer, imageWidth, imageHeight, markedColors, spotColors, regionName, dpi } = e.data;
+      const pixelData = new Uint8ClampedArray(imageBuffer);
+      const mask = createClosestColorMask(pixelData, imageWidth, imageHeight, markedColors, spotColors, 80, 128);
+      const paths = traceMaskToInchPaths(mask, imageWidth, imageHeight, dpi);
+      const response: WorkerResponse = {
+        type: 'result',
+        region: paths.length > 0 ? { name: regionName, paths, tintCMYK: [0, 1, 0, 0] } : null,
+      };
+      self.postMessage(response);
+      return;
+    }
+
+    if (e.data.type === 'trace_premask') {
+      const { masks, maskWidth, maskHeight, widthInches, heightInches, dpi, channelNames } = e.data;
+      const outW = Math.round(widthInches * dpi);
+      const outH = Math.round(heightInches * dpi);
+      const regions: SpotColorRegionWorker[] = [];
+      for (const [channel, maskBuffer] of Object.entries(masks)) {
+        const scaled = scaleMask(new Uint8Array(maskBuffer), maskWidth, maskHeight, outW, outH);
+        const paths = traceMaskToInchPaths(scaled, outW, outH, dpi);
+        if (paths.length === 0) continue;
+        regions.push({
+          name: channelNames[channel] || channel,
+          paths,
+          tintCMYK: PREMASK_TINTS[channel] ?? [0, 1, 0, 0],
+        });
+      }
+      const response: WorkerResponsePremask = { type: 'result', regions };
+      self.postMessage(response);
+    }
   } catch (err) {
     self.postMessage({ type: 'error', error: String(err) });
   }

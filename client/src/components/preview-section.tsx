@@ -3269,8 +3269,25 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
           : 0.5 - py / Math.max(1, dims.height);
         return { nx: Math.max(0.05, Math.min(0.95, nx)), ny: Math.max(0.05, Math.min(0.95, ny)) };
       };
+      // Per-sheet zoom memory. The editor saves the view on the way out of a
+      // sheet and puts it back on return, so switching between gangsheets does
+      // not silently reset where the customer was looking.
+      (canvas as any).fitToView = () => fitToView(true);
+      (canvas as any).getZoomState = () => ({
+        zoom: zoomRef.current,
+        panX: panXRef.current,
+        panY: panYRef.current,
+      });
+      (canvas as any).setZoomState = (z: number, px: number, py: number) => {
+        const clamped = Math.max(minZoomRef.current, Math.min(zoomMaxRef.current, z));
+        commitZoomNow(clamped);
+        panXRef.current = px;
+        panYRef.current = py;
+        setPanX(px);
+        setPanY(py);
+      };
       return canvas;
-    }, []);
+    }, [fitToView, commitZoomNow]);
 
     /**
      * Hand the parent the same action the Focus button performs — fit the view

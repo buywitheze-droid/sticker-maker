@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   useSelectedDesignId,
@@ -31,7 +31,7 @@ import { useAddToCartStall } from "./use-add-to-cart-stall";
 import { useRestoreDesignState } from "./use-restore-design-state";
 import type { ImageInfo, ResizeSettings, ImageTransform, DesignItem } from "@/lib/types";
 import { HOT_PEEL_PROFILE } from "@/lib/profiles";
-import type { ImageEditorProps } from "./types";
+import { MAX_SHEETS, type ImageEditorProps, type SheetState } from "./types";
 import {
   buildEditorDraft,
   computeDraftSignature,
@@ -174,7 +174,48 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [artboardWidth, setArtboardWidth] = useState(initialWidth ?? profile.artboardWidth);
-  const [artboardHeight, setArtboardHeight] = useState(initialHeight ?? profile.gangsheetHeights[0] ?? 12);
+
+  // ── Multi-sheet state ──────────────────────────────────────────────────────
+  // A session can hold several gangsheets, so `designs` and `artboardHeight`
+  // are derived views onto whichever sheet is active rather than state in
+  // their own right. Every existing reader keeps working untouched, and the
+  // setters below route writes to the active sheet.
+  const [sheetInit] = useState(() => {
+    const id = crypto.randomUUID();
+    return {
+      id,
+      sheet: {
+        id,
+        name: "Sheet 1",
+        designs: [] as DesignItem[],
+        artboardHeight: initialHeight ?? profile.gangsheetHeights[0] ?? 12,
+      } as SheetState,
+    };
+  });
+  const [sheets, setSheets] = useState<SheetState[]>([sheetInit.sheet]);
+  const [activeSheetId, setActiveSheetId] = useState<string>(sheetInit.id);
+  const activeSheetIndex = Math.max(0, sheets.findIndex((s) => s.id === activeSheetId));
+  const activeSheet = sheets[activeSheetIndex];
+  // Read by the setters so they can carry empty dep arrays and stay stable.
+  const activeSheetIdRef = useRef(activeSheetId);
+  activeSheetIdRef.current = activeSheetId;
+  const sheetsRef = useRef(sheets);
+  sheetsRef.current = sheets;
+  // Zoom/pan is saved on the way out of a sheet and restored on return, so
+  // switching sheets does not reset the customer's view of each one.
+  const sheetZoomStates = useRef<Map<string, { zoom: number; panX: number; panY: number }>>(new Map());
+
+  const artboardHeight = activeSheet.artboardHeight;
+  const setArtboardHeight: Dispatch<SetStateAction<number>> = useCallback((updater) => {
+    const id = activeSheetIdRef.current;
+    setSheets((prev) =>
+      prev.map((s) =>
+        s.id !== id
+          ? s
+          : { ...s, artboardHeight: typeof updater === "function" ? updater(s.artboardHeight) : updater },
+      ),
+    );
+  }, []);
   const artboardWidthRef = useRef(artboardWidth);
   artboardWidthRef.current = artboardWidth;
   const artboardHeightRef = useRef(artboardHeight);
@@ -233,6 +274,16 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   }, [initialQuantity]);
 
   const [designGap, setDesignGap] = useState<number | undefined>(0.25);
+  /**
+   * Lay a white underbase under the artwork in the fluorescent PDF.
+   *
+   * Fluorescent inks are transparent, so on anything but white garment they
+   * read as muddy without a white layer beneath them. The choke pulls that
+   * layer in from the artwork edge, because a underbase even slightly wider
+   * than the ink prints as a white halo.
+   */
+  const [whiteUnderbase, setWhiteUnderbase] = useState(false);
+  const [underbaseChokeIn, setUnderbaseChokeIn] = useState(0.01);
   const [duplicateCount, setDuplicateCount] = useState(1);
   const clampDuplicateCount = useCallback((value: number) => Math.max(1, Math.min(99, value)), []);
   const parseDuplicateCount = useCallback((raw: string) => clampDuplicateCount(parseInt(raw, 10) || 1), [clampDuplicateCount]);
@@ -253,7 +304,37 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   const designTransform = useDesignTransform();
   const { setDesignTransform, setActive: setActiveTransformInStore } =
     useTransformActions();
-  const [designs, setDesigns] = useState<DesignItem[]>([]);
+  const designs: DesignItem[] = activeSheet.designs;
+  const setDesigns: Dispatch<SetStateAction<DesignItem[]>> = useCallback((updater) => {
+    const id = activeSheetIdRef.current;
+    setSheets((prev) =>
+      prev.map((s) =>
+        s.id !== id ? s : { ...s, designs: typeof updater === "function" ? updater(s.designs) : updater },
+      ),
+    );
+  }, []);
+  /**
+   * Every design in the session, across all gangsheets.
+   *
+   * The draft has to persist sheets the customer is not currently looking at,
+   * and the blob store is keyed per design, so the save path works from this
+   * rather than from the active sheet's `designs`. Short-circuited for the
+   * common single-sheet case so the usual session pays nothing for it.
+   */
+  const allSheetDesigns = useMemo(
+    () => (sheets.length === 1 ? sheets[0].designs : sheets.flatMap((s) => s.designs)),
+    [sheets],
+  );
+  /** Which design sits on which sheet, as persisted alongside the flat list above. */
+  const draftSheetIndex = useMemo(
+    () => sheets.map((s) => ({
+      id: s.id,
+      name: s.name,
+      artboardHeight: s.artboardHeight,
+      designIds: s.designs.map((d) => d.id),
+    })),
+    [sheets],
+  );
   const [draftRecoveryAvailable, setDraftRecoveryAvailable] = useState(false);
   const [isRecoveringDraft, setIsRecoveringDraft] = useState(false);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -319,6 +400,9 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
     designGap: number | undefined;
     selectedDesignId: string | null;
     selectedDesignIds: Set<string>;
+    /** Which of `designs` sits on which gangsheet. */
+    sheets: Array<{ id: string; name: string; artboardHeight: number; designIds: string[] }>;
+    activeSheetId: string;
     /**
      * `true` while we should refuse to save — recovery banner is showing,
      * a recovery restore is in progress, a heavy processing job (e.g.
@@ -381,7 +465,20 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   const copySpotSelectionsRef = useRef<((fromId: string, toIds: string[]) => void) | null>(null);
 
   // Undo/Redo history
-  const { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo } = useHistory();
+  const {
+    pushSnapshot,
+    undo,
+    redo,
+    clearIsUndoRedo,
+    canUndo: canUndoOnSheet,
+    canRedo: canRedoOnSheet,
+    deleteSheetHistory,
+  } = useHistory();
+  // History is per sheet, so the toolbar has to ask about the active one.
+  // These depend on the id rather than reading the ref so the memoized
+  // toolbar re-evaluates when the customer switches sheets.
+  const canUndo = useCallback(() => canUndoOnSheet(activeSheetId), [canUndoOnSheet, activeSheetId]);
+  const canRedo = useCallback(() => canRedoOnSheet(activeSheetId), [canRedoOnSheet, activeSheetId]);
   const mountedRef = useRef(true);
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const designsRef = useRef(designs);
@@ -684,10 +781,21 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       manualHeightFloorRef.current = restored.manualHeightFloor;
       setQuantity(restored.quantity);
       setDesignGap(restored.designGap);
-      setDesigns(restored.designs);
+      // Replaces the sheet list wholesale rather than going through `setDesigns`,
+      // which would only refill the sheet that happens to be active and drop the
+      // rest of the customer's session on the floor.
+      setSheets(restored.sheets);
+      setActiveSheetId(restored.activeSheetId);
       setSelectedDesignId(restored.selectedDesignId);
       setSelectedDesignIds(restored.selectedDesignIds);
-      const selected = restored.designs.find(design => design.id === restored.selectedDesignId);
+      // Resolved against the sheet being restored onto rather than the whole
+      // session, so a selection that points at another sheet's design cannot
+      // put that artwork in the editor while a different sheet is on screen.
+      const activeRestoredSheet =
+        restored.sheets.find(sheet => sheet.id === restored.activeSheetId) ?? restored.sheets[0];
+      const selected =
+        activeRestoredSheet.designs.find(design => design.id === restored.selectedDesignId) ??
+        activeRestoredSheet.designs[0];
       setImageInfo(selected?.imageInfo ?? null);
       setDesignTransform(selected?.transform ?? DEFAULT_DESIGN_TRANSFORM);
       // Force the next save-effect to write, since the debounced-save signature
@@ -731,8 +839,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   // some *committed* render had designs on screen. On the render where designs first appear the
   // length check short-circuits, so the gate does not need the flag yet.
   useEffect(() => {
-    if (designs.length > 0) sessionHadDesignsRef.current = true;
-  }, [designs.length]);
+    if (allSheetDesigns.length > 0) sessionHadDesignsRef.current = true;
+  }, [allSheetDesigns.length]);
   // One expression for both save paths — the debounced effect and the
   // imperative unload flush. They previously each spelled the gate out, and
   // an empty sheet reached neither of them.
@@ -741,7 +849,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
     draftRecoveryAvailable ||
     isRecoveringDraft ||
     isProcessing ||
-    (designs.length === 0 && !sessionHadDesignsRef.current);
+    (allSheetDesigns.length === 0 && !sessionHadDesignsRef.current);
 
   // Refresh the imperative save-inputs snapshot every render. Cheap: one
   // object allocation of primitive/reference fields. `flushDraftSaveNow`
@@ -751,7 +859,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   // race where the listener detaches mid-hide).
   latestDraftInputsRef.current = {
     profileId: profile.id,
-    designs,
+    designs: allSheetDesigns,
     artboardWidth,
     artboardHeight,
     manualHeightFloor: manualHeightFloorRef.current,
@@ -759,6 +867,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
     designGap,
     selectedDesignId,
     selectedDesignIds,
+    sheets: draftSheetIndex,
+    activeSheetId,
     saveGated: draftSaveGated,
   };
 
@@ -852,6 +962,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       inputs.designGap,
       inputs.selectedDesignId,
       inputs.selectedDesignIds,
+      inputs.sheets,
     );
     if (signature === lastDraftSignatureRef.current) return;
     const { draft, files } = buildEditorDraft(
@@ -864,6 +975,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       inputs.designGap,
       inputs.selectedDesignId,
       inputs.selectedDesignIds,
+      inputs.sheets,
+      inputs.activeSheetId,
     );
     lastDraftSignatureRef.current = signature;
     const attemptedDesigns = inputs.designs;
@@ -983,7 +1096,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       // on) still reach disk.
       const signature = computeDraftSignature(
         profile.id,
-        designs,
+        allSheetDesigns,
         artboardWidth,
         artboardHeight,
         manualHeightFloorRef.current,
@@ -991,6 +1104,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         designGap,
         selectedDesignId,
         selectedDesignIds,
+        draftSheetIndex,
       );
       if (signature === lastDraftSignatureRef.current) return;
 
@@ -1007,10 +1121,10 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         // Checked here rather than in `draftSaveGated` because the gate is a
         // render-time value and the pause lives in a ref: this is the last point
         // before the expensive part, and skipping it is the whole saving.
-        if (draftSaveBlockedByQuota(designs)) return;
+        if (draftSaveBlockedByQuota(allSheetDesigns)) return;
         const { draft, files } = buildEditorDraft(
           profile.id,
-          designs,
+          allSheetDesigns,
           artboardWidth,
           artboardHeight,
           manualHeightFloorRef.current,
@@ -1018,6 +1132,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
           designGap,
           selectedDesignId,
           selectedDesignIds,
+          draftSheetIndex,
+          activeSheetId,
         );
         // Optimistically mark the signature as saved. If the write fails we
         // reset it so the next state change retries. Blobs already on disk are
@@ -1025,7 +1141,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         // handed over on every save.
         lastDraftSignatureRef.current = signature;
         void saveCurrentEditorDraft(draft, files).catch(error => {
-          draftSaveFailureRef.current(error, designs, "debounced");
+          draftSaveFailureRef.current(error, allSheetDesigns, "debounced");
         });
       }, { timeout: DRAFT_SAVE_IDLE_TIMEOUT_MS }) as number;
     }, 750);
@@ -1036,10 +1152,12 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       }
     };
   }, [
+    activeSheetId,
+    allSheetDesigns,
     artboardHeight,
     artboardWidth,
     designGap,
-    designs,
+    draftSheetIndex,
     draftSaveBlockedByQuota,
     draftSaveGated,
     draftRecoveryAvailable,
@@ -1137,6 +1255,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
           inputs.designGap,
           inputs.selectedDesignId,
           inputs.selectedDesignIds,
+          inputs.sheets,
         );
       }
       // Stamped, not deleted. `done` is the shell telling us the cart request
@@ -1209,7 +1328,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   }, [selectedDesignId]);
 
   const saveSnapshot = useCallback(() => {
-    pushSnapshot(getSnapshot());
+    pushSnapshot(getSnapshot(), activeSheetIdRef.current);
   }, [pushSnapshot, getSnapshot]);
 
   const applySnapshot = useCallback((snap: HistorySnapshot) => {
@@ -1287,14 +1406,150 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
   }, [clearIsUndoRedo]);
 
   const handleUndo = useCallback(() => {
-    const snap = undo(getSnapshot());
+    const snap = undo(getSnapshot(), activeSheetIdRef.current);
     if (snap) applySnapshot(snap);
   }, [undo, getSnapshot, applySnapshot]);
 
   const handleRedo = useCallback(() => {
-    const snap = redo(getSnapshot());
+    const snap = redo(getSnapshot(), activeSheetIdRef.current);
     if (snap) applySnapshot(snap);
   }, [redo, getSnapshot, applySnapshot]);
+
+  // ── Sheet operations ───────────────────────────────────────────────────────
+
+  /**
+   * Switch to another gangsheet.
+   *
+   * Selects the target's first design rather than clearing selection, because
+   * the editor is gated on there being an active image: clearing it collapses
+   * the whole editor back to the upload view mid-navigation.
+   */
+  const navigateToSheet = useCallback((targetSheetId: string) => {
+    if (targetSheetId === activeSheetIdRef.current) return;
+
+    const currentCanvas = canvasRef.current as any;
+    if (currentCanvas?.getZoomState) {
+      sheetZoomStates.current.set(activeSheetIdRef.current, currentCanvas.getZoomState());
+    }
+
+    const targetSheet = sheetsRef.current.find((s) => s.id === targetSheetId);
+    const firstDesign = targetSheet?.designs[0] ?? null;
+    setActiveSheetId(targetSheetId);
+    // Moved now rather than at the next render, because `setDesigns` routes
+    // through this ref: anything that writes designs between here and that
+    // render would otherwise land on the sheet we just left.
+    activeSheetIdRef.current = targetSheetId;
+    setSelectedDesignId(firstDesign?.id ?? null);
+    setImageInfo(firstDesign?.imageInfo ?? null);
+    setDesignTransform(firstDesign?.transform ?? DEFAULT_DESIGN_TRANSFORM);
+    setSelectedDesignIds(new Set());
+    uiActions.setContextMenu(null);
+
+    const savedZoom = sheetZoomStates.current.get(targetSheetId);
+    requestAnimationFrame(() => {
+      const c = canvasRef.current as any;
+      if (!c) return;
+      if (savedZoom) c.setZoomState?.(savedZoom.zoom, savedZoom.panX, savedZoom.panY);
+      else c.fitToView?.();
+    });
+  }, [setSelectedDesignId, setSelectedDesignIds, setImageInfo, setDesignTransform, uiActions]);
+
+  /**
+   * Both sheet mutations below read `sheetsRef` and hand `setSheets` a finished
+   * array rather than an updater function, and they write the new array back to
+   * the ref immediately.
+   *
+   * Neither detail is incidental. Minting ids and navigating from inside an
+   * updater made the whole thing impure, and React calling the updater twice in
+   * development produced two different sheet ids, only one of which was ever
+   * committed — so the editor navigated to a sheet that did not exist and
+   * silently snapped back to the first one. Refreshing the ref by hand is what
+   * lets `navigateToSheet` find the sheet it was just asked to open, in the same
+   * tick, without waiting for a render.
+   */
+  const addSheet = useCallback((mode: "blank" | "copy-layout" | "copy-layers" = "blank") => {
+    const prevSheets = sheetsRef.current;
+    if (prevSheets.length >= MAX_SHEETS) {
+      toast({
+        title: t("sheets.maxReached"),
+        description: t("sheets.maxReachedDesc", { n: MAX_SHEETS }),
+        variant: "destructive",
+      });
+      return;
+    }
+    const srcSheet = prevSheets.find((s) => s.id === activeSheetIdRef.current) ?? prevSheets[0];
+    let newDesigns: DesignItem[] = [];
+    if (mode === "copy-layout") {
+      newDesigns = srcSheet.designs.map((d) => ({ ...d, id: crypto.randomUUID() }));
+    } else if (mode === "copy-layers") {
+      // One representative per unique image, re-centred so the arrange below
+      // lays them out rather than inheriting the source sheet's positions.
+      const seen = new Set<string>();
+      newDesigns = srcSheet.designs
+        .filter((d) => {
+          const key = d.imageInfo.image.src;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((d) => ({ ...d, id: crypto.randomUUID(), transform: { ...d.transform, nx: 0.5, ny: 0.5 } }));
+    }
+    const newSheet: SheetState = {
+      id: crypto.randomUUID(),
+      name: `Sheet ${prevSheets.length + 1}`,
+      designs: newDesigns,
+      artboardHeight: srcSheet.artboardHeight,
+    };
+    const nextSheets = [...prevSheets, newSheet];
+    sheetsRef.current = nextSheets;
+    setSheets(nextSheets);
+    navigateToSheet(newSheet.id);
+    if (mode === "copy-layers" && newDesigns.length >= 2) {
+      requestAnimationFrame(() => handleAutoArrangeRef.current({ skipSnapshot: true }));
+    }
+  }, [navigateToSheet, toast, t]);
+
+  const deleteSheet = useCallback((sheetId: string) => {
+    const prevSheets = sheetsRef.current;
+    if (prevSheets.length <= 1) {
+      toast({
+        title: t("sheets.cannotDelete"),
+        description: t("sheets.cannotDeleteDesc"),
+        variant: "destructive",
+      });
+      return;
+    }
+    const idx = prevSheets.findIndex((s) => s.id === sheetId);
+    const nextSheets = prevSheets.filter((s) => s.id !== sheetId);
+    sheetsRef.current = nextSheets;
+    setSheets(nextSheets);
+    deleteSheetHistory(sheetId);
+    sheetZoomStates.current.delete(sheetId);
+    if (sheetId === activeSheetIdRef.current) {
+      const newActive = nextSheets[Math.min(idx, nextSheets.length - 1)];
+      if (newActive) navigateToSheet(newActive.id);
+    }
+  }, [navigateToSheet, deleteSheetHistory, toast, t]);
+
+  const renameSheet = useCallback((sheetId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSheets((prev) => prev.map((s) => (s.id === sheetId ? { ...s, name: trimmed } : s)));
+  }, []);
+
+  /** Copy a design from any sheet onto the active one — the "Add here" action. */
+  const addDesignToActiveSheet = useCallback((sourceDesign: DesignItem) => {
+    const newDesign: DesignItem = {
+      ...sourceDesign,
+      id: crypto.randomUUID(),
+      name: sourceDesign.name.replace(/ copy( \d+)?$/, ""),
+      transform: { ...sourceDesign.transform, nx: 0.5, ny: 0.5 },
+      printFileName: false,
+    };
+    setDesigns((prev) => [...prev, newDesign]);
+    setSelectedDesignId(newDesign.id);
+    setImageInfo(newDesign.imageInfo);
+  }, [setDesigns, setSelectedDesignId, setImageInfo]);
 
   // Called when a drag/resize/rotate interaction ends on the canvas
   const handleInteractionEnd = useCallback(() => {
@@ -2428,5 +2683,5 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
 
 
   // Base editor state; arrange/upload/export/cart hooks extend this bag in image-editor-provider.
-  return { onDesignUploaded, profile, initialWidth, initialHeight, initialGangsheetHeights, initialQuantity, shopifyVariants, initialVariantId, shopDomain, embedFromShopify, initialDesignState, initialDesignId, isEditMode, toast, t, lang, isMobile, isLgUp, imageInfo, setImageInfo, resizeSettings, setResizeSettings, isProcessing, setIsProcessing, isAddingToCart, setIsAddingToCart, isUpdateFlow, setIsUpdateFlow, addToCartProgressLabel, setAddToCartProgressLabel, exportProgressLabel, setExportProgressLabel, addToCartInFlightRef, addToCartStallTimeoutRef, lastAddToCartPngBytesRef, shellUploadUrlRef, refreshAddToCartStallTimeout, isUploading, setIsUploading, uploadProgress, setUploadProgress, artboardWidth, setArtboardWidth, artboardHeight, setArtboardHeight, artboardWidthRef, artboardHeightRef, contentFillCacheRef, handleAutoArrangeRef, shrinkSheetToFitRef, manualHeightFloorRef, clearManualHeightFloor, quantity, setQuantity, designGap, setDesignGap, duplicateCount, setDuplicateCount, clampDuplicateCount, parseDuplicateCount, handleDuplicateCountKeyDown, designTransform, setDesignTransform, designs, setDesigns, selectedDesignId, setSelectedDesignId, selectedDesignIds, setSelectedDesignIds, clipboardRef, proportionalLock, setProportionalLock, designInfoRef, sidebarFileRef, headerUploadInputRef, canvasRef, downloadContainer, setDownloadContainer, fluorPanelContainer, setFluorPanelContainer, mobileToolbarContainer, setMobileToolbarContainer, copySpotSelectionsRef, pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo, mountedRef, designsRef, nudgeSnapshotSavedRef, nudgeTimeoutRef, thumbnailCacheRef, assetDataUrlCacheRef, restoredLayerAssetRef, multiDragAccumRef, multiResizeStartRef, multiRotateStartRef, snapshotCacheRef, getSnapshot, saveSnapshot, applySnapshot, handleUndo, handleRedo, handleInteractionEnd, handleRemoveWhiteBackground, handleWandDelete, selectedDesign, activeImageInfo, activeDesignTransform, activeWidthInches, activeHeightInches, activeResizeSettings, selectedVariantPrice, effectiveDPI, layerRows, draftRecoveryAvailable, isRecoveringDraft, recoverEditorDraft, discardEditorDraft, rehydrateDesignImage, ensureDesignImagesAvailable, handleSelectDesign, handleMultiSelect, handleGroupSelected, handleUngroupSelected, selectedHasGroup, getLayerThumbnail, handleDesignTransformChange, handleMultiDragDelta, handleMultiResizeDelta, handleMultiRotateDelta, handleEffectiveSizeChange, isArtboardFull, handleDuplicateDesign, handleDuplicateAndArrange, handleDuplicateSelected, handleDuplicateById, handleRemoveOneCopy, handleCopySelected, handlePaste, handleDeleteGroup, handleDeleteDesign, handleDeleteMulti, handleRotate90, handleFlipX, handleFlipY, handleCanvasContextMenu };
+  return { onDesignUploaded, profile, initialWidth, initialHeight, initialGangsheetHeights, initialQuantity, shopifyVariants, initialVariantId, shopDomain, embedFromShopify, initialDesignState, initialDesignId, isEditMode, toast, t, lang, isMobile, isLgUp, imageInfo, setImageInfo, resizeSettings, setResizeSettings, isProcessing, setIsProcessing, isAddingToCart, setIsAddingToCart, isUpdateFlow, setIsUpdateFlow, addToCartProgressLabel, setAddToCartProgressLabel, exportProgressLabel, setExportProgressLabel, addToCartInFlightRef, addToCartStallTimeoutRef, lastAddToCartPngBytesRef, shellUploadUrlRef, refreshAddToCartStallTimeout, isUploading, setIsUploading, uploadProgress, setUploadProgress, artboardWidth, setArtboardWidth, artboardHeight, setArtboardHeight, artboardWidthRef, artboardHeightRef, sheets, setSheets, activeSheetId, activeSheet, activeSheetIndex, sheetsRef, activeSheetIdRef, sheetZoomStates, navigateToSheet, addSheet, deleteSheet, renameSheet, addDesignToActiveSheet, contentFillCacheRef, handleAutoArrangeRef, shrinkSheetToFitRef, manualHeightFloorRef, clearManualHeightFloor, quantity, setQuantity, designGap, setDesignGap, whiteUnderbase, setWhiteUnderbase, underbaseChokeIn, setUnderbaseChokeIn, duplicateCount, setDuplicateCount, clampDuplicateCount, parseDuplicateCount, handleDuplicateCountKeyDown, designTransform, setDesignTransform, designs, setDesigns, selectedDesignId, setSelectedDesignId, selectedDesignIds, setSelectedDesignIds, clipboardRef, proportionalLock, setProportionalLock, designInfoRef, sidebarFileRef, headerUploadInputRef, canvasRef, downloadContainer, setDownloadContainer, fluorPanelContainer, setFluorPanelContainer, mobileToolbarContainer, setMobileToolbarContainer, copySpotSelectionsRef, pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo, mountedRef, designsRef, nudgeSnapshotSavedRef, nudgeTimeoutRef, thumbnailCacheRef, assetDataUrlCacheRef, restoredLayerAssetRef, multiDragAccumRef, multiResizeStartRef, multiRotateStartRef, snapshotCacheRef, getSnapshot, saveSnapshot, applySnapshot, handleUndo, handleRedo, handleInteractionEnd, handleRemoveWhiteBackground, handleWandDelete, selectedDesign, activeImageInfo, activeDesignTransform, activeWidthInches, activeHeightInches, activeResizeSettings, selectedVariantPrice, effectiveDPI, layerRows, draftRecoveryAvailable, isRecoveringDraft, recoverEditorDraft, discardEditorDraft, rehydrateDesignImage, ensureDesignImagesAvailable, handleSelectDesign, handleMultiSelect, handleGroupSelected, handleUngroupSelected, selectedHasGroup, getLayerThumbnail, handleDesignTransformChange, handleMultiDragDelta, handleMultiResizeDelta, handleMultiRotateDelta, handleEffectiveSizeChange, isArtboardFull, handleDuplicateDesign, handleDuplicateAndArrange, handleDuplicateSelected, handleDuplicateById, handleRemoveOneCopy, handleCopySelected, handlePaste, handleDeleteGroup, handleDeleteDesign, handleDeleteMulti, handleRotate90, handleFlipX, handleFlipY, handleCanvasContextMenu };
 }

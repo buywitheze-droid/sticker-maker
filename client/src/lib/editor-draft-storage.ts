@@ -203,7 +203,30 @@ export interface EditorDraft {
   designGap: number | null;
   selectedDesignId: string | null;
   selectedDesignIds: string[];
+  /**
+   * Every design in the session, across all gangsheets — `sheets` below says
+   * which belongs where. Kept flat because the blob store is keyed per design,
+   * so nesting artwork under sheets would buy nothing and complicate the
+   * reconciliation pass that collects orphaned files.
+   */
   designs: StoredDraftDesign[];
+  /**
+   * The gangsheets, as an index into `designs`.
+   *
+   * Optional, and absent on a record written before the editor had more than
+   * one sheet: those restore as a single sheet holding every design, which is
+   * exactly what they were.
+   */
+  sheets?: StoredDraftSheet[];
+  /** Which sheet was on screen. Ignored if it names a sheet that is not present. */
+  activeSheetId?: string;
+}
+
+export interface StoredDraftSheet {
+  id: string;
+  name: string;
+  artboardHeight: number;
+  designIds: string[];
 }
 
 export interface DraftFileRecord {
@@ -907,6 +930,12 @@ export function computeDraftSignature(
   designGap: number | undefined,
   selectedDesignId: string | null,
   selectedDesignIds: Set<string>,
+  /**
+   * Included so renaming a sheet, reordering them, or editing one the customer
+   * is not looking at still counts as a change worth saving. Without it those
+   * edits leave every design identical and the save is skipped.
+   */
+  sheets?: StoredDraftSheet[],
 ): string {
   const parts: string[] = [
     profileId,
@@ -922,6 +951,11 @@ export function computeDraftSignature(
     selectedDesignId ?? "",
     Array.from(selectedDesignIds).sort().join(","),
   ];
+  if (sheets) {
+    for (const sheet of sheets) {
+      parts.push(`sheet:${sheet.id}:${sheet.name}:${sheet.artboardHeight}:${sheet.designIds.join("+")}`);
+    }
+  }
   for (const design of designs) {
     const info = design.imageInfo;
     const t = design.transform;
@@ -983,6 +1017,9 @@ export function buildEditorDraft(
   designGap: number | undefined,
   selectedDesignId: string | null,
   selectedDesignIds: Set<string>,
+  /** Which of `designs` sits on which gangsheet. Omitted by single-sheet callers. */
+  sheets?: StoredDraftSheet[],
+  activeSheetId?: string,
 ): { draft: EditorDraft; files: DraftFileRecord[] } {
   const files: DraftFileRecord[] = [];
   const storedDesigns = designs.map((design): StoredDraftDesign => {
@@ -1093,6 +1130,8 @@ export function buildEditorDraft(
       selectedDesignId,
       selectedDesignIds: Array.from(selectedDesignIds),
       designs: storedDesigns,
+      sheets,
+      activeSheetId,
     },
     files,
   };
@@ -1189,6 +1228,9 @@ function restoredManualHeightFloor(stored: EditorDraft["manualHeightFloor"]): nu
 
 export async function restoreEditorDraft(draft: EditorDraft): Promise<{
   designs: DesignItem[];
+  /** Every gangsheet in the saved session, rebuilt from `designs`. Never empty. */
+  sheets: RestoredSheet[];
+  activeSheetId: string;
   selectedDesignId: string | null;
   selectedDesignIds: Set<string>;
   artboardWidth: number;
@@ -1251,6 +1293,7 @@ export async function restoreEditorDraft(draft: EditorDraft): Promise<{
 
   return {
     designs: restoredDesigns,
+    ...restoredSheets(draft, restoredDesigns),
     selectedDesignId,
     selectedDesignIds,
     artboardWidth: draft.artboardWidth,
@@ -1261,4 +1304,60 @@ export async function restoreEditorDraft(draft: EditorDraft): Promise<{
     missingDesignCount: draft.designs.length - restoredDesigns.length,
     reducedQualityDesignCount,
   };
+}
+
+/**
+ * Rebuild the gangsheets from the flat design list and the stored index.
+ *
+ * Designs whose sheet is missing from the index — or that were saved before the
+ * index existed — land on the first sheet rather than being dropped, because
+ * losing a customer's artwork to a bookkeeping gap is far worse than putting it
+ * on the wrong sheet, which they can see and fix.
+ */
+function restoredSheets(
+  draft: EditorDraft,
+  restoredDesigns: DesignItem[],
+): { sheets: RestoredSheet[]; activeSheetId: string } {
+  const byId = new Map(restoredDesigns.map(design => [design.id, design]));
+  const stored = draft.sheets?.filter(sheet => sheet && typeof sheet.id === "string") ?? [];
+
+  if (stored.length === 0) {
+    const id = crypto.randomUUID();
+    return {
+      sheets: [{ id, name: "Sheet 1", artboardHeight: draft.artboardHeight, designs: restoredDesigns }],
+      activeSheetId: id,
+    };
+  }
+
+  const claimed = new Set<string>();
+  const sheets: RestoredSheet[] = stored.map((sheet, index) => {
+    const designs: DesignItem[] = [];
+    for (const designId of sheet.designIds ?? []) {
+      const design = byId.get(designId);
+      if (!design || claimed.has(designId)) continue;
+      claimed.add(designId);
+      designs.push(design);
+    }
+    return {
+      id: sheet.id,
+      name: sheet.name || `Sheet ${index + 1}`,
+      artboardHeight: isPositiveFinite(sheet.artboardHeight) ? sheet.artboardHeight : draft.artboardHeight,
+      designs,
+    };
+  });
+
+  const orphans = restoredDesigns.filter(design => !claimed.has(design.id));
+  if (orphans.length > 0) sheets[0].designs.push(...orphans);
+
+  const active = draft.activeSheetId && sheets.some(s => s.id === draft.activeSheetId)
+    ? draft.activeSheetId
+    : sheets[0].id;
+  return { sheets, activeSheetId: active };
+}
+
+export interface RestoredSheet {
+  id: string;
+  name: string;
+  artboardHeight: number;
+  designs: DesignItem[];
 }

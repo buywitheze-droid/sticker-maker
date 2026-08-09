@@ -11,7 +11,17 @@ import {
 import type { ImageEditorBagAfterUploadCrop } from "./image-editor-hook-bag.types";
 import { thresholdImageInfo } from "./useImageEditorModelHalftone";
 import { isRecoverableImageInfo } from "@/lib/editor-draft-storage";
-import { createVectorPrintSourceResolver, materialShortfalls } from "@/lib/vector-print-source";
+import {
+  createVectorPrintSourceResolver,
+  materialShortfalls,
+  type VectorPrintSourceShortfall,
+} from "@/lib/vector-print-source";
+import type { DesignItem } from "@/lib/types";
+
+/** Sheet names are customer-typed, so they cannot be trusted as filenames. */
+function safeSheetFileName(name: string): string {
+  return name.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "sheet";
+}
 
 export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
   // Only the bag fields handleDownload actually uses are destructured here;
@@ -40,15 +50,33 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
   const exportLiveRef = useRef({ imageInfo, designs, artboardWidth, artboardHeight });
   exportLiveRef.current = { imageInfo, designs, artboardWidth, artboardHeight };
 
-  const handleDownload = useCallback(async (downloadType: string = 'standard', format: string = 'png', spotColorsByDesign?: Record<string, any[]>) => {
-    const { imageInfo, designs, artboardWidth, artboardHeight } = exportLiveRef.current;
-    if (designs.length === 0) {
-      toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
-      return;
-    }
+  /** Every sheet, read at the moment of export, for the same reason as above. */
+  const exportSheetsRef = useRef({ sheets: bag.sheets, activeSheetId: bag.activeSheetId, artboardWidth });
+  exportSheetsRef.current = { sheets: bag.sheets, activeSheetId: bag.activeSheetId, artboardWidth };
 
-    setIsProcessing(true);
+  /** White underbase settings, likewise read at export time rather than depended on. */
+  const underbaseRef = useRef({ enabled: bag.whiteUnderbase, choke: bag.underbaseChokeIn });
+  underbaseRef.current = { enabled: bag.whiteUnderbase, choke: bag.underbaseChokeIn };
 
+  /**
+   * Render one gangsheet to a print file and hand back the bytes.
+   *
+   * The sheet is passed in rather than read from the live editor, so the
+   * all-sheets export can render sheets the customer is not currently looking
+   * at. Returning the blob instead of saving it is what lets one caller
+   * download a single sheet and another fold several into a ZIP.
+   */
+  const exportSheetBlob = useCallback(async (opts: {
+    designs: DesignItem[];
+    artboardWidth: number;
+    artboardHeight: number;
+    format: string;
+    spotColorsByDesign?: Record<string, any[]>;
+    /** Suppresses advisories that would otherwise repeat once per sheet in a batch. */
+    quiet?: boolean;
+  }): Promise<{ blob: Blob; baseName: string; extension: string; softDesigns: VectorPrintSourceShortfall[] }> => {
+    const { imageInfo } = exportLiveRef.current;
+    const { designs, artboardWidth, artboardHeight, format, spotColorsByDesign, quiet = false } = opts;
     try {
       const exportDesigns = await ensureDesignImagesAvailable(designs);
       if (exportDesigns.some(design => !isRecoverableImageInfo(design.imageInfo))) {
@@ -197,22 +225,62 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           decoded?.close();
         }
 
+        // ── White underbase (RDG_WHITE) ─────────────────────────────────────
+        // Added after every design is on the page, because it is built from
+        // the silhouette of the finished sheet rather than any one design.
+        // Failure here costs the sheet its underbase, never its export: the
+        // PDF is already complete and printable at this point.
+        const underbase = underbaseRef.current;
+        if (underbase.enabled) {
+          try {
+            const { buildWhiteUnderbaseMask } = await import('@/lib/white-underbase');
+            const built = buildWhiteUnderbaseMask(
+              exportDesigns.map(d => ({
+                imageInfo: d.imageInfo,
+                widthInches: d.widthInches,
+                heightInches: d.heightInches,
+                transform: d.transform,
+              })),
+              artboardWidth,
+              artboardHeight,
+              { enabled: true, choke: underbase.choke },
+            );
+            if (built) {
+              const { addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
+              await addSpotColorVectorsFromMasksToPDF(
+                pdfDoc,
+                page,
+                { WHITE: built.mask },
+                built.width,
+                built.height,
+                { WHITE: 'RDG_WHITE' },
+                // The mask spans the sheet, so it is placed at the origin with
+                // no rotation and the page's own dimensions.
+                artboardWidth,
+                artboardHeight,
+                artboardHeight,
+                0,
+                0,
+                0,
+              );
+            }
+          } catch (err) {
+            console.warn('[WhiteUnderbase] could not add the RDG_WHITE layer:', err);
+          }
+        }
+
         const pdfBytes = await pdfDoc.save();
         const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(pdfBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${firstName}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        return {
+          blob: pdfBlob,
+          baseName: firstName,
+          extension: 'pdf',
+          softDesigns: materialShortfalls(vectorSources),
+        };
       } else {
-        const filename = `${firstName}.png`;
-
         const useWorker = canUseMemoryEfficientPngExport();
         const memoryWarning = getExportMemoryWarning();
-        if (memoryWarning) {
+        if (memoryWarning && !quiet) {
           toast({
             title: t("toast.exportMemoryWarning"),
             description: memoryWarning,
@@ -225,13 +293,13 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
         // before it is printed.
         const resolved = resolveExportDpi(artboardWidth, artboardHeight, useWorker);
         const exportDpi = resolved.dpi;
-        if (resolved.clamped) {
+        if (resolved.clamped && !quiet) {
           toast({
             title: t("toast.largeSheet"),
             description: t("toast.largeSheetDesc", { dpi: Math.floor(exportDpi) }),
           });
         }
-        if (!useWorker) {
+        if (!useWorker && !quiet) {
           toast({
             title: t("toast.exportCompatibilityWarning"),
             description: t("toast.exportCompatibilityWarningDesc"),
@@ -346,48 +414,151 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           pngBlob = await injectPngDpi(rawBlob, exportDpi);
         }
 
-        const url = URL.createObjectURL(pngBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        const revokeMs = Math.max(5000, Math.round(pngBlob.size / 100000));
-        setTimeout(() => URL.revokeObjectURL(url), revokeMs);
+        // `materialShortfalls` and not `shortfalls()`: the import preview is
+        // clamped to 4096 px, which is still 300 DPI up to about 13.6 in, so most
+        // failures cost nothing. Warning on all of them would put "your print will
+        // be soft" in front of customers whose print is fine, which is how a
+        // warning gets ignored for the one design where it matters.
+        return {
+          blob: pngBlob,
+          baseName: firstName,
+          extension: 'png',
+          softDesigns: materialShortfalls(vectorSources),
+        };
       }
+    } finally {
+      setExportProgressLabel(undefined);
+    }
+  }, [toast, t, setExportProgressLabel, ensureDesignImagesAvailable]);
 
-      // Tell the customer when the sheet they just downloaded is softer than it
-      // should be. A vector whose print-resolution re-render failed silently
-      // fell back to the import preview: the file still exports, so nothing
-      // else in this function fails and nothing else would ever mention it.
-      //
-      // Deliberately after the download rather than before it. The shortfall is
-      // information about a file that already exists, so a fault in this warning
-      // must not be able to cost someone their export.
-      //
-      // `materialShortfalls` and not `shortfalls()`: the import preview is
-      // clamped to 4096 px, which is still 300 DPI up to about 13.6 in, so most
-      // failures cost nothing. Warning on all of them would put "your print will
-      // be soft" in front of customers whose print is fine, which is how a
-      // warning gets ignored for the one design where it matters.
-      const softDesigns = materialShortfalls(vectorSources);
-      if (softDesigns.length > 0) {
-        console.warn("[export] designs printed below target resolution:", softDesigns);
-        toast({
-          title: t("toast.exportVectorQualityReduced"),
-          description: t("toast.exportVectorQualityReducedDesc", { count: softDesigns.length }),
-          variant: "destructive",
-        });
-      }
+  /** Save a blob to the customer's machine. */
+  const triggerDownload = useCallback((blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    // Large blobs take longer to hand over; revoking too early aborts the save.
+    setTimeout(() => URL.revokeObjectURL(url), Math.max(5000, Math.round(blob.size / 100000)));
+  }, []);
+
+  /**
+   * Warn when a sheet that just downloaded is softer than it should be.
+   *
+   * A vector whose print-resolution re-render failed falls back to the import
+   * preview: the file still exports, so nothing else fails and nothing else
+   * would ever mention it. Raised after the download rather than before, so a
+   * fault in the warning cannot cost someone their export.
+   */
+  const warnAboutSoftDesigns = useCallback((softDesigns: VectorPrintSourceShortfall[]) => {
+    if (softDesigns.length === 0) return;
+    console.warn("[export] designs printed below target resolution:", softDesigns);
+    toast({
+      title: t("toast.exportVectorQualityReduced"),
+      description: t("toast.exportVectorQualityReducedDesc", { count: softDesigns.length }),
+      variant: "destructive",
+    });
+  }, [toast, t]);
+
+  const handleDownload = useCallback(async (
+    _downloadType: string = 'standard',
+    format: string = 'png',
+    spotColorsByDesign?: Record<string, any[]>,
+  ) => {
+    const { designs, artboardWidth, artboardHeight } = exportLiveRef.current;
+    if (designs.length === 0) {
+      toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await new Promise(r => setTimeout(r, 50));
+      const { blob, baseName, extension, softDesigns } = await exportSheetBlob({
+        designs, artboardWidth, artboardHeight, format, spotColorsByDesign,
+      });
+      triggerDownload(blob, `${baseName}.${extension}`);
+      warnAboutSoftDesigns(softDesigns);
     } catch (error) {
       console.error("Download failed:", error);
+      toast({ title: t("toast.downloadFailed"), description: error instanceof Error ? error.message : t("toast.downloadFailedDesc"), variant: "destructive" });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [toast, t, setIsProcessing, exportSheetBlob, triggerDownload, warnAboutSoftDesigns]);
+
+  /**
+   * Download every sheet that has artwork on it.
+   *
+   * One sheet saves as a plain file; several are zipped, because ten separate
+   * save prompts is not a download. Sheets are rendered one at a time rather
+   * than in parallel: each one holds a full-resolution canvas, and a phone
+   * building four at once runs out of memory.
+   */
+  const handleDownloadAllSheets = useCallback(async (
+    format: string = 'png',
+    spotColorsByDesign?: Record<string, any[]>,
+  ) => {
+    const { sheets, activeSheetId, artboardWidth } = exportSheetsRef.current;
+    const sheetsWithDesigns = sheets.filter(s => s.designs.length > 0);
+    if (sheetsWithDesigns.length === 0) {
+      toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await new Promise(r => setTimeout(r, 50));
+      const allSoftDesigns: VectorPrintSourceShortfall[] = [];
+
+      if (sheetsWithDesigns.length === 1) {
+        const sheet = sheetsWithDesigns[0];
+        const { blob, extension, softDesigns } = await exportSheetBlob({
+          designs: sheet.designs,
+          artboardWidth,
+          artboardHeight: sheet.artboardHeight,
+          format,
+          // Spot colours are collected from the sheet on screen, so they only
+          // describe that sheet.
+          spotColorsByDesign: sheet.id === activeSheetId ? spotColorsByDesign : undefined,
+        });
+        triggerDownload(blob, `${safeSheetFileName(sheet.name)}.${extension}`);
+        warnAboutSoftDesigns(softDesigns);
+        return;
+      }
+
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      for (let i = 0; i < sheetsWithDesigns.length; i++) {
+        const sheet = sheetsWithDesigns[i];
+        setExportProgressLabel(t("editor.exportSheetProgress", { current: i + 1, total: sheetsWithDesigns.length }));
+        const { blob, extension, softDesigns } = await exportSheetBlob({
+          designs: sheet.designs,
+          artboardWidth,
+          artboardHeight: sheet.artboardHeight,
+          format,
+          spotColorsByDesign: sheet.id === activeSheetId ? spotColorsByDesign : undefined,
+          quiet: i > 0,
+        });
+        zip.file(`sheet-${i + 1}-${safeSheetFileName(sheet.name)}.${extension}`, blob);
+        allSoftDesigns.push(...softDesigns);
+      }
+      setExportProgressLabel(t("editor.exportFinalizing"));
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      triggerDownload(zipBlob, 'gangsheet-export.zip');
+      toast({
+        title: t("toast.exportComplete"),
+        description: t("toast.exportCompleteDesc", { n: sheetsWithDesigns.length }),
+      });
+      warnAboutSoftDesigns(allSoftDesigns);
+    } catch (error) {
+      console.error("Multi-sheet download failed:", error);
       toast({ title: t("toast.downloadFailed"), description: error instanceof Error ? error.message : t("toast.downloadFailedDesc"), variant: "destructive" });
     } finally {
       setExportProgressLabel(undefined);
       setIsProcessing(false);
     }
-  }, [toast, t, setExportProgressLabel, ensureDesignImagesAvailable, setIsProcessing]);
+  }, [toast, t, setIsProcessing, setExportProgressLabel, exportSheetBlob, triggerDownload, warnAboutSoftDesigns]);
 
   const fileToDataUrl = useCallback((file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -402,6 +573,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
   return {
     ...bag,
     handleDownload,
+    handleDownloadAllSheets,
     fileToDataUrl,
   };
 }

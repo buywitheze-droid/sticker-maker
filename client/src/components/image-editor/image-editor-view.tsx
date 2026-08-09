@@ -8,6 +8,8 @@ import EditorActionToolbar from "./editor-action-toolbar";
 import MobileToolSheet from "./mobile-tool-sheet";
 import { LayerRow, type LayerRowHandlers } from "./layer-row";
 import { UploadsPanel } from "./uploads-panel";
+import { SheetCanvasChrome, AddSheetButton } from "./sheet-controls";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardSafeFocus } from "@/hooks/use-keyboard-safe-focus";
 import { useMobileLayout, useShortViewport } from "@/hooks/use-layout-viewport";
@@ -88,6 +90,8 @@ export default function ImageEditorView() {
     setProportionalLock,
     activeImageInfo, activeDesignTransform,
     activeResizeSettings, selectedVariantPrice, effectiveDPI, layerRows, canvasRef, designInfoRef,
+    sheets, activeSheetId, activeSheetIndex, navigateToSheet, addSheet, deleteSheet, renameSheet,
+    whiteUnderbase, setWhiteUnderbase, underbaseChokeIn, setUnderbaseChokeIn,
     sidebarFileRef, headerUploadInputRef, downloadContainer, setDownloadContainer,
     fluorPanelContainer, setFluorPanelContainer, mobileToolbarContainer, setMobileToolbarContainer,
     copySpotSelectionsRef, GANGSHEET_HEIGHTS, MAX_ARTBOARD_HEIGHT, recommendedArtboardHeight,
@@ -100,7 +104,7 @@ export default function ImageEditorView() {
     handleDuplicateAndArrange, handleDuplicateSelected, handleDuplicateById, handleRemoveOneCopy, handleSetGroupCount,
     handleDeleteDesign, handleDeleteGroup, handleDeleteMulti, handleRotate90, handleFlipX, handleFlipY, handleAlignCorner,
     handleAutoArrange, handleArtboardHeightPick, handleThresholdAlpha,
-    handleThresholdAlphaAll, handleCropDesign, handleCropApply, handleDownload, handleAddToCart,
+    handleThresholdAlphaAll, handleCropDesign, handleCropApply, handleDownload, handleDownloadAllSheets, handleAddToCart,
     handleApplyHalftone, handleOpenHalftoneMenu, halftoneStrength, setHalftoneStrength,
     halftoneMenuOpen, setHalftoneMenuOpen, halftoneTopColors,
     handleRemoveWhiteBackground, handleWandDelete,
@@ -256,6 +260,38 @@ export default function ImageEditorView() {
   // a product only means setting the flag in `profiles.ts`. Omitting the flag
   // means enabled; halftone dots do not apply to UV-DTF or Specialty DTF.
   const halftoneEnabled = profile?.enableHalftone !== false;
+
+  /**
+   * Download stops to ask a question only when there is one worth asking:
+   * which sheets to take, or whether to lay a white underbase. A single
+   * gangsheet on a non-fluorescent product has neither, so the button still
+   * downloads immediately and nobody pays an extra click for a feature they
+   * are not using.
+   */
+  const [pendingDownload, setPendingDownload] = useState<{
+    downloadType: string;
+    format: string;
+    spotColors?: Record<string, any[]>;
+  } | null>(null);
+  const sheetsWithDesignsCount = sheets.filter((s) => s.designs.length > 0).length;
+  const offersUnderbase = !!profile.enableFluorescent;
+
+  const handleDownloadGate = useCallback((
+    downloadType?: string,
+    format?: string,
+    spotColorsByDesign?: Record<string, any[]>,
+  ) => {
+    const choice = {
+      downloadType: downloadType ?? "standard",
+      format: format ?? "png",
+      spotColors: spotColorsByDesign,
+    };
+    if (sheetsWithDesignsCount > 1 || offersUnderbase) {
+      setPendingDownload(choice);
+      return;
+    }
+    void handleDownload(choice.downloadType, choice.format, choice.spotColors);
+  }, [sheetsWithDesignsCount, offersUnderbase, handleDownload]);
 
   // Stable-identity callbacks for the two `<PreviewSection>` call sites
   // (mobile + desktop). Both were inline arrow functions until now, which
@@ -519,7 +555,7 @@ export default function ImageEditorView() {
     <ControlsSection
       resizeSettings={activeResizeSettings}
       onResizeChange={handleResizeChange}
-      onDownload={handleDownload}
+      onDownload={handleDownloadGate}
       isProcessing={isProcessing}
       exportProgressLabel={exportProgressLabel}
       imageInfo={activeImageInfo}
@@ -556,7 +592,11 @@ export default function ImageEditorView() {
     />
   );
 
-  if (!activeImageInfo && !embedFromShopify) {
+  // An empty sheet is only the upload screen when it is the *only* sheet. Once
+  // the customer has more than one, collapsing to the upload view would take
+  // away the navigation and strand them on a blank gangsheet with no way back
+  // to the artwork they have already placed.
+  if (!activeImageInfo && !embedFromShopify && sheets.length <= 1) {
     return (
       <div
         className="h-full flex items-center justify-center bg-gray-50 relative"
@@ -782,6 +822,8 @@ export default function ImageEditorView() {
           {/* Fluorescent panel portal target */}
           {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
 
+          <AddSheetButton sheetCount={sheets.length} onAdd={addSheet} canCopy={designs.length > 0} />
+
           {/* Layers Panel */}
           {designs.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -925,6 +967,14 @@ export default function ImageEditorView() {
                   gangsheet from this box and anything that takes width or
                   height here comes straight off the artwork. */}
               <div className="relative min-h-0 min-w-0 flex-1">
+                <SheetCanvasChrome
+                  sheets={sheets}
+                  activeSheetId={activeSheetId}
+                  activeSheetIndex={activeSheetIndex}
+                  onNavigate={navigateToSheet}
+                  onRename={renameSheet}
+                  onDelete={deleteSheet}
+                />
                 <PreviewSection
                   ref={canvasRef}
                   imageInfo={activeImageInfo}
@@ -1302,6 +1352,8 @@ export default function ImageEditorView() {
                       {/* Fluorescent spot-colour panels portal here on this
                           arm; on desktop they go to the sidebar. */}
                       {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
+
+                      <AddSheetButton sheetCount={sheets.length} onAdd={addSheet} canCopy={designs.length > 0} />
                     </>
                   )}
                 </MobileToolSheet>
@@ -1575,6 +1627,14 @@ export default function ImageEditorView() {
           </div>
         ) : (
           <div className="flex-1 min-h-0 relative">
+            <SheetCanvasChrome
+              sheets={sheets}
+              activeSheetId={activeSheetId}
+              activeSheetIndex={activeSheetIndex}
+              onNavigate={navigateToSheet}
+              onRename={renameSheet}
+              onDelete={deleteSheet}
+            />
             <PreviewSection
               ref={canvasRef}
               imageInfo={activeImageInfo}
@@ -1683,6 +1743,116 @@ export default function ImageEditorView() {
           />
         ) : null;
       })()}
+
+      {/* Which sheets to download — only ever shown with more than one in play */}
+      {pendingDownload && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setPendingDownload(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-4 pb-2">
+              <h3 className="text-base font-bold text-gray-900">{t("download.chooseTitle")}</h3>
+              <button
+                onClick={() => setPendingDownload(null)}
+                className="w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                aria-label={t("landing.cancel")}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {offersUnderbase && (
+              <div className="mx-5 mb-2 rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-gray-800">{t("underbase.title")}</div>
+                    <div className="text-[11px] text-gray-500 mt-0.5">{t("underbase.desc")}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={whiteUnderbase}
+                    onClick={() => setWhiteUnderbase(!whiteUnderbase)}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${whiteUnderbase ? "bg-black" : "bg-gray-300"}`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${whiteUnderbase ? "translate-x-4" : "translate-x-0"}`}
+                    />
+                  </button>
+                </div>
+                {whiteUnderbase && (
+                  <div className="pt-1">
+                    <label className="block text-[10px] font-semibold text-gray-600 mb-1" htmlFor="underbase-choke">
+                      {t("underbase.choke")}
+                    </label>
+                    <input
+                      id="underbase-choke"
+                      type="number"
+                      min={0}
+                      max={0.1}
+                      step={0.001}
+                      value={underbaseChokeIn}
+                      onChange={(e) =>
+                        setUnderbaseChokeIn(Math.max(0, Math.min(0.1, parseFloat(e.target.value) || 0)))
+                      }
+                      className="w-full h-7 text-center text-[11px] border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-black"
+                    />
+                    <div className="text-[9px] text-gray-400 mt-0.5 text-center">{t("underbase.chokeHint")}</div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="pb-2">
+              {sheetsWithDesignsCount > 1 ? (
+                <>
+                  <button
+                    onClick={() => {
+                      const choice = pendingDownload;
+                      setPendingDownload(null);
+                      void handleDownload(choice.downloadType, choice.format, choice.spotColors);
+                    }}
+                    className="w-full flex flex-col items-start gap-0.5 px-5 py-3 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-sm font-semibold text-gray-900">{t("download.currentSheet")}</span>
+                    <span className="text-xs text-gray-500">
+                      {t("download.currentSheetDesc", { name: sheets[activeSheetIndex]?.name ?? "" })}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const choice = pendingDownload;
+                      setPendingDownload(null);
+                      void handleDownloadAllSheets(choice.format, choice.spotColors);
+                    }}
+                    className="w-full flex flex-col items-start gap-0.5 px-5 py-3 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-sm font-semibold text-gray-900">{t("download.allSheets")}</span>
+                    <span className="text-xs text-gray-500">
+                      {t("download.allSheetsDesc", { n: sheetsWithDesignsCount })}
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <div className="px-5 pt-1">
+                  <Button
+                    onClick={() => {
+                      const choice = pendingDownload;
+                      setPendingDownload(null);
+                      void handleDownload(choice.downloadType, choice.format, choice.spotColors);
+                    }}
+                    className="w-full"
+                  >
+                    {t("controls.downloadGangsheet")}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Processing Modal — covers downloads, edit-link restore, and add-to-cart/update */}
       {isProcessing && (

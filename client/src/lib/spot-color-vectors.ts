@@ -394,32 +394,185 @@ export async function addSpotColorVectorsToPDF(
 
   if (ocgRefs.length === 0) return addedLabels;
 
+  registerOptionalContentGroups(pdfDoc, ocgRefs);
+
+  return addedLabels;
+}
+
+/**
+ * List new optional-content groups in the document catalog.
+ *
+ * A separation that is drawn but never registered here is invisible to the
+ * layer panel of every viewer and to the RIP, so this is what turns marked-up
+ * content into an actual named channel.
+ */
+function registerOptionalContentGroups(pdfDoc: PDFDocument, ocgRefs: any[]): void {
+  if (ocgRefs.length === 0) return;
+  const context = pdfDoc.context;
   const catalog = pdfDoc.catalog;
-  let ocProperties = catalog.get(PDFName.of('OCProperties'));
+  const ocProperties = catalog.get(PDFName.of('OCProperties'));
   if (!ocProperties) {
-    const ocgsArray = context.obj([...ocgRefs]);
-    const orderArray = context.obj([...ocgRefs]);
-    const onArray = context.obj([...ocgRefs]);
-    const dDict = context.obj({ ON: onArray, Order: orderArray, BaseState: PDFName.of('ON') });
-    ocProperties = context.obj({ OCGs: ocgsArray, D: dDict });
-    catalog.set(PDFName.of('OCProperties'), ocProperties);
-  } else {
-    const existingOCGs = (ocProperties as PDFDict).get(PDFName.of('OCGs'));
-    if (existingOCGs instanceof PDFArray) {
-      for (const ref of ocgRefs) existingOCGs.push(ref);
+    catalog.set(
+      PDFName.of('OCProperties'),
+      context.obj({
+        OCGs: context.obj([...ocgRefs]),
+        D: context.obj({
+          ON: context.obj([...ocgRefs]),
+          Order: context.obj([...ocgRefs]),
+          BaseState: PDFName.of('ON'),
+        }),
+      }),
+    );
+    return;
+  }
+  const existingOCGs = (ocProperties as PDFDict).get(PDFName.of('OCGs'));
+  if (existingOCGs instanceof PDFArray) {
+    for (const ref of ocgRefs) existingOCGs.push(ref);
+  }
+  const dDict = (ocProperties as PDFDict).get(PDFName.of('D'));
+  if (dDict instanceof PDFDict) {
+    const order = dDict.get(PDFName.of('Order'));
+    if (order instanceof PDFArray) {
+      for (const ref of ocgRefs) order.push(ref);
     }
-    const dDict = (ocProperties as PDFDict).get(PDFName.of('D'));
-    if (dDict instanceof PDFDict) {
-      const order = dDict.get(PDFName.of('Order'));
-      if (order instanceof PDFArray) {
-        for (const ref of ocgRefs) order.push(ref);
-      }
-      const on = dDict.get(PDFName.of('ON'));
-      if (on instanceof PDFArray) {
-        for (const ref of ocgRefs) on.push(ref);
-      }
+    const on = dDict.get(PDFName.of('ON'));
+    if (on instanceof PDFArray) {
+      for (const ref of ocgRefs) on.push(ref);
     }
   }
+}
+
+/**
+ * Add separations whose masks the caller has already built.
+ *
+ * This is how the white underbase gets into the file. Unlike the colour
+ * separations above there is nothing to match here — the mask is derived from
+ * the silhouette of the whole sheet, covers the page rather than one design,
+ * and only needs tracing and placing.
+ */
+export async function addSpotColorVectorsFromMasksToPDF(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  masks: Record<string, Uint8Array>,
+  maskWidth: number,
+  maskHeight: number,
+  channelNames: Record<string, string>,
+  widthInches: number,
+  heightInches: number,
+  pageHeightInches: number,
+  imageOffsetXInches: number,
+  imageOffsetYInches: number,
+  rotationDeg = 0,
+): Promise<string[]> {
+  const hasInk = Object.values(masks).some(mask => mask.some(v => v > 0));
+  if (!hasInk) return [];
+
+  // Handed over rather than copied: these are full-sheet masks, and at 150 DPI
+  // a 22 x 120 in sheet is around 60 MB that nobody needs two of.
+  const masksForWorker: Record<string, ArrayBuffer> = {};
+  const transferable: ArrayBuffer[] = [];
+  for (const [channel, mask] of Object.entries(masks)) {
+    const buffer = mask.buffer.slice(mask.byteOffset, mask.byteOffset + mask.byteLength);
+    masksForWorker[channel] = buffer;
+    transferable.push(buffer);
+  }
+
+  const regions = await new Promise<SpotColorRegion[]>(resolve => {
+    let worker: Worker;
+    try {
+      worker = new SpotColorWorker();
+    } catch (err) {
+      console.warn('[SpotColor] could not start the mask worker:', err);
+      resolve([]);
+      return;
+    }
+
+    const outW = Math.round(widthInches * SPOT_COLOR_DPI);
+    const outH = Math.round(heightInches * SPOT_COLOR_DPI);
+    // Scaled to the sheet: a full-length gangsheet is legitimately slow to
+    // trace, and a fixed timeout would abandon the underbase on exactly the
+    // orders that most need one.
+    const timeoutMs = Math.max(30_000, Math.round((outW * outH) / 50_000) * 1000);
+    const timeout = setTimeout(() => {
+      worker.terminate();
+      console.warn('[SpotColor] mask worker timed out');
+      resolve([]);
+    }, timeoutMs);
+
+    worker.onmessage = (e: MessageEvent) => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve(e.data?.type === 'result' ? (e.data.regions ?? []) : []);
+    };
+    worker.onerror = () => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve([]);
+    };
+
+    worker.postMessage({
+      type: 'trace_premask',
+      masks: masksForWorker,
+      maskWidth,
+      maskHeight,
+      widthInches,
+      heightInches,
+      dpi: SPOT_COLOR_DPI,
+      channelNames,
+    }, transferable);
+  });
+
+  if (regions.length === 0) return [];
+
+  const context = pdfDoc.context;
+  const addedLabels: string[] = [];
+  const ocgRefs: any[] = [];
+
+  const existingOcgTags = new Map<string, any>();
+  try {
+    const props = page.node.Resources()?.get(PDFName.of('Properties'));
+    if (props instanceof PDFDict) {
+      for (const [key, val] of props.entries()) {
+        existingOcgTags.set(key.toString().replace('/', ''), val);
+      }
+    }
+  } catch {
+    /* nothing registered yet */
+  }
+
+  const designCx = imageOffsetXInches + widthInches / 2;
+  const designCy = imageOffsetYInches + heightInches / 2;
+  const rad = (-rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(rad);
+  const sinR = Math.sin(rad);
+
+  for (const region of regions) {
+    const offsetPaths = region.paths.map(path =>
+      path.map(p => {
+        // Same Y-down to Y-up correction as the colour separations above.
+        const relX = p.x - widthInches / 2;
+        const relY = p.y - heightInches / 2;
+        return {
+          x: designCx + relX * cosR + relY * sinR,
+          y: (pageHeightInches - designCy) + relX * sinR - relY * cosR,
+        };
+      }),
+    );
+
+    const ocgTag = `OC_${region.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    let ocgRef = existingOcgTags.get(ocgTag);
+    if (!ocgRef) {
+      ocgRef = context.register(
+        context.obj({ Type: PDFName.of('OCG'), Name: PDFHexString.fromText(region.name) }),
+      );
+      ocgRefs.push(ocgRef);
+    }
+
+    addSpotColorRegionAsLayer(pdfDoc, page, region, offsetPaths, ocgRef);
+    if (!addedLabels.includes(region.name)) addedLabels.push(region.name);
+  }
+
+  registerOptionalContentGroups(pdfDoc, ocgRefs);
 
   return addedLabels;
 }
