@@ -11,6 +11,7 @@ import {
   Copy,
   Droplets,
   Sparkles,
+  Expand,
   LayoutGrid,
   Link,
   Loader2,
@@ -47,6 +48,8 @@ export type EditorActionToolbarProps = {
   handleThresholdAlpha: () => void;
   handleThresholdAlphaAll: () => void;
   handleAutoArrange: (opts?: { skipSnapshot?: boolean; preserveSelection?: boolean; fullRepack?: boolean }) => void;
+  canFill: boolean;
+  handleFillEmptySpace: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
   handleUndo: () => void;
@@ -116,6 +119,8 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
     handleThresholdAlpha,
     handleThresholdAlphaAll,
     handleAutoArrange,
+    canFill,
+    handleFillEmptySpace,
     canUndo,
     canRedo,
     handleUndo,
@@ -374,6 +379,7 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
           <Trash2 className="w-4 h-4 lg:w-5 lg:h-5" />
         </button>
         {isMobile && (
+          <>
           <button
             onClick={() => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2, fullRepack: true })}
             disabled={designs.length < 2 && selectedDesignIds.size < 2}
@@ -387,6 +393,20 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
             <LayoutGrid className="w-3 h-3 flex-shrink-0" />
             {t("editor.autoArrange")}
           </button>
+          <button
+            onClick={handleFillEmptySpace}
+            disabled={!canFill}
+            className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all whitespace-nowrap font-semibold shadow-sm min-h-[36px] ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} ${
+              canFill
+                ? 'bg-cyan-500 hover:bg-cyan-600 text-white border border-cyan-600 shadow-md shadow-cyan-500/25'
+                : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+            }`}
+            title={t("fill.sheetTitle")}
+          >
+            <Expand className="w-3 h-3 flex-shrink-0" />
+            {t("fill.sheet")}
+          </button>
+          </>
         )}
       </div>
       </div>
@@ -568,6 +588,19 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
           >
             <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
             {t("editor.autoArrange")}
+          </button>
+          <button
+            onClick={handleFillEmptySpace}
+            disabled={!canFill}
+            className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium min-h-[36px] ${
+              canFill
+                ? 'bg-cyan-500 hover:bg-cyan-600 text-white border border-cyan-600 shadow-md shadow-cyan-500/25'
+                : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+            }`}
+            title={t("fill.sheetTitle")}
+          >
+            <Expand className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+            {t("fill.sheet")}
           </button>
         </div>
       )}

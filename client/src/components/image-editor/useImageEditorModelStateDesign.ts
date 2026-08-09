@@ -238,6 +238,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       preserveSelection?: boolean;
       arrangeAll?: boolean;
       fullRepack?: boolean;
+      trimOverflow?: boolean;
+      fillIds?: Set<string>;
       /** Internal to the arrange hook: a height-ladder step continuing the run in flight. */
       continuation?: boolean;
     }
@@ -1789,30 +1791,63 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
     return activeImageInfo.dpi;
   }, [activeImageInfo]);
 
+  /**
+   * Layer rows span every gangsheet in the session.
+   *
+   * `designs` is only the copies on the sheet currently on screen — a design
+   * that lives only on another sheet still gets a dimmed row with "Add here",
+   * so the customer can see and pull artwork across without navigating away.
+   * Grouped by image source + placed size, matching the old monolith.
+   */
   const layerRows = useMemo(() => {
-    const baseNameOf = (name: string) => name.replace(/ copy( \d+)?$/, '');
-    const sizeKeyOf = (d: DesignItem) => `${(d.widthInches * d.transform.s).toFixed(2)}x${(d.heightInches * d.transform.s).toFixed(2)}`;
-    const firstSizeByBase = new Map<string, string>();
-    const groups = new Map<string, DesignItem[]>();
-    for (const d of designs) {
-      const base = baseNameOf(d.name);
-      const sk = sizeKeyOf(d);
-      if (!firstSizeByBase.has(base)) firstSizeByBase.set(base, sk);
-      const key = `${base}::${sk}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(d);
+    const baseNameOf = (name: string) => name.replace(/ copy( \d+)?$/, "");
+    const sizeKeyOf = (d: DesignItem) =>
+      `${(d.widthInches * d.transform.s).toFixed(2)}x${(d.heightInches * d.transform.s).toFixed(2)}`;
+    type RowData = {
+      rowKey: string;
+      baseName: string;
+      sizeKey: string;
+      designs: DesignItem[];
+      isResized: boolean;
+      representative: DesignItem;
+      sheetsWithThis: Array<{ id: string; name: string; count: number }>;
+    };
+    const rowMap = new Map<string, RowData>();
+    const firstSizeBySrc = new Map<string, string>();
+    for (const s of sheets) {
+      for (const d of s.designs) {
+        const base = baseNameOf(d.name);
+        const sk = sizeKeyOf(d);
+        const src = d.imageInfo.image.src;
+        const key = `${src}::${sk}`;
+        if (!firstSizeBySrc.has(src)) firstSizeBySrc.set(src, sk);
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            rowKey: key,
+            baseName: base,
+            sizeKey: sk,
+            designs: [],
+            isResized: sk !== (firstSizeBySrc.get(src) ?? sk),
+            representative: d,
+            sheetsWithThis: [],
+          });
+        }
+        const row = rowMap.get(key)!;
+        if (s.id === activeSheetId) {
+          row.designs.push(d);
+          row.baseName = base;
+          row.representative = d;
+        }
+        const existing = row.sheetsWithThis.find((x) => x.id === s.id);
+        if (existing) existing.count++;
+        else row.sheetsWithThis.push({ id: s.id, name: s.name, count: 1 });
+      }
     }
-    return Array.from(groups.entries()).map(([key, designsInGroup]) => {
-      const [baseName, sizeKey] = key.split('::');
-      const origSize = firstSizeByBase.get(baseName) ?? sizeKey;
-      return {
-        baseName,
-        sizeKey,
-        designs: designsInGroup,
-        isResized: sizeKey !== origSize,
-      };
-    });
-  }, [designs]);
+    return Array.from(rowMap.values()).map((row) => ({
+      ...row,
+      otherSheets: row.sheetsWithThis.filter((s) => s.id !== activeSheetId),
+    }));
+  }, [sheets, activeSheetId]);
 
   useEffect(() => {
     if (activeImageInfo && onDesignUploaded) {

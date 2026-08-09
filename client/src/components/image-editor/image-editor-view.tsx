@@ -91,6 +91,7 @@ export default function ImageEditorView() {
     activeImageInfo, activeDesignTransform,
     activeResizeSettings, selectedVariantPrice, effectiveDPI, layerRows, canvasRef, designInfoRef,
     sheets, activeSheetId, activeSheetIndex, navigateToSheet, addSheet, deleteSheet, renameSheet,
+    addDesignToActiveSheet,
     whiteUnderbase, setWhiteUnderbase, underbaseChokeIn, setUnderbaseChokeIn,
     sidebarFileRef, headerUploadInputRef, downloadContainer, setDownloadContainer,
     fluorPanelContainer, setFluorPanelContainer, mobileToolbarContainer, setMobileToolbarContainer,
@@ -366,6 +367,7 @@ export default function ImageEditorView() {
     handleDeleteGroup,
     setDesigns,
     getLayerThumbnail,
+    addDesignToActiveSheet,
   });
   layerHandlersLiveRef.current = {
     handleSelectDesign,
@@ -373,6 +375,7 @@ export default function ImageEditorView() {
     handleDeleteGroup,
     setDesigns,
     getLayerThumbnail,
+    addDesignToActiveSheet,
   };
   const layerHandlers = useMemo<LayerRowHandlers>(
     () => ({
@@ -383,6 +386,7 @@ export default function ImageEditorView() {
       handleAutoArrangeRef,
       setDesigns: (updater) => layerHandlersLiveRef.current.setDesigns(updater),
       getLayerThumbnail: (design) => layerHandlersLiveRef.current.getLayerThumbnail(design),
+      addDesignToActiveSheet: (source) => layerHandlersLiveRef.current.addDesignToActiveSheet(source),
     }),
     [handleAutoArrangeRef],
   );
@@ -400,10 +404,9 @@ export default function ImageEditorView() {
   const layerListItems = useMemo(
     () =>
       layerListVisible
-        ? layerRows.map((row) => {
-            const rowKey = `${row.baseName}::${row.sizeKey}`;
-            return <LayerRow key={rowKey} rowKey={rowKey} row={row} handlers={layerHandlers} />;
-          })
+        ? layerRows.map((row) => (
+            <LayerRow key={row.rowKey} rowKey={row.rowKey} row={row} handlers={layerHandlers} />
+          ))
         : null,
     [layerListVisible, layerRows, layerHandlers],
   );

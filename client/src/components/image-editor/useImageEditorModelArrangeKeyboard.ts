@@ -300,6 +300,14 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
      * moving everything else is the behaviour users complain about.
      */
     fullRepack?: boolean;
+    /**
+     * Fill Sheet path: never grow the gangsheet. Designs the packer marks as
+     * overflowing are dropped instead, so a fill that overestimates never
+     * expands the sheet the customer already chose.
+     */
+    trimOverflow?: boolean;
+    /** Ids added by the most recent Fill Sheet click — used for the success toast. */
+    fillIds?: Set<string>;
     /** Internal: a ladder step continuing the run that is already in flight. */
     continuation?: boolean;
   }) => {
@@ -567,6 +575,92 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     const maxLadderSteps = GANGSHEET_HEIGHTS.length + 2;
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean, sizing?: PackSizing) => {
+      // Fill Sheet: never climb the height ladder. Drop whatever did not fit
+      // and leave the customer's chosen size alone.
+      if (hasOverflow && opts?.trimOverflow) {
+        const overflowIds = new Set(bestResult.filter((p) => p.overflows).map((p) => p.id));
+        const abW = artboardWidthRef.current;
+        const abH = artboardHeightRef.current;
+        const fillIds = opts.fillIds;
+        const trimmedFillCount = fillIds
+          ? [...overflowIds].filter((id) => fillIds.has(id)).length
+          : overflowIds.size;
+        const keptFillCount = fillIds ? fillIds.size - trimmedFillCount : 0;
+
+        // Build placement deltas the same way as the normal path, then filter
+        // out anything that overflowed — those designs were speculative copies.
+        type DesignDelta = {
+          nx: number;
+          ny: number;
+          rotation: number | null;
+          overflows: boolean;
+        };
+        const deltas = new Map<string, DesignDelta>();
+        for (const placed of bestResult) {
+          if (placed.anchored) continue;
+          if (placed.id.startsWith(GROUP_PREFIX)) {
+            const gid = placed.id.slice(GROUP_PREFIX.length);
+            const g = groups.get(gid);
+            if (!g) continue;
+            const oldCx = (g.minX + g.maxX) / 2;
+            const oldCy = (g.minY + g.maxY) / 2;
+            const dnx = (placed.nx * abW - oldCx) / abW;
+            const dny = (placed.ny * abH - oldCy) / abH;
+            for (const m of g.members) {
+              deltas.set(m.id, {
+                nx: m.transform.nx + dnx,
+                ny: m.transform.ny + dny,
+                rotation: null,
+                overflows: placed.overflows,
+              });
+            }
+          } else {
+            deltas.set(placed.id, {
+              nx: placed.nx,
+              ny: placed.ny,
+              rotation: placed.rotation,
+              overflows: placed.overflows,
+            });
+          }
+        }
+
+        setDesigns((prev) =>
+          prev
+            .filter((d) => !overflowIds.has(d.id))
+            .map((d) => {
+              const delta = deltas.get(d.id);
+              if (!delta || delta.overflows) return d;
+              const finalRotation = delta.rotation === null ? d.transform.rotation : delta.rotation % 360;
+              const stampExtra = getStampExtra(d);
+              let adjustedNx = delta.nx;
+              let adjustedNy = delta.ny;
+              if (stampExtra > 0 && delta.rotation !== null) {
+                const rad = (finalRotation * Math.PI) / 180;
+                adjustedNx -= (stampExtra / 2) * Math.sin(rad) / abW;
+                adjustedNy -= (stampExtra / 2) * Math.cos(rad) / abH;
+              }
+              const newTransform = { ...d.transform, nx: adjustedNx, ny: adjustedNy, rotation: finalRotation };
+              const { nx, ny } = clampDesignToArtboard({ ...d, transform: newTransform }, abW, abH);
+              return { ...d, transform: { ...newTransform, nx, ny } };
+            }),
+        );
+
+        const kept = keptFillCount;
+        toast({
+          title: t("fill.done"),
+          description:
+            kept > 0
+              ? t("fill.donePartial", { kept, trimmed: trimmedFillCount })
+              : t("fill.doneNone"),
+        });
+        if (!opts?.preserveSelection) {
+          setSelectedDesignId(null);
+          setSelectedDesignIds(new Set());
+        }
+        settleArrange();
+        return;
+      }
+
       if (hasOverflow && artboardHeightRef.current < MAX_ARTBOARD_HEIGHT && ladderStep < maxLadderSteps) {
         // Jump to the shortest rung the artwork could possibly fit on rather than the next
         // one up. `planLadderJump` only skips rungs a lower bound rules out, so it lands on
@@ -620,6 +714,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       }
       if (hasOverflow) {
         toast({ title: t("toast.noSpace"), description: t("toast.noSpaceDesc"), variant: "destructive" });
+      } else if (opts?.fillIds && opts.fillIds.size > 0) {
+        const n = opts.fillIds.size;
+        toast({ title: t("fill.done"), description: t("fill.doneAll", { n }) });
       } else if (anyRotated) {
         toast({ title: t("toast.autoArranged"), description: t("toast.autoArrangedDesc") });
       }
@@ -1014,6 +1111,152 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     if (importReseatTimerRef.current) clearTimeout(importReseatTimerRef.current);
   }, []);
 
+  // ── Fill Sheet ─────────────────────────────────────────────────────────────
+  // Estimate how many extra copies of a reference design can still fit, then
+  // add them and ask auto-arrange to pack with trimOverflow so the sheet size
+  // the customer already chose is never silently grown.
+  const sampleContentFill = useCallback((design: DesignItem): number => {
+    const key = design.imageInfo.image.src;
+    const cached = contentFillCacheRef.current.get(key);
+    if (cached !== undefined) return cached;
+    try {
+      const sampleSize = 64;
+      const c = document.createElement("canvas");
+      c.width = sampleSize;
+      c.height = sampleSize;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return 1;
+      ctx.drawImage(design.imageInfo.image, 0, 0, sampleSize, sampleSize);
+      const data = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
+      let opaque = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 20) opaque++;
+      const fill = opaque / (sampleSize * sampleSize);
+      contentFillCacheRef.current.set(key, fill);
+      return fill;
+    } catch {
+      return 1;
+    }
+  }, [contentFillCacheRef]);
+
+  const computeFillCount = useCallback((
+    ref: DesignItem,
+    currentDesigns: DesignItem[],
+    gap: number,
+    abW: number,
+    abH: number,
+  ): number => {
+    const rw = ref.widthInches * ref.transform.s;
+    const rh = ref.heightInches * ref.transform.s;
+    const refArea = (rw + gap) * (rh + gap);
+    if (refArea <= 0) return 0;
+
+    const occupiedBottom = currentDesigns.reduce((maxY, d) => {
+      const cy = d.transform.ny * abH;
+      const hw = (d.widthInches * d.transform.s) / 2;
+      const hh = (d.heightInches * d.transform.s) / 2;
+      const rad = ((d.transform.rotation ?? 0) * Math.PI) / 180;
+      const boundH = Math.abs(hw * Math.sin(rad)) + Math.abs(hh * Math.cos(rad));
+      return Math.max(maxY, cy + boundH);
+    }, 0);
+
+    const remaining =
+      Math.max(0, abW * abH - abW * occupiedBottom) +
+      Math.max(
+        0,
+        abW * occupiedBottom -
+          currentDesigns.reduce(
+            (acc, d) =>
+              acc +
+              (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap),
+            0,
+          ),
+      );
+
+    const contentFill = sampleContentFill(ref);
+    const factor = Math.max(0.35, Math.min(0.58, 0.58 * contentFill));
+    return Math.floor((remaining / refArea) * factor);
+  }, [sampleContentFill]);
+
+  const canFill = useMemo(() => {
+    if (designs.length === 0) return false;
+    const gap = designGap ?? 0.25;
+    const ref =
+      (selectedDesignId ? designs.find((d) => d.id === selectedDesignId) : null) ??
+      designs.reduce((a, b) =>
+        a.widthInches * a.transform.s * a.heightInches * a.transform.s <=
+        b.widthInches * b.transform.s * b.heightInches * b.transform.s
+          ? a
+          : b,
+      );
+    const refArea =
+      (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
+    if (refArea <= 0) return false;
+    return computeFillCount(ref, designs, gap, artboardWidth, artboardHeight) >= 1;
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, computeFillCount]);
+
+  // Ids of copies just added by Fill Sheet; cleared once arrange consumes them.
+  const pendingFillIdsRef = useRef<Set<string> | null>(null);
+
+  const handleFillEmptySpace = useCallback(() => {
+    if (designs.length === 0) return;
+    const gap = designGap ?? 0.25;
+    const ref =
+      (selectedDesignId ? designs.find((d) => d.id === selectedDesignId) : null) ??
+      designs.reduce((a, b) =>
+        a.widthInches * a.transform.s * a.heightInches * a.transform.s <=
+        b.widthInches * b.transform.s * b.heightInches * b.transform.s
+          ? a
+          : b,
+      );
+    const fillCount = Math.min(
+      computeFillCount(ref, designs, gap, artboardWidth, artboardHeight),
+      Math.max(0, 500 - designs.length),
+    );
+    if (fillCount < 1) {
+      toast({ title: t("fill.full"), description: t("fill.fullDesc"), variant: "destructive" });
+      return;
+    }
+    const baseName = ref.name.replace(/ copy( \d+)?$/, "");
+    const copies: DesignItem[] = Array.from({ length: fillCount }, () => ({
+      ...ref,
+      id: crypto.randomUUID(),
+      name: baseName,
+      transform: { ...ref.transform },
+      printFileName: false,
+    }));
+    saveSnapshot();
+    pendingFillIdsRef.current = new Set(copies.map((c) => c.id));
+    setDesigns((prev) => [...prev, ...copies]);
+    toast({
+      title: t("fill.working"),
+      description: t("fill.workingDesc", { n: fillCount }),
+    });
+  }, [
+    designs,
+    selectedDesignId,
+    artboardWidth,
+    artboardHeight,
+    designGap,
+    computeFillCount,
+    saveSnapshot,
+    setDesigns,
+    toast,
+    t,
+  ]);
+
+  // Arrange after React has committed the new copies so designsRef is current.
+  useEffect(() => {
+    if (!pendingFillIdsRef.current) return;
+    const fillIds = pendingFillIdsRef.current;
+    pendingFillIdsRef.current = null;
+    handleAutoArrangeRef.current({
+      arrangeAll: true,
+      skipSnapshot: true,
+      trimOverflow: true,
+      fillIds,
+    });
+  }, [designs, handleAutoArrangeRef]);
+
   // Stable refs for keyboard handler to avoid frequent re-registration
   const handleUndoRef = useRef(handleUndo);
   handleUndoRef.current = handleUndo;
@@ -1388,6 +1631,8 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     GANGSHEET_HEIGHTS,
     MAX_ARTBOARD_HEIGHT,
     recommendedArtboardHeight,
+    canFill,
+    handleFillEmptySpace,
     handleUndoRef,
     handleRedoRef,
     handleDuplicateDesignRef,

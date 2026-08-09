@@ -18,10 +18,18 @@ import {
 } from "@/state/editing-store";
 
 export interface LayerRowGroup {
+  /** Stable id of the form `${imageSrc}::${sizeKey}` — unique across sheets. */
+  rowKey: string;
   baseName: string;
   sizeKey: string;
+  /** Copies on the sheet currently on screen. Empty when the design only lives elsewhere. */
   designs: DesignItem[];
   isResized: boolean;
+  /** Thumbnail / Add-here source when the active sheet has no copies of this design. */
+  representative: DesignItem;
+  sheetsWithThis: Array<{ id: string; name: string; count: number }>;
+  /** Sheets other than the one on screen that also hold this design. */
+  otherSheets: Array<{ id: string; name: string; count: number }>;
 }
 
 /**
@@ -40,6 +48,8 @@ export interface LayerRowHandlers {
   >;
   setDesigns: Dispatch<SetStateAction<DesignItem[]>>;
   getLayerThumbnail: (design: DesignItem) => string;
+  /** Copy a design that lives on another sheet onto the one currently open. */
+  addDesignToActiveSheet: (source: DesignItem) => void;
 }
 
 export interface LayerRowProps {
@@ -71,8 +81,10 @@ export interface LayerRowProps {
  */
 function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
   const { t, lang } = useLanguage();
-  const first = row.designs[0];
+  const isOnActiveSheet = row.designs.length > 0;
+  const first = isOnActiveSheet ? row.designs[0] : row.representative;
   const count = row.designs.length;
+  const otherSheetNames = row.otherSheets.map((s) => s.name);
 
   // Selector-based subscription: fires only when *this row's* `isSelected`
   // boolean flips (a click on any design in the row moves it in or out of
@@ -134,13 +146,24 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
 
   const handleRowClick = useCallback(
     (e: React.MouseEvent) => {
+      // Off-sheet rows are informational only — selecting them would point
+      // the editor at a design that is not on the canvas in front of the customer.
+      if (!isOnActiveSheet) return;
       if (e.ctrlKey || e.metaKey) {
         toggleRowInSelection();
       } else {
         handlers.handleSelectDesign(first.id);
       }
     },
-    [first.id, handlers, toggleRowInSelection],
+    [isOnActiveSheet, first.id, handlers, toggleRowInSelection],
+  );
+
+  const handleAddHere = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      handlers.addDesignToActiveSheet(row.representative);
+    },
+    [handlers, row.representative],
   );
 
   const handleSelectionToggle = useCallback(
@@ -219,10 +242,12 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
 
   return (
     <div
-      className={`relative grid grid-cols-[auto_minmax(0,1fr)] coarse:grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-2.5 layersheet:gap-x-1.5 layersheet:gap-y-0.5 layersheet:px-1.5 layersheet:py-0.5 cursor-pointer transition-colors ${
-        isSelected
-          ? "bg-cyan-50 border-l-2 border-cyan-400"
-          : "hover:bg-gray-100/70 border-l-2 border-transparent"
+      className={`relative grid grid-cols-[auto_minmax(0,1fr)] coarse:grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-2.5 layersheet:gap-x-1.5 layersheet:gap-y-0.5 layersheet:px-1.5 layersheet:py-0.5 transition-colors ${
+        !isOnActiveSheet
+          ? "opacity-60 cursor-default border-l-2 border-transparent bg-gray-50/60"
+          : isSelected
+            ? "bg-cyan-50 border-l-2 border-cyan-400 cursor-pointer"
+            : "hover:bg-gray-100/70 border-l-2 border-transparent cursor-pointer"
       }`}
       onClick={handleRowClick}
     >
@@ -244,6 +269,7 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
         structural: the button owns grid column 1 for both rows, so it cannot
         intersect the copies stepper or the delete button whatever their size.
       */}
+      {isOnActiveSheet && (
       <button
         type="button"
         role="checkbox"
@@ -269,6 +295,7 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
           <Check className="h-3.5 w-3.5" strokeWidth={3} />
         </span>
       </button>
+      )}
       <div className="row-span-2 h-9 w-9 layersheet:h-8 layersheet:w-8 rounded bg-gray-100 border border-gray-300 flex-shrink-0 overflow-hidden flex items-center justify-center">
         <img
           src={handlers.getLayerThumbnail(first)}
@@ -311,9 +338,12 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
           </div>
         ) : (
           <p
-            className="text-[11px] text-gray-900 truncate cursor-text hover:text-cyan-600 transition-colors layersheet:min-w-0"
-            title={t("editor.renameDesign")}
+            className={`text-[11px] text-gray-900 truncate transition-colors layersheet:min-w-0 ${
+              isOnActiveSheet ? "cursor-text hover:text-cyan-600" : "cursor-default"
+            }`}
+            title={isOnActiveSheet ? t("editor.renameDesign") : row.baseName}
             onClick={(e) => {
+              if (!isOnActiveSheet) return;
               e.stopPropagation();
               beginNameEdit(rowKey, first.name);
             }}
@@ -341,13 +371,36 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
             first.heightInches * first.transform.s,
             lang,
           )}
+          {!isOnActiveSheet && otherSheetNames.length > 0 && (
+            <span className="ml-1.5 text-[9px] text-violet-500 font-medium">
+              {" · "}
+              {t("sheets.onOtherSheet", { name: otherSheetNames.join(", ") })}
+            </span>
+          )}
+          {isOnActiveSheet && otherSheetNames.length > 0 && (
+            <span className="ml-1.5 text-[9px] text-gray-400">
+              +{otherSheetNames.join(", ")}
+            </span>
+          )}
         </p>
       </div>
       {/* `layersheet:pr-10` reserves the delete gutter on this row too. Without
           it the Apply button, being `flex-1`, ran to the row's right edge and
           straight under the delete target — so the right end of a routine
           action was a tap on a destructive one. */}
-      <div className="col-start-2 coarse:col-start-3 flex min-w-0 items-center gap-1.5 layersheet:pr-10">
+      <div className={`col-start-2 flex min-w-0 items-center gap-1.5 layersheet:pr-10 ${isOnActiveSheet ? "coarse:col-start-3" : ""}`}>
+        {!isOnActiveSheet ? (
+          <button
+            type="button"
+            onClick={handleAddHere}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-emerald-400 bg-emerald-50 px-2 text-[9px] font-bold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 whitespace-nowrap layersheet:h-10 layersheet:text-[11px]"
+            title={t("sheets.addHere")}
+          >
+            <Plus className="h-3 w-3" strokeWidth={2.5} />
+            {t("sheets.addHere")}
+          </button>
+        ) : (
+        <>
         <div
           className="flex items-center gap-px shrink-0"
           onClick={(e) => e.stopPropagation()}
@@ -478,6 +531,8 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
               competing for the space. */}
           <span className="truncate">{t("editor.apply")}</span>
         </button>
+        </>
+        )}
       </div>
       {/* Hit area and glyph are separate boxes on the phone, as everywhere else
           in this row: the 12px bezel keeps its size and the box around it grows.
@@ -485,6 +540,7 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
           down the right edge — that makes the target taller than the 40px the
           rest of the row gets, and, paired with the `pr-10` on both grid rows,
           means it can never sit on top of another control. */}
+      {isOnActiveSheet && (
       <button
         onClick={handleDelete}
         aria-label={t("editor.deleteLayer", { name: row.baseName })}
@@ -493,6 +549,7 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
       >
         <Trash2 className="w-3 h-3" />
       </button>
+      )}
     </div>
   );
 }

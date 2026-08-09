@@ -311,6 +311,8 @@ function useImageEditorModel(props: ImageEditorProps) {
     handleThresholdAlpha: bag.handleThresholdAlpha,
     handleThresholdAlphaAll: bag.handleThresholdAlphaAll,
     handleAutoArrange: bag.handleAutoArrange,
+    canFill: bag.canFill,
+    handleFillEmptySpace: bag.handleFillEmptySpace,
     canUndo: bag.canUndo,
     canRedo: bag.canRedo,
     handleUndo: bag.handleUndo,
