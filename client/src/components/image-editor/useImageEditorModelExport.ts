@@ -116,7 +116,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
 
       if (format === 'pdf') {
         const { PDFDocument, degrees } = await import('pdf-lib');
-        const { addSpotColorVectorsToPDF } = await import('@/lib/spot-color-vectors');
+        const { addSpotColorVectorsToPDF, addSpotColorVectorsFromMasksToPDF } = await import('@/lib/spot-color-vectors');
 
         const exportDpi = EXPORT_DPI;
         const pageWidthPt = artboardWidth * 72;
@@ -130,7 +130,12 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           const sourceBlob = printSourceFor(design);
           const decoded = sourceBlob
             ? await decodePrintSourceAtSize(
-                sourceBlob, printSourceCropFor(design), drawW, drawH, design.alphaThresholded,
+                sourceBlob,
+                printSourceCropFor(design),
+                drawW,
+                drawH,
+                design.alphaThresholded,
+                design.imageInfo.image,
               )
             : null;
           const img: ImageBitmap | HTMLImageElement = decoded ?? design.imageInfo.image;
@@ -149,6 +154,151 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           } else {
             cctx.drawImage(img, 0, 0, drawW, drawH);
           }
+
+          // Full-resolution fluorescent knockout + spot masks. Classify every
+          // export-DPI pixel by nearest centroid so CMYK is hard-cleared where
+          // spot ink lives, and the same masks feed the PDF spot layers.
+          const designSpotColors = spotColorsByDesign?.[design.id];
+          const hasFluor = !!(designSpotColors?.some(
+            (c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange,
+          ));
+          let spotVectorData: {
+            masks: Record<string, Uint8Array>;
+            channelNames: Record<string, string>;
+            maskWidth: number;
+            maskHeight: number;
+          } | null = null;
+
+          if (hasFluor && designSpotColors && designSpotColors.length > 0) {
+            try {
+              const colors = designSpotColors as any[];
+              const centroids = colors.map((c: any) => c.rgb as { r: number; g: number; b: number });
+
+              const hasRegionLevel = colors.some((c: any) =>
+                c.regions && c.regions.length > 1 && c.regionMap &&
+                c.regions.some((r: any) => r.spotFluorY || r.spotFluorM || r.spotFluorG || r.spotFluorOrange),
+              );
+
+              let lowResMap: { pixelMap: Int16Array; width: number; height: number } | null = null;
+              if (hasRegionLevel) {
+                const { buildPixelMapFromImage } = await import('@/lib/color-extractor');
+                lowResMap = buildPixelMapFromImage(img as any, designSpotColors as any) ?? null;
+              }
+
+              const n = drawW * drawH;
+              const mFY = new Uint8Array(n);
+              const mFM = new Uint8Array(n);
+              const mFG = new Uint8Array(n);
+              const mFO = new Uint8Array(n);
+
+              const imgDataFull = cctx.getImageData(0, 0, drawW, drawH);
+              const pixels = imgDataFull.data;
+              const lrW = lowResMap?.width ?? 1;
+              const lrH = lowResMap?.height ?? 1;
+
+              for (let py = 0; py < drawH; py++) {
+                for (let px = 0; px < drawW; px++) {
+                  const pi = py * drawW + px;
+                  const alpha = pixels[pi * 4 + 3];
+                  if (alpha < 10) continue;
+                  const r = pixels[pi * 4];
+                  const g = pixels[pi * 4 + 1];
+                  const b = pixels[pi * 4 + 2];
+
+                  let bestDist = Infinity;
+                  let bestIdx = -1;
+                  let secDist = Infinity;
+                  let secIdx = -1;
+                  for (let ki = 0; ki < centroids.length; ki++) {
+                    const c = centroids[ki];
+                    const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+                    if (d < bestDist) {
+                      secDist = bestDist;
+                      secIdx = bestIdx;
+                      bestDist = d;
+                      bestIdx = ki;
+                    } else if (d < secDist) {
+                      secDist = d;
+                      secIdx = ki;
+                    }
+                  }
+                  if (bestIdx < 0) continue;
+                  const color = colors[bestIdx];
+                  if (!color) continue;
+
+                  // Projection confidence toward the colour-boundary midpoint
+                  // between the two nearest centroids (1 = pure, 0.5 = edge).
+                  let confidence = 1.0;
+                  if (secIdx >= 0) {
+                    const cA = centroids[bestIdx];
+                    const cB = centroids[secIdx];
+                    const vR = cB.r - cA.r;
+                    const vG = cB.g - cA.g;
+                    const vBc = cB.b - cA.b;
+                    const dotVV = vR * vR + vG * vG + vBc * vBc;
+                    if (dotVV > 0) {
+                      const t = ((r - cA.r) * vR + (g - cA.g) * vG + (b - cA.b) * vBc) / dotVV;
+                      confidence = Math.max(0, Math.min(1, 1 - t));
+                    }
+                  }
+
+                  const isInk = confidence >= 0.5 && alpha >= 10;
+                  if (!isInk) continue;
+
+                  const assignInk = (fy: boolean, fm: boolean, fg: boolean, fo: boolean) => {
+                    if (fy) mFY[pi] = 255;
+                    if (fm) mFM[pi] = 255;
+                    if (fg) mFG[pi] = 255;
+                    if (fo) mFO[pi] = 255;
+                  };
+
+                  if (color.regions && color.regions.length > 1 && color.regionMap && lowResMap) {
+                    const mx = Math.min(Math.floor((px * lrW) / drawW), lrW - 1);
+                    const my = Math.min(Math.floor((py * lrH) / drawH), lrH - 1);
+                    const ri = (color.regionMap as Int16Array)[my * lrW + mx] ?? -1;
+                    if (ri < 0 || !color.regions[ri]) continue;
+                    const region = color.regions[ri];
+                    assignInk(region.spotFluorY, region.spotFluorM, region.spotFluorG, region.spotFluorOrange);
+                  } else {
+                    assignInk(color.spotFluorY, color.spotFluorM, color.spotFluorG, color.spotFluorOrange);
+                  }
+                }
+              }
+
+              // Hard binary knockout — clear CMYK alpha wherever spot ink lives.
+              for (let pi = 0; pi < n; pi++) {
+                if (mFY[pi] || mFM[pi] || mFG[pi] || mFO[pi]) {
+                  imgDataFull.data[pi * 4 + 3] = 0;
+                }
+              }
+              cctx.putImageData(imgDataFull, 0, 0);
+
+              const cNames = {
+                FY: (colors[0]?.spotFluorYName as string) || 'FY',
+                FM: (colors[0]?.spotFluorMName as string) || 'FM',
+                FG: (colors[0]?.spotFluorGName as string) || 'FG',
+                FO: (colors[0]?.spotFluorOrangeName as string) || 'FO',
+              };
+              const allChannelMasks: Record<string, Uint8Array> = {
+                FY: mFY, FM: mFM, FG: mFG, FO: mFO,
+              };
+              const activeMasks: Record<string, Uint8Array> = {};
+              for (const [ch, m] of Object.entries(allChannelMasks)) {
+                if (m.some((v) => v > 0)) activeMasks[ch] = m;
+              }
+              if (Object.keys(activeMasks).length > 0) {
+                spotVectorData = {
+                  masks: activeMasks,
+                  channelNames: { FY: cNames.FY, FM: cNames.FM, FG: cNames.FG, FO: cNames.FO },
+                  maskWidth: drawW,
+                  maskHeight: drawH,
+                };
+              }
+            } catch (koErr) {
+              console.warn('[Knockout] mask build failed, skipping:', koErr);
+            }
+          }
+
           let pngDataUrl: string;
           try {
             pngDataUrl = cvs.toDataURL('image/png');
@@ -201,15 +351,35 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
             });
           }
 
-          if (spotColorsByDesign) {
-            const designSpotColors = spotColorsByDesign[design.id];
-            if (designSpotColors && designSpotColors.length > 0) {
-              const hasFluor = designSpotColors.some((c: any) => c.spotFluorY || c.spotFluorM || c.spotFluorG || c.spotFluorOrange);
-              if (hasFluor) {
+          if (spotVectorData) {
+            const designWidthIn = design.widthInches * design.transform.s;
+            const designHeightIn = design.heightInches * design.transform.s;
+            const centerXIn = design.transform.nx * artboardWidth;
+            const centerYIn = design.transform.ny * artboardHeight;
+            await addSpotColorVectorsFromMasksToPDF(
+              pdfDoc,
+              page,
+              spotVectorData.masks,
+              spotVectorData.maskWidth,
+              spotVectorData.maskHeight,
+              spotVectorData.channelNames,
+              designWidthIn,
+              designHeightIn,
+              artboardHeight,
+              centerXIn - designWidthIn / 2,
+              centerYIn - designHeightIn / 2,
+              design.transform.rotation ?? 0,
+            );
+          } else if (spotColorsByDesign) {
+            // Non-fluorescent spots (white/gloss) still use the trace path.
+            const colors = spotColorsByDesign[design.id];
+            if (colors && colors.length > 0) {
+              const hasOther = colors.some((c: any) => c.spotWhite || c.spotGloss);
+              if (hasOther) {
                 const offsetXInches = design.transform.nx * artboardWidth - (design.widthInches * design.transform.s) / 2;
                 const offsetYInches = design.transform.ny * artboardHeight - (design.heightInches * design.transform.s) / 2;
                 await addSpotColorVectorsToPDF(
-                  pdfDoc, page, img, designSpotColors,
+                  pdfDoc, page, img, colors,
                   design.widthInches * design.transform.s,
                   design.heightInches * design.transform.s,
                   artboardHeight,
@@ -379,7 +549,12 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
             const sourceBlob = printSourceFor(design);
             const decoded = sourceBlob
               ? await decodePrintSourceAtSize(
-                  sourceBlob, printSourceCropFor(design), drawW, drawH, design.alphaThresholded,
+                  sourceBlob,
+                  printSourceCropFor(design),
+                  drawW,
+                  drawH,
+                  design.alphaThresholded,
+                  design.imageInfo.image,
                 )
               : null;
             const img: ImageBitmap | HTMLImageElement = decoded ?? design.imageInfo.image;
@@ -500,7 +675,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
     format: string = 'png',
     spotColorsByDesign?: Record<string, any[]>,
   ) => {
-    const { sheets, activeSheetId, artboardWidth } = exportSheetsRef.current;
+    const { sheets, artboardWidth } = exportSheetsRef.current;
     const sheetsWithDesigns = sheets.filter(s => s.designs.length > 0);
     if (sheetsWithDesigns.length === 0) {
       toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
@@ -518,9 +693,9 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           artboardWidth,
           artboardHeight: sheet.artboardHeight,
           format,
-          // Spot colours are collected from the sheet on screen, so they only
-          // describe that sheet.
-          spotColorsByDesign: sheet.id === activeSheetId ? spotColorsByDesign : undefined,
+          // Spot selections accumulate by design id across the session; pass the
+          // full map so every sheet can look up its own fluorescent assignments.
+          spotColorsByDesign,
         });
         triggerDownload(blob, `${safeSheetFileName(sheet.name)}.${extension}`);
         warnAboutSoftDesigns(softDesigns);
@@ -537,7 +712,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           artboardWidth,
           artboardHeight: sheet.artboardHeight,
           format,
-          spotColorsByDesign: sheet.id === activeSheetId ? spotColorsByDesign : undefined,
+          spotColorsByDesign,
           quiet: i > 0,
         });
         zip.file(`sheet-${i + 1}-${safeSheetFileName(sheet.name)}.${extension}`, blob);

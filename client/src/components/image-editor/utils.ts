@@ -231,6 +231,15 @@ export type PngExportDesign = {
 };
 
 /**
+ * EXIF-aware decode options. The prepare endpoint measures `exportCrop` in
+ * *oriented* source pixels (sharp `.rotate()`), so the browser must apply the
+ * same orientation before honouring that rect — otherwise a rotated JPEG
+ * prints the wrong slice (or the full uncropped frame) while the preview,
+ * which came from the server already oriented+cropped, looks correct.
+ */
+const ORIENT_FROM_IMAGE: ImageBitmapOptions = { imageOrientation: "from-image" };
+
+/**
  * Decode an encoded print source cropped to `crop` and scaled to the size it
  * will occupy on the sheet. Used by the export paths that draw on the main
  * thread (the non-worker canvas fallback and PDF embedding); the PNG worker
@@ -239,6 +248,12 @@ export type PngExportDesign = {
  * Decoding straight to the placement size means peak memory tracks the sheet
  * rather than the upload, and the pixels are resampled once by the decoder
  * instead of twice. Never upscales — returns the natural size in that case.
+ *
+ * `framingPreview` is the editor image the customer arranged. When the print
+ * source has no crop rect but still carries transparent margin the preview
+ * already trimmed, decoding it into the placement box would shrink the
+ * artwork — return null so the caller falls back to the preview and download
+ * matches what is on screen.
  */
 export async function decodePrintSourceAtSize(
   blob: Blob,
@@ -246,20 +261,44 @@ export async function decodePrintSourceAtSize(
   targetW: number,
   targetH: number,
   pixelated = false,
+  framingPreview?: HTMLImageElement | null,
 ): Promise<ImageBitmap | null> {
   if (typeof createImageBitmap !== "function") return null;
   const wantW = Math.max(1, Math.round(targetW));
   const wantH = Math.max(1, Math.round(targetH));
   const resizeQuality: ImageBitmapOptions["resizeQuality"] = pixelated ? "pixelated" : "high";
   try {
-    if (crop) {
-      const options =
-        wantW < crop.width || wantH < crop.height
-          ? { resizeWidth: wantW, resizeHeight: wantH, resizeQuality }
-          : undefined;
-      return await createImageBitmap(blob, crop.x, crop.y, crop.width, crop.height, options);
+    if (crop && crop.width > 0 && crop.height > 0) {
+      const sx = Math.max(0, Math.floor(crop.x));
+      const sy = Math.max(0, Math.floor(crop.y));
+      const sw = Math.max(1, Math.floor(crop.width));
+      const sh = Math.max(1, Math.floor(crop.height));
+      const options: ImageBitmapOptions =
+        wantW < sw || wantH < sh
+          ? { ...ORIENT_FROM_IMAGE, resizeWidth: wantW, resizeHeight: wantH, resizeQuality }
+          : { ...ORIENT_FROM_IMAGE };
+      return await createImageBitmap(blob, sx, sy, sw, sh, options);
     }
-    const probe = await createImageBitmap(blob);
+    const probe = await createImageBitmap(blob, ORIENT_FROM_IMAGE);
+    if (framingPreview) {
+      const pw = framingPreview.naturalWidth || framingPreview.width;
+      const ph = framingPreview.naturalHeight || framingPreview.height;
+      if (pw > 0 && ph > 0) {
+        const aspectBlob = probe.width / probe.height;
+        const aspectPreview = pw / ph;
+        const aspectDiff = Math.abs(aspectBlob - aspectPreview) / aspectPreview;
+        const stillHasMargin = probe.width > pw * 1.08 || probe.height > ph * 1.08;
+        // Different aspect + larger source ⇒ transparent margin was cropped for
+        // the preview but `exportCrop` never made it to export.
+        if (aspectDiff > 0.03 && stillHasMargin) {
+          console.warn(
+            "[export] print source framing differs from preview without exportCrop; using preview so download matches the editor",
+          );
+          probe.close();
+          return null;
+        }
+      }
+    }
     if (wantW >= probe.width && wantH >= probe.height) return probe;
     const scaled = await createImageBitmap(probe, 0, 0, probe.width, probe.height, {
       resizeWidth: wantW,
@@ -272,6 +311,45 @@ export async function decodePrintSourceAtSize(
     console.warn("[export] print-source decode failed", { err });
     return null;
   }
+}
+
+/**
+ * Drop a print-source blob that would print with the wrong framing.
+ *
+ * Used by the PNG worker path, which cannot see the preview image once the
+ * buffers are posted. Same rule as `decodePrintSourceAtSize`'s framing guard.
+ */
+export async function discardMismatchedPrintSource(
+  sourceBlob: Blob | undefined,
+  sourceCrop: { x: number; y: number; width: number; height: number } | undefined,
+  preview: HTMLImageElement,
+): Promise<{ sourceBlob?: Blob; sourceCrop?: { x: number; y: number; width: number; height: number } }> {
+  if (!sourceBlob) return {};
+  if (sourceCrop && sourceCrop.width > 0 && sourceCrop.height > 0) {
+    return { sourceBlob, sourceCrop };
+  }
+  if (typeof createImageBitmap !== "function") return { sourceBlob };
+  try {
+    const probe = await createImageBitmap(sourceBlob, ORIENT_FROM_IMAGE);
+    try {
+      const pw = preview.naturalWidth || preview.width;
+      const ph = preview.naturalHeight || preview.height;
+      if (pw > 0 && ph > 0) {
+        const aspectDiff = Math.abs(probe.width / probe.height - pw / ph) / (pw / ph);
+        if (aspectDiff > 0.03 && (probe.width > pw * 1.08 || probe.height > ph * 1.08)) {
+          console.warn(
+            "[export] print source framing differs from preview without exportCrop; using preview so download matches the editor",
+          );
+          return {};
+        }
+      }
+    } finally {
+      probe.close();
+    }
+  } catch {
+    /* keep the blob — decode will fall back if it fails later */
+  }
+  return { sourceBlob };
 }
 
 function imageToExportBuffer(image: HTMLImageElement): Promise<ArrayBuffer> {
@@ -350,7 +428,20 @@ export async function exportPngWithWorker(options: {
     throw new Error("The memory-efficient PNG export path is unavailable in this browser.");
   }
 
-  const { sources, designSourceIndex } = await buildDedupedSources(options.designs);
+  // Resolve framing before posting: once buffers leave this thread the worker
+  // can no longer compare them to the preview the customer arranged.
+  const framedDesigns: PngExportDesign[] = await Promise.all(
+    options.designs.map(async (design) => {
+      const resolved = await discardMismatchedPrintSource(
+        design.sourceBlob,
+        design.sourceCrop,
+        design.image,
+      );
+      return { ...design, sourceBlob: resolved.sourceBlob, sourceCrop: resolved.sourceCrop };
+    }),
+  );
+
+  const { sources, designSourceIndex } = await buildDedupedSources(framedDesigns);
   const designPayload: Array<{
     widthInches: number;
     heightInches: number;
@@ -365,7 +456,7 @@ export async function exportPngWithWorker(options: {
     alphaThresholded?: boolean;
     printFileName?: boolean;
     name?: string;
-  }> = options.designs.map((design, i) => ({
+  }> = framedDesigns.map((design, i) => ({
     widthInches: design.widthInches,
     heightInches: design.heightInches,
     nx: design.nx,

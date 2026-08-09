@@ -406,11 +406,26 @@ function ControlsSection({
     const regionIndex = color?.regionMap?.[pixelIndex] ?? -1;
     if (color?.regions?.[regionIndex]) {
       setExtractedColors(prev => {
-        const updated = prev.map((entry, index) => index !== colorIndex ? entry : {
-          ...entry,
-          regions: entry.regions?.map(region => region.id !== color.regions?.[regionIndex]?.id
+        const updated = prev.map((entry, index) => {
+          if (index !== colorIndex) return entry;
+          const regions = entry.regions?.map(region => region.id !== color.regions?.[regionIndex]?.id
             ? region
-            : { ...region, spotFluorY: activeChannel === 'spotFluorY', spotFluorM: activeChannel === 'spotFluorM', spotFluorG: activeChannel === 'spotFluorG', spotFluorOrange: activeChannel === 'spotFluorOrange' }),
+            : {
+                ...region,
+                spotFluorY: activeChannel === 'spotFluorY',
+                spotFluorM: activeChannel === 'spotFluorM',
+                spotFluorG: activeChannel === 'spotFluorG',
+                spotFluorOrange: activeChannel === 'spotFluorOrange',
+              });
+          // Export reads color-level flags; keep them as the OR of region assigns.
+          return {
+            ...entry,
+            regions,
+            spotFluorY: !!regions?.some(r => r.spotFluorY),
+            spotFluorM: !!regions?.some(r => r.spotFluorM),
+            spotFluorG: !!regions?.some(r => r.spotFluorG),
+            spotFluorOrange: !!regions?.some(r => r.spotFluorOrange),
+          };
         });
         if (selectedDesignId) spotSelectionsRef.current.set(selectedDesignId, updated);
         return updated;
@@ -458,6 +473,9 @@ function ControlsSection({
     spotFluorG: c.spotFluorG ?? false,
     spotFluorOrange: c.spotFluorOrange ?? false,
     spotFluorYName, spotFluorMName, spotFluorGName, spotFluorOrangeName,
+    // Region-level wand assigns — needed for per-region knockout at export.
+    regions: c.regions,
+    regionMap: c.regionMap,
   })), [spotFluorYName, spotFluorMName, spotFluorGName, spotFluorOrangeName]);
 
   const getAllDesignSpotColors = useCallback(() => {

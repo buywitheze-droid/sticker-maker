@@ -180,6 +180,8 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     preserveSelection?: boolean;
     arrangeAll?: boolean;
     fullRepack?: boolean;
+    trimOverflow?: boolean;
+    fillIds?: Set<string>;
     /** Internal: a ladder step continuing the run that is already in flight. */
     continuation?: boolean;
   };
@@ -188,13 +190,26 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
    * Fold a superseded request into the one already waiting. Work flags are unioned so a
    * coalesced burst never does *less* than the requests it stands in for; `skipSnapshot`
    * is intersected, because a request that wanted an undo point never got to take one.
+   * Fill Sheet flags must survive the merge — otherwise a fill queued behind another
+   * arrange silently becomes a normal pack and the height ladder grows the sheet.
    */
-  const mergeArrangeOpts = (a: ArrangeOpts | null, b: ArrangeOpts | undefined): ArrangeOpts => ({
-    skipSnapshot: (a?.skipSnapshot ?? true) && (b?.skipSnapshot ?? false),
-    preserveSelection: (a?.preserveSelection ?? false) || (b?.preserveSelection ?? false),
-    arrangeAll: (a?.arrangeAll ?? false) || (b?.arrangeAll ?? false),
-    fullRepack: (a?.fullRepack ?? false) || (b?.fullRepack ?? false),
-  });
+  const mergeArrangeOpts = (a: ArrangeOpts | null, b: ArrangeOpts | undefined): ArrangeOpts => {
+    const fillIds =
+      a?.fillIds || b?.fillIds
+        ? new Set<string>([...(a?.fillIds ?? []), ...(b?.fillIds ?? [])])
+        : undefined;
+    return {
+      skipSnapshot: (a?.skipSnapshot ?? true) && (b?.skipSnapshot ?? false),
+      preserveSelection: (a?.preserveSelection ?? false) || (b?.preserveSelection ?? false),
+      arrangeAll: (a?.arrangeAll ?? false) || (b?.arrangeAll ?? false),
+      fullRepack: (a?.fullRepack ?? false) || (b?.fullRepack ?? false),
+      trimOverflow: (a?.trimOverflow ?? false) || (b?.trimOverflow ?? false),
+      fillIds,
+    };
+  };
+  /** True while Fill Sheet copies are waiting on / packing through arrange. */
+  const fillSessionActiveRef = useRef(false);
+  const [isFilling, setIsFilling] = useState(false);
   /**
    * Release the lock and start whatever queued up behind the run that just finished.
    *
@@ -208,6 +223,11 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     arrangeInFlightRef.current = false;
     const next = pendingArrangeRef.current;
     pendingArrangeRef.current = null;
+    // End the Fill Sheet busy state once nothing fill-related is still queued.
+    if (fillSessionActiveRef.current && !(next?.trimOverflow || next?.fillIds)) {
+      fillSessionActiveRef.current = false;
+      setIsFilling(false);
+    }
     if (next) setTimeout(() => handleAutoArrangeRef.current(next), 0);
   };
 
@@ -575,20 +595,38 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     const maxLadderSteps = GANGSHEET_HEIGHTS.length + 2;
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean, sizing?: PackSizing) => {
-      // Fill Sheet: never climb the height ladder. Drop whatever did not fit
-      // and leave the customer's chosen size alone.
+      // Fill Sheet: never climb the height ladder. Drop speculative fill copies
+      // that did not fit and leave the customer's chosen size alone.
       if (hasOverflow && opts?.trimOverflow) {
-        const overflowIds = new Set(bestResult.filter((p) => p.overflows).map((p) => p.id));
+        const overflowPlacedIds = new Set(bestResult.filter((p) => p.overflows).map((p) => p.id));
         const abW = artboardWidthRef.current;
         const abH = artboardHeightRef.current;
         const fillIds = opts.fillIds;
-        const trimmedFillCount = fillIds
-          ? [...overflowIds].filter((id) => fillIds.has(id)).length
-          : overflowIds.size;
-        const keptFillCount = fillIds ? fillIds.size - trimmedFillCount : 0;
 
-        // Build placement deltas the same way as the normal path, then filter
-        // out anything that overflowed — those designs were speculative copies.
+        // Packer ids may be `group:…` super-items — expand those to member design ids
+        // before deciding what to drop or leave alone.
+        const expandedOverflow = new Set<string>();
+        for (const id of overflowPlacedIds) {
+          if (id.startsWith(GROUP_PREFIX)) {
+            const g = groups.get(id.slice(GROUP_PREFIX.length));
+            if (g) for (const m of g.members) expandedOverflow.add(m.id);
+          } else {
+            expandedOverflow.add(id);
+          }
+        }
+
+        // Only remove Fill Sheet copies. Originals (and group members that are
+        // not fill copies) stay on the sheet even if the packer marked them
+        // overflowing — otherwise preferStable losing to a full winner can
+        // delete artwork the customer already placed.
+        const removeIds = fillIds
+          ? new Set([...expandedOverflow].filter((id) => fillIds.has(id)))
+          : expandedOverflow;
+        const trimmedFillCount = removeIds.size;
+        const keptFillCount = fillIds
+          ? [...fillIds].filter((id) => !removeIds.has(id)).length
+          : 0;
+
         type DesignDelta = {
           nx: number;
           ny: number;
@@ -626,9 +664,10 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
 
         setDesigns((prev) =>
           prev
-            .filter((d) => !overflowIds.has(d.id))
+            .filter((d) => !removeIds.has(d.id))
             .map((d) => {
               const delta = deltas.get(d.id);
+              // Overflowing non-fill designs keep their previous transform.
               if (!delta || delta.overflows) return d;
               const finalRotation = delta.rotation === null ? d.transform.rotation : delta.rotation % 360;
               const stampExtra = getStampExtra(d);
@@ -650,7 +689,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
           title: t("fill.done"),
           description:
             kept > 0
-              ? t("fill.donePartial", { kept, trimmed: trimmedFillCount })
+              ? (trimmedFillCount > 0
+                ? t("fill.donePartial", { kept, trimmed: trimmedFillCount })
+                : t("fill.doneAll", { n: kept }))
               : t("fill.doneNone"),
         });
         if (!opts?.preserveSelection) {
@@ -705,6 +746,10 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
           preserveSelection: true,
           arrangeAll: opts?.arrangeAll,
           fullRepack: opts?.fullRepack,
+          // Defense in depth: Fill Sheet should never reach the ladder (trim
+          // returns first), but if a future reorder does, keep the fill flags.
+          trimOverflow: opts?.trimOverflow,
+          fillIds: opts?.fillIds,
           // Keeps the lock held across the climb: a rung is part of this arrange, not a
           // competing one, and releasing here would let a queued request interleave with
           // a half-finished expansion.
@@ -1115,11 +1160,31 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
   // Estimate how many extra copies of a reference design can still fit, then
   // add them and ask auto-arrange to pack with trimOverflow so the sheet size
   // the customer already chose is never silently grown.
+  //
+  // Ink coverage uses the same nest silhouette arrange prefers, cached under a
+  // separate key so a coarse 64×64 fallback never poisons arrange's inkRatio.
   const sampleContentFill = useCallback((design: DesignItem): number => {
-    const key = design.imageInfo.image.src;
-    const cached = contentFillCacheRef.current.get(key);
+    const src = design.imageInfo.image.src;
+    const cacheKey = `fillest:${src}`;
+    const cached = contentFillCacheRef.current.get(cacheKey);
     if (cached !== undefined) return cached;
+    const shared = contentFillCacheRef.current.get(src);
+    if (shared !== undefined) return shared;
     try {
+      const silhouette = getDesignNestMask({
+        image: design.imageInfo.image,
+        artW: design.widthInches * design.transform.s,
+        artH: design.heightInches * design.transform.s,
+        stampExtra: getStampExtra(design),
+        stampText: design.printFileName ? design.name : undefined,
+        flipX: design.transform.flipX,
+        flipY: design.transform.flipY,
+        sourceKey: src,
+      });
+      if (silhouette) {
+        contentFillCacheRef.current.set(cacheKey, silhouette.inkRatio);
+        return silhouette.inkRatio;
+      }
       const sampleSize = 64;
       const c = document.createElement("canvas");
       c.width = sampleSize;
@@ -1131,7 +1196,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       let opaque = 0;
       for (let i = 3; i < data.length; i += 4) if (data[i] > 20) opaque++;
       const fill = opaque / (sampleSize * sampleSize);
-      contentFillCacheRef.current.set(key, fill);
+      contentFillCacheRef.current.set(cacheKey, fill);
       return fill;
     } catch {
       return 1;
@@ -1146,14 +1211,14 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     abH: number,
   ): number => {
     const rw = ref.widthInches * ref.transform.s;
-    const rh = ref.heightInches * ref.transform.s;
+    const rh = getEffectiveHeight(ref);
     const refArea = (rw + gap) * (rh + gap);
     if (refArea <= 0) return 0;
 
     const occupiedBottom = currentDesigns.reduce((maxY, d) => {
       const cy = d.transform.ny * abH;
       const hw = (d.widthInches * d.transform.s) / 2;
-      const hh = (d.heightInches * d.transform.s) / 2;
+      const hh = getEffectiveHeight(d) / 2;
       const rad = ((d.transform.rotation ?? 0) * Math.PI) / 180;
       const boundH = Math.abs(hw * Math.sin(rad)) + Math.abs(hh * Math.cos(rad));
       return Math.max(maxY, cy + boundH);
@@ -1167,7 +1232,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
           currentDesigns.reduce(
             (acc, d) =>
               acc +
-              (d.widthInches * d.transform.s + gap) * (d.heightInches * d.transform.s + gap),
+              (d.widthInches * d.transform.s + gap) * (getEffectiveHeight(d) + gap),
             0,
           ),
       );
@@ -1178,7 +1243,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
   }, [sampleContentFill]);
 
   const canFill = useMemo(() => {
-    if (designs.length === 0) return false;
+    if (isFilling || designs.length === 0) return false;
     const gap = designGap ?? 0.25;
     const ref =
       (selectedDesignId ? designs.find((d) => d.id === selectedDesignId) : null) ??
@@ -1189,16 +1254,16 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
           : b,
       );
     const refArea =
-      (ref.widthInches * ref.transform.s + gap) * (ref.heightInches * ref.transform.s + gap);
+      (ref.widthInches * ref.transform.s + gap) * (getEffectiveHeight(ref) + gap);
     if (refArea <= 0) return false;
     return computeFillCount(ref, designs, gap, artboardWidth, artboardHeight) >= 1;
-  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, computeFillCount]);
+  }, [designs, selectedDesignId, artboardWidth, artboardHeight, designGap, computeFillCount, isFilling]);
 
   // Ids of copies just added by Fill Sheet; cleared once arrange consumes them.
   const pendingFillIdsRef = useRef<Set<string> | null>(null);
 
   const handleFillEmptySpace = useCallback(() => {
-    if (designs.length === 0) return;
+    if (designs.length === 0 || isFilling || pendingFillIdsRef.current) return;
     const gap = designGap ?? 0.25;
     const ref =
       (selectedDesignId ? designs.find((d) => d.id === selectedDesignId) : null) ??
@@ -1217,14 +1282,18 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       return;
     }
     const baseName = ref.name.replace(/ copy( \d+)?$/, "");
+    // Strip groupId — fill copies must pack individually, same as Duplicate.
+    const { groupId: _dropGid, ...refNoGroup } = ref;
     const copies: DesignItem[] = Array.from({ length: fillCount }, () => ({
-      ...ref,
+      ...refNoGroup,
       id: crypto.randomUUID(),
       name: baseName,
       transform: { ...ref.transform },
       printFileName: false,
     }));
     saveSnapshot();
+    fillSessionActiveRef.current = true;
+    setIsFilling(true);
     pendingFillIdsRef.current = new Set(copies.map((c) => c.id));
     setDesigns((prev) => [...prev, ...copies]);
     toast({
@@ -1242,15 +1311,19 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     setDesigns,
     toast,
     t,
+    isFilling,
   ]);
 
   // Arrange after React has committed the new copies so designsRef is current.
+  // fullRepack matches the old Fill behaviour and the area estimate: pack the
+  // whole sheet rather than leaving fill copies as floaters around anchors.
   useEffect(() => {
     if (!pendingFillIdsRef.current) return;
     const fillIds = pendingFillIdsRef.current;
     pendingFillIdsRef.current = null;
     handleAutoArrangeRef.current({
       arrangeAll: true,
+      fullRepack: true,
       skipSnapshot: true,
       trimOverflow: true,
       fillIds,

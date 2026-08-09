@@ -661,14 +661,18 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
 
 /** Build a small pixel-to-dominant-color map used by the fluorescent picker. */
 export function buildPixelMapFromImage(
-  image: HTMLImageElement,
+  image: HTMLImageElement | ImageBitmap,
   colors: ExtractedColor[],
 ): { pixelMap: Int16Array; width: number; height: number; imageData: ImageData } | null {
-  if (!image.complete || image.width === 0 || colors.length === 0) return null;
+  // ImageBitmap has no `complete`; treat it as ready once we have dimensions.
+  const ready = "complete" in image ? image.complete : true;
+  const imgW = "naturalWidth" in image && image.naturalWidth ? image.naturalWidth : image.width;
+  const imgH = "naturalHeight" in image && image.naturalHeight ? image.naturalHeight : image.height;
+  if (!ready || imgW === 0 || colors.length === 0) return null;
   const maxDim = 512;
-  const scale = Math.min(1, maxDim / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
+  const scale = Math.min(1, maxDim / Math.max(imgW, imgH));
+  const width = Math.max(1, Math.round(imgW * scale));
+  const height = Math.max(1, Math.round(imgH * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;

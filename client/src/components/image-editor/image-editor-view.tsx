@@ -827,8 +827,9 @@ export default function ImageEditorView() {
 
           <AddSheetButton sheetCount={sheets.length} onAdd={addSheet} canCopy={designs.length > 0} />
 
-          {/* Layers Panel */}
-          {designs.length > 0 && (
+          {/* Layers Panel — gate on the unified cross-sheet list so a blank
+              active sheet still shows other sheets' rows + "Add here". */}
+          {layerRows.length > 0 && (
             <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
                 <div className="flex flex-1 min-w-0 items-center gap-3 rounded-md px-1.5 py-1 text-base font-semibold text-gray-800 overflow-hidden">

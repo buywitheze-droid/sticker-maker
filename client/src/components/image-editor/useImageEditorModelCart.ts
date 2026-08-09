@@ -390,7 +390,12 @@ export function useImageEditorModelCart(bag: ImageEditorBagAfterExport) {
             const blob = printSourceFor(design);
             const decoded = blob
               ? await decodePrintSourceAtSize(
-                  blob, printSourceCropFor(design), drawW, drawH, design.alphaThresholded,
+                  blob,
+                  printSourceCropFor(design),
+                  drawW,
+                  drawH,
+                  design.alphaThresholded,
+                  design.imageInfo.image,
                 )
               : null;
             const img: ImageBitmap | HTMLImageElement = decoded ?? design.imageInfo.image;
@@ -504,7 +509,12 @@ export function useImageEditorModelCart(bag: ImageEditorBagAfterExport) {
           if (decoded === undefined) {
             decoded = sourceBlob
               ? await decodePrintSourceAtSize(
-                  sourceBlob, printSourceCropFor(design), drawW, drawH, design.alphaThresholded,
+                  sourceBlob,
+                  printSourceCropFor(design),
+                  drawW,
+                  drawH,
+                  design.alphaThresholded,
+                  design.imageInfo.image,
                 )
               : null;
             decodedByKey.set(embedKey, decoded);

@@ -208,28 +208,38 @@ async function getSourceBitmap(
   const blob = new Blob([buf], { type: d.mimeType || 'image/png' });
 
   const resizeQuality: ImageBitmapOptions['resizeQuality'] = d.alphaThresholded ? 'pixelated' : 'high';
+  // Match the prepare endpoint: crop rects are in EXIF-oriented pixels.
+  const orient: ImageBitmapOptions = { imageOrientation: 'from-image' };
   const shouldResize =
     wantW > 0 && wantH > 0 &&
     (!crop || wantW < crop.width || wantH < crop.height);
-  const options: ImageBitmapOptions | undefined = shouldResize
-    ? { resizeWidth: wantW, resizeHeight: wantH, resizeQuality }
-    : undefined;
+  const options: ImageBitmapOptions = shouldResize
+    ? { ...orient, resizeWidth: wantW, resizeHeight: wantH, resizeQuality }
+    : { ...orient };
 
   let bitmap: ImageBitmap;
-  if (crop) {
-    bitmap = await createImageBitmap(blob, crop.x, crop.y, crop.width, crop.height, options);
-  } else if (options) {
+  if (crop && crop.width > 0 && crop.height > 0) {
+    const sx = Math.max(0, Math.floor(crop.x));
+    const sy = Math.max(0, Math.floor(crop.y));
+    const sw = Math.max(1, Math.floor(crop.width));
+    const sh = Math.max(1, Math.floor(crop.height));
+    bitmap = await createImageBitmap(blob, sx, sy, sw, sh, options);
+  } else if (shouldResize) {
     // Without a crop rect we only know the source size after a probe decode,
     // so clamp the request to the natural size to avoid upscaling here.
-    const probe = await createImageBitmap(blob);
+    const probe = await createImageBitmap(blob, orient);
     if (wantW >= probe.width && wantH >= probe.height) {
       cache.set(key, probe);
       return probe;
     }
-    bitmap = await createImageBitmap(probe, 0, 0, probe.width, probe.height, options);
+    bitmap = await createImageBitmap(probe, 0, 0, probe.width, probe.height, {
+      resizeWidth: wantW,
+      resizeHeight: wantH,
+      resizeQuality,
+    });
     probe.close();
   } else {
-    bitmap = await createImageBitmap(blob);
+    bitmap = await createImageBitmap(blob, orient);
   }
   cache.set(key, bitmap);
   return bitmap;

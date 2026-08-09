@@ -965,6 +965,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       inputs.selectedDesignId,
       inputs.selectedDesignIds,
       inputs.sheets,
+      inputs.activeSheetId,
     );
     if (signature === lastDraftSignatureRef.current) return;
     const { draft, files } = buildEditorDraft(
@@ -1107,6 +1108,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         selectedDesignId,
         selectedDesignIds,
         draftSheetIndex,
+        activeSheetId,
       );
       if (signature === lastDraftSignatureRef.current) return;
 
@@ -1258,6 +1260,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
           inputs.selectedDesignId,
           inputs.selectedDesignIds,
           inputs.sheets,
+          inputs.activeSheetId,
         );
       }
       // Stamped, not deleted. `done` is the shell telling us the cart request

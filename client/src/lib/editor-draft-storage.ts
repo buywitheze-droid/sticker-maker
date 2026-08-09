@@ -936,6 +936,8 @@ export function computeDraftSignature(
    * edits leave every design identical and the save is skipped.
    */
   sheets?: StoredDraftSheet[],
+  /** Which sheet was on screen — switching among identical blank sheets still saves. */
+  activeSheetId?: string,
 ): string {
   const parts: string[] = [
     profileId,
@@ -950,6 +952,7 @@ export function computeDraftSignature(
     String(designGap),
     selectedDesignId ?? "",
     Array.from(selectedDesignIds).sort().join(","),
+    activeSheetId ?? "",
   ];
   if (sheets) {
     for (const sheet of sheets) {

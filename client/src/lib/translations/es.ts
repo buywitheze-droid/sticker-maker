@@ -324,7 +324,7 @@ export const es: Record<string, string> = {
   "fill.fullDesc": "No queda espacio para llenar.",
   "fill.working": "Llenando la hoja…",
   "fill.workingDesc": "Colocando hasta {n} copias y acomodando.",
-  "fill.done": "Hoja llena",
+  "fill.done": "Hoja rellenada",
   "fill.doneAll": "{n} copias agregadas — todas caben.",
   "fill.donePartial": "{kept} copias caben. {trimmed} eliminadas — la hoja está llena.",
   "fill.doneNone": "La hoja está llena — no caben más.",

@@ -128,9 +128,19 @@ async function drawPrintSourceToCanvas(
     const crop = info.exportCrop;
     // Decode at natural size and let the canvas do the fit — the edit wants
     // every pixel the print source has, up to the caps above.
-    const bmp = crop
-      ? await createImageBitmap(info.exportBlob, crop.x, crop.y, crop.width, crop.height)
-      : await createImageBitmap(info.exportBlob);
+    // `from-image` keeps the crop rect in the same oriented space the prepare
+    // endpoint measured (and the preview the customer is editing).
+    const orient = { imageOrientation: "from-image" as const };
+    const bmp = crop && crop.width > 0 && crop.height > 0
+      ? await createImageBitmap(
+          info.exportBlob,
+          Math.max(0, Math.floor(crop.x)),
+          Math.max(0, Math.floor(crop.y)),
+          Math.max(1, Math.floor(crop.width)),
+          Math.max(1, Math.floor(crop.height)),
+          orient,
+        )
+      : await createImageBitmap(info.exportBlob, orient);
     source = bmp;
     close = () => bmp.close();
   }

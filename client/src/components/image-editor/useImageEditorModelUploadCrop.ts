@@ -148,7 +148,14 @@ async function decodePrintSourceAsImage(
   }
   if (!blob) {
     if (!info.exportBlob) return null;
-    const bitmap = await decodePrintSourceAtSize(info.exportBlob, info.exportCrop, targetW, targetH);
+    const bitmap = await decodePrintSourceAtSize(
+      info.exportBlob,
+      info.exportCrop,
+      targetW,
+      targetH,
+      false,
+      info.image,
+    );
     if (!bitmap) return null;
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
