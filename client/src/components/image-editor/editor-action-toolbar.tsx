@@ -466,7 +466,7 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
             <span
               className={`text-[11px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 inline-flex items-center gap-1.5 ${
                 effectiveDPI < 198
-                  ? 'text-amber-600 bg-amber-100 border border-amber-400'
+                  ? 'text-red-700 bg-red-100 border border-red-400'
                   : effectiveDPI < 277
                     ? 'text-amber-600 bg-amber-100 border border-amber-400'
                     : 'text-emerald-600 bg-emerald-100 border border-emerald-700'

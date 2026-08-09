@@ -17,10 +17,11 @@ import { formatDimensions, formatLength, useMetric, getUnitSuffix } from "@/lib/
 import { formatVariantPriceForDisplay } from "@/lib/variant-price";
 import { useWandTolerance, useToolActions } from "@/state/tool-store";
 import {
-  ArrowDownLeft, ArrowDownRight, ArrowUpLeft, ArrowUpRight, Copy,
+  ArrowDownLeft, ArrowDownRight, ArrowUpLeft, ArrowUpRight, CheckSquare, Copy,
   Download, Droplets, Eraser, Expand, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
   SlidersHorizontal, Sparkles, Trash2, Ungroup, Unlink, WandSparkles, X, XCircle,
 } from "lucide-react";
+import { CenterHorizontalIcon, CenterVerticalIcon } from "./center-axis-icons";
 import { useImageEditorContext } from "./image-editor-context";
 import {
   useContextMenu,
@@ -131,6 +132,12 @@ export default function ImageEditorView() {
   // See `hooks/use-layout-viewport.ts`.
   const mobileLayout = useMobileLayout();
   const shortViewport = useShortViewport();
+  // Mirrors the same computation in EditorActionToolbar so the mobile H
+  // size-input allows designs up to the tallest available sheet, not just
+  // the current one.
+  const maxGangsheetHeight = GANGSHEET_HEIGHTS.length > 0
+    ? Math.max(...GANGSHEET_HEIGHTS)
+    : artboardHeight;
   // The phone presents one surface — canvas, persistent bar, contextual sheet.
   // Everything the old Controls panel held that is not contextual to a
   // selection now lives behind this, summoned over the canvas rather than
@@ -787,7 +794,10 @@ export default function ImageEditorView() {
                </button>
                {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
                  <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-md border border-gray-200 bg-white p-2 shadow-lg">
-                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Strength</p>
+                   <div className="mb-1.5 flex items-center justify-between">
+                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Strength</p>
+                     <button type="button" onClick={() => setHalftoneMenuOpen(false)} className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="Close halftone menu"><X className="h-3.5 w-3.5" /></button>
+                   </div>
                    <div className="mb-2 flex gap-1">
                      {(['light', 'balanced', 'strong'] as const).map((s) => (
                        <button
@@ -1120,7 +1130,7 @@ export default function ImageEditorView() {
                         </button>
                         <div className="flex min-w-0 max-w-[200px] flex-1 items-center gap-0.5">
                           <span className="flex-shrink-0 text-[12px] font-bold leading-none text-cyan-900">H</span>
-                          <SizeInput fluid value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={artboardHeight} lang={lang} />
+                          <SizeInput fluid value={activeResizeSettings.heightInches * activeDesignTransform.s} onCommit={(v) => handleEffectiveSizeChange("height", v)} title={useMetric(lang) ? t("editor.heightTitleCm") : t("editor.heightTitle")} max={maxGangsheetHeight} lang={lang} />
                           <span className={`flex-shrink-0 text-[11px] font-semibold text-cyan-900 ${useMetric(lang) ? "max-[430px]:hidden" : ""}`}>{getUnitSuffix(activeResizeSettings.heightInches * activeDesignTransform.s, lang)}</span>
                         </div>
                       </div>
@@ -1129,6 +1139,10 @@ export default function ImageEditorView() {
                         <>
                           <div className="flex flex-nowrap items-center justify-start gap-0.5 overflow-x-auto">
                             <button onClick={handleRotate90} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.rotate")}><RotateCw className="mx-auto h-4 w-4" /></button>
+                            <div className="h-5 w-px flex-shrink-0 bg-gray-200" />
+                            <button onClick={() => actionToolbarProps.handleAlignAxis("vertical")} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-cyan-500 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignCenterX")} aria-label={t("editor.alignCenterX")}><CenterHorizontalIcon className="mx-auto h-4 w-4" /></button>
+                            <button onClick={() => actionToolbarProps.handleAlignAxis("horizontal")} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-cyan-500 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignCenterY")} aria-label={t("editor.alignCenterY")}><CenterVerticalIcon className="mx-auto h-4 w-4" /></button>
+                            <div className="h-5 w-px flex-shrink-0 bg-gray-200" />
                             <button onClick={() => handleAlignCorner('tl')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignTL")}><ArrowUpLeft className="mx-auto h-4 w-4" /></button>
                             <button onClick={() => handleAlignCorner('tr')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignTR")}><ArrowUpRight className="mx-auto h-4 w-4" /></button>
                             <button onClick={() => handleAlignCorner('bl')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignBL")}><ArrowDownLeft className="mx-auto h-4 w-4" /></button>
@@ -1743,7 +1757,7 @@ export default function ImageEditorView() {
                   null,
                 ]
               : []),
-            { icon: LayoutGrid, label: t("editor.selectAll"), shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
+            { icon: CheckSquare, label: t("editor.selectAll"), shortcut: 'Ctrl+A', action: () => { handleMultiSelect(designs.map(d => d.id)); setContextMenu(null); }, disabled: designs.length === 0 },
             { icon: XCircle, label: t("editor.deselect"), shortcut: 'Esc', action: () => { handleSelectDesign(null); setContextMenu(null); }, disabled: false },
           ] as Array<{ icon: React.ComponentType<any>; label: string; shortcut: string; action: () => void; disabled: boolean } | null>).map((item, i) =>
             item === null ? (
