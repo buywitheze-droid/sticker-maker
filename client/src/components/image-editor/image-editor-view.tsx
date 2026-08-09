@@ -18,7 +18,7 @@ import { formatVariantPriceForDisplay } from "@/lib/variant-price";
 import { useWandTolerance, useToolActions } from "@/state/tool-store";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowUpLeft, ArrowUpRight, Copy,
-  Download, Droplets, Eraser, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
+  Download, Droplets, Eraser, Expand, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
   SlidersHorizontal, Sparkles, Trash2, Ungroup, Unlink, WandSparkles, X, XCircle,
 } from "lucide-react";
 import { useImageEditorContext } from "./image-editor-context";
@@ -66,7 +66,8 @@ type DesignToolId =
   | "flipV"
   | "upscale"
   | "halftone"
-  | "autoArrange";
+  | "autoArrange"
+  | "fillSheet";
 
 interface DesignTool {
   id: DesignToolId;
@@ -493,6 +494,16 @@ export default function ImageEditorView() {
       disabled: designs.length < 2 && selectedDesignIds.size < 2,
       run: () => handleAutoArrange({ preserveSelection: selectedDesignIds.size >= 2, fullRepack: true }),
     },
+    {
+      id: "fillSheet",
+      label: t("fill.sheet"),
+      title: t("fill.sheetTitle"),
+      Icon: Expand,
+      tone: "border-cyan-600 bg-cyan-500 text-white hover:bg-cyan-600",
+      pillTone: "border-cyan-600 bg-cyan-500 text-white",
+      disabled: !actionToolbarProps.canFill,
+      run: actionToolbarProps.handleFillEmptySpace,
+    },
     ...(canIncreaseQuality
       ? [{
           id: "upscale" as const,
@@ -892,12 +903,11 @@ export default function ImageEditorView() {
 
       {/* Right area - Canvas workspace */}
       <div className={`min-w-0 flex flex-col ${mobileLayout ? "w-full flex-shrink-0" : "flex-1 h-full overflow-hidden"}`}>
-        {/* The toolbar's own mobile/desktop arms have to match the layout it is
-            rendered into, so the bag's device-level `isMobile` is overridden.
-            On the phone layout the toolbar uses its compact mobile arm (Row 1:
-            Upload / Clean-Alpha / Undo-Redo-Delete / Auto-Arrange / Fill;
-            Row 2: size inputs + Duplicate). */}
-        <EditorActionToolbar {...actionToolbarProps} isMobile={mobileLayout} />
+        {/* Desktop toolbar only. On mobile, action buttons live in the Design
+            Tools sheet and size inputs live in the layers / tool sheet, so the
+            toolbar is not shown — its height was pushing the canvas down and
+            duplicating controls already accessible at the bottom. */}
+        {!mobileLayout && <EditorActionToolbar {...actionToolbarProps} isMobile={false} />}
 
         {/* Preview Canvas */}
         {mobileLayout ? (
