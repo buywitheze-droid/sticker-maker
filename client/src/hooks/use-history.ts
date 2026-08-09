@@ -6,42 +6,36 @@ export interface HistorySnapshot {
   imageInfoMap?: Map<string, unknown>;
   artboardWidth?: number;
   artboardHeight?: number;
+  /**
+   * Height the customer had picked by hand at this point, which auto-shrink treats as a
+   * floor. Travels with `artboardHeight` because the two describe the same decision: a
+   * snapshot that restored one without the other would leave the sheet pinned to a size
+   * nobody chose, or silently un-pin one they did.
+   */
+  manualHeightFloor?: number | null;
 }
 
 const MAX_HISTORY = 50;
 
-interface SheetStack {
-  past: HistorySnapshot[];
-  future: HistorySnapshot[];
-}
-
 export function useHistory() {
-  const stacksRef = useRef<Map<string, SheetStack>>(new Map());
+  const pastRef = useRef<HistorySnapshot[]>([]);
+  const futureRef = useRef<HistorySnapshot[]>([]);
   const isUndoRedoRef = useRef(false);
 
-  const getStack = (sheetId: string): SheetStack => {
-    if (!stacksRef.current.has(sheetId)) {
-      stacksRef.current.set(sheetId, { past: [], future: [] });
-    }
-    return stacksRef.current.get(sheetId)!;
-  };
-
-  const pushSnapshot = useCallback((snapshot: HistorySnapshot, sheetId?: string) => {
+  const pushSnapshot = useCallback((snapshot: HistorySnapshot) => {
     if (isUndoRedoRef.current) return;
-    const stack = getStack(sheetId ?? '_default');
-    stack.past.push(snapshot);
-    if (stack.past.length > MAX_HISTORY) {
-      stack.past.shift();
+    pastRef.current.push(snapshot);
+    if (pastRef.current.length > MAX_HISTORY) {
+      pastRef.current.shift();
     }
-    stack.future = [];
+    futureRef.current = [];
   }, []);
 
   const undo = useCallback(
-    (currentSnapshot: HistorySnapshot, sheetId?: string): HistorySnapshot | null => {
-      const stack = getStack(sheetId ?? '_default');
-      if (stack.past.length === 0) return null;
-      const prev = stack.past.pop()!;
-      stack.future.push(currentSnapshot);
+    (currentSnapshot: HistorySnapshot): HistorySnapshot | null => {
+      if (pastRef.current.length === 0) return null;
+      const prev = pastRef.current.pop()!;
+      futureRef.current.push(currentSnapshot);
       isUndoRedoRef.current = true;
       return prev;
     },
@@ -49,11 +43,10 @@ export function useHistory() {
   );
 
   const redo = useCallback(
-    (currentSnapshot: HistorySnapshot, sheetId?: string): HistorySnapshot | null => {
-      const stack = getStack(sheetId ?? '_default');
-      if (stack.future.length === 0) return null;
-      const next = stack.future.pop()!;
-      stack.past.push(currentSnapshot);
+    (currentSnapshot: HistorySnapshot): HistorySnapshot | null => {
+      if (futureRef.current.length === 0) return null;
+      const next = futureRef.current.pop()!;
+      pastRef.current.push(currentSnapshot);
       isUndoRedoRef.current = true;
       return next;
     },
@@ -64,17 +57,8 @@ export function useHistory() {
     isUndoRedoRef.current = false;
   }, []);
 
-  const canUndo = useCallback((sheetId?: string) => {
-    return (stacksRef.current.get(sheetId ?? '_default')?.past.length ?? 0) > 0;
-  }, []);
+  const canUndo = useCallback(() => pastRef.current.length > 0, []);
+  const canRedo = useCallback(() => futureRef.current.length > 0, []);
 
-  const canRedo = useCallback((sheetId?: string) => {
-    return (stacksRef.current.get(sheetId ?? '_default')?.future.length ?? 0) > 0;
-  }, []);
-
-  const deleteSheetHistory = useCallback((sheetId: string) => {
-    stacksRef.current.delete(sheetId);
-  }, []);
-
-  return { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo, deleteSheetHistory };
+  return { pushSnapshot, undo, redo, clearIsUndoRedo, canUndo, canRedo };
 }

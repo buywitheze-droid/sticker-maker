@@ -1,17 +1,3 @@
-export interface ColorRegion {
-  id: number;
-  bbox: { minX: number; minY: number; maxX: number; maxY: number };
-  pixelCount: number;
-  percentage: number;
-  selected: boolean;
-  pixelIndices: number[];
-  thumbnailUrl?: string;
-  spotFluorY?: boolean;
-  spotFluorM?: boolean;
-  spotFluorG?: boolean;
-  spotFluorOrange?: boolean;
-}
-
 export interface ExtractedColor {
   hex: string;
   rgb: { r: number; g: number; b: number };
@@ -26,6 +12,19 @@ export interface ExtractedColor {
   name?: string;
   regions?: ColorRegion[];
   regionMap?: Int32Array;
+}
+
+export interface ColorRegion {
+  id: number;
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+  pixelCount: number;
+  percentage: number;
+  selected: boolean;
+  pixelIndices: number[];
+  spotFluorY?: boolean;
+  spotFluorM?: boolean;
+  spotFluorG?: boolean;
+  spotFluorOrange?: boolean;
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -528,7 +527,7 @@ export function groupColorsByShade(colors: ExtractedColor[]): ColorGroup[] {
 }
 
 export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: number = 18): ExtractedColor[] {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return [];
   
   const sampleSize = Math.min(canvas.width, canvas.height, 300);
@@ -538,7 +537,7 @@ export function extractColorsFromCanvas(canvas: HTMLCanvasElement, maxColors: nu
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = Math.max(1, Math.floor(canvas.width * scaleX));
   tempCanvas.height = Math.max(1, Math.floor(canvas.height * scaleY));
-  const tempCtx = tempCanvas.getContext('2d');
+  const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
   if (!tempCtx) return [];
   
   tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
@@ -563,7 +562,7 @@ export function extractColorsFromImage(image: HTMLImageElement, maxColors: numbe
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = w;
     tempCanvas.height = h;
-    const tempCtx = tempCanvas.getContext('2d');
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
     if (!tempCtx) return [];
     
     tempCtx.drawImage(image, 0, 0, w, h);
@@ -577,158 +576,30 @@ export function extractColorsFromImage(image: HTMLImageElement, maxColors: numbe
 }
 
 import ColorExtractionWorker from './color-extraction-worker?worker';
-import RegionWorker from './region-worker?worker';
-
-export interface ColorExtractionResult {
-  colors: ExtractedColor[];
-  pixelMap: Int16Array;
-  width: number;
-  height: number;
-  imageData: ImageData;
-}
-
-/** Build a pixel→colorIndex map from an image + already-extracted colors. */
-export function buildPixelMapFromImage(
-  image: HTMLImageElement,
-  colors: ExtractedColor[],
-): { pixelMap: Int16Array; width: number; height: number; imageData: ImageData } | null {
-  try {
-    if (!image.complete || image.width === 0 || colors.length === 0) return null;
-    const MAX_DIM = 512;
-    let w = image.width, h = image.height;
-    if (Math.max(w, h) > MAX_DIM) {
-      const ratio = MAX_DIM / Math.max(w, h);
-      w = Math.round(w * ratio); h = Math.round(h * ratio);
-    }
-    const tc = document.createElement('canvas');
-    tc.width = w; tc.height = h;
-    const ctx = tc.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.drawImage(image, 0, 0, w, h);
-    let imageData: ImageData;
-    try { imageData = ctx.getImageData(0, 0, w, h); } catch { return null; }
-    const data = imageData.data;
-    const pixelMap = new Int16Array(w * h).fill(-1);
-    for (let i = 0; i < w * h; i++) {
-      if (data[i * 4 + 3] < 10) continue;
-      const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
-      let bestDist = Infinity, bestIdx = 0;
-      for (let ci = 0; ci < colors.length; ci++) {
-        const c = colors[ci].rgb;
-        const d = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
-        if (d < bestDist) { bestDist = d; bestIdx = ci; }
-      }
-      pixelMap[i] = bestIdx;
-    }
-    return { pixelMap, width: w, height: h, imageData };
-  } catch { return null; }
-}
-
-/** Generate a small thumbnail data-URL for a region's pixels. */
-function generateRegionThumbnail(
-  imageData: ImageData,
-  pixelIndices: number[],
-  minX: number, minY: number, maxX: number, maxY: number,
-  imgW: number, imgH: number,
-): string | undefined {
-  try {
-    const bW = maxX - minX + 1, bH = maxY - minY + 1;
-    if (bW <= 0 || bH <= 0) return undefined;
-    const SIZE = 28;
-    const scale = Math.min(SIZE / bW, SIZE / bH, 1);
-    const outW = Math.max(1, Math.round(bW * scale));
-    const outH = Math.max(1, Math.round(bH * scale));
-    const tc = document.createElement('canvas');
-    tc.width = outW; tc.height = outH;
-    const tctx = tc.getContext('2d');
-    if (!tctx) return undefined;
-    const out = tctx.createImageData(outW, outH);
-    const mask = new Uint8Array(imgW * imgH);
-    for (const pi of pixelIndices) mask[pi] = 1;
-    for (let oy = 0; oy < outH; oy++) {
-      for (let ox = 0; ox < outW; ox++) {
-        const sx = Math.min(Math.floor(ox / scale) + minX, imgW - 1);
-        const sy = Math.min(Math.floor(oy / scale) + minY, imgH - 1);
-        const si = sy * imgW + sx;
-        const di = (oy * outW + ox) * 4;
-        if (mask[si]) {
-          out.data[di]     = imageData.data[si * 4];
-          out.data[di + 1] = imageData.data[si * 4 + 1];
-          out.data[di + 2] = imageData.data[si * 4 + 2];
-          out.data[di + 3] = imageData.data[si * 4 + 3];
-        }
-      }
-    }
-    tctx.putImageData(out, 0, 0);
-    return tc.toDataURL();
-  } catch { return undefined; }
-}
-
-/**
- * For each extracted color, detect spatially disconnected regions via
- * connected-component labeling. Populates `regions` and `regionMap` on
- * colors that have 2+ distinct blobs. Generates thumbnail previews.
- *
- * Creates a fresh worker per call to prevent race conditions when called
- * concurrently (e.g. rapid image switching). The worker is terminated after
- * the result arrives.
- */
-export function detectColorRegionsAsync(
-  pixelMap: Int16Array,
-  width: number,
-  height: number,
-  colors: ExtractedColor[],
-  imageData?: ImageData,
-): Promise<void> {
-  return new Promise((resolve) => {
-    let worker: Worker;
-    try { worker = new RegionWorker(); } catch { resolve(); return; }
-
-    const mapCopy = pixelMap.slice(0);
-
-    const finish = () => {
-      try { worker.terminate(); } catch { /* already gone */ }
-      resolve();
-    };
-
-    const errHandler = () => finish();
-    worker.addEventListener('error', errHandler);
-
-    worker.addEventListener('message', (e: MessageEvent) => {
-      worker.removeEventListener('error', errHandler);
-      const results: Array<{
-        colorIndex: number;
-        regions: Array<{ id: number; bbox: { minX: number; minY: number; maxX: number; maxY: number }; pixelCount: number; percentage: number; pixelIndices: number[] }>;
-        regionMap: Int32Array;
-      }> = e.data;
-      const processedIndices = new Set(results.map(r => r.colorIndex));
-      for (let ci = 0; ci < colors.length; ci++) {
-        if (!processedIndices.has(ci)) { colors[ci].regions = undefined; colors[ci].regionMap = undefined; }
-      }
-      for (const result of results) {
-        const color = colors[result.colorIndex];
-        color.regionMap = result.regionMap;
-        color.regions = result.regions.map(r => {
-          const thumbnailUrl = imageData
-            ? generateRegionThumbnail(imageData, r.pixelIndices, r.bbox.minX, r.bbox.minY, r.bbox.maxX, r.bbox.maxY, width, height)
-            : undefined;
-          return { id: r.id, bbox: r.bbox, pixelCount: r.pixelCount, percentage: r.percentage, selected: true, pixelIndices: r.pixelIndices, thumbnailUrl };
-        });
-      }
-      finish();
-    }, { once: true });
-
-    worker.postMessage({ pixelMap: mapCopy, width, height, colorCount: colors.length }, [mapCopy.buffer]);
-  });
-}
 
 let _colorWorker: Worker | null = null;
+let _colorRequestCounter = 0;
 function getColorWorker(): Worker | null {
   if (!_colorWorker) {
     try { _colorWorker = new ColorExtractionWorker(); }
     catch { return null; }
   }
   return _colorWorker;
+}
+
+/**
+ * Kill the shared extraction worker so the next call spawns a fresh one.
+ *
+ * Called before falling back to the main thread: extraction only times out on a device that is
+ * already saturated, and letting the worker keep grinding on a result nobody will read leaves
+ * it competing with the fallback that replaced it.
+ */
+function discardColorWorker(): void {
+  const worker = _colorWorker;
+  _colorWorker = null;
+  if (worker) {
+    try { worker.terminate(); } catch { /* already dead */ }
+  }
 }
 
 export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: number = 999): Promise<ExtractedColor[]> {
@@ -744,7 +615,7 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
       }
       const tc = document.createElement('canvas');
       tc.width = w; tc.height = h;
-      const ctx = tc.getContext('2d');
+      const ctx = tc.getContext('2d', { willReadFrequently: true });
       if (!ctx) { resolve(extractColorsFromImage(image, maxColors)); return; }
       ctx.drawImage(image, 0, 0, w, h);
       let imageData: ImageData;
@@ -759,9 +630,12 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
       const worker = getColorWorker();
       if (!worker) { resolve(extractDominantColors(imageData, maxColors)); return; }
 
-      const buffer = imageData.data.buffer.slice(0);
+      // Transferred, so `imageData` is detached from here on. The timeout path below
+      // re-reads the canvas instead of reusing it.
+      const buffer = imageData.data.buffer;
+      const requestId = ++_colorRequestCounter;
       const handler = (e: MessageEvent) => {
-        if (e.data.type === 'result') {
+        if (e.data.type === 'result' && e.data.requestId === requestId) {
           clearTimeout(timeout);
           worker.removeEventListener('message', handler);
           resolve(e.data.colors);
@@ -769,17 +643,106 @@ export function extractColorsFromImageAsync(image: HTMLImageElement, maxColors: 
       };
       const timeout = setTimeout(() => {
         worker.removeEventListener('message', handler);
+        discardColorWorker();
         try {
           resolve(extractDominantColors(ctx.getImageData(0, 0, w, h), maxColors));
         } catch {
-          resolve(extractDominantColors(imageData, maxColors));
+          resolve([]);
         }
       }, 10000);
       worker.addEventListener('message', handler);
-      worker.postMessage({ type: 'extract', pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
+      worker.postMessage({ type: 'extract', requestId, pixelBuffer: buffer, width: w, height: h, maxColors, minPercentage: 0.1 }, [buffer]);
     } catch (e) {
       console.warn('[ColorExtractor] extractColorsFromImageAsync failed:', e);
       resolve([]);
     }
   });
+}
+
+/** Build a small pixel-to-dominant-color map used by the fluorescent picker. */
+export function buildPixelMapFromImage(
+  image: HTMLImageElement,
+  colors: ExtractedColor[],
+): { pixelMap: Int16Array; width: number; height: number; imageData: ImageData } | null {
+  if (!image.complete || image.width === 0 || colors.length === 0) return null;
+  const maxDim = 512;
+  const scale = Math.min(1, maxDim / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const pixelMap = new Int16Array(width * height).fill(-1);
+  for (let i = 0; i < pixelMap.length; i++) {
+    const p = i * 4;
+    if (imageData.data[p + 3] < 10) continue;
+    let best = 0;
+    let distance = Infinity;
+    for (let c = 0; c < colors.length; c++) {
+      const color = colors[c].rgb;
+      const d = (imageData.data[p] - color.r) ** 2 +
+        (imageData.data[p + 1] - color.g) ** 2 +
+        (imageData.data[p + 2] - color.b) ** 2;
+      if (d < distance) { distance = d; best = c; }
+    }
+    pixelMap[i] = best;
+  }
+  return { pixelMap, width, height, imageData };
+}
+
+/** Detect disconnected shapes for each extracted color without changing export behavior. */
+export async function detectColorRegionsAsync(
+  pixelMap: Int16Array,
+  width: number,
+  height: number,
+  colors: ExtractedColor[],
+): Promise<void> {
+  const visited = new Uint8Array(pixelMap.length);
+  const regionMaps = colors.map(() => new Int32Array(pixelMap.length).fill(-1));
+  const minPixels = Math.max(3, Math.floor(pixelMap.length * 0.00005));
+  for (let colorIndex = 0; colorIndex < colors.length; colorIndex++) {
+    const regions: ColorRegion[] = [];
+    for (let start = 0; start < pixelMap.length; start++) {
+      if (visited[start] || pixelMap[start] !== colorIndex) continue;
+      const queue = [start];
+      visited[start] = 1;
+      const pixels: number[] = [];
+      let minX = width, minY = height, maxX = 0, maxY = 0;
+      for (let head = 0; head < queue.length; head++) {
+        const index = queue[head];
+        pixels.push(index);
+        const x = index % width, y = Math.floor(index / width);
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        for (const next of [index - 1, index + 1, index - width, index + width]) {
+          if (next < 0 || next >= pixelMap.length || visited[next] || pixelMap[next] !== colorIndex) continue;
+          const nx = next % width;
+          if (Math.abs(nx - x) > 1) continue;
+          visited[next] = 1;
+          queue.push(next);
+        }
+      }
+      if (pixels.length >= minPixels) {
+        const region = {
+          id: regions.length,
+          bbox: { minX, minY, maxX, maxY },
+          pixelCount: pixels.length,
+          percentage: pixels.length / pixelMap.length * 100,
+          selected: true,
+          pixelIndices: pixels,
+        };
+        regions.push(region);
+        const regionMap = regionMaps[colorIndex];
+        for (const pixel of pixels) regionMap[pixel] = region.id;
+      }
+    }
+    if (regions.length > 0) {
+      colors[colorIndex].regions = regions;
+      colors[colorIndex].regionMap = regionMaps[colorIndex];
+    }
+  }
 }

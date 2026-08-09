@@ -1,3 +1,5 @@
+import type { VectorInkBox } from "./vector-trim";
+
 export interface ImageInfo {
   file: File;
   image: HTMLImageElement;
@@ -5,17 +7,26 @@ export interface ImageInfo {
   originalHeight: number;
   dpi: number;
   isPDF?: boolean;
+  /** Retained PDF bytes. Re-rendered at the placement size during export so
+   *  large designs print from the page geometry instead of the import preview. */
   originalPdfData?: ArrayBuffer;
-  /**
-   * Optional full-resolution PNG blob captured at upload time.
-   *
-   * The in-memory `image` field is downsampled to `MAX_STORED_IMAGE_DIMENSION`
-   * so we don't hold multi-hundred-MP decoded rasters in RAM for every
-   * layer. Export needs the un-degraded pixels — this blob is that
-   * source. Decode on demand (`createImageBitmap` / `<img>.src=objectURL`)
-   * at print time and free right after.
-   */
+  /** Sanitised SVG source, retained for the same reason as `originalPdfData`.
+   *  Already through DOMPurify, so re-rasterising it introduces no new risk. */
+  svgSource?: string;
+  /** Artwork's box within the vector page, as page fractions, when the import
+   *  was trimmed off its page. The export re-renders from the page, so it has to
+   *  reapply this to land on the same artwork the editor is showing. */
+  vectorInkBox?: VectorInkBox;
+  /** Full-resolution print source preserved for HD export. For inline uploads
+   *  this is the post-crop, pre-downsample PNG; for server-prepared uploads it
+   *  is the user's untouched original file. `image` above is capped at
+   *  MAX_STORED_IMAGE_DIMENSION for preview memory, so the export path decodes
+   *  this blob just-in-time at the placement size to keep 300 DPI at print
+   *  sizes larger than the preview cap. */
   exportBlob?: Blob;
+  /** Content box within `exportBlob`, in source pixels, when the blob is an
+   *  uncropped original. Absent when `exportBlob` is already cropped. */
+  exportCrop?: { x: number; y: number; width: number; height: number };
 }
 
 export interface ResizeSettings {
@@ -25,6 +36,7 @@ export interface ResizeSettings {
   outputDPI: number;
 }
 
+/** Consumed by the contour/cut-line libraries rather than the editor itself. */
 export interface StrokeSettings {
   enabled: boolean;
   width: number;
@@ -35,6 +47,7 @@ export interface StrokeSettings {
   backgroundColor: string;
 }
 
+/** Consumed by the contour/cut-line libraries rather than the editor itself. */
 export interface ShapeSettings {
   enabled?: boolean;
   type: string;
@@ -59,6 +72,13 @@ export interface ImageTransform {
   flipY?: boolean;
 }
 
+export type HalftoneStrength = 'light' | 'balanced' | 'strong';
+
+export interface HalftoneSettings {
+  color: { r: number; g: number; b: number };
+  strength: HalftoneStrength;
+}
+
 export interface DesignItem {
   id: string;
   imageInfo: ImageInfo;
@@ -68,17 +88,28 @@ export interface DesignItem {
   name: string;
   originalDPI: number;
   alphaThresholded?: boolean;
+  /** Set by the halftone tool. Export pipeline pre-cleans halftoned designs to
+   *  guarantee binary alpha (0 or 255) and uses nearest-neighbour scaling so
+   *  bilinear interpolation cannot reintroduce semi-transparent edge pixels. */
   halftoned?: boolean;
+  /** Settings used to rebuild the halftone when its physical size changes. */
+  halftoneSettings?: HalftoneSettings;
+  /** Original pixels kept in memory so resizing never halftones the halftone. */
+  halftoneSourceImage?: HTMLImageElement;
   printFileName?: boolean;
   /**
-   * Optional group id. Designs sharing the same `groupId` are treated
-   * as a single "super-item" by auto-arrange (their internal layout is
-   * preserved and the whole cluster is packed as one bounding box).
+   * User-defined group membership. Designs sharing the same `groupId` are
+   * treated as a single unit by:
+   *   - selection (clicking any member selects the whole group)
+   *   - auto-arrange (the group is packed as one super-item whose bounding
+   *     box is preserved so intra-group layout stays intact)
    *
-   * Reserved forward-compat field — the sticker-maker monolith does
-   * not yet consume it, but we accept it in the data model so imported
-   * / migrated designs from the Shopify build don't lose their
-   * grouping information on round-trip.
+   * `undefined` means "not grouped". Empty string is not valid — always
+   * omit the field instead. This design uses a shared id (rather than a
+   * separate `groups: Map<id, Set<id>>` structure) because it round-trips
+   * through the existing snapshot + draft-persistence pipelines without a
+   * migration, and because there is no case in the app where a design
+   * belongs to more than one group at once.
    */
   groupId?: string;
 }

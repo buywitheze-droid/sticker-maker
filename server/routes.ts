@@ -137,11 +137,349 @@ const uploadAny = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
+/** Raster import prepare / metadata — PNG, JPEG, WebP up to 100 MB. */
+const MAX_PREPARE_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_SOURCE_MEGAPIXELS = 150;
+const PREPARE_PREVIEW_MAX_EDGE = 4096;
+const MAX_INLINE_DECODE_MEGAPIXELS = 40;
+/** How many source pixels collapse into one sample of the reduced alpha probe. */
+const MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE = 64;
+
+/**
+ * Pixel ceiling handed to every `sharp()` construction.
+ *
+ * libvips defaults to roughly 268 MP when `limitInputPixels` is omitted, which
+ * is well above the 150 MP this app actually intends to accept.
+ */
+const SHARP_PIXEL_LIMIT = Math.ceil(MAX_SOURCE_MEGAPIXELS * 1_000_000);
+
+type RasterFormat = "png" | "jpeg" | "webp";
+
+/**
+ * Identify a raster container from its leading bytes.
+ *
+ * The multer filters screen on a client-supplied MIME type or, worse, on the
+ * file *name* — neither says anything about the content, so `evil.png` holding
+ * SVG markup would otherwise reach `sharp()` and get dispatched to librsvg.
+ */
+function sniffRasterFormat(buffer: Buffer): RasterFormat | null {
+  if (buffer.length >= 8 && buffer.readUInt32BE(0) === 0x89504e47 && buffer.readUInt32BE(4) === 0x0d0a1a0a) {
+    return "png";
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "jpeg";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("latin1", 0, 4) === "RIFF" &&
+    buffer.toString("latin1", 8, 12) === "WEBP"
+  ) {
+    return "webp";
+  }
+  return null;
+}
+
+class UnsupportedRasterError extends Error {}
+
+/**
+ * Confirm a buffer really is one of the accepted raster formats, first from
+ * its magic bytes and then from libvips' own verdict, before any pipeline work
+ * runs against it.
+ */
+async function assertAllowedRasterFormat(
+  buffer: Buffer,
+  allowed: readonly RasterFormat[],
+): Promise<sharp.Metadata> {
+  const sniffed = sniffRasterFormat(buffer);
+  if (!sniffed || !allowed.includes(sniffed)) {
+    throw new UnsupportedRasterError(
+      `Unsupported image format. Only ${allowed.join(", ").toUpperCase()} files are accepted.`,
+    );
+  }
+  const metadata = await sharp(buffer, {
+    failOn: "none",
+    limitInputPixels: SHARP_PIXEL_LIMIT,
+  }).metadata();
+  const decoded = metadata.format as RasterFormat | undefined;
+  if (!decoded || !allowed.includes(decoded)) {
+    throw new UnsupportedRasterError(
+      `Unsupported image format. Only ${allowed.join(", ").toUpperCase()} files are accepted.`,
+    );
+  }
+  return metadata;
+}
+
+const rasterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_PREPARE_FILE_BYTES,
+    fieldSize: 10 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    // Some browsers hand over `application/octet-stream` for a perfectly good
+    // PNG, so the extension still has to be tolerated here. It is only a cheap
+    // pre-filter: `assertAllowedRasterFormat` is the real gate.
+    const declared = String(file.mimetype || "").toLowerCase();
+    const ok =
+      declared === "image/png" ||
+      declared === "image/jpeg" ||
+      declared === "image/jpg" ||
+      declared === "image/webp" ||
+      ((declared === "application/octet-stream" || declared === "") &&
+        /\.(png|jpe?g|webp)$/i.test(file.originalname || ""));
+    if (ok) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, and WebP files are allowed"));
+  },
+});
+
+function fitWithinMegapixels(w: number, h: number, maxMP: number, maxEdge: number): number {
+  const pixels = Math.max(1, w * h);
+  const mpScale = Math.sqrt((maxMP * 1_000_000) / pixels);
+  const edgeScale = Math.min(maxEdge / Math.max(w, 1), maxEdge / Math.max(h, 1));
+  return Math.min(1, mpScale, edgeScale);
+}
+
+type SharpReadOpts = {
+  failOn: "none";
+  sequentialRead: boolean;
+  limitInputPixels: number;
+};
+
+/**
+ * Sample the alpha channel to learn whether the artwork is actually cut out
+ * and whether its alpha is binary.
+ *
+ * Reduced nearest-neighbour, so every byte read is an exact source value
+ * rather than a blend of its neighbours — that is what makes the binary-alpha
+ * answer trustworthy. Roughly a megabyte even for a 150 MP source.
+ */
+async function probeAlpha(
+  buffer: Buffer,
+  sharpOpts: SharpReadOpts,
+  srcW: number,
+  srcH: number,
+): Promise<{ hasTransparentPixels: boolean; binaryAlpha: boolean }> {
+  const cells = Math.ceil((srcW * srcH) / MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE);
+  const scale = Math.min(1, Math.sqrt(cells / Math.max(1, srcW * srcH)));
+  const samples = await sharp(buffer, sharpOpts)
+    .rotate()
+    .toColourspace("srgb")
+    .ensureAlpha()
+    .extractChannel(3)
+    .resize(Math.max(1, Math.round(srcW * scale)), Math.max(1, Math.round(srcH * scale)), {
+      fit: "fill",
+      kernel: "nearest",
+    })
+    .raw()
+    .toBuffer();
+
+  let hasTransparentPixels = false;
+  let hasPartialAlpha = false;
+  for (let i = 0; i < samples.length; i++) {
+    const a = samples[i];
+    if (a === 0) hasTransparentPixels = true;
+    else if (a !== 255) hasPartialAlpha = true;
+  }
+
+  // "Binary alpha" is a claim about hard-edged cut-out artwork, and it is only
+  // meaningful when transparency exists at all. A fully opaque image trivially
+  // satisfies "every alpha is 0 or 255", and calling that binary sends ordinary
+  // opaque PNGs down the hard-edge path: nearest-neighbour for the preview and
+  // pixelated resampling at print size, both visibly aliased.
+  return {
+    hasTransparentPixels,
+    binaryAlpha: hasTransparentPixels && !hasPartialAlpha,
+  };
+}
+
+/**
+ * Measure the exact content box of a large raster without materializing it.
+ *
+ * libvips' find_trim runs at full resolution and before any resize, and it
+ * reports how far it moved the top-left corner. Running it a second time on
+ * the mirrored image turns those same two numbers into the right and bottom
+ * insets, so two passes give all four edges exactly — no cell quantisation,
+ * no padding fudge, and soft shadow ramps survive down to alpha 1. Both
+ * pipelines resize their output to 1×1, so nothing full-size is ever encoded
+ * or held in memory.
+ */
+async function measureContentBounds(
+  buffer: Buffer,
+  sharpOpts: SharpReadOpts,
+  srcW: number,
+  srcH: number,
+): Promise<{ left: number; top: number; width: number; height: number }> {
+  const probe = (mirror: boolean) => {
+    let p = sharp(buffer, sharpOpts).rotate();
+    if (mirror) p = p.flop().flip();
+    return p
+      // `lineArt` is essential, not a tweak: without it libvips compares an
+      // averaged row/column profile, so a 1-2 px stroke on a wide canvas falls
+      // below the threshold and gets cropped off the artwork.
+      .trim({ threshold: 0, lineArt: true })
+      .resize(1, 1, { fit: "fill" })
+      .toBuffer({ resolveWithObject: true });
+  };
+
+  const full = { left: 0, top: 0, width: srcW, height: srcH };
+  let normal: Awaited<ReturnType<typeof probe>>;
+  let mirrored: Awaited<ReturnType<typeof probe>>;
+  try {
+    [normal, mirrored] = await Promise.all([probe(false), probe(true)]);
+  } catch {
+    // A uniform image gives libvips nothing to trim against.
+    return full;
+  }
+
+  const left = Math.max(0, -(normal.info.trimOffsetLeft ?? 0));
+  const top = Math.max(0, -(normal.info.trimOffsetTop ?? 0));
+  const right = Math.min(srcW, srcW + (mirrored.info.trimOffsetLeft ?? 0));
+  const bottom = Math.min(srcH, srcH + (mirrored.info.trimOffsetTop ?? 0));
+  const width = right - left;
+  const height = bottom - top;
+
+  if (!(width > 0) || !(height > 0)) return full;
+  if (width >= srcW && height >= srcH) return full;
+  return { left, top, width, height };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/downloads", express.static(path.resolve(process.cwd(), "downloads")));
 
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  /**
+   * Prepare an oversized raster for import.
+   *
+   * Returns a downscaled preview PNG only. The client keeps the user's
+   * original file as the print source, so nothing here caps print quality and
+   * we never ship high-resolution pixels back over the wire. Everything the
+   * client needs to line the preview up with the original travels in headers:
+   * the content-crop rect (in source pixels), the oriented source size, and
+   * whether the source alpha is binary (so halftone-ready art keeps hard
+   * edges instead of being resampled soft).
+   */
+  app.post("/api/prepare-raster-upload", rasterUpload.single("image"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No image file provided" });
+      }
+
+      const sharpOpts = {
+        failOn: "none" as const,
+        sequentialRead: true,
+        limitInputPixels: SHARP_PIXEL_LIMIT,
+      };
+
+      const meta = await assertAllowedRasterFormat(req.file.buffer, ["png", "jpeg", "webp"]);
+      // `metadata()` reports pre-rotation dimensions; EXIF orientations 5-8
+      // swap the axes once `.rotate()` auto-orients the pipeline.
+      const swapAxes = (meta.orientation ?? 0) >= 5;
+      const srcW = (swapAxes ? meta.height : meta.width) ?? 0;
+      const srcH = (swapAxes ? meta.width : meta.height) ?? 0;
+      if (!(srcW > 0) || !(srcH > 0)) {
+        return res.status(400).json({ error: "Could not read image dimensions" });
+      }
+
+      const sourceMegapixels = (srcW * srcH) / 1_000_000;
+      if (sourceMegapixels > MAX_SOURCE_MEGAPIXELS) {
+        return res.status(400).json({
+          error: `Image is ${Math.round(sourceMegapixels)} MP; maximum is ${MAX_SOURCE_MEGAPIXELS} MP`,
+        });
+      }
+
+      // Crop to content only for genuinely cut-out artwork. A PNG that carries
+      // an alpha channel but no transparent pixels is treated like a photo:
+      // trimming it would eat a deliberate solid border.
+      const alpha = meta.hasAlpha
+        ? await probeAlpha(req.file.buffer, sharpOpts, srcW, srcH)
+        : { hasTransparentPixels: false, binaryAlpha: false };
+      const bounds = alpha.hasTransparentPixels
+        ? await measureContentBounds(req.file.buffer, sharpOpts, srcW, srcH)
+        : { left: 0, top: 0, width: srcW, height: srcH };
+
+      const previewScale = fitWithinMegapixels(
+        bounds.width,
+        bounds.height,
+        MAX_INLINE_DECODE_MEGAPIXELS,
+        PREPARE_PREVIEW_MAX_EDGE,
+      );
+      const previewW = Math.max(1, Math.round(bounds.width * previewScale));
+      const previewH = Math.max(1, Math.round(bounds.height * previewScale));
+
+      let pipeline = sharp(req.file.buffer, sharpOpts).rotate();
+      if (bounds.width !== srcW || bounds.height !== srcH) {
+        pipeline = pipeline.extract({
+          left: bounds.left,
+          top: bounds.top,
+          width: bounds.width,
+          height: bounds.height,
+        });
+      }
+      const previewBuf = await pipeline
+        .resize(previewW, previewH, {
+          fit: "fill",
+          // Binary alpha means halftone-ready art: nearest keeps the edges hard
+          // instead of introducing a soft fringe the editor would then read as
+          // anti-aliased.
+          kernel: alpha.binaryAlpha ? "nearest" : "lanczos3",
+        })
+        .png()
+        .toBuffer();
+
+      const exposed = [
+        "X-Anynest-Source-Width",
+        "X-Anynest-Source-Height",
+        "X-Anynest-Crop-X",
+        "X-Anynest-Crop-Y",
+        "X-Anynest-Crop-Width",
+        "X-Anynest-Crop-Height",
+        "X-Anynest-Preview-Width",
+        "X-Anynest-Preview-Height",
+        "X-Anynest-Density",
+        "X-Anynest-Source-MP",
+        "X-Anynest-Binary-Alpha",
+        "X-Anynest-Has-Transparency",
+      ];
+      res.set({
+        "Content-Type": "image/png",
+        "X-Anynest-Source-Width": String(srcW),
+        "X-Anynest-Source-Height": String(srcH),
+        "X-Anynest-Crop-X": String(bounds.left),
+        "X-Anynest-Crop-Y": String(bounds.top),
+        "X-Anynest-Crop-Width": String(bounds.width),
+        "X-Anynest-Crop-Height": String(bounds.height),
+        "X-Anynest-Preview-Width": String(previewW),
+        "X-Anynest-Preview-Height": String(previewH),
+        "X-Anynest-Density": String(meta.density && meta.density > 0 ? meta.density : 72),
+        "X-Anynest-Source-MP": String(Math.round(sourceMegapixels * 10) / 10),
+        "X-Anynest-Binary-Alpha": alpha.binaryAlpha ? "1" : "0",
+        // Measured on the *uncropped* source. The client cannot re-derive this
+        // from the preview: cropping to content can remove every transparent
+        // pixel, making cut-out artwork look like an opaque photo.
+        "X-Anynest-Has-Transparency": alpha.hasTransparentPixels ? "1" : "0",
+        "Access-Control-Expose-Headers": exposed.join(", "),
+        "Cache-Control": "no-store",
+      });
+      return res.status(200).send(previewBuf);
+    } catch (error) {
+      if (error instanceof UnsupportedRasterError) {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error("[prepare-raster-upload] failed:", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      if (/exceeds pixel limit/i.test(message)) {
+        return res.status(400).json({
+          error: `Image exceeds the ${MAX_SOURCE_MEGAPIXELS} MP limit`,
+        });
+      }
+      return res.status(500).json({
+        error: "Failed to prepare image for import",
+        details: message,
+      });
+    }
   });
 
   app.post("/api/process-image", upload.single('image'), async (req, res) => {

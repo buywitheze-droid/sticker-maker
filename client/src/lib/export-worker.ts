@@ -1,3 +1,5 @@
+import { SAFARI_MAX_CANVAS_AREA } from "./image-budget";
+
 interface DesignExportData {
   widthInches: number;
   heightInches: number;
@@ -7,8 +9,14 @@ interface DesignExportData {
   rotation: number;
   flipX?: boolean;
   flipY?: boolean;
-  /** Blob (File) reference — decoded lazily inside the worker per-strip. */
-  blob: Blob;
+  // New shape: index into `sources[]` (shared across duplicate designs).
+  // Old shape: an inline per-design PNG buffer. One of the two is set.
+  sourceIndex?: number;
+  imageBuffer?: ArrayBuffer;
+  mimeType?: string;
+  // Content box within the source, in source pixels. Present when the source
+  // is an uncropped original (the oversized-raster import path).
+  sourceCrop?: { x: number; y: number; width: number; height: number };
   alphaThresholded?: boolean;
   printFileName?: boolean;
   name?: string;
@@ -18,40 +26,37 @@ interface ExportInput {
   type: 'export';
   requestId: number;
   designs: DesignExportData[];
+  // Deduplicated source PNG buffers. If designs use `sourceIndex`, they refer
+  // into this array. Absent when the caller uses the older inline shape.
+  sources?: ArrayBuffer[];
   outW: number;
   outH: number;
   exportDpi: number;
 }
 
-interface DrawInfo {
+interface DesignExportBounds {
   design: DesignExportData;
   drawW: number;
   drawH: number;
-  centerX: number;
-  centerY: number;
-  radius: number;
-  aabbW: number;
-  aabbH: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
   stampKey: string;
 }
 
-const STRIP_HEIGHT = 4096;
-const BATCH_ROWS = 512;
-const MAX_IDAT_BYTES = 2 * 1024 * 1024;
-
 // Per-stamp memory cap: skip caching individual stamps that would exceed this
-// (huge one-off designs). Small duplicates always fit.
-const STAMP_CACHE_MAX_BYTES = 64 * 1024 * 1024; // ~4096x4096 RGBA
-// Total stamp cache cap.
-const STAMP_CACHE_TOTAL_MAX_BYTES = 256 * 1024 * 1024;
+// (huge one-off designs). Small duplicates (the common gangsheet case) always fit.
+const STAMP_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MB RGBA per stamp (= ~4096x4096)
+// Total stamp cache cap: guard against many unique large stamps.
+const STAMP_CACHE_TOTAL_MAX_BYTES = 256 * 1024 * 1024; // 256 MB across all stamps
 
-type SourceBitmapCache = Map<Blob, ImageBitmap>;
-type StampCache = Map<string, OffscreenCanvas>;
-
-function makeStampKey(d: DesignExportData, drawW: number, drawH: number, blobIndex: number): string {
+function makeStampKey(d: DesignExportData, drawW: number, drawH: number): string {
   const nameKey = d.printFileName && d.name ? `|n${d.name}` : '';
   return [
-    `b${blobIndex}`,
+    designSourceKey(d),
     drawW,
     drawH,
     d.rotation | 0,
@@ -63,86 +68,52 @@ function makeStampKey(d: DesignExportData, drawW: number, drawH: number, blobInd
   ].join('|');
 }
 
-// Assign a stable index to each unique Blob reference in the export payload.
-// Duplicate designs share the same Blob (imageInfo.file), so this maps
-// "designs referencing the same source" to identical stamp keys.
-function buildBlobIndex(designs: DesignExportData[]): Map<Blob, number> {
-  const map = new Map<Blob, number>();
-  let counter = 0;
-  for (const d of designs) {
-    if (!map.has(d.blob)) map.set(d.blob, counter++);
-  }
-  return map;
+// Keep temporary export canvases bounded for tall sheets. This only changes
+// internal batching; output dimensions, DPI, placement, and pixel quality are
+// unchanged.
+const MAX_STRIP_HEIGHT = 4096;
+
+/**
+ * Floor on the strip height, so a pathological sheet width cannot reduce this
+ * to a handful of rows and spend all its time on per-strip overhead.
+ */
+const MIN_STRIP_HEIGHT = 256;
+
+/**
+ * How tall a strip may be for a sheet of this width.
+ *
+ * Strips bound the height of the temporary canvas, but nothing bounded its
+ * width, which is the full sheet at export DPI. At a fixed 4096 that made the
+ * area *worse* the wider the sheet: a 22 inch sheet at 300 DPI is 6600 px
+ * across, so the strip was 27 MP against Safari's 16.8 MP ceiling — over the
+ * limit for every sheet width sold, and only ever safe below 13.65 inches.
+ *
+ * Deriving the height from the width holds the area under the cap instead:
+ * 2542 rows at 22 inches, 2282 at 24.5, and the full 4096 for anything narrow
+ * enough to afford it. Output is unaffected — strips are tiles of the same
+ * render, so this changes only how many passes it takes.
+ */
+function stripHeightFor(outW: number): number {
+  const byArea = Math.floor(SAFARI_MAX_CANVAS_AREA / Math.max(1, outW));
+  return Math.max(MIN_STRIP_HEIGHT, Math.min(MAX_STRIP_HEIGHT, byArea));
 }
+const BATCH_ROWS = 1024;
+const MAX_IDAT_BYTES = 2 * 1024 * 1024;
 
-async function getSourceBitmap(blob: Blob, cache: SourceBitmapCache): Promise<ImageBitmap> {
-  const cached = cache.get(blob);
-  if (cached) return cached;
-  const bitmap = await createImageBitmap(blob);
-  cache.set(blob, bitmap);
-  return bitmap;
-}
-
-// Pre-render a design at its AABB size, once per unique (source + render
-// parameters) combo. Every subsequent copy is composited by a single 1:1
-// drawImage of this pre-baked stamp — orders of magnitude cheaper than
-// re-running rotate/scale/drawImage/text for every duplicate.
-async function getOrBuildStamp(
-  d: DesignExportData,
-  info: DrawInfo,
-  bitmap: ImageBitmap,
-  exportDpi: number,
-  cache: StampCache,
-  cacheState: { totalBytes: number },
-): Promise<OffscreenCanvas | null> {
-  const stampBytes = info.aabbW * info.aabbH * 4;
-  const canCache = stampBytes <= STAMP_CACHE_MAX_BYTES
-    && cacheState.totalBytes + stampBytes <= STAMP_CACHE_TOTAL_MAX_BYTES;
-
-  if (canCache) {
-    const existing = cache.get(info.stampKey);
-    if (existing) return existing;
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[i] = c >>> 0;
   }
-
-  const stamp = new OffscreenCanvas(info.aabbW, info.aabbH);
-  const sctx = stamp.getContext('2d', { alpha: true });
-  if (!sctx) return null;
-
-  sctx.imageSmoothingEnabled = !d.alphaThresholded;
-  sctx.imageSmoothingQuality = 'high';
-  sctx.save();
-  // Round the internal pivot so it lands on an integer pixel, matching the
-  // pre-cache code path that translated to centerX/centerY directly. This
-  // keeps the composited output byte-identical whether or not we hit cache.
-  sctx.translate(Math.round(info.aabbW / 2), Math.round(info.aabbH / 2));
-  sctx.rotate((d.rotation * Math.PI) / 180);
-  sctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
-  sctx.drawImage(bitmap, -info.drawW / 2, -info.drawH / 2, info.drawW, info.drawH);
-  if (d.printFileName && d.name) {
-    sctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
-    const marginPx = 0.1 * exportDpi;
-    const fontSize = Math.max(8, Math.round(info.drawH * 0.045));
-    sctx.font = `bold ${fontSize}px sans-serif`;
-    const displayName = d.name.replace(/\.[^/.]+$/, '');
-    sctx.fillStyle = '#000000';
-    sctx.textAlign = 'right';
-    sctx.textBaseline = 'top';
-    sctx.fillText(displayName, info.drawW / 2, info.drawH / 2 + marginPx);
-  }
-  sctx.restore();
-
-  if (canCache) {
-    cache.set(info.stampKey, stamp);
-    cacheState.totalBytes += stampBytes;
-  }
-  return stamp;
-}
+  return table;
+})();
 
 function crc32(data: Uint8Array): number {
   let c = 0xFFFFFFFF;
   for (let i = 0; i < data.length; i++) {
-    c ^= data[i];
-    for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xEDB88320 : 0);
+    c = CRC32_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
   }
   return (c ^ 0xFFFFFFFF) >>> 0;
 }
@@ -160,52 +131,371 @@ function makePngChunk(type: string, data: Uint8Array): Uint8Array {
   return chunk;
 }
 
+function designDrawSize(d: DesignExportData, exportDpi: number) {
+  return {
+    drawW: Math.max(1, Math.round(d.widthInches * d.s * exportDpi)),
+    drawH: Math.max(1, Math.round(d.heightInches * d.s * exportDpi)),
+  };
+}
+
+function designAabb(d: DesignExportData, outW: number, outH: number, exportDpi: number) {
+  const { drawW, drawH } = designDrawSize(d, exportDpi);
+  const centerX = d.nx * outW;
+  const centerY = d.ny * outH;
+  const rad = (d.rotation * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const aabbW = Math.max(1, Math.ceil(drawW * cos + drawH * sin));
+  const aabbH = Math.max(1, Math.ceil(drawW * sin + drawH * cos));
+  return {
+    drawW,
+    drawH,
+    centerX,
+    centerY,
+    aabbW,
+    aabbH,
+    left: centerX - aabbW / 2,
+    right: centerX + aabbW / 2,
+    top: centerY - aabbH / 2,
+    bottom: centerY + aabbH / 2,
+  };
+}
+
+function stripHasContent(designs: DesignExportBounds[], stripY: number, stripH: number): boolean {
+  const stripBottom = stripY + stripH;
+  for (const p of designs) {
+    if (p.bottom >= stripY && p.top <= stripBottom) return true;
+  }
+  return false;
+}
+
+// Decode-once cache for source buffers. Keyed by source index (or a stable
+// synthetic key when the caller sends inline buffers).
+type SourceBitmapCache = Map<string, ImageBitmap>;
+
 /**
- * Composite pre-baked stamps into a strip. Stamps already have rotation,
- * flip, scale, and text baked in — this only does a 1:1 drawImage.
+ * Decode a design's print source, cropped and scaled to the size it will
+ * actually occupy on the sheet.
+ *
+ * A design never needs more pixels than its placed size at the export DPI, so
+ * asking the codec for exactly that bounds peak memory by the sheet rather
+ * than by the upload: a 150 MP photo placed at 4"×3" decodes to 1200×900.
+ * It is also higher quality than decoding full-size and scaling afterwards,
+ * because the pixels are resampled once, inside the decoder.
+ *
+ * Downscale only. When the source is already smaller than the placement we
+ * decode it 1:1 and let the stamp canvas do the upscale, exactly as before.
  */
-function drawStampsOnCtx(
+async function getSourceBitmap(
+  d: DesignExportData,
+  sources: ArrayBuffer[] | undefined,
+  cache: SourceBitmapCache,
+  targetW?: number,
+  targetH?: number,
+): Promise<ImageBitmap> {
+  if (typeof createImageBitmap !== 'function') {
+    throw new Error('This browser cannot decode images inside the export worker.');
+  }
+  const crop = d.sourceCrop;
+  const wantW = targetW && targetW > 0 ? Math.round(targetW) : 0;
+  const wantH = targetH && targetH > 0 ? Math.round(targetH) : 0;
+  const key = `${designSourceKey(d)}|${wantW}x${wantH}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const buf = d.sourceIndex != null && sources ? sources[d.sourceIndex] : d.imageBuffer;
+  if (!buf) throw new Error('Export design is missing image data.');
+  const blob = new Blob([buf], { type: d.mimeType || 'image/png' });
+
+  const resizeQuality: ImageBitmapOptions['resizeQuality'] = d.alphaThresholded ? 'pixelated' : 'high';
+  const shouldResize =
+    wantW > 0 && wantH > 0 &&
+    (!crop || wantW < crop.width || wantH < crop.height);
+  const options: ImageBitmapOptions | undefined = shouldResize
+    ? { resizeWidth: wantW, resizeHeight: wantH, resizeQuality }
+    : undefined;
+
+  let bitmap: ImageBitmap;
+  if (crop) {
+    bitmap = await createImageBitmap(blob, crop.x, crop.y, crop.width, crop.height, options);
+  } else if (options) {
+    // Without a crop rect we only know the source size after a probe decode,
+    // so clamp the request to the natural size to avoid upscaling here.
+    const probe = await createImageBitmap(blob);
+    if (wantW >= probe.width && wantH >= probe.height) {
+      cache.set(key, probe);
+      return probe;
+    }
+    bitmap = await createImageBitmap(probe, 0, 0, probe.width, probe.height, options);
+    probe.close();
+  } else {
+    bitmap = await createImageBitmap(blob);
+  }
+  cache.set(key, bitmap);
+  return bitmap;
+}
+
+// Stable per-source key, used by both the decoded-bitmap cache and the stamp
+// cache. For the new (deduped) shape the source index is authoritative; for
+// the legacy inline shape we tag each design with a WeakMap-based synthetic
+// index the first time we see it so repeat strips can hit the cache.
+const inlineSourceIndex = new WeakMap<ArrayBuffer, number>();
+let inlineSourceCounter = 0;
+function designSourceKey(d: DesignExportData): string {
+  if (d.sourceIndex != null) return `s${d.sourceIndex}`;
+  const buf = d.imageBuffer;
+  if (!buf) return `nil`;
+  let idx = inlineSourceIndex.get(buf);
+  if (idx == null) {
+    idx = ++inlineSourceCounter;
+    inlineSourceIndex.set(buf, idx);
+  }
+  return `i${idx}`;
+}
+
+type StampCache = Map<string, OffscreenCanvas>;
+
+// Pre-render a design into an AABB-sized canvas. If the same source + render
+// parameters appear again in another copy (typical for duplicated stickers),
+// we skip the entire rotate/scale/drawImage/text pipeline and just blit the
+// pre-baked stamp with a single drawImage — orders of magnitude cheaper than
+// rebuilding each copy from scratch.
+async function getOrBuildStamp(
+  d: DesignExportData,
+  bounds: DesignExportBounds,
+  bitmap: ImageBitmap,
+  exportDpi: number,
+  cache: StampCache,
+  cacheState: { totalBytes: number },
+): Promise<{ stamp: OffscreenCanvas | null; aabbW: number; aabbH: number }> {
+  const aabbW = bounds.width;
+  const aabbH = bounds.height;
+  const stampBytes = aabbW * aabbH * 4;
+  const canCache = stampBytes <= STAMP_CACHE_MAX_BYTES
+    && cacheState.totalBytes + stampBytes <= STAMP_CACHE_TOTAL_MAX_BYTES;
+
+  if (canCache) {
+    const existing = cache.get(bounds.stampKey);
+    if (existing) {
+      return { stamp: existing, aabbW, aabbH };
+    }
+  }
+
+  const stamp = new OffscreenCanvas(aabbW, aabbH);
+  const sctx = stamp.getContext('2d', { alpha: true });
+  if (!sctx) return { stamp: null, aabbW, aabbH };
+
+  sctx.imageSmoothingEnabled = !d.alphaThresholded;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.save();
+  // Round the internal pivot so it lands on an integer pixel, matching the
+  // pre-cache path that translated to Math.round(centerX). This guarantees
+  // byte-identical output regardless of whether we hit the stamp cache.
+  sctx.translate(Math.round(aabbW / 2), Math.round(aabbH / 2));
+  sctx.rotate((d.rotation * Math.PI) / 180);
+  sctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
+  sctx.drawImage(bitmap, -bounds.drawW / 2, -bounds.drawH / 2, bounds.drawW, bounds.drawH);
+  if (d.printFileName && d.name) {
+    sctx.scale(d.flipX ? -1 : 1, d.flipY ? -1 : 1);
+    const marginPx = 0.1 * exportDpi;
+    const fontSize = Math.max(8, Math.round(bounds.drawH * 0.045));
+    sctx.font = `bold ${fontSize}px sans-serif`;
+    const displayName = d.name.replace(/\.[^/.]+$/, '');
+    sctx.fillStyle = '#000000';
+    sctx.textAlign = 'right';
+    sctx.textBaseline = 'top';
+    sctx.fillText(displayName, bounds.drawW / 2, bounds.drawH / 2 + marginPx);
+  }
+  sctx.restore();
+
+  if (canCache) {
+    cache.set(bounds.stampKey, stamp);
+    cacheState.totalBytes += stampBytes;
+  }
+  return { stamp, aabbW, aabbH };
+}
+
+async function drawDesignsOnStrip(
   ctx: OffscreenCanvasRenderingContext2D,
-  infos: DrawInfo[],
-  stamps: Map<DrawInfo, OffscreenCanvas>,
+  designs: DesignExportBounds[],
   stripY: number,
+  stripH: number,
+  exportDpi: number,
+  sources: ArrayBuffer[] | undefined,
+  bitmapCache: SourceBitmapCache,
+  stampCache: StampCache,
+  stampCacheState: { totalBytes: number },
 ) {
-  for (const info of infos) {
-    const stamp = stamps.get(info);
+  const stripBottom = stripY + stripH;
+  for (const p of designs) {
+    if (p.bottom < stripY || p.top > stripBottom) continue;
+    const d = p.design;
+    const bitmap = await getSourceBitmap(d, sources, bitmapCache, p.drawW, p.drawH);
+    const { stamp, aabbW, aabbH } = await getOrBuildStamp(
+      d, p, bitmap, exportDpi, stampCache, stampCacheState,
+    );
     if (!stamp) continue;
+
     // Placement chosen so the design's pivot lands on the same integer pixel
-    // the pre-cache path did (translate(centerX, centerY - stripY) at fractional
-    // values used to be rounded implicitly by the canvas at composite time —
-    // we keep behavior consistent by rounding here).
-    const stampCenterInX = Math.round(info.aabbW / 2);
-    const stampCenterInY = Math.round(info.aabbH / 2);
-    const drawX = Math.round(info.centerX) - stampCenterInX;
-    const drawY = Math.round(info.centerY - stripY) - stampCenterInY;
+    // as the pre-cache code path (Math.round of the design's absolute center),
+    // preserving byte-identical output.
+    const stampCenterInX = Math.round(aabbW / 2);
+    const stampCenterInY = Math.round(aabbH / 2);
+    const drawX = Math.round(p.left + p.width / 2) - stampCenterInX;
+    const drawY = Math.round(p.top - stripY + p.height / 2) - stampCenterInY;
     ctx.drawImage(stamp, drawX, drawY);
   }
 }
 
-// Write `stripH` rows of fully transparent PNG rows to the deflate stream.
-// Uint8Array is zero-filled by construction, so filter byte 0 + zero payload
-// requires no extra work — this replaces allocating an OffscreenCanvas + a
-// full getImageData for strips that have no visible designs (common on
-// tall sparse sheets).
-async function writeEmptyStripRows(
+type FilterScratch = { sub: Uint8Array; up: Uint8Array; avg: Uint8Array; paeth: Uint8Array };
+
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = p >= a ? p - a : a - p;
+  const pb = p >= b ? p - b : b - p;
+  const pc = p >= c ? p - c : c - p;
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+// Picks the PNG filter (None/Sub/Up/Average/Paeth) that compresses smallest for this row — lossless.
+function filterRowAdaptive(
+  cur: Uint8ClampedArray,
+  prev: Uint8Array,
+  bpp: number,
+  rowBytes: number,
+  scratch: FilterScratch,
+  out: Uint8Array,
+  outOff: number,
+) {
+  const { sub, up, avg, paeth } = scratch;
+  let sNone = 0, sSub = 0, sUp = 0, sAvg = 0, sPaeth = 0;
+  for (let i = 0; i < rowBytes; i++) {
+    const x = cur[i];
+    const a = i >= bpp ? cur[i - bpp] : 0;
+    const b = prev[i];
+    const c = i >= bpp ? prev[i - bpp] : 0;
+
+    sNone += x < 128 ? x : 256 - x;
+
+    const vs = (x - a) & 0xff; sub[i] = vs; sSub += vs < 128 ? vs : 256 - vs;
+    const vu = (x - b) & 0xff; up[i] = vu; sUp += vu < 128 ? vu : 256 - vu;
+    const vg = (x - ((a + b) >> 1)) & 0xff; avg[i] = vg; sAvg += vg < 128 ? vg : 256 - vg;
+    const vp = (x - paethPredictor(a, b, c)) & 0xff; paeth[i] = vp; sPaeth += vp < 128 ? vp : 256 - vp;
+  }
+
+  let best = 0, bestSum = sNone;
+  if (sSub < bestSum) { best = 1; bestSum = sSub; }
+  if (sUp < bestSum) { best = 2; bestSum = sUp; }
+  if (sAvg < bestSum) { best = 3; bestSum = sAvg; }
+  if (sPaeth < bestSum) { best = 4; }
+
+  out[outOff] = best;
+  const d = outOff + 1;
+  switch (best) {
+    case 0: out.set(cur, d); break;
+    case 1: out.set(sub, d); break;
+    case 2: out.set(up, d); break;
+    case 3: out.set(avg, d); break;
+    default: out.set(paeth, d); break;
+  }
+}
+
+async function writeEmptyRows(
   writer: WritableStreamDefaultWriter<Uint8Array>,
-  stripH: number,
+  _outW: number,
+  rowCount: number,
+  _emptyRow: Uint8Array,
   filteredRowLen: number,
 ) {
-  for (let startRow = 0; startRow < stripH; startRow += BATCH_ROWS) {
-    const batchCount = Math.min(BATCH_ROWS, stripH - startRow);
+  // new Uint8Array is already zero-filled, so allocation *is* the empty batch.
+  // We skip the per-row .set() copy loop, cutting empty-strip CPU roughly in half.
+  for (let startRow = 0; startRow < rowCount; startRow += BATCH_ROWS) {
+    const batchCount = Math.min(BATCH_ROWS, rowCount - startRow);
     const batch = new Uint8Array(batchCount * filteredRowLen);
     await writer.write(batch);
   }
 }
 
-async function buildPngStreaming(input: ExportInput): Promise<Blob> {
-  const { designs, outW, outH, exportDpi, requestId } = input;
+// True when the entire row is zero (fully transparent). Common inside content
+// strips for gangsheets, where designs are sparse and most rows are blank.
+function isRowAllZero(pixels: Uint8ClampedArray, offset: number, length: number): boolean {
+  const end = offset + length;
+  let i = offset;
+  // Aligned 32-bit stride for speed; Uint8ClampedArray is byte-addressable
+  // but the browser lays it out contiguously so we can safely walk it.
+  for (; i + 8 <= end; i += 8) {
+    if (
+      pixels[i] | pixels[i + 1] | pixels[i + 2] | pixels[i + 3] |
+      pixels[i + 4] | pixels[i + 5] | pixels[i + 6] | pixels[i + 7]
+    ) return false;
+  }
+  for (; i < end; i++) {
+    if (pixels[i]) return false;
+  }
+  return true;
+}
 
+async function writeStripRows(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  pixels: Uint8ClampedArray,
+  stripH: number,
+  filteredRowLen: number,
+  rowBytes: number,
+  bpp: number,
+  prevRow: Uint8Array,
+  scratch: FilterScratch,
+) {
+  for (let startRow = 0; startRow < stripH; startRow += BATCH_ROWS) {
+    const endRow = Math.min(startRow + BATCH_ROWS, stripH);
+    const batchCount = endRow - startRow;
+    const batch = new Uint8Array(batchCount * filteredRowLen);
+    for (let r = 0; r < batchCount; r++) {
+      const rowIdx = startRow + r;
+      const rowStart = rowIdx * rowBytes;
+      const cur = pixels.subarray(rowStart, rowStart + rowBytes);
+      if (isRowAllZero(pixels, rowStart, rowBytes)) {
+        // Filter type 0 (None) + zero row: cheapest possible representation.
+        // batch is already zero, so filter byte + payload are both correct.
+        prevRow.fill(0);
+      } else {
+        filterRowAdaptive(cur, prevRow, bpp, rowBytes, scratch, batch, r * filteredRowLen);
+        prevRow.set(cur); // this row is the "up" reference for the next
+      }
+    }
+    await writer.write(batch);
+  }
+}
+
+async function buildPngStreaming(input: ExportInput): Promise<Uint8Array> {
+  const { designs, sources, outW, outH, exportDpi } = input;
   const ppm = Math.round(exportDpi / 0.0254);
+  const designBounds: DesignExportBounds[] = designs.map((design) => {
+    const bounds = designAabb(design, outW, outH, exportDpi);
+    return {
+      design,
+      drawW: bounds.drawW,
+      drawH: bounds.drawH,
+      left: bounds.left,
+      top: bounds.top,
+      right: bounds.right,
+      bottom: bounds.bottom,
+      width: bounds.aabbW,
+      height: bounds.aabbH,
+      stampKey: makeStampKey(design, bounds.drawW, bounds.drawH),
+    };
+  });
+  const bitmapCache: SourceBitmapCache = new Map();
+  const stampCache: StampCache = new Map();
+  const stampCacheState = { totalBytes: 0 };
+  self.postMessage({
+    type: 'progress',
+    requestId: input.requestId,
+    phase: 'preparing',
+    completed: 1,
+    total: 1,
+  });
 
   const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -213,11 +503,11 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   const ihdrDv = new DataView(ihdrData.buffer);
   ihdrDv.setUint32(0, outW);
   ihdrDv.setUint32(4, outH);
-  ihdrData[8] = 8;   // bit depth
-  ihdrData[9] = 6;   // color type RGBA
-  ihdrData[10] = 0;  // compression
-  ihdrData[11] = 0;  // filter
-  ihdrData[12] = 0;  // interlace
+  ihdrData[8] = 8;
+  ihdrData[9] = 6;
+  ihdrData[10] = 0;
+  ihdrData[11] = 0;
+  ihdrData[12] = 0;
   const ihdrChunk = makePngChunk('IHDR', ihdrData);
 
   const physData = new Uint8Array(9);
@@ -226,40 +516,6 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   physDv.setUint32(4, ppm);
   physData[8] = 1;
   const physChunk = makePngChunk('pHYs', physData);
-
-  // Pre-compute geometry for all designs — no bitmaps decoded yet. Stamp key
-  // is derived from the shared blob index so duplicates cluster into a single
-  // cached stamp regardless of render order.
-  const blobIndex = buildBlobIndex(designs);
-  const allInfos: DrawInfo[] = designs.map(d => {
-    const drawW = Math.max(1, Math.round(d.widthInches * d.s * exportDpi));
-    const drawH = Math.max(1, Math.round(d.heightInches * d.s * exportDpi));
-    const centerX = d.nx * outW;
-    const centerY = d.ny * outH;
-    const radius = Math.sqrt(drawW * drawW + drawH * drawH) / 2;
-    const rad = (d.rotation * Math.PI) / 180;
-    const cos = Math.abs(Math.cos(rad));
-    const sin = Math.abs(Math.sin(rad));
-    const aabbW = Math.max(1, Math.ceil(drawW * cos + drawH * sin));
-    const aabbH = Math.max(1, Math.ceil(drawW * sin + drawH * cos));
-    return {
-      design: d,
-      drawW,
-      drawH,
-      centerX,
-      centerY,
-      radius,
-      aabbW,
-      aabbH,
-      stampKey: makeStampKey(d, drawW, drawH, blobIndex.get(d.blob) ?? 0),
-    };
-  });
-
-  // Whole-export caches: decoded ImageBitmaps by Blob identity, and rendered
-  // stamps by (source × render parameters). Freed after all strips are done.
-  const bitmapCache: SourceBitmapCache = new Map();
-  const stampCache: StampCache = new Map();
-  const stampCacheState = { totalBytes: 0 };
 
   const cs = new CompressionStream('deflate');
   const writer = cs.writable.getWriter();
@@ -276,39 +532,39 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
 
   const rowBytes = outW * 4;
   const filteredRowLen = 1 + rowBytes;
+  const emptyRow = new Uint8Array(filteredRowLen);
 
-  const totalStrips = Math.ceil(outH / STRIP_HEIGHT);
+  // Adaptive-filter state, reused across all rows/strips to avoid per-row allocation.
+  const bpp = 4; // RGBA, 8-bit
+  const prevRow = new Uint8Array(rowBytes); // "up" reference; starts as zeros (transparent)
+  const scratch: FilterScratch = {
+    sub: new Uint8Array(rowBytes),
+    up: new Uint8Array(rowBytes),
+    avg: new Uint8Array(rowBytes),
+    paeth: new Uint8Array(rowBytes),
+  };
+
   let stripCanvas: OffscreenCanvas | null = null;
   let stripCtx: OffscreenCanvasRenderingContext2D | null = null;
+  const stripHeight = stripHeightFor(outW);
+  const totalStrips = Math.max(1, Math.ceil(outH / stripHeight));
+  let completedStrips = 0;
 
-  for (let si = 0; si < totalStrips; si++) {
-    const stripY = si * STRIP_HEIGHT;
-    const stripH = Math.min(STRIP_HEIGHT, outH - stripY);
+  for (let stripY = 0; stripY < outH; stripY += stripHeight) {
+    const stripH = Math.min(stripHeight, outH - stripY);
 
-    // Filter to designs whose bounding circle intersects this strip.
-    const visible = allInfos.filter(info =>
-      info.centerY + info.radius >= stripY && info.centerY - info.radius <= stripY + stripH
-    );
-
-    if (visible.length === 0) {
-      // Fast path for empty strips: skip canvas allocation and getImageData
-      // entirely. Uint8Array is already zero-filled, matching the transparent
-      // pixels that would have been generated.
-      await writeEmptyStripRows(writer, stripH, filteredRowLen);
-      self.postMessage({ type: 'progress', requestId, strip: si + 1, totalStrips });
+    if (!stripHasContent(designBounds, stripY, stripH)) {
+      await writeEmptyRows(writer, outW, stripH, emptyRow, filteredRowLen);
+      prevRow.fill(0); // the rows just written are fully transparent (zero)
+      completedStrips++;
+      self.postMessage({
+        type: 'progress',
+        requestId: input.requestId,
+        phase: 'rendering',
+        completed: completedStrips,
+        total: totalStrips,
+      });
       continue;
-    }
-
-    // Decode + pre-render every visible design. Cache is keyed by shared
-    // sources, so duplicates only cost one decode and one stamp render per
-    // unique (source × render params) combo across the whole export.
-    const stamps = new Map<DrawInfo, OffscreenCanvas>();
-    for (const info of visible) {
-      const bitmap = await getSourceBitmap(info.design.blob, bitmapCache);
-      const stamp = await getOrBuildStamp(
-        info.design, info, bitmap, exportDpi, stampCache, stampCacheState,
-      );
-      if (stamp) stamps.set(info, stamp);
     }
 
     if (!stripCanvas || stripCanvas.width !== outW || stripCanvas.height !== stripH) {
@@ -318,28 +574,21 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
     }
     const ctx = stripCtx!;
     ctx.clearRect(0, 0, outW, stripH);
-    drawStampsOnCtx(ctx, visible, stamps, stripY);
+    await drawDesignsOnStrip(
+      ctx, designBounds, stripY, stripH, exportDpi,
+      sources, bitmapCache, stampCache, stampCacheState,
+    );
 
     const imageData = ctx.getImageData(0, 0, outW, stripH);
-    const pixels = imageData.data;
-
-    for (let startRow = 0; startRow < stripH; startRow += BATCH_ROWS) {
-      const endRow = Math.min(startRow + BATCH_ROWS, stripH);
-      const batchCount = endRow - startRow;
-      const batch = new Uint8Array(batchCount * filteredRowLen);
-      for (let r = 0; r < batchCount; r++) {
-        const off = r * filteredRowLen;
-        batch[off] = 0; // PNG filter type None
-        batch.set(
-          pixels.subarray((startRow + r) * rowBytes, (startRow + r + 1) * rowBytes),
-          off + 1,
-        );
-      }
-      await writer.write(batch);
-    }
-
-    // Report strip progress to the main thread.
-    self.postMessage({ type: 'progress', requestId, strip: si + 1, totalStrips });
+    await writeStripRows(writer, imageData.data, stripH, filteredRowLen, rowBytes, bpp, prevRow, scratch);
+    completedStrips++;
+    self.postMessage({
+      type: 'progress',
+      requestId: input.requestId,
+      phase: 'rendering',
+      completed: completedStrips,
+      total: totalStrips,
+    });
   }
 
   if (stripCanvas) {
@@ -347,8 +596,9 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
     stripCanvas.height = 0;
   }
 
-  // Release caches so their pixel storage can be reclaimed before the final
-  // IDAT chunks are assembled.
+  // Release the source-bitmap and stamp caches so their pixel storage can be
+  // reclaimed before the final PNG chunks are assembled. Stamps and bitmaps
+  // can add up to hundreds of megabytes on a duplicate-heavy 370" sheet.
   for (const bitmap of bitmapCache.values()) {
     try { bitmap.close(); } catch {}
   }
@@ -360,6 +610,14 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   stampCache.clear();
   stampCacheState.totalBytes = 0;
 
+  self.postMessage({
+    type: 'progress',
+    requestId: input.requestId,
+    phase: 'finalizing',
+    completed: 0,
+    total: 1,
+  });
+
   await writer.close();
   await readPromise;
 
@@ -367,7 +625,10 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   for (const p of compressedParts) totalCompressed += p.length;
   const compressed = new Uint8Array(totalCompressed);
   let pos = 0;
-  for (const p of compressedParts) { compressed.set(p, pos); pos += p.length; }
+  for (const p of compressedParts) {
+    compressed.set(p, pos);
+    pos += p.length;
+  }
 
   const idatChunks: Uint8Array[] = [];
   for (let i = 0; i < compressed.length; i += MAX_IDAT_BYTES) {
@@ -376,14 +637,19 @@ async function buildPngStreaming(input: ExportInput): Promise<Blob> {
 
   const iendChunk = makePngChunk('IEND', new Uint8Array(0));
 
-  return new Blob([signature, ihdrChunk, physChunk, ...idatChunks, iendChunk], { type: 'image/png' });
+  const parts = [signature, ihdrChunk, physChunk, ...idatChunks, iendChunk];
+  const totalLen = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(totalLen);
+  pos = 0;
+  for (const part of parts) {
+    out.set(part, pos);
+    pos += part.length;
+  }
+  return out;
 }
 
-// Legacy single-canvas export for browsers without CompressionStream.
-// Decodes each unique source blob only once and reuses the same ImageBitmap
-// across duplicate designs.
-async function runExportLegacy(input: ExportInput): Promise<Blob> {
-  const { designs, outW, outH, exportDpi } = input;
+async function runExportLegacy(input: ExportInput): Promise<Uint8Array> {
+  const { designs, sources, outW, outH, exportDpi } = input;
 
   const canvas = new OffscreenCanvas(outW, outH);
   const ctx = canvas.getContext('2d');
@@ -394,10 +660,12 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
   ctx.imageSmoothingQuality = 'high';
 
   const bitmapCache: SourceBitmapCache = new Map();
+  if (typeof createImageBitmap !== 'function') {
+    throw new Error('This browser cannot decode images inside the export worker.');
+  }
   for (const design of designs) {
-    const bitmap = await getSourceBitmap(design.blob, bitmapCache);
-    const drawW = Math.max(1, Math.round(design.widthInches * design.s * exportDpi));
-    const drawH = Math.max(1, Math.round(design.heightInches * design.s * exportDpi));
+    const { drawW, drawH } = designDrawSize(design, exportDpi);
+    const bitmap = await getSourceBitmap(design, sources, bitmapCache, drawW, drawH);
     const centerX = design.nx * outW;
     const centerY = design.ny * outH;
 
@@ -459,21 +727,111 @@ async function runExportLegacy(input: ExportInput): Promise<Blob> {
 
   canvas.width = 0;
   canvas.height = 0;
-
-  return new Blob(parts, { type: 'image/png' });
+  self.postMessage({
+    type: 'progress',
+    requestId: input.requestId,
+    phase: 'finalizing',
+    completed: 0,
+    total: 1,
+  });
+  const totalLen = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(totalLen);
+  let writePos = 0;
+  for (const part of parts) {
+    out.set(part, writePos);
+    writePos += part.length;
+  }
+  return out;
 }
 
 const hasStreaming = typeof CompressionStream !== 'undefined';
 
+type R2PartMeta = { partNumber: number; url: string };
+type R2UploadMeta = {
+  singlePut?: boolean;
+  putUrl?: string;
+  putHeaders?: Record<string, string>;
+  parts?: R2PartMeta[];
+  partSize?: number;
+  totalParts?: number;
+  parallelism?: number;
+};
+
+async function uploadBufferToPreparedR2(
+  buffer: ArrayBuffer,
+  meta: R2UploadMeta,
+  requestId: string,
+): Promise<Array<{ partNumber: number; etag: string }>> {
+  const total = buffer.byteLength;
+  if (meta.singlePut && meta.putUrl) {
+    const putHeaders = meta.putHeaders || { 'Content-Type': 'image/png' };
+    const putRes = await fetch(String(meta.putUrl), { method: 'PUT', body: buffer, headers: putHeaders });
+    if (!putRes.ok) throw new Error(`Cloud upload failed: ${putRes.status}`);
+    return [];
+  }
+  const parts = Array.isArray(meta.parts) ? meta.parts : [];
+  if (!parts.length) throw new Error('Upload prepare incomplete');
+  const bytes = new Uint8Array(buffer);
+  const partSize = Number(meta.partSize) || 64 * 1024 * 1024;
+  const totalParts = Number(meta.totalParts) || parts.length;
+  const parallelism = Math.max(1, Math.min(Number(meta.parallelism) || 16, totalParts));
+  const sorted = parts.slice().sort((a, b) => Number(a.partNumber) - Number(b.partNumber));
+  let nextIndex = 0;
+  const uploadedParts: Array<{ partNumber: number; etag: string }> = [];
+
+  async function uploadPart(part: R2PartMeta) {
+    const pn = Number(part.partNumber);
+    const start = (pn - 1) * partSize;
+    const end = Math.min(start + partSize, total);
+    self.postMessage({ type: 'r2-upload-progress', requestId, message: `Uploading part ${pn} of ${totalParts}...` });
+    const chunk = bytes.subarray(start, end);
+    const res = await fetch(String(part.url), { method: 'PUT', body: chunk });
+    if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
+    const etag = res.headers.get('etag') || res.headers.get('ETag');
+    if (etag) uploadedParts.push({ partNumber: pn, etag });
+  }
+
+  async function worker() {
+    while (nextIndex < sorted.length) {
+      const part = sorted[nextIndex++];
+      await uploadPart(part);
+    }
+  }
+
+  await Promise.all(Array.from({ length: parallelism }, () => worker()));
+  return uploadedParts;
+}
+
 self.onmessage = async function(e: MessageEvent) {
-  if (e.data.type === 'export') {
+  if (e.data.type === 'r2-upload') {
     try {
-      const blob = hasStreaming
+      const buffer = e.data.buffer as ArrayBuffer | undefined;
+      if (!buffer || !buffer.byteLength) throw new Error('Empty design image');
+      const meta = e.data.meta as R2UploadMeta;
+      const requestId = String(e.data.requestId || '');
+      const uploadedParts = await uploadBufferToPreparedR2(buffer, meta, requestId);
+      self.postMessage({ type: 'r2-upload-done', requestId, uploadedParts });
+    } catch (err: any) {
+      self.postMessage({
+        type: 'error',
+        requestId: e.data.requestId,
+        error: err?.message || 'R2 upload failed',
+      });
+    }
+    return;
+  }
+  if (e.data.type === 'export') {
+    const designs = e.data.designs as ExportInput['designs'] | undefined;
+    try {
+      const bytes = hasStreaming
         ? await buildPngStreaming(e.data)
         : await runExportLegacy(e.data);
-      self.postMessage({ type: 'result', requestId: e.data.requestId, blob });
+      const buffer = bytes.buffer as ArrayBuffer;
+      (self as unknown as Worker).postMessage(
+        { type: 'result', requestId: e.data.requestId, buffer, byteLength: bytes.byteLength },
+        [buffer],
+      );
     } catch (err: any) {
-      // Blobs don't need explicit cleanup — just report the error.
       self.postMessage({ type: 'error', requestId: e.data.requestId, error: err?.message || 'Export failed' });
     }
   }
