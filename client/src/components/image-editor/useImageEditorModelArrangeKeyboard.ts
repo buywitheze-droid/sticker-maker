@@ -1635,6 +1635,45 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       } else {
         const maxBottom = Math.max(...currentRects.map(r => r.y + r.h));
         baseNx = (scaledW / 2) / currentAbW;
+
+        // If placing the new design below all existing content would push it off the
+        // bottom of the sheet, grow the sheet to the next configured height rung —
+        // exactly as `handleAutoArrange` does when its own packer overflows.
+        const minRequired = maxBottom + gap + scaledH;
+        if (minRequired > effectiveAbH && effectiveAbH < MAX_ARTBOARD_HEIGHT) {
+          const nextHeight = planLadderJump({
+            currentHeight: effectiveAbH,
+            minRequiredHeight: minRequired,
+            heights: GANGSHEET_HEIGHTS,
+          });
+          if (nextHeight !== null && nextHeight > effectiveAbH) {
+            const oldAbH = effectiveAbH;
+            effectiveAbH = nextHeight;
+            setDesigns(prev => prev.map(d => ({
+              ...d,
+              transform: { ...d.transform, ny: (d.transform.ny * oldAbH) / nextHeight },
+            })));
+            setArtboardHeight(nextHeight);
+            toast({
+              title: t("toast.gangsheetExpanded"),
+              description: t("toast.gangsheetExpandedDesc", { dimensions: formatDimensions(currentAbW, nextHeight, lang) }),
+            });
+          } else if (nextHeight === null && MAX_ARTBOARD_HEIGHT > effectiveAbH) {
+            // No rung fits the required height; expand to the maximum available.
+            const oldAbH = effectiveAbH;
+            effectiveAbH = MAX_ARTBOARD_HEIGHT;
+            setDesigns(prev => prev.map(d => ({
+              ...d,
+              transform: { ...d.transform, ny: (d.transform.ny * oldAbH) / MAX_ARTBOARD_HEIGHT },
+            })));
+            setArtboardHeight(MAX_ARTBOARD_HEIGHT);
+            toast({
+              title: t("toast.gangsheetMax"),
+              description: t("toast.gangsheetMaxDesc", { dimensions: formatDimensions(currentAbW, MAX_ARTBOARD_HEIGHT, lang) }),
+            });
+          }
+        }
+
         baseNy = (maxBottom + gap + scaledH / 2) / effectiveAbH;
       }
     }
