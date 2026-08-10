@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import JSZip from "jszip";
 import { EXPORT_DPI, EXPORT_TIMEOUT_MS } from "./constants";
 import {
   canUseMemoryEfficientPngExport,
@@ -702,7 +703,6 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
         return;
       }
 
-      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       for (let i = 0; i < sheetsWithDesigns.length; i++) {
         const sheet = sheetsWithDesigns[i];
