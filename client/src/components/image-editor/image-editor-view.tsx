@@ -135,7 +135,9 @@ export default function ImageEditorView() {
   // Keep the page header in sync with the current sheet height so it can
   // show the size without being inside the editor context tree.
   const setHeaderArtboardHeight = useUiStore(s => s.setHeaderArtboardHeight);
+  const setHeaderSheetInfo = useUiStore(s => s.setHeaderSheetInfo);
   useEffect(() => { setHeaderArtboardHeight(artboardHeight); }, [artboardHeight, setHeaderArtboardHeight]);
+  useEffect(() => { setHeaderSheetInfo(sheets.length, designs.length > 0); }, [sheets.length, designs.length, setHeaderSheetInfo]);
   // Mirrors the same computation in EditorActionToolbar so the mobile H
   // size-input allows designs up to the tallest available sheet, not just
   // the current one.
@@ -353,6 +355,27 @@ export default function ImageEditorView() {
     (h: number) => handleArtboardHeightPick(h),
     [handleArtboardHeightPick],
   );
+
+  // Bridge: the page header (outside the editor context) dispatches these
+  // custom events so it can change sheet height and add new sheets without
+  // prop-drilling through the component tree.
+  useEffect(() => {
+    const onHeightChange = (e: Event) => {
+      const h = (e as CustomEvent<{ height: number }>).detail.height;
+      handleArtboardHeightChange(h);
+    };
+    const onAddSheet = (e: Event) => {
+      const mode = (e as CustomEvent<{ mode: "blank" | "copy-layout" | "copy-layers" }>).detail.mode;
+      addSheet(mode);
+    };
+    document.addEventListener("editor:height-change", onHeightChange);
+    document.addEventListener("editor:add-sheet", onAddSheet);
+    return () => {
+      document.removeEventListener("editor:height-change", onHeightChange);
+      document.removeEventListener("editor:add-sheet", onAddSheet);
+    };
+  }, [handleArtboardHeightChange, addSheet]);
+
   const handleWandDeleteToggle = useCallback(() => {
     const prev = useUiStore.getState().wandDeleteModeActive;
     const nextActive = !prev;
@@ -1306,46 +1329,12 @@ export default function ImageEditorView() {
                           otherwise run together into one block of text. */}
                       <div data-mobile-layers className="divide-y divide-gray-200 rounded-lg border border-gray-200">{layerListItems}</div>
 
-                      {/* Gangsheet size: compact height picker stays in the layers sheet
-                          so the user can change it, but now lives at the top rather than
-                          the bottom so it's the first thing visible when the sheet opens.
-                          Width × Height display + height select sits in the sheet header
-                          row (inside the layers title row above). A read-only badge in the
-                          page header (sticker-maker.tsx) mirrors the size without crowding
-                          the sheet content. */}
-                      {!isEditMode && (
-                        <div className="flex flex-nowrap items-center gap-1.5 border-t border-gray-100 pt-1.5">
-                          <span className="flex-shrink-0 text-[11px] font-semibold text-gray-500">{t("controls.gangsheetSize")}</span>
-                          <span className="flex-shrink-0 text-[11px] tabular-nums text-gray-700">{formatLength(artboardWidth, lang)}{lang === "en" ? '"' : ""} ×</span>
-                          <select
-                            value={String(artboardHeight)}
-                            onChange={(e) => handleArtboardHeightChange(parseFloat(e.target.value))}
-                            className="h-7 w-[5rem] flex-shrink-0 cursor-pointer rounded border border-gray-300 bg-gray-50 px-1 text-[12px] font-semibold tabular-nums text-gray-900 outline-none transition-colors hover:border-gray-400 focus:border-cyan-500 coarse:h-10 coarse:text-[16px]"
-                            title={t("controls.gangsheetSize")}
-                            data-testid="mobile-gangsheet-height"
-                          >
-                            {GANGSHEET_HEIGHTS.map((h) => (
-                              <option key={h} value={String(h)}>
-                                {formatLength(h, lang)}{lang === "en" ? '"' : ""}
-                                {recommendedArtboardHeight === h && artboardHeight !== h
-                                  ? ` (${t("controls.currentBounds")})`
-                                  : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {selectedVariantPrice != null && (
-                            <span className="flex-shrink-0 whitespace-nowrap rounded-full border border-emerald-600 bg-white px-2 py-0.5 text-[11px] font-bold leading-tight tabular-nums text-emerald-600">
-                              {formatVariantPriceForDisplay(selectedVariantPrice)}
-                            </span>
-                          )}
-                        </div>
-                      )}
+
 
                       {/* Fluorescent spot-colour panels portal here on this
                           arm; on desktop they go to the sidebar. */}
                       {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
 
-                      <AddSheetButton sheetCount={sheets.length} onAdd={addSheet} canCopy={designs.length > 0} />
                     </>
                   )}
                 </MobileToolSheet>
