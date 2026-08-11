@@ -18,8 +18,8 @@ import { formatVariantPriceForDisplay } from "@/lib/variant-price";
 import { useWandTolerance, useToolActions } from "@/state/tool-store";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowUpLeft, ArrowUpRight, CheckSquare, Copy,
-  Download, Droplets, Eraser, Expand, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, RotateCw,
-  SlidersHorizontal, Sparkles, Trash2, Ungroup, Unlink, WandSparkles, X, XCircle,
+  Download, Droplets, Eraser, Expand, FlipHorizontal2, FlipVertical2, Group, Layers, LayoutGrid, Link, Loader2, Minus, Plus, Redo2, RotateCw,
+  SlidersHorizontal, Sparkles, Trash2, Ungroup, Undo2, Unlink, WandSparkles, X, XCircle,
 } from "lucide-react";
 import { CenterHorizontalIcon, CenterVerticalIcon } from "./center-axis-icons";
 import { useImageEditorContext } from "./image-editor-context";
@@ -977,6 +977,27 @@ export default function ImageEditorView() {
                   gangsheet from this box and anything that takes width or
                   height here comes straight off the artwork. */}
               <div className="relative min-h-0 min-w-0 flex-1">
+                {/* Floating undo / redo — always visible at the top-right of the canvas */}
+                <div className="pointer-events-none absolute right-2 top-2 z-20 flex items-center gap-1 pointer-events-auto">
+                  <button
+                    type="button"
+                    onClick={handleUndo}
+                    disabled={!canUndo()}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white/90 shadow-sm backdrop-blur-sm text-gray-700 hover:bg-white hover:text-black transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                    title={t("editor.undo")}
+                  >
+                    <Undo2 className="h-4 w-4" strokeWidth={2.5} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRedo}
+                    disabled={!canRedo()}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white/90 shadow-sm backdrop-blur-sm text-gray-700 hover:bg-white hover:text-black transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                    title={t("editor.redo")}
+                  >
+                    <Redo2 className="h-4 w-4" strokeWidth={2.5} />
+                  </button>
+                </div>
                 <SheetCanvasChrome
                   sheets={sheets}
                   activeSheetId={activeSheetId}
