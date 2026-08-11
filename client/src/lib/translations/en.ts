@@ -218,6 +218,8 @@ export const en: Record<string, string> = {
   "toast.invalidImageDesc": "The image has invalid dimensions.",
   "toast.uploadFailed": "Upload failed",
   "toast.uploadFailedDesc": "Could not process this image. Try a different file or format.",
+  "toast.networkError": "Connection interrupted",
+  "toast.networkErrorDesc": "Your upload was interrupted. Please check your internet connection and try again.",
   "toast.pdfFailed": "Failed to parse PDF",
   "toast.pdfFailedDesc": "The file could not be read. Please try a different PDF.",
   "toast.pdfFailedShort": "Could not read this file.",

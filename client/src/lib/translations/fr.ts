@@ -216,6 +216,8 @@ export const fr: Record<string, string> = {
   "toast.invalidImageDesc": "L'image a des dimensions invalides.",
   "toast.uploadFailed": "Échec du téléchargement",
   "toast.uploadFailedDesc": "Impossible de traiter cette image. Essayez un autre fichier ou format.",
+  "toast.networkError": "Connexion interrompue",
+  "toast.networkErrorDesc": "Votre téléchargement a été interrompu. Vérifiez votre connexion internet et réessayez.",
   "toast.pdfFailed": "Échec de lecture du PDF",
   "toast.pdfFailedDesc": "Le fichier n'a pas pu être lu. Veuillez essayer un autre PDF.",
   "toast.pdfFailedShort": "Ce fichier n'a pas pu être lu.",

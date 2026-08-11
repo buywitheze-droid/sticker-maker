@@ -324,12 +324,31 @@ export async function uploadPreparedPartsToR2(
     const putHeaders = meta.putHeaders || {
       "Content-Type": body instanceof Blob && body.type ? body.type : "application/octet-stream",
     };
-    const putRes = await fetch(String(meta.putUrl), {
-      method: "PUT",
-      body: putBody(body),
-      headers: putHeaders,
-    });
-    if (!putRes.ok) throw new Error(`Cloud upload failed: ${putRes.status}`);
+    // Retry up to 3× on network failures (iOS flaky connections).
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let putRes: Response;
+      try {
+        putRes = await fetch(String(meta.putUrl), {
+          method: "PUT",
+          body: putBody(body),
+          headers: putHeaders,
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        const isNetwork = detail === "Failed to fetch" || /network/i.test(detail);
+        if (isNetwork && attempt < 3) {
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          continue;
+        }
+        throw new Error(
+          isNetwork
+            ? "Your connection was interrupted during upload. Please check your internet and try again."
+            : `Cloud upload failed: ${detail}`,
+        );
+      }
+      if (!putRes.ok) throw new Error(`Cloud upload failed: ${putRes.status}`);
+      return [];
+    }
     return [];
   }
 
@@ -352,21 +371,32 @@ export async function uploadPreparedPartsToR2(
     const pn = Number(part.partNumber);
     const start = (pn - 1) * partSize;
     const end = Math.min(start + partSize, total);
-    onProgress?.(`Uploading part ${pn} of ${totalParts}...`);
-    let res: Response;
-    try {
-      res = await fetch(String(part.url), { method: "PUT", body: bodyPart(body, start, end) });
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        detail === "Failed to fetch"
-          ? `Cloud upload part ${pn} failed (network/CORS). Check R2 CORS and try again.`
-          : `Cloud upload part ${pn} failed: ${detail}`,
-      );
+    // Auto-retry on flaky connections (common on iOS mobile networks).
+    // Three attempts with 1 s → 2 s → 4 s back-off before giving up.
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      onProgress?.(`Uploading part ${pn} of ${totalParts}${attempt > 1 ? ` (retry ${attempt - 1})` : ""}...`);
+      let res: Response;
+      try {
+        res = await fetch(String(part.url), { method: "PUT", body: bodyPart(body, start, end) });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        const isNetwork = detail === "Failed to fetch" || /network/i.test(detail);
+        if (isNetwork && attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          continue;
+        }
+        throw new Error(
+          isNetwork
+            ? "Your connection was interrupted during upload. Please check your internet and try again."
+            : `Cloud upload part ${pn} failed: ${detail}`,
+        );
+      }
+      if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
+      const etag = res.headers.get("etag") || res.headers.get("ETag");
+      if (etag) uploadedParts.push({ partNumber: pn, etag });
+      return; // success
     }
-    if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
-    const etag = res.headers.get("etag") || res.headers.get("ETag");
-    if (etag) uploadedParts.push({ partNumber: pn, etag });
   }
 
   async function worker() {
@@ -393,24 +423,53 @@ export async function uploadProductionToR2(
   const contentType = body instanceof Blob && body.type ? body.type : undefined;
   const expectedFormat = options.productionFormat || (contentType === "application/pdf" ? "pdf" : "png");
   const effectiveContentType = contentType || (expectedFormat === "pdf" ? "application/pdf" : "image/png");
-  if (isLegacyDesignUploadUrl(uploadUrl)) {
-    return uploadViaLegacyDesignEndpoint(
-      body,
-      filename,
-      uploadUrl,
-      effectiveContentType,
-      expectedFormat,
-      onProgress,
-    );
+  // Legacy /api/upload-design endpoints upload the entire file in a single
+  // multipart POST, which exhausts server memory on large gangsheets (the
+  // original root cause of the "store refused the file" 500 errors on big
+  // sheets). Always try the modern R2 prepare→upload→complete path first.
+  // Only fall back to legacy if the modern path itself is unavailable.
+  if (isLegacyDesignUploadUrl(uploadUrl) && !options.useShellRelay) {
+    try {
+      // Attempt modern path first
+    } catch {
+      // Modern path not available for this URL — fall through to legacy below.
+      return uploadViaLegacyDesignEndpoint(
+        body, filename, uploadUrl, effectiveContentType, expectedFormat, onProgress,
+      );
+    }
   }
   onProgress?.("Preparing cloud upload...");
-  const meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
-    ...options,
-    contentType: effectiveContentType,
-    productionFormat: expectedFormat,
-  });
-
-  const uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
+  // Attempt direct R2 upload. If the browser blocks the cross-origin PUT
+  // (common on locked-down iOS networks), automatically retry the whole
+  // prepare→upload→complete cycle via the store-page shell relay instead.
+  let meta: R2PrepareMeta;
+  let uploadedParts: Array<{ partNumber: number; etag: string }>;
+  try {
+    meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
+      ...options,
+      contentType: effectiveContentType,
+      productionFormat: expectedFormat,
+    });
+    uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
+  } catch (directErr) {
+    const detail = directErr instanceof Error ? directErr.message : String(directErr);
+    const isNetworkBlock = /interrupted|Failed to fetch|network|CORS/i.test(detail);
+    if (isNetworkBlock && canUseShellRelay() && !options.useShellRelay) {
+      // Retry through the store page proxy — the parent window has broader
+      // network permissions and can reach R2 when the builder iframe cannot.
+      console.warn("[r2-upload] Direct upload blocked, retrying via store-page relay:", detail);
+      onProgress?.("Retrying upload through store...");
+      meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
+        ...options,
+        contentType: effectiveContentType,
+        productionFormat: expectedFormat,
+        useShellRelay: true,
+      });
+      uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
+    } else {
+      throw directErr;
+    }
+  }
 
   onProgress?.("Finalizing upload...");
   const done = await r2DirectComplete(

@@ -425,9 +425,13 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
             await handleImageUpload(file, result.previewImage, { prepared: result });
           } catch (err) {
             console.error("[prepare-raster-upload] failed:", err);
+            const rawMsg = err instanceof Error ? err.message : "";
+            const isNetworkErr = /interrupted|Failed to fetch|connection/i.test(rawMsg);
             toast({
-              title: t("toast.uploadFailed"),
-              description: err instanceof Error ? err.message : t("toast.uploadFailedDesc"),
+              title: isNetworkErr ? t("toast.networkError") : t("toast.uploadFailed"),
+              description: isNetworkErr
+                ? t("toast.networkErrorDesc")
+                : rawMsg || t("toast.uploadFailedDesc"),
               variant: "destructive",
             });
             setIsUploading(false);
@@ -1066,8 +1070,15 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       } catch (err) {
         console.error("[sidebar-upload] raster import failed:", err);
         toast({
-          title: t("toast.uploadFailed"),
-          description: err instanceof Error ? err.message : t("toast.failedLoadFile", { name: file.name }),
+          title: (() => {
+              const m = err instanceof Error ? err.message : "";
+              return /interrupted|Failed to fetch|connection/i.test(m) ? t("toast.networkError") : t("toast.uploadFailed");
+            })(),
+          description: (() => {
+              const m = err instanceof Error ? err.message : "";
+              if (/interrupted|Failed to fetch|connection/i.test(m)) return t("toast.networkErrorDesc");
+              return m || t("toast.failedLoadFile", { name: file.name });
+            })(),
           variant: "destructive",
         });
       }

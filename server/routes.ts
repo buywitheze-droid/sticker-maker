@@ -146,6 +146,38 @@ const MAX_INLINE_DECODE_MEGAPIXELS = 40;
 const MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE = 64;
 
 /**
+ * Limit concurrent raster-prepare jobs to one at a time.
+ *
+ * libvips/sharp decodes the entire image into memory during analysis. With
+ * memoryStorage every byte of the upload PLUS every intermediate pipeline
+ * lived in the Node heap simultaneously — on a large gangsheet that pushed the
+ * process past the OS memory limit and triggered a SIGKILL (the real cause of
+ * the "Prepare failed (500)" reports on iOS). Disk storage means only the
+ * sharp pipeline's working set is in RAM, and the semaphore prevents two heavy
+ * pipelines from running side-by-side.
+ */
+const prepareRasterSemaphore = (() => {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return {
+    acquire(): Promise<void> {
+      return new Promise((resolve) => {
+        const attempt = () => {
+          if (active < 1) { active++; resolve(); }
+          else queue.push(attempt);
+        };
+        attempt();
+      });
+    },
+    release() {
+      active = Math.max(0, active - 1);
+      const next = queue.shift();
+      if (next) next();
+    },
+  };
+})();
+
+/**
  * Pixel ceiling handed to every `sharp()` construction.
  *
  * libvips defaults to roughly 268 MP when `limitInputPixels` is omitted, which
@@ -196,16 +228,17 @@ class UnsupportedRasterError extends Error {}
  * runs against it.
  */
 async function assertAllowedRasterFormat(
-  buffer: Buffer,
+  sniffBuf: Buffer,
+  filePath: string,
   allowed: readonly RasterFormat[],
 ): Promise<sharp.Metadata> {
-  const sniffed = sniffRasterFormat(buffer);
+  const sniffed = sniffRasterFormat(sniffBuf);
   if (!sniffed || !allowed.includes(sniffed)) {
     throw new UnsupportedRasterError(
-      `Unsupported image format. Only ${allowed.join(", ").toUpperCase()} files are accepted.`,
+      `Unsupported image format. Only ${allowed.filter(f => f !== "heic").join(", ").toUpperCase()} files are accepted.`,
     );
   }
-  const metadata = await sharp(buffer, {
+  const metadata = await sharp(filePath, {
     failOn: "none",
     limitInputPixels: SHARP_PIXEL_LIMIT,
   }).metadata();
@@ -223,7 +256,13 @@ async function assertAllowedRasterFormat(
 }
 
 const rasterUpload = multer({
-  storage: multer.memoryStorage(),
+  // Disk storage keeps the upload off the Node heap; only the sharp pipeline's
+  // working set lives in RAM. The temp file is always deleted in the route's
+  // finally block regardless of success or failure.
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename: (_req, _file, cb) => cb(null, `anynest_prepare_${crypto.randomUUID()}`),
+  }),
   limits: {
     fileSize: MAX_PREPARE_FILE_BYTES,
     fieldSize: 10 * 1024 * 1024,
@@ -281,14 +320,14 @@ type SharpReadOpts = {
  * answer trustworthy. Roughly a megabyte even for a 150 MP source.
  */
 async function probeAlpha(
-  buffer: Buffer,
+  filePath: string,
   sharpOpts: SharpReadOpts,
   srcW: number,
   srcH: number,
 ): Promise<{ hasTransparentPixels: boolean; binaryAlpha: boolean }> {
   const cells = Math.ceil((srcW * srcH) / MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE);
   const scale = Math.min(1, Math.sqrt(cells / Math.max(1, srcW * srcH)));
-  const samples = await sharp(buffer, sharpOpts)
+  const samples = await sharp(filePath, sharpOpts)
     .rotate()
     .toColourspace("srgb")
     .ensureAlpha()
@@ -331,13 +370,13 @@ async function probeAlpha(
  * or held in memory.
  */
 async function measureContentBounds(
-  buffer: Buffer,
+  filePath: string,
   sharpOpts: SharpReadOpts,
   srcW: number,
   srcH: number,
 ): Promise<{ left: number; top: number; width: number; height: number }> {
   const probe = (mirror: boolean) => {
-    let p = sharp(buffer, sharpOpts).rotate();
+    let p = sharp(filePath, sharpOpts).rotate();
     if (mirror) p = p.flop().flip();
     return p
       // `lineArt` is essential, not a tweak: without it libvips compares an
@@ -378,6 +417,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
+   * Proxy a public HTTPS image through the server.
+   *
+   * useRestoreDesignState falls back to this when the direct fetch of a
+   * saved layer asset fails (CORS, signed-URL expiry, CDN geo-block).
+   * Without this endpoint the fallback always 404s and the layer is silently
+   * dropped from the restored design state.
+   */
+  app.get("/api/fetch-binary", async (req, res) => {
+    const urlParam = String(req.query.url || "").trim();
+    if (!urlParam.startsWith("https://")) {
+      return res.status(400).json({ error: "Only HTTPS URLs are supported" });
+    }
+    try {
+      const upstream = await fetch(urlParam, {
+        headers: { "User-Agent": "anynest-builder/1.0" },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!upstream.ok) return res.status(upstream.status).end();
+      const ct = upstream.headers.get("content-type") || "application/octet-stream";
+      res.setHeader("Content-Type", ct);
+      res.setHeader("Cache-Control", "no-store");
+      const buf = await upstream.arrayBuffer();
+      return res.send(Buffer.from(buf));
+    } catch (err) {
+      console.warn("[fetch-binary] failed:", err instanceof Error ? err.message : err);
+      return res.status(502).json({ error: "Could not fetch remote asset" });
+    }
+  });
+
+  /**
    * Prepare an oversized raster for import.
    *
    * Returns a downscaled preview PNG only. The client keeps the user's
@@ -389,8 +458,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * edges instead of being resampled soft).
    */
   app.post("/api/prepare-raster-upload", rasterUpload.single("image"), async (req, res) => {
+    const tmpPath = (req.file as Express.Multer.File & { path?: string })?.path ?? null;
     try {
-      if (!req.file) {
+      if (!req.file || !tmpPath) {
         // If multer silently rejected the file (unsupported MIME type), say so.
         const rejected = (req as any)._multerRejectedMimetype;
         const error = rejected
@@ -405,43 +475,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limitInputPixels: SHARP_PIXEL_LIMIT,
       };
 
-      const meta = await assertAllowedRasterFormat(req.file.buffer, ["png", "jpeg", "webp", "heic"]);
-      // `metadata()` reports pre-rotation dimensions; EXIF orientations 5-8
-      // swap the axes once `.rotate()` auto-orients the pipeline.
-      const swapAxes = (meta.orientation ?? 0) >= 5;
-      const srcW = (swapAxes ? meta.height : meta.width) ?? 0;
-      const srcH = (swapAxes ? meta.width : meta.height) ?? 0;
-      if (!(srcW > 0) || !(srcH > 0)) {
-        return res.status(400).json({ error: "Could not read image dimensions" });
-      }
+      // Read only the first 16 bytes for magic-byte sniffing — no need to
+      // load the entire file into memory just to identify the format.
+      const magicBuf = Buffer.allocUnsafe(16);
+      const fd = fs.openSync(tmpPath, "r");
+      const bytesRead = fs.readSync(fd, magicBuf, 0, 16, 0);
+      fs.closeSync(fd);
+      const sniffBuf = magicBuf.subarray(0, bytesRead);
 
-      const sourceMegapixels = (srcW * srcH) / 1_000_000;
-      if (sourceMegapixels > MAX_SOURCE_MEGAPIXELS) {
-        return res.status(400).json({
-          error: `Image is ${Math.round(sourceMegapixels)} MP; maximum is ${MAX_SOURCE_MEGAPIXELS} MP`,
-        });
-      }
+      // Wait for a processing slot before doing any heavy pipeline work.
+      // This prevents two concurrent 100 MP decodes from exhausting RAM.
+      await prepareRasterSemaphore.acquire();
+      try {
+        const meta = await assertAllowedRasterFormat(sniffBuf, tmpPath, ["png", "jpeg", "webp", "heic"]);
+        // `metadata()` reports pre-rotation dimensions; EXIF orientations 5-8
+        // swap the axes once `.rotate()` auto-orients the pipeline.
+        const swapAxes = (meta.orientation ?? 0) >= 5;
+        const srcW = (swapAxes ? meta.height : meta.width) ?? 0;
+        const srcH = (swapAxes ? meta.width : meta.height) ?? 0;
+        if (!(srcW > 0) || !(srcH > 0)) {
+          return res.status(400).json({ error: "Could not read image dimensions" });
+        }
 
-      // Crop to content only for genuinely cut-out artwork. A PNG that carries
-      // an alpha channel but no transparent pixels is treated like a photo:
-      // trimming it would eat a deliberate solid border.
-      const alpha = meta.hasAlpha
-        ? await probeAlpha(req.file.buffer, sharpOpts, srcW, srcH)
-        : { hasTransparentPixels: false, binaryAlpha: false };
-      const bounds = alpha.hasTransparentPixels
-        ? await measureContentBounds(req.file.buffer, sharpOpts, srcW, srcH)
-        : { left: 0, top: 0, width: srcW, height: srcH };
+        const sourceMegapixels = (srcW * srcH) / 1_000_000;
+        if (sourceMegapixels > MAX_SOURCE_MEGAPIXELS) {
+          return res.status(400).json({
+            error: `Image is ${Math.round(sourceMegapixels)} MP; maximum is ${MAX_SOURCE_MEGAPIXELS} MP`,
+          });
+        }
 
-      const previewScale = fitWithinMegapixels(
-        bounds.width,
-        bounds.height,
-        MAX_INLINE_DECODE_MEGAPIXELS,
-        PREPARE_PREVIEW_MAX_EDGE,
-      );
-      const previewW = Math.max(1, Math.round(bounds.width * previewScale));
-      const previewH = Math.max(1, Math.round(bounds.height * previewScale));
+        // Crop to content only for genuinely cut-out artwork. A PNG that carries
+        // an alpha channel but no transparent pixels is treated like a photo:
+        // trimming it would eat a deliberate solid border.
+        const alpha = meta.hasAlpha
+          ? await probeAlpha(tmpPath, sharpOpts, srcW, srcH)
+          : { hasTransparentPixels: false, binaryAlpha: false };
+        const bounds = alpha.hasTransparentPixels
+          ? await measureContentBounds(tmpPath, sharpOpts, srcW, srcH)
+          : { left: 0, top: 0, width: srcW, height: srcH };
 
-      let pipeline = sharp(req.file.buffer, sharpOpts).rotate();
+        const previewScale = fitWithinMegapixels(
+          bounds.width,
+          bounds.height,
+          MAX_INLINE_DECODE_MEGAPIXELS,
+          PREPARE_PREVIEW_MAX_EDGE,
+        );
+        const previewW = Math.max(1, Math.round(bounds.width * previewScale));
+        const previewH = Math.max(1, Math.round(bounds.height * previewScale));
+
+        let pipeline = sharp(tmpPath, sharpOpts).rotate();
       if (bounds.width !== srcW || bounds.height !== srcH) {
         pipeline = pipeline.extract({
           left: bounds.left,
@@ -491,11 +573,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Measured on the *uncropped* source. The client cannot re-derive this
         // from the preview: cropping to content can remove every transparent
         // pixel, making cut-out artwork look like an opaque photo.
-        "X-Anynest-Has-Transparency": alpha.hasTransparentPixels ? "1" : "0",
-        "Access-Control-Expose-Headers": exposed.join(", "),
-        "Cache-Control": "no-store",
-      });
-      return res.status(200).send(previewBuf);
+          "X-Anynest-Has-Transparency": alpha.hasTransparentPixels ? "1" : "0",
+          "Access-Control-Expose-Headers": exposed.join(", "),
+          "Cache-Control": "no-store",
+        });
+        return res.status(200).send(previewBuf);
+      } finally {
+        prepareRasterSemaphore.release();
+      }
     } catch (error) {
       if (error instanceof UnsupportedRasterError) {
         return res.status(400).json({ error: error.message });
@@ -511,6 +596,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to prepare image for import",
         details: message,
       });
+    } finally {
+      // Always remove the temp file — disk storage never self-cleans.
+      if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch {} }
     }
   });
 
