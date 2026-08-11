@@ -222,22 +222,17 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
         : t("controls.addToCart");
   const cartButtonTitle = !canAddToCart ? t("controls.uploadFirst") : cartButtonLabel;
   const [upscaleScale, setUpscaleScale] = useState<UpscaleFactor>(2);
-  const [pixelCleanOpen, setPixelCleanOpen] = useState(false);
   const [alignRotateOpen, setAlignRotateOpen] = useState(false);
   const [designToolsOpen, setDesignToolsOpen] = useState(false);
   const [lastDesktopToolId, setLastDesktopToolId] = useState<"whiteBg" | "wand" | "halftone" | null>(null);
-  const pixelCleanRef = useRef<HTMLDivElement>(null);
   const alignRotateRef = useRef<HTMLDivElement>(null);
   const designToolsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!pixelCleanOpen && !alignRotateOpen && !designToolsOpen && !halftoneMenuOpen) return;
+    if (!alignRotateOpen && !designToolsOpen && !halftoneMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
-      if (pixelCleanOpen && pixelCleanRef.current && !pixelCleanRef.current.contains(target)) {
-        setPixelCleanOpen(false);
-      }
-      if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contains(target)) {
+if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contains(target)) {
         setAlignRotateOpen(false);
       }
       if ((designToolsOpen || halftoneMenuOpen) && designToolsRef.current && !designToolsRef.current.contains(target)) {
@@ -247,7 +242,6 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setPixelCleanOpen(false);
         setAlignRotateOpen(false);
         setDesignToolsOpen(false);
         setHalftoneMenuOpen(false);
@@ -259,7 +253,7 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [pixelCleanOpen, alignRotateOpen, designToolsOpen, halftoneMenuOpen, setHalftoneMenuOpen]);
+  }, [alignRotateOpen, designToolsOpen, halftoneMenuOpen, setHalftoneMenuOpen]);
 
   return (
     <>
@@ -290,61 +284,6 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
           rather than scrolls — "Duplicate & Arrange" was being cut in half. */}
       <div className="flex flex-col gap-1 lg:flex-row lg:flex-wrap lg:gap-1 flex-shrink-0 lg:shrink lg:min-w-0 ml-auto lg:ml-0">
         <div className="flex items-center gap-1">
-          <div className="relative" ref={pixelCleanRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setAlignRotateOpen(false);
-                setPixelCleanOpen((v) => !v);
-              }}
-              disabled={designs.length === 0}
-              aria-expanded={pixelCleanOpen}
-              aria-haspopup="menu"
-              className={`flex items-center gap-1.5 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium shadow-sm min-h-[36px] ${
-                designs.length > 0
-                  ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#2563EB] border border-[#CBD5E1] shadow-none'
-                  : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-              }`}
-              title={t("editor.cleanAlphaTitle")}
-            >
-              <Droplets className="w-3 h-3 lg:w-4 lg:h-4" />
-              {t("editor.cleanAlpha")}
-              <ChevronDown className={`w-3 h-3 transition-transform ${pixelCleanOpen ? "rotate-180" : ""}`} />
-            </button>
-            {pixelCleanOpen && (
-              <div
-                role="menu"
-                className="absolute left-0 top-full z-50 mt-1 min-w-[11rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                  onClick={() => {
-                    handleThresholdAlpha();
-                    setPixelCleanOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-[#2563EB] hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <Droplets className="h-3.5 w-3.5 flex-shrink-0" />
-                  {t("editor.cleanAlphaSelected")}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={designs.length === 0}
-                  onClick={() => {
-                    handleThresholdAlphaAll();
-                    setPixelCleanOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-[#2563EB] hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <Droplets className="h-3.5 w-3.5 flex-shrink-0" />
-                  {t("editor.cleanAlphaFullPage")}
-                </button>
-              </div>
-            )}
-          </div>
           {canIncreaseQuality && (
           <div className="flex items-center gap-0.5">
             <button
@@ -736,16 +675,38 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
                   <WandSparkles className="h-3.5 w-3.5 flex-shrink-0" />
                   {wandDeleteModeActive ? "Magic Wand (ON — tap to off)" : "Magic Wand"}
                 </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button" role="menuitem"
+                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                  onClick={() => { handleThresholdAlpha(); setDesignToolsOpen(false); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-blue-600 hover:bg-blue-50 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Droplets className="h-3.5 w-3.5 flex-shrink-0" />
+                  {t("editor.cleanAlphaSelected")}
+                </button>
+                <button
+                  type="button" role="menuitem"
+                  disabled={designs.length === 0}
+                  onClick={() => { handleThresholdAlphaAll(); setDesignToolsOpen(false); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-blue-600 hover:bg-blue-50 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Droplets className="h-3.5 w-3.5 flex-shrink-0" />
+                  {t("editor.cleanAlphaFullPage")}
+                </button>
                 {halftoneEnabled && (
-                  <button
-                    type="button" role="menuitem"
-                    disabled={!selectedDesignId && selectedDesignIds.size === 0}
-                    onClick={() => { handleOpenHalftoneMenu(); setLastDesktopToolId("halftone"); setDesignToolsOpen(false); }}
-                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-amber-700 hover:bg-amber-50 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <HalftoneIconToolbar className="h-3.5 w-3.5 flex-shrink-0" />
-                    Halftone
-                  </button>
+                  <>
+                    <div className="my-1 border-t border-gray-100" />
+                    <button
+                      type="button" role="menuitem"
+                      disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                      onClick={() => { handleOpenHalftoneMenu(); setLastDesktopToolId("halftone"); setDesignToolsOpen(false); }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-amber-700 hover:bg-amber-50 disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <HalftoneIconToolbar className="h-3.5 w-3.5 flex-shrink-0" />
+                      Halftone
+                    </button>
+                  </>
                 )}
               </div>
             )}
@@ -810,7 +771,6 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
             <button
               type="button"
               onClick={() => {
-                setPixelCleanOpen(false);
                 setAlignRotateOpen((v) => !v);
               }}
               disabled={!selectedDesignId}
