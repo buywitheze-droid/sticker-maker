@@ -698,11 +698,11 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
               disabled={!selectedDesignId && selectedDesignIds.size === 0}
               aria-expanded={designToolsOpen}
               aria-haspopup="menu"
-              className={`flex items-center gap-1.5 px-2 py-1 lg:px-3 lg:py-1.5 rounded-md border transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium min-h-[36px] ${
+              className={`flex items-center gap-1.5 px-2 py-1 lg:px-3 lg:py-1.5 rounded-md border transition-all whitespace-nowrap text-[11px] lg:text-sm font-semibold min-h-[36px] shadow-sm ${
                 selectedDesignId || selectedDesignIds.size > 0
                   ? designToolsOpen
-                    ? "border-black bg-black text-white"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    ? "border-blue-700 bg-blue-700 text-white shadow-blue-200"
+                    : "border-blue-500 bg-blue-500 text-white hover:bg-blue-600 hover:border-blue-600 shadow-blue-100"
                   : "border-gray-200 bg-gray-200 text-gray-500 opacity-30 pointer-events-none"
               }`}
               title="Design tools — White BG, Magic Wand, Halftone"
