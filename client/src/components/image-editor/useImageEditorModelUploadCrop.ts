@@ -305,7 +305,12 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
     const dpi = await resolveUploadDpi(file, image, opts?.dpi);
 
     let croppedCanvas: HTMLCanvasElement | null = null;
-    if (opts?.skipCrop) {
+    const fbW = image.naturalWidth || image.width;
+    const fbH = image.naturalHeight || image.height;
+    const tooBigForInlineCanvas =
+      fbW * fbH > 16_000_000 || Math.max(fbW, fbH) > 4096;
+
+    if (opts?.skipCrop && !tooBigForInlineCanvas) {
       const fullCanvas = document.createElement("canvas");
       fullCanvas.width = image.width;
       fullCanvas.height = image.height;
@@ -315,7 +320,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         croppedCanvas = fullCanvas;
       }
     }
-    if (!croppedCanvas) {
+    if (!croppedCanvas && !tooBigForInlineCanvas) {
       try { croppedCanvas = cropImageToContent(image); } catch { /* use original */ }
     }
 
@@ -488,8 +493,18 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         inchWidthPx = sourceW;
         inchHeightPx = sourceH;
       } else {
+        const srcPxW = image.naturalWidth || image.width;
+        const srcPxH = image.naturalHeight || image.height;
+        // Full-size canvas copy / getImageData crashes Chrome on large 30"+
+        // rasters. Skip inline crop when the bitmap is too big and keep the
+        // original file as the print source (same as the prepare path).
+        const tooBigForInlineCanvas =
+          srcPxW * srcPxH > 16_000_000 || Math.max(srcPxW, srcPxH) > 4096;
+
         let croppedCanvas: HTMLCanvasElement | null = null;
-        if (matchesArtboard) {
+        if (tooBigForInlineCanvas) {
+          croppedCanvas = null;
+        } else if (matchesArtboard) {
           const fullCanvas = document.createElement("canvas");
           fullCanvas.width = image.width;
           fullCanvas.height = image.height;
@@ -499,7 +514,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
             croppedCanvas = fullCanvas;
           }
         }
-        if (!croppedCanvas) {
+        if (!croppedCanvas && !tooBigForInlineCanvas) {
           if (isOpaqueRasterUpload(image)) {
             const fullCanvas = document.createElement("canvas");
             fullCanvas.width = image.width;
@@ -514,10 +529,19 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
           }
         }
         if (!croppedCanvas) {
-          console.error("Failed to crop image, using original");
-          await handleFallbackImage(file, image, { dpi, skipCrop: matchesArtboard });
-          return;
-        }
+          if (tooBigForInlineCanvas) {
+            // Keep original bytes; preview is downsampled below.
+            setUploadProgress(60);
+            exportBlob = file;
+            croppedImg = image;
+            inchWidthPx = sourceW;
+            inchHeightPx = sourceH;
+          } else {
+            console.error("Failed to crop image, using original");
+            await handleFallbackImage(file, image, { dpi, skipCrop: matchesArtboard });
+            return;
+          }
+        } else {
 
         setUploadProgress(60);
         const blob = await canvasToBlob(croppedCanvas);
@@ -536,6 +560,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         exportBlob = blob;
         inchWidthPx = croppedImg.naturalWidth || croppedImg.width;
         inchHeightPx = croppedImg.naturalHeight || croppedImg.height;
+        }
       }
 
       if (document.activeElement instanceof HTMLElement) {
@@ -546,6 +571,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       const previewW = croppedImg.naturalWidth || croppedImg.width;
       const previewH = croppedImg.naturalHeight || croppedImg.height;
       const maxDim = Math.max(previewW, previewH);
+      let downsampledPreviewBlob: Blob | null = null;
 
       if (maxDim > maxStoredDimension) {
         setUploadProgress(75);
@@ -568,6 +594,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         if (dsBlob) {
           try {
             croppedImg = await loadImageFromBlob(dsBlob);
+            downsampledPreviewBlob = dsBlob;
           } catch { /* keep original croppedImg */ }
         }
       } else {
@@ -590,6 +617,11 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       let previewFile = file;
       if (prepared) {
         previewFile = prepared.previewFile;
+      } else if (downsampledPreviewBlob) {
+        previewFile = new File([downsampledPreviewBlob], pngUploadName(file.name), {
+          type: "image/png",
+          lastModified: file.lastModified,
+        });
       } else if (previewW !== image.width || previewH !== image.height) {
         previewFile = new File([exportBlob], pngUploadName(file.name), {
           type: "image/png",

@@ -229,12 +229,20 @@ export function isOpaqueRasterUpload(image: HTMLImageElement): boolean {
 
 export function cropImageToContent(image: HTMLImageElement): HTMLCanvasElement | null {
   try {
+    const srcW = image.naturalWidth || image.width;
+    const srcH = image.naturalHeight || image.height;
+    // Full-frame getImageData of a large raster OOMs Chrome (and Safari). Callers
+    // fall back to the uncropped source when this returns null.
+    if (!(srcW > 0) || !(srcH > 0) || srcW * srcH > 16_000_000 || Math.max(srcW, srcH) > 4096) {
+      return null;
+    }
+
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
 
-    canvas.width = image.width;
-    canvas.height = image.height;
+    canvas.width = srcW;
+    canvas.height = srcH;
     ctx.drawImage(image, 0, 0);
 
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -337,12 +345,21 @@ let _cropRequestCounter = 0;
 export function cropImageToContentAsync(image: HTMLImageElement): Promise<HTMLCanvasElement | null> {
   return new Promise((resolve) => {
     try {
+      const srcW = image.naturalWidth || image.width;
+      const srcH = image.naturalHeight || image.height;
+      // Same ceiling as the sync crop — transferring a 30"+ decode into a worker
+      // still requires a full getImageData on the main thread first.
+      if (!(srcW > 0) || !(srcH > 0) || srcW * srcH > 16_000_000 || Math.max(srcW, srcH) > 4096) {
+        resolve(null);
+        return;
+      }
+
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) { resolve(cropImageToContent(image)); return; }
 
-      canvas.width = image.width;
-      canvas.height = image.height;
+      canvas.width = srcW;
+      canvas.height = srcH;
       ctx.drawImage(image, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 

@@ -4,25 +4,85 @@ import { isMobileDevice } from "./upload-queue";
 type UploadJson = Record<string, unknown>;
 export type R2UploadBody = Blob | ArrayBuffer | Uint8Array;
 
+/** Mobile cellular dies on 64 MB parts — prefer small chunks on phones. */
+const MOBILE_PREFERRED_PART_BYTES = 8 * 1024 * 1024;
+const DESKTOP_PREFERRED_PART_BYTES = 32 * 1024 * 1024;
+const DEFAULT_PART_BYTES = 64 * 1024 * 1024;
+
+function preferredPartSizeBytes(): number {
+  return isMobileDevice() ? MOBILE_PREFERRED_PART_BYTES : DESKTOP_PREFERRED_PART_BYTES;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Exponential backoff with light jitter (attempt 1 → ~1s, 2 → ~2s, 3 → ~4s). */
+function backoffMs(attempt: number): number {
+  const base = Math.min(8_000, 1000 * 2 ** (attempt - 1));
+  return base + Math.floor(Math.random() * 250);
+}
+
+function isNetworkFailureMessage(detail: string): boolean {
+  return (
+    detail === "Failed to fetch" ||
+    /network|interrupted|timeout|abort|load failed|failed to load/i.test(detail)
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen Wake Lock
 //
 // iOS suspends Safari's network process when the screen locks — the #1
 // confirmed cause of failed uploads on iPhone. Acquiring a "screen" wake lock
 // keeps the display on (and the network stack alive) for the duration of the
-// upload. Degrades silently on browsers that don't support the API.
+// upload. Re-acquires when the tab becomes visible again (lock is released on
+// hide). Degrades silently on browsers that don't support the API.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type WakeLockSentinel = { release(): Promise<void> };
+type WakeLockSentinel = { release(): Promise<void>; addEventListener?(type: string, listener: () => void): void };
 
-async function acquireWakeLock(): Promise<WakeLockSentinel | null> {
-  try {
-    const nav = navigator as unknown as {
-      wakeLock?: { request(type: string): Promise<WakeLockSentinel> };
-    };
-    return nav.wakeLock ? await nav.wakeLock.request("screen") : null;
-  } catch {
-    return null; // permission denied, unsupported, or page not visible
+class WakeLockSession {
+  private sentinel: WakeLockSentinel | null = null;
+  private released = false;
+  private readonly onVisibility = () => {
+    if (this.released) return;
+    if (document.visibilityState === "visible") {
+      void this.acquire();
+    }
+  };
+
+  async start(): Promise<void> {
+    document.addEventListener("visibilitychange", this.onVisibility);
+    await this.acquire();
+  }
+
+  private async acquire(): Promise<void> {
+    if (this.released) return;
+    try {
+      const nav = navigator as unknown as {
+        wakeLock?: { request(type: string): Promise<WakeLockSentinel> };
+      };
+      if (!nav.wakeLock) return;
+      this.sentinel = await nav.wakeLock.request("screen");
+      this.sentinel.addEventListener?.("release", () => {
+        // Browser released it (often on hide) — reacquire when visible again.
+        if (!this.released && document.visibilityState === "visible") {
+          void this.acquire();
+        }
+      });
+    } catch {
+      this.sentinel = null;
+    }
+  }
+
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    const s = this.sentinel;
+    this.sentinel = null;
+    s?.release().catch(() => {});
   }
 }
 
@@ -32,16 +92,30 @@ async function acquireWakeLock(): Promise<WakeLockSentinel | null> {
 // After each multipart part succeeds its etag is persisted to localStorage so
 // that a retry (connection drop, screen lock before Wake Lock fires, tab
 // restore) can skip already-finished parts and only re-send the remainder.
-// Keys are namespaced by the server-issued sessionId and expire after 24 h;
-// they are cleared immediately on a successful complete().
+//
+// Fingerprint keys (filename + byte length) let a brand-new prepare() reuse the
+// previous sessionId when the store honors `resumeSessionId` — otherwise a
+// retry used to mint a new session and throw away completed parts.
+// Keys expire after 24 h and are cleared immediately on a successful complete().
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RESUME_KEY_PREFIX = "anynest_upload_resume_";
+const RESUME_FINGERPRINT_PREFIX = "anynest_upload_fp_";
 const RESUME_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface ResumeState {
   parts: Array<{ partNumber: number; etag: string }>;
   expires: number;
+}
+
+interface FingerprintResume {
+  sessionId: string;
+  totalBytes: number;
+  expires: number;
+}
+
+function uploadFingerprint(filename: string, totalBytes: number): string {
+  return `${totalBytes}:${filename}`;
 }
 
 function loadResumeState(sessionId: string): Array<{ partNumber: number; etag: string }> {
@@ -81,6 +155,74 @@ function savePartProgress(
 
 function clearResumeState(sessionId: string): void {
   try { localStorage.removeItem(RESUME_KEY_PREFIX + sessionId); } catch {}
+}
+
+function loadFingerprintResume(fingerprint: string): FingerprintResume | null {
+  try {
+    const raw = localStorage.getItem(RESUME_FINGERPRINT_PREFIX + fingerprint);
+    if (!raw) return null;
+    const state: FingerprintResume = JSON.parse(raw);
+    if (Date.now() > state.expires || !state.sessionId) {
+      localStorage.removeItem(RESUME_FINGERPRINT_PREFIX + fingerprint);
+      return null;
+    }
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function saveFingerprintResume(fingerprint: string, sessionId: string, totalBytes: number): void {
+  try {
+    localStorage.setItem(RESUME_FINGERPRINT_PREFIX + fingerprint, JSON.stringify({
+      sessionId,
+      totalBytes,
+      expires: Date.now() + RESUME_TTL_MS,
+    } satisfies FingerprintResume));
+  } catch {
+    /* best-effort */
+  }
+}
+
+function clearFingerprintResume(fingerprint: string): void {
+  try { localStorage.removeItem(RESUME_FINGERPRINT_PREFIX + fingerprint); } catch {}
+}
+
+/**
+ * PUT via XHR — more reliable than fetch for large bodies on iOS Safari, and
+ * gives upload progress events. Never uses keepalive (Safari 64KB limit).
+ */
+function putWithXhr(
+  url: string,
+  body: Blob | Uint8Array,
+  headers: Record<string, string> | undefined,
+  onByteProgress?: (loaded: number, total: number) => void,
+): Promise<{ ok: boolean; status: number; etag: string | null }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    if (headers) {
+      for (const [k, v] of Object.entries(headers)) {
+        try { xhr.setRequestHeader(k, v); } catch { /* forbidden header */ }
+      }
+    }
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onByteProgress) onByteProgress(ev.loaded, ev.total);
+    };
+    xhr.onload = () => {
+      const etag =
+        xhr.getResponseHeader("etag") ||
+        xhr.getResponseHeader("ETag");
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, etag });
+    };
+    xhr.onerror = () => reject(new Error("Failed to fetch"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out"));
+    // Long cellular uploads — 10 minutes per part is generous for 8–64 MB.
+    xhr.timeout = 600_000;
+    const payload = body instanceof Blob ? body : new Blob([body as BlobPart]);
+    xhr.send(payload);
+  });
 }
 
 export type R2PrepareMeta = {
@@ -168,7 +310,10 @@ function waitForShellMessage<T>(
 async function prepareViaShellRelay(
   filename: string,
   totalBytes: number,
-  options: Pick<R2UploadOptions, "objectKey" | "contentType" | "productionFormat"> = {},
+  options: Pick<R2UploadOptions, "objectKey" | "contentType" | "productionFormat"> & {
+    preferredPartSizeBytes?: number;
+    resumeSessionId?: string;
+  } = {},
 ): Promise<R2PrepareMeta> {
   const requestId = newRelayId("prep");
   const wait = waitForShellMessage(requestId, "dtf-builder-r2-prepared", SHELL_RELAY_TIMEOUT_MS, (data) => {
@@ -182,6 +327,8 @@ async function prepareViaShellRelay(
       requestId,
       filename,
       totalBytes,
+      preferredPartSizeBytes: options.preferredPartSizeBytes ?? preferredPartSizeBytes(),
+      ...(options.resumeSessionId ? { resumeSessionId: options.resumeSessionId } : {}),
       ...(options.contentType ? { contentType: options.contentType } : {}),
       ...(options.productionFormat ? { productionFormat: options.productionFormat } : {}),
       ...(options.objectKey ? { objectKey: options.objectKey } : {}),
@@ -368,10 +515,17 @@ export async function prepareR2DirectUpload(
   uploadUrl: string,
   filename: string,
   totalBytes: number,
-  options: Pick<R2UploadOptions, "objectKey" | "useShellRelay" | "contentType" | "productionFormat"> = {},
+  options: Pick<R2UploadOptions, "objectKey" | "useShellRelay" | "contentType" | "productionFormat"> & {
+    preferredPartSizeBytes?: number;
+    resumeSessionId?: string;
+  } = {},
 ): Promise<R2PrepareMeta> {
+  const partSize = options.preferredPartSizeBytes ?? preferredPartSizeBytes();
   if (shouldUseShellRelay(options)) {
-    return prepareViaShellRelay(filename, totalBytes, options);
+    return prepareViaShellRelay(filename, totalBytes, {
+      ...options,
+      preferredPartSizeBytes: partSize,
+    });
   }
   const prepareRes = await builderFetch(uploadUrl, {
     method: "POST",
@@ -380,6 +534,8 @@ export async function prepareR2DirectUpload(
       step: "r2-direct-prepare",
       filename,
       totalBytes,
+      preferredPartSizeBytes: partSize,
+      ...(options.resumeSessionId ? { resumeSessionId: options.resumeSessionId } : {}),
       ...(options.contentType ? { contentType: options.contentType } : {}),
       ...(options.productionFormat ? { productionFormat: options.productionFormat } : {}),
       ...(options.objectKey ? { objectKey: options.objectKey } : {}),
@@ -405,18 +561,23 @@ export async function uploadPreparedPartsToR2(
     };
     // Retry up to 3× on network failures (iOS flaky connections).
     for (let attempt = 1; attempt <= 3; attempt++) {
-      let putRes: Response;
       try {
-        putRes = await fetch(String(meta.putUrl), {
-          method: "PUT",
-          body: putBody(body),
-          headers: putHeaders,
-        });
+        const putRes = await putWithXhr(
+          String(meta.putUrl),
+          putBody(body),
+          putHeaders,
+          (loaded, partTotal) => {
+            const pct = partTotal > 0 ? Math.round((loaded / partTotal) * 100) : 0;
+            onProgress?.(`Uploading print file… ${pct}%`);
+          },
+        );
+        if (!putRes.ok) throw new Error(`Cloud upload failed: ${putRes.status}`);
+        return [];
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        const isNetwork = detail === "Failed to fetch" || /network/i.test(detail);
+        const isNetwork = isNetworkFailureMessage(detail);
         if (isNetwork && attempt < 3) {
-          await new Promise((r) => setTimeout(r, attempt * 1000));
+          await sleep(backoffMs(attempt));
           continue;
         }
         throw new Error(
@@ -425,8 +586,6 @@ export async function uploadPreparedPartsToR2(
             : `Cloud upload failed: ${detail}`,
         );
       }
-      if (!putRes.ok) throw new Error(`Cloud upload failed: ${putRes.status}`);
-      return [];
     }
     return [];
   }
@@ -434,12 +593,10 @@ export async function uploadPreparedPartsToR2(
   const parts = Array.isArray(meta.parts) ? meta.parts : [];
   if (!parts.length) throw new Error("Upload prepare incomplete");
 
-  const partSize = Number(meta.partSize) || 64 * 1024 * 1024;
+  // Prefer server-provided part size; fall back to mobile-safe default rather than 64 MB.
+  const partSize = Number(meta.partSize) || preferredPartSizeBytes() || DEFAULT_PART_BYTES;
   const totalParts = Number(meta.totalParts) || parts.length;
-  // Parts are 64 MB by default, and each one in flight is that much memory held by the
-  // network stack. Sixteen at once is fine on a desktop and is roughly a gigabyte on a phone
-  // that has already just built the sheet — over the budget iOS allows a tab, where the
-  // failure surfaces as an upload error rather than anything mentioning memory.
+  // Parts hold memory in the network stack while in flight. Cap concurrency on phones.
   const maxInFlight = isMobileDevice() ? 2 : 16;
   const parallelism = Math.max(1, Math.min(Number(meta.parallelism) || maxInFlight, maxInFlight, totalParts));
   const sorted = parts.slice().sort((a, b) => Number(a.partNumber) - Number(b.partNumber));
@@ -452,6 +609,7 @@ export async function uploadPreparedPartsToR2(
     console.info(`[r2-upload] resuming — ${savedParts.length} of ${totalParts} parts already uploaded`);
   }
   const uploadedParts: Array<{ partNumber: number; etag: string }> = [...savedParts];
+  let completedCount = savedParts.length;
 
   async function uploadPart(part: { partNumber: number; url: string }) {
     const pn = Number(part.partNumber);
@@ -464,36 +622,44 @@ export async function uploadPreparedPartsToR2(
       return;
     }
 
-    // Auto-retry on flaky connections (common on iOS mobile networks).
-    // Three attempts with 1 s → 2 s → 4 s back-off before giving up.
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       onProgress?.(`Uploading part ${pn} of ${totalParts}${attempt > 1 ? ` (retry ${attempt - 1})` : ""}...`);
-      let res: Response;
       try {
-        res = await fetch(String(part.url), { method: "PUT", body: bodyPart(body, start, end) });
+        const res = await putWithXhr(
+          String(part.url),
+          bodyPart(body, start, end),
+          undefined,
+          (loaded, partTotal) => {
+            const pct = partTotal > 0 ? Math.round((loaded / partTotal) * 100) : 0;
+            onProgress?.(
+              `Uploading part ${pn} of ${totalParts}… ${pct}% (${completedCount}/${totalParts} done)`,
+            );
+          },
+        );
+        if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
+        if (res.etag) {
+          const completed = { partNumber: pn, etag: res.etag };
+          uploadedParts.push(completed);
+          if (resumeId) savePartProgress(resumeId, completed);
+        }
+        completedCount += 1;
+        return;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        const isNetwork = detail === "Failed to fetch" || /network/i.test(detail);
+        const isNetwork = isNetworkFailureMessage(detail);
         if (isNetwork && attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, attempt * 1000));
+          await sleep(backoffMs(attempt));
           continue;
         }
         throw new Error(
           isNetwork
             ? "Your connection was interrupted during upload. Please check your internet and try again."
-            : `Cloud upload part ${pn} failed: ${detail}`,
+            : detail.startsWith("Cloud upload part")
+              ? detail
+              : `Cloud upload part ${pn} failed: ${detail}`,
         );
       }
-      if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
-      const etag = res.headers.get("etag") || res.headers.get("ETag");
-      if (etag) {
-        const completed = { partNumber: pn, etag };
-        uploadedParts.push(completed);
-        // Persist immediately so a subsequent interruption can resume.
-        if (resumeId) savePartProgress(resumeId, completed);
-      }
-      return; // success
     }
   }
 
@@ -521,100 +687,115 @@ export async function uploadProductionToR2(
   // Hold the screen awake for the duration of this upload.
   // On iOS, screen-lock suspends the network process and kills in-flight
   // uploads — this is the #1 confirmed failure mode on iPhone.
-  // The API is a no-op on desktop and degrades silently where unsupported.
-  const wakeLock = await acquireWakeLock();
-  let _wakeLockReleased = false;
-  const releaseWakeLock = () => {
-    if (_wakeLockReleased) return;
-    _wakeLockReleased = true;
-    wakeLock?.release().catch(() => {});
-  };
+  // Re-acquires when the tab becomes visible again after unlock/app-switch.
+  const wakeLock = new WakeLockSession();
+  await wakeLock.start();
 
-  const contentType = body instanceof Blob && body.type ? body.type : undefined;
-  const expectedFormat = options.productionFormat || (contentType === "application/pdf" ? "pdf" : "png");
-  const effectiveContentType = contentType || (expectedFormat === "pdf" ? "application/pdf" : "image/png");
-  // Legacy /api/upload-design endpoints upload the entire file in a single
-  // multipart POST, which exhausts server memory on large gangsheets (the
-  // original root cause of the "store refused the file" 500 errors on big
-  // sheets). Always try the modern R2 prepare→upload→complete path first.
-  // Only fall back to legacy if the modern path itself is unavailable.
-  if (isLegacyDesignUploadUrl(uploadUrl) && !options.useShellRelay) {
-    try {
-      // Attempt modern path first
-    } catch {
-      // Modern path not available for this URL — fall through to legacy below.
-      return uploadViaLegacyDesignEndpoint(
-        body, filename, uploadUrl, effectiveContentType, expectedFormat, onProgress,
-      );
-    }
-  }
-  onProgress?.("Preparing cloud upload...");
-  // Attempt direct R2 upload. If the browser blocks the cross-origin PUT
-  // (common on locked-down iOS networks), automatically retry the whole
-  // prepare→upload→complete cycle via the store-page shell relay instead.
-  let meta: R2PrepareMeta;
-  let uploadedParts: Array<{ partNumber: number; etag: string }>;
   try {
-    meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
+    const contentType = body instanceof Blob && body.type ? body.type : undefined;
+    const expectedFormat = options.productionFormat || (contentType === "application/pdf" ? "pdf" : "png");
+    const effectiveContentType = contentType || (expectedFormat === "pdf" ? "application/pdf" : "image/png");
+    // Legacy /api/upload-design endpoints upload the entire file in a single
+    // multipart POST, which exhausts server memory on large gangsheets (the
+    // original root cause of the "store refused the file" 500 errors on big
+    // sheets). Always try the modern R2 prepare→upload→complete path first.
+    // Only fall back to legacy if the modern path itself is unavailable.
+    if (isLegacyDesignUploadUrl(uploadUrl) && !options.useShellRelay) {
+      try {
+        // Attempt modern path first
+      } catch {
+        // Modern path not available for this URL — fall through to legacy below.
+        return uploadViaLegacyDesignEndpoint(
+          body, filename, uploadUrl, effectiveContentType, expectedFormat, onProgress,
+        );
+      }
+    }
+    onProgress?.("Preparing cloud upload...");
+    const fingerprint = uploadFingerprint(filename, total);
+    const prior = loadFingerprintResume(fingerprint);
+    const resumeSessionId =
+      prior && prior.totalBytes === total ? prior.sessionId : undefined;
+
+    // Attempt direct R2 upload. If the browser blocks the cross-origin PUT
+    // (common on locked-down iOS networks), automatically retry the whole
+    // prepare→upload→complete cycle via the store-page shell relay instead.
+    let meta: R2PrepareMeta;
+    let uploadedParts: Array<{ partNumber: number; etag: string }>;
+    const prepareOpts = {
       ...options,
       contentType: effectiveContentType,
       productionFormat: expectedFormat,
-    });
-    uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
-  } catch (directErr) {
-    const detail = directErr instanceof Error ? directErr.message : String(directErr);
-    const isNetworkBlock = /interrupted|Failed to fetch|network|CORS/i.test(detail);
-    if (isNetworkBlock && canUseShellRelay() && !options.useShellRelay) {
-      // Retry through the store page proxy — the parent window has broader
-      // network permissions and can reach R2 when the builder iframe cannot.
-      console.warn("[r2-upload] Direct upload blocked, retrying via store-page relay:", detail);
-      onProgress?.("Retrying upload through store...");
-      meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
-        ...options,
-        contentType: effectiveContentType,
-        productionFormat: expectedFormat,
-        useShellRelay: true,
-      });
-      uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
-    } else {
-      releaseWakeLock();
-      throw directErr;
-    }
-  }
-
-  onProgress?.("Finalizing upload...");
-  const done = await r2DirectComplete(
-    uploadUrl,
-    String(meta.sessionId),
-    Boolean(meta.singlePut),
-    Number(meta.totalParts) || 1,
-    uploadedParts.length ? uploadedParts : undefined,
-    options,
-  );
-  const prod = String(done.productionUrl || done.url || "");
-  if (!prod) throw new Error("No production URL");
-  const returnedPath = (() => {
+      preferredPartSizeBytes: preferredPartSizeBytes(),
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+    };
     try {
-      return new URL(prod, window.location.href).pathname.toLowerCase();
-    } catch {
-      return prod.toLowerCase();
+      meta = await prepareR2DirectUpload(uploadUrl, filename, total, prepareOpts);
+      if (meta.sessionId) {
+        saveFingerprintResume(fingerprint, String(meta.sessionId), total);
+        // If the store minted a brand-new session, drop orphaned part etags
+        // from a previous session for the same file so we don't send stale ETags.
+        if (resumeSessionId && String(meta.sessionId) !== resumeSessionId) {
+          clearResumeState(resumeSessionId);
+        }
+      }
+      uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
+    } catch (directErr) {
+      const detail = directErr instanceof Error ? directErr.message : String(directErr);
+      const isNetworkBlock = /interrupted|Failed to fetch|network|CORS/i.test(detail);
+      if (isNetworkBlock && canUseShellRelay() && !options.useShellRelay) {
+        // Retry through the store page proxy — the parent window has broader
+        // network permissions and can reach R2 when the builder iframe cannot.
+        console.warn("[r2-upload] Direct upload blocked, retrying via store-page relay:", detail);
+        onProgress?.("Retrying upload through store...");
+        meta = await prepareR2DirectUpload(uploadUrl, filename, total, {
+          ...prepareOpts,
+          useShellRelay: true,
+        });
+        if (meta.sessionId) {
+          saveFingerprintResume(fingerprint, String(meta.sessionId), total);
+        }
+        uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
+      } else {
+        throw directErr;
+      }
     }
-  })();
-  const expectedExtension = expectedFormat === "pdf" ? ".pdf" : ".png";
-  if (!returnedPath.endsWith(expectedExtension)) {
-    throw new Error(`Upload returned a non-${expectedFormat.toUpperCase()} production URL`);
+
+    onProgress?.("Finalizing upload...");
+    const done = await r2DirectComplete(
+      uploadUrl,
+      String(meta.sessionId),
+      Boolean(meta.singlePut),
+      Number(meta.totalParts) || 1,
+      uploadedParts.length ? uploadedParts : undefined,
+      options,
+    );
+    const prod = String(done.productionUrl || done.url || "");
+    if (!prod) throw new Error("No production URL");
+    const returnedPath = (() => {
+      try {
+        return new URL(prod, window.location.href).pathname.toLowerCase();
+      } catch {
+        return prod.toLowerCase();
+      }
+    })();
+    const expectedExtension = expectedFormat === "pdf" ? ".pdf" : ".png";
+    if (!returnedPath.endsWith(expectedExtension)) {
+      throw new Error(`Upload returned a non-${expectedFormat.toUpperCase()} production URL`);
+    }
+
+    // Upload complete — clear persisted resume state.
+    if (meta.sessionId) clearResumeState(String(meta.sessionId));
+    clearFingerprintResume(fingerprint);
+
+    return {
+      productionUrl: prod,
+      key: done.key ? String(done.key) : null,
+      previewUrl: prod,
+      cartPreviewUrl: done.cartPreviewUrl ? String(done.cartPreviewUrl) : prod,
+    };
+  } finally {
+    wakeLock.release();
   }
-
-  // Upload complete — clear persisted resume state and release the screen lock.
-  if (meta.sessionId) clearResumeState(String(meta.sessionId));
-  releaseWakeLock();
-
-  return {
-    productionUrl: prod,
-    key: done.key ? String(done.key) : null,
-    previewUrl: prod,
-    cartPreviewUrl: done.cartPreviewUrl ? String(done.cartPreviewUrl) : prod,
-  };
 }
 
 type WorkerR2UploadResult = {

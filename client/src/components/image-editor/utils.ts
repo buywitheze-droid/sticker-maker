@@ -27,6 +27,17 @@ const MIN_DESIGN_INCHES = 0.01;
 const MAX_DESIGN_INCHES = 10_000;
 
 /**
+ * Imports whose *shorter* side is still ≥ 24.6" cannot fit a 24.5" gangsheet
+ * even after rotation (both axes exceed the sheet width). Cap those to a safe
+ * default print size while preserving aspect ratio.
+ *
+ * A 24.5" × 60" file is fine — the 24.5" side can sit on the sheet width.
+ * A 24.6" × 24.6" (or larger on both axes) is not.
+ */
+export const OVERSIZE_IMPORT_MIN_SIDE_IN = 24.6;
+export const OVERSIZE_IMPORT_TARGET_IN = 12;
+
+/**
  * Clamp an imported design's physical size to something every downstream
  * calculation can survive, or `null` when the file gave us nothing usable.
  *
@@ -38,21 +49,40 @@ const MAX_DESIGN_INCHES = 10_000;
  * be laid out, arranged, or exported again, in this session or any future one.
  *
  * Oversized-but-real sizes are scaled proportionally so the aspect ratio the
- * customer authored survives the clamp.
+ * customer authored survives the clamp. Designs that cannot fit the gangsheet
+ * even when rotated (both sides ≥ {@link OVERSIZE_IMPORT_MIN_SIDE_IN}) are
+ * further reduced to {@link OVERSIZE_IMPORT_TARGET_IN} on the longest side so
+ * nest/export math stays within mobile memory budgets.
  */
 function sanitizeDesignInches(
   widthInches: number,
   heightInches: number,
-): { widthInches: number; heightInches: number } | null {
+): {
+  widthInches: number;
+  heightInches: number;
+  /** Pre-fit size when an oversize gangsheet clamp ran. */
+  oversizeFrom?: { widthInches: number; heightInches: number };
+} | null {
   const usable = (n: number) => Number.isFinite(n) && n > 0;
   if (!usable(widthInches) || !usable(heightInches)) return null;
 
   const overshoot = Math.max(widthInches, heightInches) / MAX_DESIGN_INCHES;
   const scale = overshoot > 1 ? 1 / overshoot : 1;
-  return {
-    widthInches: Math.max(MIN_DESIGN_INCHES, widthInches * scale),
-    heightInches: Math.max(MIN_DESIGN_INCHES, heightInches * scale),
-  };
+  let w = Math.max(MIN_DESIGN_INCHES, widthInches * scale);
+  let h = Math.max(MIN_DESIGN_INCHES, heightInches * scale);
+
+  // Only when BOTH sides are ≥ 24.6" — can't fit 24.5" width even rotated.
+  const shortest = Math.min(w, h);
+  if (shortest >= OVERSIZE_IMPORT_MIN_SIDE_IN) {
+    const from = { widthInches: w, heightInches: h };
+    const longest = Math.max(w, h);
+    const fit = OVERSIZE_IMPORT_TARGET_IN / longest;
+    w = Math.max(MIN_DESIGN_INCHES, parseFloat((w * fit).toFixed(4)));
+    h = Math.max(MIN_DESIGN_INCHES, parseFloat((h * fit).toFixed(4)));
+    return { widthInches: w, heightInches: h, oversizeFrom: from };
+  }
+
+  return { widthInches: w, heightInches: h };
 }
 
 function inchesFromPixelsPair(pw: number, ph: number, dpi: number): { widthInches: number; heightInches: number } {
@@ -72,9 +102,19 @@ function normalizeRasterDpiForInches(dpi: number): number {
 }
 
 function imageHasCleanAlpha(img: HTMLImageElement): boolean {
+  // Never read back the full bitmap — a 30" @ 300 DPI source (or a 4096px
+  // prepare preview) is tens of megapixels, and `getImageData` of that size
+  // OOMs Chrome and Safari alike. Sample a small probe like isOpaqueRasterUpload.
+  const PROBE_MAX_EDGE = 512;
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!(iw > 0) || !(ih > 0)) return false;
+  const scale = Math.min(1, PROBE_MAX_EDGE / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * scale));
+  const h = Math.max(1, Math.round(ih * scale));
   const c = document.createElement('canvas');
-  c.width = img.width;
-  c.height = img.height;
+  c.width = w;
+  c.height = h;
   // Read back immediately below, so the canvas must be CPU-backed. Without the
   // hint Chrome keeps it on the GPU and `getImageData` blocks the main thread
   // waiting for a flush — measured elsewhere in this app as seconds of freeze on
@@ -82,8 +122,11 @@ function imageHasCleanAlpha(img: HTMLImageElement): boolean {
   // only drawn to and composited: there the hint forces CPU backing and costs.
   const ctx = c.getContext('2d', { willReadFrequently: true });
   if (!ctx) return false;
-  ctx.drawImage(img, 0, 0);
-  const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height);
+  // Nearest-neighbour so soft edges from smoothing don't fake semi-transparent
+  // pixels on an otherwise binary cutout.
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data, width, height } = ctx.getImageData(0, 0, w, h);
   return hasCleanAlpha(data, width, height);
 }
 

@@ -179,50 +179,85 @@ export async function isSupportedRasterContainer(file: File): Promise<boolean> {
 }
 
 export async function prepareRasterUpload(file: File): Promise<PreparedRaster> {
-  const form = new FormData();
-  form.append("image", file);
-  const res = await fetch("/api/prepare-raster-upload", { method: "POST", body: form });
-  if (!res.ok) {
-    let message = `Prepare failed (${res.status})`;
+  const maxAttempts = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const errJson = (await res.json()) as { error?: string };
-      if (errJson?.error) message = errJson.error;
-    } catch {
-      /* keep the status-based message */
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch("/api/prepare-raster-upload", { method: "POST", body: form });
+      if (!res.ok) {
+        let message = `Prepare failed (${res.status})`;
+        try {
+          const errJson = (await res.json()) as { error?: string };
+          if (errJson?.error) message = errJson.error;
+        } catch {
+          /* keep the status-based message */
+        }
+        // 4xx (except 408/429) is not worth retrying — the file itself was rejected.
+        const retryableStatus = res.status >= 500 || res.status === 408 || res.status === 429;
+        if (!retryableStatus || attempt === maxAttempts) {
+          throw new Error(message);
+        }
+        lastError = new Error(message);
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)));
+        continue;
+      }
+
+      const num = (name: string) => Number(res.headers.get(name));
+      const sourceWidth = num("X-Anynest-Source-Width");
+      const sourceHeight = num("X-Anynest-Source-Height");
+      const cropWidth = num("X-Anynest-Crop-Width");
+      const cropHeight = num("X-Anynest-Crop-Height");
+      if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(cropWidth > 0) || !(cropHeight > 0)) {
+        throw new Error("Prepare response was missing dimension headers");
+      }
+
+      const previewBlob = await res.blob();
+      const previewImage = await loadImageFromBlob(previewBlob);
+      const baseName = file.name.replace(/\.\w+$/, "") || "design";
+
+      return {
+        previewImage,
+        previewFile: new File([previewBlob], `${baseName}.png`, { type: "image/png" }),
+        sourceBlob: file,
+        sourceCrop: {
+          x: Math.max(0, num("X-Anynest-Crop-X") || 0),
+          y: Math.max(0, num("X-Anynest-Crop-Y") || 0),
+          width: cropWidth,
+          height: cropHeight,
+        },
+        sourceWidth,
+        sourceHeight,
+        dpi: num("X-Anynest-Density") || 72,
+        sourceMegapixels: num("X-Anynest-Source-MP") || (sourceWidth * sourceHeight) / 1_000_000,
+        binaryAlpha: res.headers.get("X-Anynest-Binary-Alpha") === "1",
+        hasTransparency: res.headers.get("X-Anynest-Has-Transparency") === "1",
+      };
+    } catch (err) {
+      lastError = err;
+      const detail = err instanceof Error ? err.message : String(err);
+      const isNetwork =
+        detail === "Failed to fetch" ||
+        /network|interrupted|timeout|Failed to load/i.test(detail);
+      const isRetryablePrepare = /Prepare failed \(5\d\d\)|Prepare failed \(408\)|Prepare failed \(429\)/.test(detail);
+      if ((isNetwork || isRetryablePrepare) && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)));
+        continue;
+      }
+      if (isNetwork) {
+        throw new Error(
+          "Your connection was interrupted during upload. Please check your internet and try again.",
+        );
+      }
+      throw err instanceof Error ? err : new Error(String(err));
     }
-    throw new Error(message);
   }
 
-  const num = (name: string) => Number(res.headers.get(name));
-  const sourceWidth = num("X-Anynest-Source-Width");
-  const sourceHeight = num("X-Anynest-Source-Height");
-  const cropWidth = num("X-Anynest-Crop-Width");
-  const cropHeight = num("X-Anynest-Crop-Height");
-  if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(cropWidth > 0) || !(cropHeight > 0)) {
-    throw new Error("Prepare response was missing dimension headers");
-  }
-
-  const previewBlob = await res.blob();
-  const previewImage = await loadImageFromBlob(previewBlob);
-  const baseName = file.name.replace(/\.\w+$/, "") || "design";
-
-  return {
-    previewImage,
-    previewFile: new File([previewBlob], `${baseName}.png`, { type: "image/png" }),
-    sourceBlob: file,
-    sourceCrop: {
-      x: Math.max(0, num("X-Anynest-Crop-X") || 0),
-      y: Math.max(0, num("X-Anynest-Crop-Y") || 0),
-      width: cropWidth,
-      height: cropHeight,
-    },
-    sourceWidth,
-    sourceHeight,
-    dpi: num("X-Anynest-Density") || 72,
-    sourceMegapixels: num("X-Anynest-Source-MP") || (sourceWidth * sourceHeight) / 1_000_000,
-    binaryAlpha: res.headers.get("X-Anynest-Binary-Alpha") === "1",
-    hasTransparency: res.headers.get("X-Anynest-Has-Transparency") === "1",
-  };
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Prepare failed after retries");
 }
 
 export function describeBudgetRejection(

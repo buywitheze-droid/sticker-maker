@@ -62,7 +62,7 @@ type DesignToolId =
   | "whiteBg"
   | "wand"
   | "cleanAlpha"
-  | "cleanAlphaAll"
+  | "alignRotate"
   | "flipH"
   | "flipV"
   | "upscale"
@@ -154,6 +154,8 @@ export default function ImageEditorView() {
    */
   const [designToolsOpen, setDesignToolsOpen] = useState(false);
   const [toolsCollapseSignal, setToolsCollapseSignal] = useState(0);
+  const [alignRotatePanelOpen, setAlignRotatePanelOpen] = useState(false);
+  const [pixelCleanPanelOpen, setPixelCleanPanelOpen] = useState(false);
   /**
    * Where the canvas's backdrop-colour swatches land on the phone: the right-hand end of the
    * view bar, which is on screen for the whole session.
@@ -429,6 +431,23 @@ export default function ImageEditorView() {
    */
   const designTools: DesignTool[] = !mobileLayout ? [] : [
     {
+      id: "alignRotate",
+      label: t("editor.alignRotate"),
+      title: t("editor.alignRotateTitle"),
+      Icon: RotateCw,
+      tone: alignRotatePanelOpen
+        ? "border-black bg-black text-white"
+        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100",
+      pillTone: "border-gray-300 bg-white text-gray-700",
+      disabled: !selectedDesignId,
+      run: () => {
+        setPixelCleanPanelOpen(false);
+        setAlignRotatePanelOpen((v) => !v);
+        setDesignToolsOpen(true);
+        setLayersOpen(false);
+      },
+    },
+    {
       id: "whiteBg",
       label: t("editor.whiteBg"),
       title: t("editor.whiteBgTitle"),
@@ -453,20 +472,17 @@ export default function ImageEditorView() {
       label: t("editor.cleanAlpha"),
       title: t("editor.cleanAlphaTitle"),
       Icon: Droplets,
-      tone: "border-[#CBD5E1] bg-[#F1F5F9] text-[#2563EB]",
-      pillTone: "border-[#CBD5E1] bg-[#F1F5F9] text-[#2563EB]",
-      disabled: !selectedDesignId && selectedDesignIds.size === 0,
-      run: handleThresholdAlpha,
-    },
-    {
-      id: "cleanAlphaAll",
-      label: t("editor.cleanAlphaAll"),
-      title: t("editor.cleanAlphaAllTitle"),
-      Icon: Droplets,
-      tone: "border-[#CBD5E1] bg-[#F1F5F9] text-[#2563EB]",
+      tone: pixelCleanPanelOpen
+        ? "border-[#2563EB] bg-[#2563EB] text-white"
+        : "border-[#CBD5E1] bg-[#F1F5F9] text-[#2563EB]",
       pillTone: "border-[#CBD5E1] bg-[#F1F5F9] text-[#2563EB]",
       disabled: designs.length === 0,
-      run: handleThresholdAlphaAll,
+      run: () => {
+        setAlignRotatePanelOpen(false);
+        setPixelCleanPanelOpen((v) => !v);
+        setDesignToolsOpen(true);
+        setLayersOpen(false);
+      },
     },
     {
       id: "flipH",
@@ -488,9 +504,6 @@ export default function ImageEditorView() {
       disabled: !selectedDesignId,
       run: handleFlipY,
     },
-    /* Auto-Arrange sits with the tools now rather than in the bar. Imports and copy-count
-       changes already arrange as they land, so pressing it is the exception rather than the
-       routine, and it was holding the only labelled slot on the row. */
     {
       id: "autoArrange",
       label: t("editor.autoArrange"),
@@ -536,21 +549,21 @@ export default function ImageEditorView() {
             : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100",
           pillTone: "border-amber-300 bg-amber-50 text-amber-700",
           disabled: !selectedDesignId && selectedDesignIds.size === 0,
-          /* Its options render inside the sheet, so repeating it from the pill has to bring
-             the sheet back up or the menu would open somewhere nobody can see. */
           run: () => { setDesignToolsOpen(true); setLayersOpen(false); handleOpenHalftoneMenu(); },
         }]
       : []),
   ];
 
   /**
-   * Halftone is the one tool that opens options instead of applying, so it must not collapse
-   * the sheet it just drew them into.
+   * Halftone / Align-Rotate / Pixel Clean open options instead of applying, so
+   * they must not collapse the sheet they just drew into.
    */
   const runTool = (tool: DesignTool) => {
     setLastToolId(tool.id);
     tool.run();
-    if (tool.id !== "halftone") minimiseToolsAndFocus();
+    if (tool.id !== "halftone" && tool.id !== "alignRotate" && tool.id !== "cleanAlpha") {
+      minimiseToolsAndFocus();
+    }
   };
 
   const lastTool = lastToolId ? designTools.find((tool) => tool.id === lastToolId) ?? null : null;
@@ -1137,30 +1150,7 @@ export default function ImageEditorView() {
 
                       {level !== "peek" && (
                         <>
-                          <div className="flex flex-nowrap items-center justify-start gap-0.5 overflow-x-auto">
-                            <button onClick={handleRotate90} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.rotate")}><RotateCw className="mx-auto h-4 w-4" /></button>
-                            <div className="h-5 w-px flex-shrink-0 bg-gray-200" />
-                            <button onClick={() => actionToolbarProps.handleAlignAxis("vertical")} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-cyan-500 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignCenterX")} aria-label={t("editor.alignCenterX")}><CenterHorizontalIcon className="mx-auto h-4 w-4" /></button>
-                            <button onClick={() => actionToolbarProps.handleAlignAxis("horizontal")} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 hover:text-cyan-500 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignCenterY")} aria-label={t("editor.alignCenterY")}><CenterVerticalIcon className="mx-auto h-4 w-4" /></button>
-                            <div className="h-5 w-px flex-shrink-0 bg-gray-200" />
-                            <button onClick={() => handleAlignCorner('tl')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignTL")}><ArrowUpLeft className="mx-auto h-4 w-4" /></button>
-                            <button onClick={() => handleAlignCorner('tr')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignTR")}><ArrowUpRight className="mx-auto h-4 w-4" /></button>
-                            <button onClick={() => handleAlignCorner('bl')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignBL")}><ArrowDownLeft className="mx-auto h-4 w-4" /></button>
-                            <button onClick={() => handleAlignCorner('br')} disabled={!selectedDesignId} className="h-8 w-8 flex-shrink-0 rounded text-gray-600 hover:bg-gray-100 hover:text-cyan-400 disabled:pointer-events-none disabled:opacity-30 coarse:h-11 coarse:w-11" title={t("editor.alignBR")}><ArrowDownRight className="mx-auto h-4 w-4" /></button>
-                          </div>
-
                           <div className="flex flex-nowrap items-center justify-start gap-2 overflow-x-auto">
-                            <button
-                              onClick={() => handleDuplicateDesign(duplicateCount)}
-                              disabled={!selectedDesignId}
-                              className={`flex-shrink-0 rounded-md px-2 py-2 text-[11px] font-medium transition-all coarse:min-h-[44px] ${selectedDesignId ? "border border-[#CBD5E1] bg-[#F1F5F9] text-[#7C3AED]" : "pointer-events-none bg-gray-200 text-gray-500 opacity-30"}`}
-                              title={t("editor.duplicate")}
-                            >
-                              <span className="inline-flex w-full items-center justify-center gap-1 text-center whitespace-nowrap leading-snug">
-                                <Copy className="h-3.5 w-3.5 flex-shrink-0" />
-                                <span>{t("editor.duplicate").replace(/ \(.*/, "")}</span>
-                              </span>
-                            </button>
                             {/* Hit area and glyph are separate boxes on a coarse
                                 pointer, the same trade `size-input.tsx` and
                                 `layer-row.tsx` make: the two chevrons keep their
@@ -1199,9 +1189,6 @@ export default function ImageEditorView() {
                                   title={t("editor.increaseCopies")}
                                   aria-label={t("editor.increaseCopies")}
                                 >
-                                  {/* Same bezel and same −/+ as the layers and size
-                                      steppers — this one kept chevrons on both pointers
-                                      and was the odd one out of the three. */}
                                   <span className="flex h-3.5 w-4 min-w-4 items-center justify-center rounded border border-gray-300 bg-gray-50 text-gray-600 group-hover:bg-gray-100">
                                     <Plus className="h-3 w-3" strokeWidth={3} />
                                   </span>
@@ -1224,7 +1211,7 @@ export default function ImageEditorView() {
                               onClick={() => handleDuplicateAndArrange(duplicateCount)}
                               disabled={!selectedDesignId}
                                className={`flex-shrink-0 rounded-md px-2 py-2 text-[12px] font-semibold transition-all coarse:min-h-[44px] ${selectedDesignId ? "border border-[#CBD5E1] bg-[#F1F5F9] text-[#0891B2]" : "pointer-events-none bg-gray-200 text-gray-500 opacity-30"}`}
-                              title={t("editor.duplicateArrange")}
+                              title={t("editor.duplicateArrangeTitle")}
                             >
                               <span className="inline-flex w-full items-center justify-center gap-1 text-center whitespace-nowrap leading-snug">
                                 <Copy className="h-3.5 w-3.5 flex-shrink-0" />
@@ -1428,7 +1415,12 @@ export default function ImageEditorView() {
                   handleLeading={
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setDesignToolsOpen(false); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDesignToolsOpen(false);
+                        setAlignRotatePanelOpen(false);
+                        setPixelCleanPanelOpen(false);
+                      }}
                       onPointerDown={(e) => e.stopPropagation()}
                       className="flex h-11 w-11 items-center justify-center text-gray-500 hover:text-gray-800"
                       aria-label={t("editor.closeDesignTools")}
@@ -1480,13 +1472,85 @@ export default function ImageEditorView() {
                                 disabled={tool.disabled}
                                 className={`flex items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-2 text-[11px] font-medium transition-all disabled:pointer-events-none disabled:opacity-30 coarse:min-h-[44px] ${tool.tone}`}
                                 title={tool.title}
-                                aria-expanded={tool.id === "halftone" ? halftoneMenuOpen : undefined}
+                                aria-expanded={
+                                  tool.id === "halftone" ? halftoneMenuOpen
+                                    : tool.id === "alignRotate" ? alignRotatePanelOpen
+                                      : tool.id === "cleanAlpha" ? pixelCleanPanelOpen
+                                        : undefined
+                                }
                               >
                                 <tool.Icon className="h-3.5 w-3.5 flex-shrink-0" />
                                 <span className="truncate">{tool.label}</span>
                               </button>
                             ))}
                           </div>
+
+                          {alignRotatePanelOpen && selectedDesignId && (
+                            <div className="rounded-md border border-gray-200 bg-gray-50 p-1.5">
+                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{t("editor.alignRotate")}</p>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => { handleRotate90(); minimiseToolsAndFocus(); }}
+                                  className="h-11 w-11 rounded-md border border-gray-300 bg-white text-gray-700"
+                                  title={t("editor.rotate")}
+                                >
+                                  <RotateCw className="mx-auto h-4 w-4" />
+                                </button>
+                                {[0, 90, 180, 270].map((deg) => (
+                                  <button
+                                    key={deg}
+                                    type="button"
+                                    onClick={() => { actionToolbarProps.handleSetRotation(deg); minimiseToolsAndFocus(); }}
+                                    className="h-11 min-w-11 rounded-md border border-gray-300 bg-white px-2 text-[12px] font-bold tabular-nums text-gray-800"
+                                  >
+                                    {deg}°
+                                  </button>
+                                ))}
+                                <div className="h-8 w-px bg-gray-200" />
+                                <button type="button" onClick={() => { actionToolbarProps.handleAlignAxis("vertical"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignCenterX")} aria-label={t("editor.alignCenterX")}><CenterHorizontalIcon className="mx-auto h-4 w-4" /></button>
+                                <button type="button" onClick={() => { actionToolbarProps.handleAlignAxis("horizontal"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignCenterY")} aria-label={t("editor.alignCenterY")}><CenterVerticalIcon className="mx-auto h-4 w-4" /></button>
+                                <button type="button" onClick={() => { handleAlignCorner("tl"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignTL")}><ArrowUpLeft className="mx-auto h-4 w-4" /></button>
+                                <button type="button" onClick={() => { handleAlignCorner("tr"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignTR")}><ArrowUpRight className="mx-auto h-4 w-4" /></button>
+                                <button type="button" onClick={() => { handleAlignCorner("bl"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignBL")}><ArrowDownLeft className="mx-auto h-4 w-4" /></button>
+                                <button type="button" onClick={() => { handleAlignCorner("br"); minimiseToolsAndFocus(); }} className="h-11 w-11 rounded-md border border-gray-300 bg-white" title={t("editor.alignBR")}><ArrowDownRight className="mx-auto h-4 w-4" /></button>
+                              </div>
+                            </div>
+                          )}
+
+                          {pixelCleanPanelOpen && (
+                            <div className="rounded-md border border-slate-200 bg-slate-50 p-1.5">
+                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{t("editor.cleanAlpha")}</p>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                                  onClick={() => {
+                                    handleThresholdAlpha();
+                                    setPixelCleanPanelOpen(false);
+                                    minimiseToolsAndFocus();
+                                  }}
+                                  className="flex items-center justify-center gap-1 rounded-md border border-[#CBD5E1] bg-[#F1F5F9] px-2 py-2 text-[11px] font-medium text-[#2563EB] disabled:opacity-40 coarse:min-h-[44px]"
+                                >
+                                  <Droplets className="h-3.5 w-3.5" />
+                                  {t("editor.cleanAlphaSelected")}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={designs.length === 0}
+                                  onClick={() => {
+                                    handleThresholdAlphaAll();
+                                    setPixelCleanPanelOpen(false);
+                                    minimiseToolsAndFocus();
+                                  }}
+                                  className="flex items-center justify-center gap-1 rounded-md border border-[#CBD5E1] bg-[#F1F5F9] px-2 py-2 text-[11px] font-medium text-[#2563EB] disabled:opacity-40 coarse:min-h-[44px]"
+                                >
+                                  <Droplets className="h-3.5 w-3.5" />
+                                  {t("editor.cleanAlphaFullPage")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Inline below the grid, not the popover the desktop
                               uses: a popover anchored inside a sheet that owns
@@ -1729,8 +1793,7 @@ export default function ImageEditorView() {
           onClick={(e) => e.stopPropagation()}
         >
           {([
-            { icon: Copy, label: t("editor.duplicate").replace(/ \(.*/, '') + ` (${duplicateCount})`, shortcut: 'Ctrl+D', action: () => { handleDuplicateDesign(duplicateCount); setContextMenu(null); }, disabled: false },
-            { icon: Copy, label: t("editor.duplicateArrange") + ` (${duplicateCount})`, shortcut: '', action: () => { handleDuplicateAndArrange(duplicateCount); setContextMenu(null); }, disabled: false },
+            { icon: Copy, label: t("editor.duplicateArrange") + (duplicateCount > 1 ? ` (${duplicateCount})` : ""), shortcut: '', action: () => { handleDuplicateAndArrange(duplicateCount); setContextMenu(null); }, disabled: false },
             { icon: Trash2, label: t("editor.delete").replace(/ \(.*/, ''), shortcut: 'Del', action: () => { if (selectedDesignIds.size > 1) handleDeleteMulti(selectedDesignIds); else handleDeleteDesign(contextMenu.designId); setContextMenu(null); }, disabled: false },
             null,
             { icon: RotateCw, label: t("editor.rotate").replace(/ \(.*/, ''), shortcut: 'R', action: () => { handleRotate90(); setContextMenu(null); }, disabled: false },
