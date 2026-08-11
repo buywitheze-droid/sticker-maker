@@ -1,0 +1,13 @@
+What's really killing iPhone uploads (confirmed, not folklore):
+
+Screen lock / app switch kills the transfer. iOS suspends Safari's network process when the phone locks — there's a long-standing WebKit bug where uploads holding open files get terminated. A customer uploading a 80MB sheet on cellular locks their phone for a minute → dead upload.
+No true background uploads on iOS web — the tech doesn't exist. Chrome has "Background Fetch" (uploads continue after leaving the page); Apple still doesn't support it in 2026, and there's no sign they will. Anyone selling you that capability for Safari is wrong.
+A Safari tab gets roughly 1–1.5GB of memory, hard ceiling. Anything that processes a whole 100MB file in the browser risks the tab crash — which is why your setup (server does the heavy image work) is already the right architecture.
+Good news from your own code: your cloud uploads already use the modern approach — files split into parts, several uploaded in parallel (that's the technique behind those "20MB/s → 2GB/s" case studies), running over Cloudflare's HTTP/3 network automatically. The foundation is current; you're not behind.
+
+What's worth adding, ranked by bang-for-buck:
+
+Keep-awake during uploads — Safari has supported the Screen Wake Lock API since 16.4: while a big upload runs, the phone won't auto-lock. Directly neutralizes killer #1. Small change.
+Resumable uploads — your code already tracks which parts finished; persisting that in the browser's local storage (infrastructure you already have for draft recovery) means an interrupted 100MB upload resumes where it stopped instead of restarting from zero. This is what tus/Uppy sell — you can get it with the pieces you own.
+Accept iPhone HEIC photos natively — iPhone camera originals are HEIC: half the bytes of the JPEG copies customers convert them to, and zero quality loss since it's the original. Your server's image engine ships without HEIC decoding (patent licensing), but there are two proven routes around it; needs a small feasibility spike first. This would turn yesterday's "HEIC not supported" message into "smaller, faster, better uploads."
+What to skip (researched and rejected): compressing files in the browser before upload (WebAssembly encoders exist, but on a 1.5GB-ceiling iPhone tab with 100MB print files it trades your crash problem for a worse one), and migrating to tus/Uppy (redundant — you already have their core technique).

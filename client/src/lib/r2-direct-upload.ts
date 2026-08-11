@@ -4,6 +4,85 @@ import { isMobileDevice } from "./upload-queue";
 type UploadJson = Record<string, unknown>;
 export type R2UploadBody = Blob | ArrayBuffer | Uint8Array;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen Wake Lock
+//
+// iOS suspends Safari's network process when the screen locks — the #1
+// confirmed cause of failed uploads on iPhone. Acquiring a "screen" wake lock
+// keeps the display on (and the network stack alive) for the duration of the
+// upload. Degrades silently on browsers that don't support the API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type WakeLockSentinel = { release(): Promise<void> };
+
+async function acquireWakeLock(): Promise<WakeLockSentinel | null> {
+  try {
+    const nav = navigator as unknown as {
+      wakeLock?: { request(type: string): Promise<WakeLockSentinel> };
+    };
+    return nav.wakeLock ? await nav.wakeLock.request("screen") : null;
+  } catch {
+    return null; // permission denied, unsupported, or page not visible
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resumable-upload helpers
+//
+// After each multipart part succeeds its etag is persisted to localStorage so
+// that a retry (connection drop, screen lock before Wake Lock fires, tab
+// restore) can skip already-finished parts and only re-send the remainder.
+// Keys are namespaced by the server-issued sessionId and expire after 24 h;
+// they are cleared immediately on a successful complete().
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RESUME_KEY_PREFIX = "anynest_upload_resume_";
+const RESUME_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface ResumeState {
+  parts: Array<{ partNumber: number; etag: string }>;
+  expires: number;
+}
+
+function loadResumeState(sessionId: string): Array<{ partNumber: number; etag: string }> {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY_PREFIX + sessionId);
+    if (!raw) return [];
+    const state: ResumeState = JSON.parse(raw);
+    if (Date.now() > state.expires) {
+      localStorage.removeItem(RESUME_KEY_PREFIX + sessionId);
+      return [];
+    }
+    return Array.isArray(state.parts) ? state.parts : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePartProgress(
+  sessionId: string,
+  part: { partNumber: number; etag: string },
+): void {
+  try {
+    const key = RESUME_KEY_PREFIX + sessionId;
+    const existing = loadResumeState(sessionId);
+    const merged = [
+      ...existing.filter((p) => p.partNumber !== part.partNumber),
+      part,
+    ];
+    localStorage.setItem(key, JSON.stringify({
+      parts: merged,
+      expires: Date.now() + RESUME_TTL_MS,
+    } satisfies ResumeState));
+  } catch {
+    // localStorage full or unavailable — resume is best-effort, not critical
+  }
+}
+
+function clearResumeState(sessionId: string): void {
+  try { localStorage.removeItem(RESUME_KEY_PREFIX + sessionId); } catch {}
+}
+
 export type R2PrepareMeta = {
   sessionId: string;
   singlePut?: boolean;
@@ -365,12 +444,26 @@ export async function uploadPreparedPartsToR2(
   const parallelism = Math.max(1, Math.min(Number(meta.parallelism) || maxInFlight, maxInFlight, totalParts));
   const sorted = parts.slice().sort((a, b) => Number(a.partNumber) - Number(b.partNumber));
   let nextIndex = 0;
-  const uploadedParts: Array<{ partNumber: number; etag: string }> = [];
+
+  // Resume: seed with any parts that were already uploaded in a previous attempt.
+  const resumeId = meta.sessionId ? String(meta.sessionId) : null;
+  const savedParts = resumeId ? loadResumeState(resumeId) : [];
+  if (savedParts.length) {
+    console.info(`[r2-upload] resuming — ${savedParts.length} of ${totalParts} parts already uploaded`);
+  }
+  const uploadedParts: Array<{ partNumber: number; etag: string }> = [...savedParts];
 
   async function uploadPart(part: { partNumber: number; url: string }) {
     const pn = Number(part.partNumber);
     const start = (pn - 1) * partSize;
     const end = Math.min(start + partSize, total);
+
+    // Skip parts that were already completed in a previous attempt (resume).
+    if (savedParts.some((p) => p.partNumber === pn)) {
+      onProgress?.(`Skipping part ${pn} of ${totalParts} (already uploaded)...`);
+      return;
+    }
+
     // Auto-retry on flaky connections (common on iOS mobile networks).
     // Three attempts with 1 s → 2 s → 4 s back-off before giving up.
     const maxAttempts = 3;
@@ -394,7 +487,12 @@ export async function uploadPreparedPartsToR2(
       }
       if (!res.ok) throw new Error(`Cloud upload part ${pn} failed: ${res.status}`);
       const etag = res.headers.get("etag") || res.headers.get("ETag");
-      if (etag) uploadedParts.push({ partNumber: pn, etag });
+      if (etag) {
+        const completed = { partNumber: pn, etag };
+        uploadedParts.push(completed);
+        // Persist immediately so a subsequent interruption can resume.
+        if (resumeId) savePartProgress(resumeId, completed);
+      }
       return; // success
     }
   }
@@ -419,6 +517,18 @@ export async function uploadProductionToR2(
 ): Promise<R2UploadResult> {
   const total = bodySize(body);
   if (!total) throw new Error("Empty design image");
+
+  // Hold the screen awake for the duration of this upload.
+  // On iOS, screen-lock suspends the network process and kills in-flight
+  // uploads — this is the #1 confirmed failure mode on iPhone.
+  // The API is a no-op on desktop and degrades silently where unsupported.
+  const wakeLock = await acquireWakeLock();
+  let _wakeLockReleased = false;
+  const releaseWakeLock = () => {
+    if (_wakeLockReleased) return;
+    _wakeLockReleased = true;
+    wakeLock?.release().catch(() => {});
+  };
 
   const contentType = body instanceof Blob && body.type ? body.type : undefined;
   const expectedFormat = options.productionFormat || (contentType === "application/pdf" ? "pdf" : "png");
@@ -467,6 +577,7 @@ export async function uploadProductionToR2(
       });
       uploadedParts = await uploadPreparedPartsToR2(body, meta, onProgress);
     } else {
+      releaseWakeLock();
       throw directErr;
     }
   }
@@ -493,6 +604,11 @@ export async function uploadProductionToR2(
   if (!returnedPath.endsWith(expectedExtension)) {
     throw new Error(`Upload returned a non-${expectedFormat.toUpperCase()} production URL`);
   }
+
+  // Upload complete — clear persisted resume state and release the screen lock.
+  if (meta.sessionId) clearResumeState(String(meta.sessionId));
+  releaseWakeLock();
+
   return {
     productionUrl: prod,
     key: done.key ? String(done.key) : null,
