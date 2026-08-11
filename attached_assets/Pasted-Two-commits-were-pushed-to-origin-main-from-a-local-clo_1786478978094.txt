@@ -1,0 +1,80 @@
+Two commits were pushed to origin/main from a local clone. Pull them into this Replit
+workspace. The tip is 46f500c, parent ff9dee7, on top of c349eca.
+
+  ff9dee7  Trim every raster upload, and stop gangsheet downloads failing at save time
+  46f500c  Point package-lock resolved URLs at the public npm registry
+
+HOW TO PULL
+
+Before pulling, run `git status` and `git log origin/main..HEAD`. If this workspace has
+uncommitted edits or commits of its own, STOP and report exactly what they are — do not
+stash, reset, checkout -f, or force anything. If it is clean and has no local commits:
+
+  git fetch origin
+  git pull --ff-only origin main
+
+Then confirm `git log -1` shows 46f500c and `git status` is clean. One file is DELETED by
+this pull (client/src/lib/image-crop-worker.ts) and two are added (client/src/lib/
+content-bounds.ts, content-bounds-selftest.ts). Restart the dev server afterwards rather
+than relying on HMR, because a worker module was removed and main.tsx changed.
+
+package.json is unchanged, so there are NO new dependencies and npm install is not
+required. Do not run it unless something is actually broken.
+
+ABOUT THE LOCKFILE COMMIT
+
+46f500c only rewrites six `resolved` URLs from http://package-firewall.replit.local to
+https://registry.npmjs.org, because that host only resolves inside Replit and npm install
+failed everywhere else. Every integrity hash is unchanged, so the installed bytes are
+identical. If Replit's proxy rewrites those URLs back the next time it installs, that is
+expected — commit it or discard it, whichever you prefer, but do not treat it as a
+regression and do not revert any application code over it.
+
+WHAT CHANGED, AND WHAT NOT TO "FIX"
+
+These are all deliberate. Please do not undo them:
+
+1. Empty space is now trimmed from ALL raster uploads. Trim used to be refused above
+   16 MP or 4096 px on an edge while uploads decoded inline up to 40 MP, so anything in
+   that gap (including an ordinary 6600x2400 sheet) imported with all its margins.
+   Content bounds are now measured by walking the source in 2048 px tiles, so peak memory
+   is one tile and no canvas approaches the iOS Safari limit. Do not reintroduce a
+   size-based skip, and do not raise the tile size.
+2. Trim is recorded as a RECT (imageInfo.exportCrop) against the customer's original
+   bytes (imageInfo.exportBlob), not baked into a bitmap. Nothing is re-encoded. The
+   export, cart, and PDF paths already decode through exportCrop.
+3. cropImageToContentAsync and client/src/lib/image-crop-worker.ts were deleted as
+   unused. Do not recreate them.
+4. Uploads are copied into a blob the app owns (ownUploadedBytes). A picked File is only
+   a reference to disk, so a moved or re-saved original used to make export fail with
+   "the requested file could not be found" long after import.
+5. Export and add-to-cart now HARD FAIL with a message naming the design when a print
+   source cannot be read, instead of silently substituting the capped preview. This is
+   intentional — a soft production file that nobody inspects is worse than an error.
+   Designs imported before this deploy still hold the old stale reference, so a customer's
+   first export after deploy may surface "re-upload that design". That is expected.
+6. Download blob URLs are held for one second per megabyte from a 60-second floor (was a
+   flat 5 seconds, which could be revoked while the browser was still writing the file),
+   and are revoked on pagehide only when the page is NOT entering the back/forward cache.
+7. /api/image-info still accepts PNG only, but now rejects other types silently and
+   returns a 400 naming the type, instead of cb(new Error(...)). A throwing multer filter
+   aborts the multipart stream and answers with a TCP RST, which poisons iOS Safari's
+   connection pool so every later fetch on that connection fails. Do not switch it back,
+   and do not widen it to accept JPEG — that would change the resolved DPI of
+   metadata-free JPEGs and therefore the size they import at.
+
+VERIFY AFTER PULLING
+
+  - npm run check  → 0 errors
+  - npm run build  → clean
+  - In the browser console: await __testTrim()  → every case passes. Cases reported
+    "skipped" mean the harness could not allocate a source that large on this platform,
+    not that measurement failed.
+  - Upload a 6600x2400 transparent PNG: the empty space should be gone, and the artwork
+    should not look soft or misframed.
+  - Download that sheet and confirm the output is full resolution and framed like the
+    editor.
+  - If a real iPhone is available, upload a >16 MP transparent PNG: no crash, no blank
+    canvas, trim applied.
+
+Report the npm run check count, the __testTrim summary, and anything that differs.
