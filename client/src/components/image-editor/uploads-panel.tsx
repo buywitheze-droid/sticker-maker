@@ -22,7 +22,7 @@ interface UploadsPanelProps {
  */
 export function UploadsPanel({ t, onAddFile, onUnavailable }: UploadsPanelProps) {
   const [entries, setEntries] = useState<UploadLibraryEntry[]>([]);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [addingKey, setAddingKey] = useState<string | null>(null);
 
   const refresh = useCallback(() => {

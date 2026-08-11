@@ -621,7 +621,9 @@ function ControlsSection({
         </div>
       </div>
 
-      {imageInfo && (
+      {/* White BG + Magic Wand only shown when the prop is wired up.
+          On desktop they live in the toolbar Design Tools button instead. */}
+      {imageInfo && onRemoveWhiteBackground && (
         <div className="rounded-lg border border-gray-200 bg-white p-2">
           <div className="flex items-center gap-1.5">
             <Button

@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Copy,
   Droplets,
+  Eraser,
   Sparkles,
   Expand,
   LayoutGrid,
@@ -21,8 +22,21 @@ import {
   Trash2,
   Undo2,
   Unlink,
+  WandSparkles,
+  X,
 } from "lucide-react";
 import { CenterHorizontalIcon, CenterVerticalIcon } from "./center-axis-icons";
+import { useWandTolerance, useToolActions } from "@/state/tool-store";
+
+/** Halftone icon — a grid of circles shrinking diagonally. */
+const HalftoneIconToolbar = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 16 16" fill="currentColor" className={className} aria-hidden="true">
+    <circle cx="2" cy="2" r="1.9" /><circle cx="6" cy="2" r="1.6" /><circle cx="10" cy="2" r="1.1" /><circle cx="14" cy="2" r="0.6" />
+    <circle cx="2" cy="6" r="1.6" /><circle cx="6" cy="6" r="1.3" /><circle cx="10" cy="6" r="0.9" /><circle cx="14" cy="6" r="0.4" />
+    <circle cx="2" cy="10" r="1.1" /><circle cx="6" cy="10" r="0.9" /><circle cx="10" cy="10" r="0.6" />
+    <circle cx="2" cy="14" r="0.6" /><circle cx="6" cy="14" r="0.4" />
+  </svg>
+);
 import { formatLength, getUnitSuffix, useMetric } from "@/lib/format-length";
 import { formatVariantPriceForDisplay } from "@/lib/variant-price";
 import type { ProfileConfig } from "@/lib/profiles";
@@ -102,6 +116,18 @@ export type EditorActionToolbarProps = {
    * than a permanently greyed one — see `client/src/lib/upscale-support.ts`.
    */
   canIncreaseQuality: boolean;
+  // ── Design tools (White BG, Magic Wand, Halftone) — optional; provided by image-editor-view ──
+  handleRemoveWhiteBackground?: () => void;
+  handleWandDeleteToggle?: () => void;
+  wandDeleteModeActive?: boolean;
+  halftoneEnabled?: boolean;
+  handleOpenHalftoneMenu?: () => void;
+  halftoneMenuOpen?: boolean;
+  setHalftoneMenuOpen?: (v: boolean) => void;
+  halftoneStrength?: "light" | "balanced" | "strong";
+  setHalftoneStrength?: (v: "light" | "balanced" | "strong") => void;
+  halftoneTopColors?: Array<{ r: number; g: number; b: number; hex: string; name?: string }>;
+  handleApplyHalftone?: (id: string, r: number, g: number, b: number, strength: "light" | "balanced" | "strong") => void;
 };
 
 function EditorActionToolbar(props: EditorActionToolbarProps) {
@@ -166,7 +192,20 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
     isUpscaling,
     upscaleProgress,
     canIncreaseQuality,
+    handleRemoveWhiteBackground = () => {},
+    handleWandDeleteToggle = () => {},
+    wandDeleteModeActive = false,
+    halftoneEnabled = false,
+    handleOpenHalftoneMenu = () => {},
+    halftoneMenuOpen = false,
+    setHalftoneMenuOpen = () => {},
+    halftoneStrength = "balanced",
+    setHalftoneStrength = () => {},
+    halftoneTopColors = [],
+    handleApplyHalftone = () => {},
   } = props;
+  const wandTolerance = useWandTolerance();
+  const { setWandTolerance } = useToolActions();
   const metric = useMetric(lang);
   const maxGangsheetHeight = GANGSHEET_HEIGHTS.length > 0
     ? Math.max(...GANGSHEET_HEIGHTS)
@@ -185,11 +224,14 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
   const [upscaleScale, setUpscaleScale] = useState<UpscaleFactor>(2);
   const [pixelCleanOpen, setPixelCleanOpen] = useState(false);
   const [alignRotateOpen, setAlignRotateOpen] = useState(false);
+  const [designToolsOpen, setDesignToolsOpen] = useState(false);
+  const [lastDesktopToolId, setLastDesktopToolId] = useState<"whiteBg" | "wand" | "halftone" | null>(null);
   const pixelCleanRef = useRef<HTMLDivElement>(null);
   const alignRotateRef = useRef<HTMLDivElement>(null);
+  const designToolsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!pixelCleanOpen && !alignRotateOpen) return;
+    if (!pixelCleanOpen && !alignRotateOpen && !designToolsOpen && !halftoneMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (pixelCleanOpen && pixelCleanRef.current && !pixelCleanRef.current.contains(target)) {
@@ -198,11 +240,17 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
       if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contains(target)) {
         setAlignRotateOpen(false);
       }
+      if ((designToolsOpen || halftoneMenuOpen) && designToolsRef.current && !designToolsRef.current.contains(target)) {
+        setDesignToolsOpen(false);
+        setHalftoneMenuOpen(false);
+      }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setPixelCleanOpen(false);
         setAlignRotateOpen(false);
+        setDesignToolsOpen(false);
+        setHalftoneMenuOpen(false);
       }
     };
     document.addEventListener("pointerdown", onPointerDown);
@@ -211,7 +259,7 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [pixelCleanOpen, alignRotateOpen]);
+  }, [pixelCleanOpen, alignRotateOpen, designToolsOpen, halftoneMenuOpen, setHalftoneMenuOpen]);
 
   return (
     <>
@@ -586,6 +634,176 @@ function EditorActionToolbar(props: EditorActionToolbarProps) {
       {/* Align/Rotate — collapsed behind one subtle control so the toolbar
           stays short; expands inline with the same rotate + align cluster. */}
       <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap lg:flex-nowrap w-full lg:w-auto">
+        {/* Design Tools — White BG, Magic Wand, Halftone merged into one dropdown.
+            Last-used tool shows as a quick-repeat pill so one more click re-applies. */}
+        {!isMobile && (
+          <div className="relative flex items-center gap-1.5" ref={designToolsRef}>
+            <div className="w-px h-4 bg-gray-100 mx-0.5 hidden lg:block" />
+
+            {/* Last-tool quick-repeat pill ─────────────────────────────────── */}
+            {lastDesktopToolId === "whiteBg" && (
+              <button
+                type="button"
+                onClick={handleRemoveWhiteBackground}
+                disabled={!selectedDesignId}
+                className="flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 min-h-[36px] disabled:pointer-events-none disabled:opacity-30"
+                title="Re-run: Remove white background"
+              >
+                <Eraser className="h-3 w-3 flex-shrink-0" /> White BG
+              </button>
+            )}
+            {lastDesktopToolId === "wand" && (
+              <div className="flex items-center gap-1.5 rounded-md border border-fuchsia-300 bg-fuchsia-50 px-2 py-1 min-h-[36px]">
+                <button
+                  type="button"
+                  onClick={handleWandDeleteToggle}
+                  disabled={!selectedDesignId}
+                  className={`flex items-center gap-1 text-[11px] font-medium disabled:opacity-30 disabled:pointer-events-none ${wandDeleteModeActive ? "text-fuchsia-700 font-semibold" : "text-fuchsia-600"}`}
+                  title={wandDeleteModeActive ? "Wand active — click a colour on canvas to erase" : "Toggle Magic Wand"}
+                >
+                  <WandSparkles className="h-3 w-3 flex-shrink-0" />
+                  {wandDeleteModeActive ? "Wand ON" : "Magic Wand"}
+                </button>
+                {wandDeleteModeActive && (
+                  <>
+                    <span className="text-[10px] font-medium text-fuchsia-700">Tol</span>
+                    <input
+                      type="range" min="1" max="100"
+                      value={wandTolerance}
+                      onChange={(e) => setWandTolerance(Number(e.target.value))}
+                      className="w-16 accent-fuchsia-600"
+                      aria-label="Wand tolerance"
+                    />
+                    <span className="w-5 text-right text-[10px] tabular-nums text-fuchsia-800">{wandTolerance}</span>
+                  </>
+                )}
+              </div>
+            )}
+            {lastDesktopToolId === "halftone" && halftoneEnabled && (
+              <button
+                type="button"
+                onClick={handleOpenHalftoneMenu}
+                disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                className="flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 min-h-[36px] disabled:pointer-events-none disabled:opacity-30"
+                title="Open Halftone options"
+              >
+                <HalftoneIconToolbar className="h-3 w-3 flex-shrink-0" /> Halftone
+              </button>
+            )}
+
+            {/* Design tools trigger button ─────────────────────────────────── */}
+            <button
+              type="button"
+              onClick={() => { setAlignRotateOpen(false); setDesignToolsOpen((v) => !v); }}
+              disabled={!selectedDesignId && selectedDesignIds.size === 0}
+              aria-expanded={designToolsOpen}
+              aria-haspopup="menu"
+              className={`flex items-center gap-1.5 px-2 py-1 lg:px-3 lg:py-1.5 rounded-md border transition-all whitespace-nowrap text-[11px] lg:text-sm font-medium min-h-[36px] ${
+                selectedDesignId || selectedDesignIds.size > 0
+                  ? designToolsOpen
+                    ? "border-black bg-black text-white"
+                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  : "border-gray-200 bg-gray-200 text-gray-500 opacity-30 pointer-events-none"
+              }`}
+              title="Design tools — White BG, Magic Wand, Halftone"
+            >
+              <Sparkles className="w-3 h-3 lg:w-3.5 lg:h-3.5 flex-shrink-0" />
+              Design tools
+              <ChevronDown className={`w-3 h-3 transition-transform ${designToolsOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* Dropdown menu ─────────────────────────────────────────────── */}
+            {designToolsOpen && (
+              <div
+                role="menu"
+                className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] overflow-hidden rounded-xl border-2 border-black bg-white py-1 shadow-lg"
+              >
+                <button
+                  type="button" role="menuitem"
+                  disabled={!selectedDesignId}
+                  onClick={() => { handleRemoveWhiteBackground(); setLastDesktopToolId("whiteBg"); setDesignToolsOpen(false); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-amber-700 hover:bg-amber-50 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Eraser className="h-3.5 w-3.5 flex-shrink-0" />
+                  Remove White BG
+                </button>
+                <button
+                  type="button" role="menuitem"
+                  disabled={!selectedDesignId}
+                  onClick={() => { handleWandDeleteToggle(); setLastDesktopToolId("wand"); setDesignToolsOpen(false); }}
+                  className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium disabled:pointer-events-none disabled:opacity-40 ${wandDeleteModeActive ? "text-fuchsia-700 bg-fuchsia-50" : "text-fuchsia-600 hover:bg-fuchsia-50"}`}
+                >
+                  <WandSparkles className="h-3.5 w-3.5 flex-shrink-0" />
+                  {wandDeleteModeActive ? "Magic Wand (ON — tap to off)" : "Magic Wand"}
+                </button>
+                {halftoneEnabled && (
+                  <button
+                    type="button" role="menuitem"
+                    disabled={!selectedDesignId && selectedDesignIds.size === 0}
+                    onClick={() => { handleOpenHalftoneMenu(); setLastDesktopToolId("halftone"); setDesignToolsOpen(false); }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] font-medium text-amber-700 hover:bg-amber-50 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <HalftoneIconToolbar className="h-3.5 w-3.5 flex-shrink-0" />
+                    Halftone
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Halftone sub-panel ─────────────────────────────────────────── */}
+            {halftoneMenuOpen && (selectedDesignId || selectedDesignIds.size > 0) && (
+              <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-xl border-2 border-black bg-white p-3 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Strength</p>
+                  <button type="button" onClick={() => setHalftoneMenuOpen(false)} className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="Close halftone menu">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="mb-2.5 flex gap-1">
+                  {(['light', 'balanced', 'strong'] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setHalftoneStrength(s)}
+                      className={`flex-1 rounded border py-1 text-[10px] font-medium capitalize transition-colors ${halftoneStrength === s ? "border-amber-600 bg-amber-500 text-white" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-amber-50"}`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    setHalftoneMenuOpen(false);
+                    const id = selectedDesignId ?? [...selectedDesignIds][0];
+                    if (id) handleApplyHalftone(id, 0, 0, 0, halftoneStrength);
+                  }}
+                  className="mb-1.5 w-full rounded-lg bg-gray-900 px-2 py-2 text-[11px] font-medium text-white hover:bg-gray-700"
+                >
+                  ⬛ Black garment
+                </button>
+                {halftoneTopColors.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Colour garment</p>
+                    {halftoneTopColors.map((c, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setHalftoneMenuOpen(false);
+                          const id = selectedDesignId ?? [...selectedDesignIds][0];
+                          if (id) handleApplyHalftone(id, c.r, c.g, c.b, halftoneStrength);
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1 text-[11px] hover:bg-gray-100"
+                      >
+                        <span className="h-3.5 w-3.5 flex-shrink-0 rounded-full border border-gray-200" style={{ background: c.hex }} />
+                        <span className="truncate text-gray-700">{c.name ?? c.hex}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {!isMobile && (
           <div className="relative flex items-center gap-1" ref={alignRotateRef}>
             <div className="w-px h-4 bg-gray-100 mx-0.5 hidden lg:block" />
