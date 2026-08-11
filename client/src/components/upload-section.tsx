@@ -9,6 +9,7 @@ import {
   importRasterForEditor,
   type PreparedRaster,
 } from "@/lib/prepare-raster-upload";
+import { IOS_SAFE_CANVAS_DIM, SAFARI_MAX_CANVAS_AREA } from "@/lib/image-budget";
 // From the module rather than the `image-editor` barrel: that barrel renders
 // the editor view, which imports this file, so a value import would be a cycle.
 import { injectPngDpi, readDeclaredDpi } from "./image-editor/utils";
@@ -114,7 +115,15 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo, 
           c.width = 0; c.height = 0;
 
           const isPng = rasterFile.type === 'image/png' || rasterFile.name.toLowerCase().endsWith('.png');
-          if (!isPng) {
+          // The conversion below sizes a canvas from the decoded image, and iOS
+          // Safari answers a request past its ceiling with a blank surface
+          // instead of an error — which would import as an empty design. Above
+          // it the original container goes through untouched; the model reads
+          // any raster format and keeps the declared DPI off the original bytes.
+          const canConvertInline =
+            img.width * img.height <= SAFARI_MAX_CANVAS_AREA &&
+            Math.max(img.width, img.height) <= IOS_SAFE_CANVAS_DIM;
+          if (!isPng && canConvertInline) {
             // A canvas PNG carries no pHYs chunk, so re-encoding here destroys
             // whatever resolution the original container declared — and every
             // reader downstream (the model's DPI resolve, the uploads library,

@@ -126,7 +126,15 @@ const upload = multer({
     if (file.mimetype === 'image/png') {
       cb(null, true);
     } else {
-      cb(new Error('Only PNG files are allowed'));
+      // Rejected silently, for the reason spelled out on `rasterUpload` below:
+      // cb(error) makes multer v2 abort the multipart stream, which answers with
+      // a TCP RST rather than a response and poisons iOS Safari's connection
+      // pool. Every route using this instance already handles the flag and
+      // returns a 400 saying which type arrived — that handling was unreachable
+      // while this threw. The accepted type is unchanged.
+      (req as any)._multerRejectedMimetype =
+        String(file.mimetype || "").toLowerCase() || file.originalname || "unknown";
+      cb(null, false);
     }
   },
 });

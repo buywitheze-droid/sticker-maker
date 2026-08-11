@@ -1,7 +1,8 @@
 import { useCallback, useRef } from "react";
 import JSZip from "jszip";
-import { EXPORT_DPI, EXPORT_TIMEOUT_MS } from "./constants";
+import { EXPORT_DPI } from "./constants";
 import {
+  assertPrintSourcesReadable,
   canUseMemoryEfficientPngExport,
   decodePrintSourceAtSize,
   exportPngWithWorker,
@@ -22,6 +23,181 @@ import type { DesignItem } from "@/lib/types";
 /** Sheet names are customer-typed, so they cannot be trusted as filenames. */
 function safeSheetFileName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "sheet";
+}
+
+/** Names Windows refuses to create a file for, whatever the extension. */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
+
+/**
+ * Make a filename Windows will actually accept.
+ *
+ * The base name reaching here is a design name, which is usually an uploaded
+ * filename and therefore anything at all: `Logo 3/4" <final>.png`, a pasted
+ * path, a 300-character product title, emoji. The browser hands `download`
+ * to the OS close to verbatim, so a single `:` or a trailing dot is enough to
+ * fail the save after the sheet has already rendered — the expensive half of
+ * the operation, thrown away at the last step.
+ *
+ * Only the illegal characters are replaced: the customer still recognises the
+ * file they asked for.
+ */
+function safeDownloadFileName(filename: string, fallbackBase = "gangsheet"): string {
+  const raw = String(filename ?? "");
+  const dot = raw.lastIndexOf(".");
+  const hasExt = dot > 0 && dot > raw.length - 12;
+  const extension = hasExt ? raw.slice(dot + 1).replace(/[^a-z0-9]/gi, "") : "";
+  const base = hasExt ? raw.slice(0, dot) : raw;
+
+  const cleaned = base
+    // Reserved on Windows, plus control characters, which also break the header.
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]+/g, "-")
+    .replace(/\s+/g, " ")
+    // A name may not end in a dot or a space; Explorer silently strips them and
+    // then cannot find the file it was told to write.
+    .replace(/^[.\s]+/, "")
+    .replace(/[.\s]+$/, "")
+    // Long names are legal until the destination folder makes the whole path
+    // exceed MAX_PATH, which is not something this side can measure.
+    .slice(0, 120)
+    .replace(/[.\s]+$/, "");
+
+  const safeBase = WINDOWS_RESERVED_NAME.test(cleaned) ? `${cleaned}-sheet` : cleaned || fallbackBase;
+  return extension ? `${safeBase}.${extension}` : safeBase;
+}
+
+/**
+ * How long the blob URL behind a download has to stay alive.
+ *
+ * Revoking it is what ends the download, not the click: the browser reads the
+ * blob while it writes the file, so the URL has to outlive the whole save.
+ * That includes anything between the click and the first byte — a "Save as"
+ * dialog waiting on the customer, SmartScreen, an antivirus hook — and then
+ * the write itself, onto whatever disk or synced folder they chose.
+ *
+ * The old formula was `max(5s, bytes / 100_000)`, which reads as "longer for
+ * bigger files" but is not: the division only overtakes the 5 second floor
+ * above 500 MB, so every production sheet got exactly 5 seconds. A second per
+ * megabyte from a one minute floor is generous in the units that matter, and
+ * the cost of being generous is a blob held a little longer.
+ */
+function revokeDelayMs(bytes: number): number {
+  const perMegabyte = Math.round(bytes / 1_000_000) * 1_000;
+  return Math.min(20 * 60_000, Math.max(60_000, perMegabyte));
+}
+
+/** Structural shape of the parts of the File System Access API used here. */
+type SaveFileHandle = {
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+    abort?: () => Promise<void>;
+  }>;
+};
+type ShowSaveFilePicker = (options: {
+  suggestedName?: string;
+  types?: Array<{ description?: string; accept: Record<string, string[]> }>;
+}) => Promise<SaveFileHandle>;
+
+/** The customer dismissed the save dialog. Not a failure, so not a toast. */
+class SaveCancelled extends Error {
+  constructor() {
+    super("The customer cancelled the save dialog.");
+    this.name = "SaveCancelled";
+  }
+}
+
+/**
+ * When a sheet is big enough to be worth choosing a destination for up front.
+ *
+ * Below this the anchor download is quick and silent, and interrupting every
+ * small download with a dialog to prevent a failure it will not have is a bad
+ * trade. 120 megapixels is about a 22 x 60 inch sheet at 300 DPI.
+ */
+const PICKER_MIN_SHEET_PIXELS = 120_000_000;
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  pdf: "application/pdf",
+  zip: "application/zip",
+};
+
+/**
+ * Ask the customer where to put the file *before* the sheet is rendered, and
+ * write straight into it when the render finishes.
+ *
+ * This exists because the anchor-and-blob-URL download has a race no amount of
+ * care removes: the object URL has to be revoked eventually, the browser is
+ * reading it while it writes the file, and nothing tells the page when that
+ * write has finished. Handing the bytes to a file the customer already chose
+ * skips the blob URL, the revoke, and the copy the browser takes on the way to
+ * disk — the sheet streams from blob storage into the file.
+ *
+ * It has to be requested on the click. The picker needs transient user
+ * activation, and rendering a large gangsheet takes minutes, by which point the
+ * activation from the click that started it is long gone. Asking first also
+ * means a customer who changes their mind does so before the work, not after.
+ *
+ * Returns null whenever the API is unavailable or refuses — an unsupported
+ * browser, or an embedded builder iframe, where it is blocked — and the caller
+ * falls back to the anchor path.
+ *
+ * Accepting the dialog creates the file immediately, so an export that fails
+ * afterwards leaves an empty one behind. That is the API's behaviour and not
+ * something this side can defer; a visibly empty file is at least honest about
+ * what happened.
+ */
+async function reserveSaveTarget(suggestedName: string): Promise<SaveFileHandle | null> {
+  // Called as a method so `this` is the window; the API rejects a bare call.
+  const host = window as unknown as { showSaveFilePicker?: ShowSaveFilePicker };
+  if (typeof host.showSaveFilePicker !== "function") return null;
+  const safeName = safeDownloadFileName(suggestedName);
+  const extension = safeName.slice(safeName.lastIndexOf(".") + 1).toLowerCase();
+  const mime = MIME_BY_EXTENSION[extension];
+  try {
+    return await host.showSaveFilePicker({
+      suggestedName: safeName,
+      types: mime ? [{ description: `${extension.toUpperCase()} file`, accept: { [mime]: [`.${extension}`] } }] : undefined,
+    });
+  } catch (error) {
+    if ((error as DOMException)?.name === "AbortError") throw new SaveCancelled();
+    // SecurityError in an iframe, NotAllowedError without activation, or an
+    // implementation that does not have the API at all.
+    console.warn("[export] save dialog unavailable; using the standard download", error);
+    return null;
+  }
+}
+
+/** Reserve a destination only for sheets large enough to justify the dialog. */
+async function reserveTargetForLargeSheet(
+  suggestedName: string,
+  outputPixels: number,
+): Promise<SaveFileHandle | null> {
+  if (outputPixels < PICKER_MIN_SHEET_PIXELS) return null;
+  return reserveSaveTarget(suggestedName);
+}
+
+/** Output pixels a sheet of this size has at print resolution. */
+function sheetPixels(widthInches: number, heightInches: number): number {
+  return Math.max(0, widthInches) * Math.max(0, heightInches) * EXPORT_DPI * EXPORT_DPI;
+}
+
+/** The name a sheet's file takes from the artwork on it. */
+function exportBaseName(designs: Array<{ name?: string }>, fallbackFileName?: string): string {
+  return (designs[0]?.name || fallbackFileName || 'gangsheet').replace(/\.[^/.]+$/, '');
+}
+
+const EMPTY_EXPORT_MESSAGE = "The export finished without producing any image data. Please try again.";
+
+async function writeToSaveTarget(handle: SaveFileHandle, blob: Blob): Promise<void> {
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    // Leave no half-written file behind for a customer to send to a printer.
+    try { await writable.abort?.(); } catch { /* already broken */ }
+    throw error;
+  }
 }
 
 export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
@@ -83,7 +259,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
       if (exportDesigns.some(design => !isRecoverableImageInfo(design.imageInfo))) {
         throw new Error("A design image could not be reloaded. Your progress is saved; recover the draft and try again.");
       }
-      const firstName = (exportDesigns[0]?.name || imageInfo?.file.name || 'gangsheet').replace(/\.[^/.]+$/, '');
+      const firstName = exportBaseName(exportDesigns, imageInfo?.file.name);
 
       await new Promise(r => setTimeout(r, 50));
 
@@ -114,6 +290,21 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
         d.halftoned ? undefined : (vectorSourceByDesignId.get(d.id) ?? d.imageInfo.exportBlob);
       const printSourceCropFor = (d: typeof exportDesigns[number]) =>
         d.halftoned || vectorSourceByDesignId.has(d.id) ? undefined : d.imageInfo.exportCrop;
+
+      // Check every print source can be read before rendering anything, for all
+      // output formats.
+      //
+      // The PNG worker path asserts this too, but the PDF and non-worker canvas
+      // paths reach their sources through `decodePrintSourceAtSize`, which
+      // answers *any* failure — unsupported codec, wrong framing, unreadable
+      // file — by returning null so the caller draws the preview instead. That
+      // is right for a framing mismatch and wrong for a missing file: the
+      // preview is capped at MAX_STORED_IMAGE_DIMENSION, so a fluorescent PDF
+      // would have gone to the printer soft, with nothing said. Checked here,
+      // once, so the answer cannot differ by format.
+      await assertPrintSourcesReadable(
+        exportDesigns.map(d => ({ source: printSourceFor(d), label: d.name })),
+      );
 
       if (format === 'pdf') {
         const { PDFDocument, degrees } = await import('pdf-lib');
@@ -607,18 +798,63 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
     }
   }, [toast, t, setExportProgressLabel, ensureDesignImagesAvailable]);
 
-  /** Save a blob to the customer's machine. */
+  /**
+   * Save a blob to the customer's machine.
+   *
+   * Everything that reaches a customer's disk goes through here, so this is
+   * where the filename is made safe and the empty-file case is caught. An
+   * export that silently produced nothing used to save a 0-byte file, which
+   * looks like a successful download until it is opened.
+   */
   const triggerDownload = useCallback((blob: Blob, filename: string) => {
+    if (!blob || blob.size === 0) {
+      throw new Error(EMPTY_EXPORT_MESSAGE);
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = filename;
+    link.download = safeDownloadFileName(filename);
+    link.rel = 'noopener';
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    // Large blobs take longer to hand over; revoking too early aborts the save.
-    setTimeout(() => URL.revokeObjectURL(url), Math.max(5000, Math.round(blob.size / 100000)));
+
+    let revoked = false;
+    const onPageHide = (event: PageTransitionEvent) => {
+      // `pagehide` also fires when the document enters the back/forward cache,
+      // and such a page can be restored with the download still being written.
+      // Only a real teardown is the moment this URL is certainly finished with;
+      // revoking on a bfcache entry would throw away a live download.
+      if (!event.persisted) revoke();
+    };
+    const revoke = () => {
+      if (revoked) return;
+      revoked = true;
+      window.removeEventListener('pagehide', onPageHide);
+      URL.revokeObjectURL(url);
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.setTimeout(revoke, revokeDelayMs(blob.size));
   }, []);
+
+  /**
+   * Put a finished sheet where it belongs: into the file the customer chose
+   * before the render started, or, when there is no such file, through the
+   * anchor download.
+   */
+  const saveExport = useCallback(async (
+    blob: Blob,
+    filename: string,
+    target: SaveFileHandle | null,
+  ) => {
+    if (!target) {
+      triggerDownload(blob, filename);
+      return;
+    }
+    if (!blob || blob.size === 0) throw new Error(EMPTY_EXPORT_MESSAGE);
+    await writeToSaveTarget(target, blob);
+  }, [triggerDownload]);
 
   /**
    * Warn when a sheet that just downloaded is softer than it should be.
@@ -643,26 +879,32 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
     format: string = 'png',
     spotColorsByDesign?: Record<string, any[]>,
   ) => {
-    const { designs, artboardWidth, artboardHeight } = exportLiveRef.current;
+    const { designs, imageInfo, artboardWidth, artboardHeight } = exportLiveRef.current;
     if (designs.length === 0) {
       toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
       return;
     }
-    setIsProcessing(true);
     try {
+      // Before the render, while the click still counts as user activation.
+      const target = await reserveTargetForLargeSheet(
+        `${exportBaseName(designs, imageInfo?.file.name)}.${format === 'pdf' ? 'pdf' : 'png'}`,
+        sheetPixels(artboardWidth, artboardHeight),
+      );
+      setIsProcessing(true);
       await new Promise(r => setTimeout(r, 50));
       const { blob, baseName, extension, softDesigns } = await exportSheetBlob({
         designs, artboardWidth, artboardHeight, format, spotColorsByDesign,
       });
-      triggerDownload(blob, `${baseName}.${extension}`);
+      await saveExport(blob, `${baseName}.${extension}`, target);
       warnAboutSoftDesigns(softDesigns);
     } catch (error) {
+      if (error instanceof SaveCancelled) return;
       console.error("Download failed:", error);
       toast({ title: t("toast.downloadFailed"), description: error instanceof Error ? error.message : t("toast.downloadFailedDesc"), variant: "destructive" });
     } finally {
       setIsProcessing(false);
     }
-  }, [toast, t, setIsProcessing, exportSheetBlob, triggerDownload, warnAboutSoftDesigns]);
+  }, [toast, t, setIsProcessing, exportSheetBlob, saveExport, warnAboutSoftDesigns]);
 
   /**
    * Download every sheet that has artwork on it.
@@ -682,14 +924,24 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
       toast({ title: t("toast.noDesigns"), description: t("toast.noDesignsDesc"), variant: "destructive" });
       return;
     }
-    setIsProcessing(true);
+    const extension = format === 'pdf' ? 'pdf' : 'png';
+    const multiple = sheetsWithDesigns.length > 1;
     try {
+      // One reservation covers the whole batch, whether it ends up as a single
+      // sheet or a ZIP, and it has to happen on the click.
+      const target = await reserveTargetForLargeSheet(
+        multiple
+          ? 'gangsheet-export.zip'
+          : `${safeSheetFileName(sheetsWithDesigns[0].name)}.${extension}`,
+        sheetsWithDesigns.reduce((sum, s) => sum + sheetPixels(artboardWidth, s.artboardHeight), 0),
+      );
+      setIsProcessing(true);
       await new Promise(r => setTimeout(r, 50));
       const allSoftDesigns: VectorPrintSourceShortfall[] = [];
 
-      if (sheetsWithDesigns.length === 1) {
+      if (!multiple) {
         const sheet = sheetsWithDesigns[0];
-        const { blob, extension, softDesigns } = await exportSheetBlob({
+        const { blob, extension: ext, softDesigns } = await exportSheetBlob({
           designs: sheet.designs,
           artboardWidth,
           artboardHeight: sheet.artboardHeight,
@@ -698,7 +950,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           // full map so every sheet can look up its own fluorescent assignments.
           spotColorsByDesign,
         });
-        triggerDownload(blob, `${safeSheetFileName(sheet.name)}.${extension}`);
+        await saveExport(blob, `${safeSheetFileName(sheet.name)}.${ext}`, target);
         warnAboutSoftDesigns(softDesigns);
         return;
       }
@@ -707,7 +959,7 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
       for (let i = 0; i < sheetsWithDesigns.length; i++) {
         const sheet = sheetsWithDesigns[i];
         setExportProgressLabel(t("editor.exportSheetProgress", { current: i + 1, total: sheetsWithDesigns.length }));
-        const { blob, extension, softDesigns } = await exportSheetBlob({
+        const { blob, extension: ext, softDesigns } = await exportSheetBlob({
           designs: sheet.designs,
           artboardWidth,
           artboardHeight: sheet.artboardHeight,
@@ -715,25 +967,30 @@ export function useImageEditorModelExport(bag: ImageEditorBagAfterUploadCrop) {
           spotColorsByDesign,
           quiet: i > 0,
         });
-        zip.file(`sheet-${i + 1}-${safeSheetFileName(sheet.name)}.${extension}`, blob);
+        zip.file(`sheet-${i + 1}-${safeSheetFileName(sheet.name)}.${ext}`, blob);
         allSoftDesigns.push(...softDesigns);
       }
       setExportProgressLabel(t("editor.exportFinalizing"));
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      triggerDownload(zipBlob, 'gangsheet-export.zip');
+      // Stored, not deflated. Every entry is a PNG or a PDF, so it is already
+      // compressed: deflating it again spends minutes of main-thread time and a
+      // second copy of the whole archive to save a fraction of a percent, and
+      // that second copy is what a large multi-sheet export runs out of.
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      await saveExport(zipBlob, 'gangsheet-export.zip', target);
       toast({
         title: t("toast.exportComplete"),
         description: t("toast.exportCompleteDesc", { n: sheetsWithDesigns.length }),
       });
       warnAboutSoftDesigns(allSoftDesigns);
     } catch (error) {
+      if (error instanceof SaveCancelled) return;
       console.error("Multi-sheet download failed:", error);
       toast({ title: t("toast.downloadFailed"), description: error instanceof Error ? error.message : t("toast.downloadFailedDesc"), variant: "destructive" });
     } finally {
       setExportProgressLabel(undefined);
       setIsProcessing(false);
     }
-  }, [toast, t, setIsProcessing, setExportProgressLabel, exportSheetBlob, triggerDownload, warnAboutSoftDesigns]);
+  }, [toast, t, setIsProcessing, setExportProgressLabel, exportSheetBlob, saveExport, warnAboutSoftDesigns]);
 
   const fileToDataUrl = useCallback((file: File): Promise<string> => {
     return new Promise((resolve, reject) => {

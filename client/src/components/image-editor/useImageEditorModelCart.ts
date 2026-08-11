@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { uploadProductionToR2, canUseShellRelay } from "@/lib/r2-direct-upload";
 import { EXPORT_DPI, EXPORT_TIMEOUT_MS } from "./constants";
 import {
+  assertPrintSourcesReadable,
   canUseMemoryEfficientPngExport,
   decodePrintSourceAtSize,
   exportPngWithWorker,
@@ -343,6 +344,13 @@ export function useImageEditorModelCart(bag: ImageEditorBagAfterExport) {
         const printSourceCropFor = (d: typeof exportDesignsSource[number]) =>
           d.halftoned || vectorSourceByDesignId.has(d.id) ? undefined : d.imageInfo.exportCrop;
 
+        // A source that cannot be read stops the order here rather than being
+        // quietly swapped for the capped preview. Nobody inspects a production
+        // file before it is printed, so this path least of all may degrade.
+        await assertPrintSourcesReadable(
+          exportDesignsSource.map(d => ({ source: printSourceFor(d), label: d.name })),
+        );
+
         if (useWorker) {
           const result = await exportPngWithWorker({
             designs: exportDesignsSource.map(d => ({
@@ -471,6 +479,13 @@ export function useImageEditorModelCart(bag: ImageEditorBagAfterExport) {
           d.halftoned ? undefined : (vectorSourceByDesignId.get(d.id) ?? d.imageInfo.exportBlob);
         const printSourceCropFor = (d: typeof exportDesignsSource[number]) =>
           d.halftoned || vectorSourceByDesignId.has(d.id) ? undefined : d.imageInfo.exportCrop;
+
+        // As above: an unreadable print source fails the order instead of
+        // printing the preview.
+        await assertPrintSourcesReadable(
+          exportDesignsSource.map(d => ({ source: printSourceFor(d), label: d.name })),
+        );
+
         // Per-copy PDF embed cache. Duplicates with the same source and
         // matching rasterization parameters share a single embedded PNG.
         // pdfDoc.embedPng parses the whole PNG, so this is a big win when
