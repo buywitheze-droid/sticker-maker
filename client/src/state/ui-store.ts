@@ -54,6 +54,8 @@ interface UiState {
   activeSpotChannel: string | null;
   spotPreviewData: SpotPreviewData;
   cropModalDesignId: string | null;
+  /** Synced from the editor so the page header can show the current sheet size. */
+  headerArtboardHeight: number;
 
   setContextMenu: (menu: ContextMenuState) => void;
   setMobilePanel: (panel: MobilePanel) => void;
@@ -72,6 +74,7 @@ interface UiState {
   setActiveSpotChannel: (channel: string | null) => void;
   setSpotPreviewData: (data: SpotPreviewData) => void;
   setCropModalDesignId: (id: string | null) => void;
+  setHeaderArtboardHeight: (h: number) => void;
 }
 
 const DEFAULT_SPOT_PREVIEW: SpotPreviewData = { enabled: false, colors: [] };
@@ -86,6 +89,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeSpotChannel: null,
   spotPreviewData: DEFAULT_SPOT_PREVIEW,
   cropModalDesignId: null,
+  headerArtboardHeight: 12,
 
   setContextMenu: (menu) => set({ contextMenu: menu }),
   setMobilePanel: (panel) => set({ mobilePanel: panel }),
@@ -120,6 +124,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setActiveSpotChannel: (channel) => set({ activeSpotChannel: channel }),
   setSpotPreviewData: (data) => set({ spotPreviewData: data }),
   setCropModalDesignId: (id) => set({ cropModalDesignId: id }),
+  setHeaderArtboardHeight: (h) => set({ headerArtboardHeight: h }),
 }));
 
 // --------------------------------------------------------------------------

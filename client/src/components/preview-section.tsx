@@ -4923,11 +4923,12 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                        beside "Deshacer" and "Rehacer" left no width for the
                        zoom controls at 390px. It groups with the zoom buttons
                        either way, which have always been icons. */
-                    className="min-w-[40px] min-h-[40px] h-8 w-10 p-0 hover:bg-gray-200 rounded text-gray-700 flex items-center justify-center"
+                    className={`h-8 px-2 hover:bg-gray-200 rounded text-gray-700 whitespace-nowrap ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} font-medium flex items-center gap-1`}
                     title={t("preview.resetView")}
                     aria-label={t("preview.resetView")}
                   >
-                    <RotateCcw className="h-4 w-4 flex-shrink-0" />
+                    <RotateCcw className="h-3.5 w-3.5 flex-shrink-0" />
+                    {t("preview.reset")}
                   </Button>
                 )}
                 <div className="flex items-center gap-0 flex-shrink-0 items-center">
@@ -5010,11 +5011,11 @@ const PreviewSection = forwardRef<HTMLCanvasElement, PreviewSectionProps>(
                     variant="ghost"
                     size="sm"
                     onClick={zoomToSelected}
-                     className={`${isMobile ? 'min-w-[36px] min-h-[36px] h-8 w-8 p-0 justify-center' : 'h-7 px-2'} hover:bg-gray-200 rounded text-gray-700 whitespace-nowrap ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} font-medium flex items-center`}
+                     className={`${isMobile ? 'h-8 px-2' : 'h-7 px-2'} hover:bg-gray-200 rounded text-gray-700 whitespace-nowrap ${lang !== 'en' ? 'text-[11px]' : 'text-[12px]'} font-medium flex items-center gap-1`}
                     title={t("preview.focusTitle")}
                   >
-                    <Focus className={`${isMobile ? 'h-4 w-4' : 'h-2.5 w-2.5 mr-0.5'} flex-shrink-0`} />
-                    {!isMobile && t("preview.focus")}
+                    <Focus className="h-2.5 w-2.5 flex-shrink-0" />
+                    {t("preview.focus")}
                   </Button>
                 )}
               </div>
