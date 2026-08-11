@@ -10,6 +10,7 @@ import ArrangeWorkerModule from "@/lib/arrange-worker?worker";
 import {
   ADD_TO_CART_LABEL_MAX_LEN,
   EXPORT_DPI,
+  EXPORT_TIMEOUT_MS,
   RASTER_DPI_FALLBACK,
 } from "./constants";
 
@@ -168,6 +169,21 @@ export function getExportWorker(): Worker | null {
     catch { return null; }
   }
   return _exportWorker;
+}
+
+/**
+ * Kill the shared export worker so the next export spawns a fresh one.
+ *
+ * Same reasoning as `discardArrangeWorker`, with the added problem that an
+ * export holds decoded bitmaps and rendered stamps: an abandoned one keeps
+ * hundreds of megabytes alive while the customer tries again.
+ */
+export function discardExportWorker(): void {
+  const worker = _exportWorker;
+  _exportWorker = null;
+  if (worker) {
+    try { worker.terminate(); } catch { /* worker already dead */ }
+  }
 }
 
 export function canUseMemoryEfficientPngExport(): boolean {
@@ -357,6 +373,65 @@ export async function decodePrintSourceAtSize(
 }
 
 /**
+ * Fail before rendering, and in words a customer can act on, when a design's
+ * print source cannot be read.
+ *
+ * Older designs — anything imported before uploads started being copied into
+ * blobs the app owns — hold a reference to a file on the customer's disk. If it
+ * has since moved, been re-saved, or been turned back into a cloud placeholder,
+ * the read fails deep in the export with the browser's own wording: "A
+ * requested file or directory could not be found at the time an operation was
+ * processed." That arrives after the sheet has rendered, names nothing, and
+ * reads like the download broke rather than like a file is missing.
+ *
+ * Deliberately not a fallback to the preview image. The preview is capped at
+ * MAX_STORED_IMAGE_DIMENSION, so substituting it would hand over a production
+ * file that is soft at print size — and nobody inspects a gangsheet before it
+ * goes on the printer.
+ */
+export async function assertPrintSourceReadable(source: Blob, label?: string): Promise<void> {
+  const name = label ? `“${label.replace(/\.[^/.]+$/, "")}”` : "a design";
+  const advice = `Re-upload ${label ? "that design" : "it"} and try again.`;
+  if (source.size === 0) {
+    throw new Error(`The print file for ${name} is empty. ${advice}`);
+  }
+  try {
+    // One byte is enough: the read goes through the same path as the whole
+    // file, so a source that is gone fails here instead of mid-render.
+    await source.slice(0, 1).arrayBuffer();
+  } catch {
+    throw new Error(
+      `The original file for ${name} can no longer be read from this device, so this sheet cannot be printed at full resolution. ${advice}`,
+    );
+  }
+}
+
+/**
+ * Check a sheet's print sources, reading each distinct one once.
+ *
+ * Duplicates share a single blob: a sheet holding two hundred copies of three
+ * uploads has three print sources, not two hundred. Keying on blob identity is
+ * what keeps this proportional to the uploads rather than to the layout, which
+ * matters because the sheets with the most copies are already the slowest ones
+ * to export. The message names a design, so the first one using each source
+ * supplies the label.
+ *
+ * Every export and add-to-cart path goes through here rather than mapping
+ * `assertPrintSourceReadable` itself, so the four of them cannot drift apart.
+ */
+export async function assertPrintSourcesReadable(
+  designs: Iterable<{ source: Blob | undefined; label?: string }>,
+): Promise<void> {
+  const labelBySource = new Map<Blob, string | undefined>();
+  for (const { source, label } of designs) {
+    if (source && !labelBySource.has(source)) labelBySource.set(source, label);
+  }
+  await Promise.all(
+    Array.from(labelBySource, ([source, label]) => assertPrintSourceReadable(source, label)),
+  );
+}
+
+/**
  * Drop a print-source blob that would print with the wrong framing.
  *
  * Used by the PNG worker path, which cannot see the preview image once the
@@ -395,7 +470,7 @@ export async function discardMismatchedPrintSource(
   return { sourceBlob };
 }
 
-function imageToExportBuffer(image: HTMLImageElement): Promise<ArrayBuffer> {
+function imageToExportBlob(image: HTMLImageElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const width = image.naturalWidth || image.width;
     const height = image.naturalHeight || image.height;
@@ -415,9 +490,7 @@ function imageToExportBuffer(image: HTMLImageElement): Promise<ArrayBuffer> {
     canvas.toBlob((blob) => {
       canvas.width = 0;
       canvas.height = 0;
-      if (blob) {
-        blob.arrayBuffer().then(resolve).catch(reject);
-      }
+      if (blob) resolve(blob);
       else reject(new Error("Could not encode an export image."));
     }, "image/png");
   });
@@ -427,19 +500,26 @@ function imageToExportBuffer(image: HTMLImageElement): Promise<ArrayBuffer> {
 // design N times (very common in gangsheets), we only encode the source once
 // and let the worker cache the decoded bitmap and rendered stamps.
 //
-// A design carrying `sourceBlob` contributes its already-encoded bytes
-// verbatim. Falling back to `imageToExportBuffer` means a full-size canvas
-// plus a PNG encode on the main thread, so it is reserved for sources that
-// only exist as a decoded element (halftoned output, vector rasterisations).
+// A design carrying `sourceBlob` contributes that blob as-is. Falling back to
+// `imageToExportBlob` means a full-size canvas plus a PNG encode on the main
+// thread, so it is reserved for sources that only exist as a decoded element
+// (halftoned output, vector rasterisations).
+//
+// The blob is passed through rather than read into an ArrayBuffer. Reading it
+// was the expensive half of preparing an export: `sourceBlob` is the *full
+// resolution* upload, so a sheet of thirty designs pulled all thirty originals
+// into the main thread's JS heap before rendering began, on top of the sheet
+// itself. Handing the worker blobs leaves those bytes in browser-managed
+// storage, and the worker decodes each one straight to its placed size.
 async function buildDedupedSources(
   designs: PngExportDesign[],
 ): Promise<{
-  sources: ArrayBuffer[];
+  sources: Blob[];
   designSourceIndex: number[];
 }> {
   const imageCache = new WeakMap<HTMLImageElement, number>();
   const blobCache = new WeakMap<Blob, number>();
-  const sources: ArrayBuffer[] = [];
+  const sources: Blob[] = [];
   const designSourceIndex: number[] = new Array(designs.length);
   for (let i = 0; i < designs.length; i++) {
     const { image: img, sourceBlob } = designs[i];
@@ -450,9 +530,9 @@ async function buildDedupedSources(
       designSourceIndex[i] = existing;
       continue;
     }
-    const buffer = sourceBlob ? await sourceBlob.arrayBuffer() : await imageToExportBuffer(img);
+    const source = sourceBlob ?? await imageToExportBlob(img);
     const idx = sources.length;
-    sources.push(buffer);
+    sources.push(source);
     cache.set(key, idx);
     designSourceIndex[i] = idx;
   }
@@ -471,8 +551,14 @@ export async function exportPngWithWorker(options: {
     throw new Error("The memory-efficient PNG export path is unavailable in this browser.");
   }
 
-  // Resolve framing before posting: once buffers leave this thread the worker
-  // can no longer compare them to the preview the customer arranged.
+  // Callers check this too; repeating it at the boundary costs one read per
+  // distinct source and means no future caller can post an unreadable one.
+  await assertPrintSourcesReadable(
+    options.designs.map((design) => ({ source: design.sourceBlob, label: design.name })),
+  );
+
+  // Resolve framing before posting: once the sources leave this thread the
+  // worker can no longer compare them to the preview the customer arranged.
   const framedDesigns: PngExportDesign[] = await Promise.all(
     options.designs.map(async (design) => {
       const resolved = await discardMismatchedPrintSource(
@@ -516,7 +602,7 @@ export async function exportPngWithWorker(options: {
   }));
 
   const requestId = nextExportRequestId();
-  const result = await new Promise<{ buffer: ArrayBuffer; byteLength: number }>((resolve, reject) => {
+  const blob = await new Promise<Blob>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
       worker.removeEventListener("message", onMessage);
@@ -536,45 +622,48 @@ export async function exportPngWithWorker(options: {
       if (settled) return;
       settled = true;
       cleanup();
-      if (event.data.type === "error") {
-        reject(new Error(event.data.error || "Export failed"));
-      } else if (event.data.buffer) {
-        const buffer = event.data.buffer as ArrayBuffer;
-        resolve({
-          buffer,
-          byteLength: Number(event.data.byteLength) > 0 ? Number(event.data.byteLength) : buffer.byteLength,
-        });
-      } else {
-        reject(new Error("Export returned no image data"));
+      try {
+        const result = exportWorkerResultToBlob(event.data);
+        if (result.size === 0) throw new Error("Export returned an empty image");
+        resolve(result);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("Export failed"));
       }
     };
     const onError = (event: ErrorEvent) => {
       if (settled) return;
       settled = true;
       cleanup();
+      // The worker is the thing that failed, so it does not get to serve the
+      // next export.
+      discardExportWorker();
       reject(new Error(event.message || "Export worker crashed"));
     };
     const timer = window.setTimeout(() => {
       if (settled) return;
       settled = true;
       cleanup();
+      // Abandoning a timed-out export without killing the worker left it
+      // rendering a sheet nobody would collect, and this worker is a singleton:
+      // the customer's second attempt queued behind the first and timed out
+      // too, so one slow sheet turned into an editor that could never export
+      // again.
+      discardExportWorker();
       reject(new Error("Export timed out — the gangsheet may be too large. Try a smaller size."));
-    }, 300_000);
+    }, EXPORT_TIMEOUT_MS);
     worker.addEventListener("message", onMessage);
     worker.addEventListener("error", onError);
     try {
-      worker.postMessage(
-        {
-          type: "export",
-          requestId,
-          sources,
-          designs: designPayload,
-          outW: options.outW,
-          outH: options.outH,
-          exportDpi: options.exportDpi,
-        },
+      // No transferables: `sources` are Blobs, which cross as references.
+      worker.postMessage({
+        type: "export",
+        requestId,
         sources,
-      );
+        designs: designPayload,
+        outW: options.outW,
+        outH: options.outH,
+        exportDpi: options.exportDpi,
+      });
     } catch (error) {
       settled = true;
       cleanup();
@@ -582,12 +671,7 @@ export async function exportPngWithWorker(options: {
     }
   });
 
-  // Only the Blob is returned. Handing back the ArrayBuffer as well kept the encoded sheet
-  // alive twice for as long as the caller held the result, and the add-to-cart path then
-  // built further Blobs from it — four live copies of a production PNG that can be 150 MB.
-  // Letting the buffer fall out of scope here means the copy the Blob just took is the only
-  // one that survives this function.
-  return { blob: new Blob([result.buffer], { type: "image/png" }) };
+  return { blob };
 }
 
 let _arrangeWorker: Worker | null = null;

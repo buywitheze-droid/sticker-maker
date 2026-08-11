@@ -10,10 +10,9 @@ interface DesignExportData {
   flipX?: boolean;
   flipY?: boolean;
   // New shape: index into `sources[]` (shared across duplicate designs).
-  // Old shape: an inline per-design PNG buffer. One of the two is set.
+  // Old shape: an inline per-design encoded image. One of the two is set.
   sourceIndex?: number;
-  imageBuffer?: ArrayBuffer;
-  mimeType?: string;
+  imageBlob?: Blob;
   // Content box within the source, in source pixels. Present when the source
   // is an uncropped original (the oversized-raster import path).
   sourceCrop?: { x: number; y: number; width: number; height: number };
@@ -26,9 +25,18 @@ interface ExportInput {
   type: 'export';
   requestId: number;
   designs: DesignExportData[];
-  // Deduplicated source PNG buffers. If designs use `sourceIndex`, they refer
-  // into this array. Absent when the caller uses the older inline shape.
-  sources?: ArrayBuffer[];
+  /**
+   * Deduplicated encoded sources. If designs use `sourceIndex`, they refer into
+   * this array. Absent when the caller uses the older inline shape.
+   *
+   * Blobs rather than ArrayBuffers: a Blob crosses to the worker as a reference
+   * and stays in browser-managed storage, which can page to disk. Reading the
+   * same sources into ArrayBuffers first put every full-resolution upload on the
+   * sheet into the main thread's JS heap at once, before the export had even
+   * started — a heap that is capped, cannot spill, and belongs to the thread the
+   * UI runs on.
+   */
+  sources?: Blob[];
   outW: number;
   outH: number;
   exportDpi: number;
@@ -98,8 +106,6 @@ function stripHeightFor(outW: number): number {
   return Math.max(MIN_STRIP_HEIGHT, Math.min(MAX_STRIP_HEIGHT, byArea));
 }
 const BATCH_ROWS = 1024;
-const MAX_IDAT_BYTES = 2 * 1024 * 1024;
-
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
@@ -188,7 +194,7 @@ type SourceBitmapCache = Map<string, ImageBitmap>;
  */
 async function getSourceBitmap(
   d: DesignExportData,
-  sources: ArrayBuffer[] | undefined,
+  sources: Blob[] | undefined,
   cache: SourceBitmapCache,
   targetW?: number,
   targetH?: number,
@@ -203,9 +209,8 @@ async function getSourceBitmap(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const buf = d.sourceIndex != null && sources ? sources[d.sourceIndex] : d.imageBuffer;
-  if (!buf) throw new Error('Export design is missing image data.');
-  const blob = new Blob([buf], { type: d.mimeType || 'image/png' });
+  const blob = d.sourceIndex != null && sources ? sources[d.sourceIndex] : d.imageBlob;
+  if (!blob || blob.size === 0) throw new Error('Export design is missing image data.');
 
   const resizeQuality: ImageBitmapOptions['resizeQuality'] = d.alphaThresholded ? 'pixelated' : 'high';
   // Match the prepare endpoint: crop rects are in EXIF-oriented pixels.
@@ -249,16 +254,16 @@ async function getSourceBitmap(
 // cache. For the new (deduped) shape the source index is authoritative; for
 // the legacy inline shape we tag each design with a WeakMap-based synthetic
 // index the first time we see it so repeat strips can hit the cache.
-const inlineSourceIndex = new WeakMap<ArrayBuffer, number>();
+const inlineSourceIndex = new WeakMap<Blob, number>();
 let inlineSourceCounter = 0;
 function designSourceKey(d: DesignExportData): string {
   if (d.sourceIndex != null) return `s${d.sourceIndex}`;
-  const buf = d.imageBuffer;
-  if (!buf) return `nil`;
-  let idx = inlineSourceIndex.get(buf);
+  const blob = d.imageBlob;
+  if (!blob) return `nil`;
+  let idx = inlineSourceIndex.get(blob);
   if (idx == null) {
     idx = ++inlineSourceCounter;
-    inlineSourceIndex.set(buf, idx);
+    inlineSourceIndex.set(blob, idx);
   }
   return `i${idx}`;
 }
@@ -331,7 +336,7 @@ async function drawDesignsOnStrip(
   stripY: number,
   stripH: number,
   exportDpi: number,
-  sources: ArrayBuffer[] | undefined,
+  sources: Blob[] | undefined,
   bitmapCache: SourceBitmapCache,
   stampCache: StampCache,
   stampCacheState: { totalBytes: number },
@@ -478,7 +483,17 @@ async function writeStripRows(
   }
 }
 
-async function buildPngStreaming(input: ExportInput): Promise<Uint8Array> {
+/**
+ * How much finished PNG is held as JS arrays before being folded into a Blob.
+ *
+ * Compressed output arrives in small pieces and has to be wrapped in IDAT
+ * chunks. Folding it into a Blob every so often hands those bytes to
+ * browser-managed storage, which can page to disk, instead of letting the whole
+ * file accumulate in the worker's heap.
+ */
+const PNG_COALESCE_BYTES = 16 * 1024 * 1024;
+
+async function buildPngStreaming(input: ExportInput): Promise<Blob> {
   const { designs, sources, outW, outH, exportDpi } = input;
   const ppm = Math.round(exportDpi / 0.0254);
   const designBounds: DesignExportBounds[] = designs.map((design) => {
@@ -530,13 +545,33 @@ async function buildPngStreaming(input: ExportInput): Promise<Uint8Array> {
   const cs = new CompressionStream('deflate');
   const writer = cs.writable.getWriter();
 
-  const compressedParts: Uint8Array[] = [];
+  // The finished file, in order: signature, header chunks, then IDAT chunks as
+  // the compressor produces them. Wrapping each compressed piece in its own
+  // IDAT as it arrives is what makes this streaming — the alternative is to
+  // hold the entire compressed image so its length can be written as a single
+  // chunk header. A PNG may carry any number of IDAT chunks; a decoder
+  // concatenates them, so this is the same image either way, ~12 bytes per
+  // chunk larger.
+  const fileParts: BlobPart[] = [signature, ihdrChunk, physChunk];
+  let pending: Uint8Array[] = [];
+  let pendingBytes = 0;
+  const foldPendingIntoBlob = () => {
+    if (pending.length === 0) return;
+    fileParts.push(new Blob(pending));
+    pending = [];
+    pendingBytes = 0;
+  };
+
   const reader = cs.readable.getReader();
   const readPromise = (async () => {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      compressedParts.push(new Uint8Array(value));
+      if (!value || value.length === 0) continue;
+      const chunk = makePngChunk('IDAT', value);
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+      if (pendingBytes >= PNG_COALESCE_BYTES) foldPendingIntoBlob();
     }
   })();
 
@@ -631,34 +666,13 @@ async function buildPngStreaming(input: ExportInput): Promise<Uint8Array> {
   await writer.close();
   await readPromise;
 
-  let totalCompressed = 0;
-  for (const p of compressedParts) totalCompressed += p.length;
-  const compressed = new Uint8Array(totalCompressed);
-  let pos = 0;
-  for (const p of compressedParts) {
-    compressed.set(p, pos);
-    pos += p.length;
-  }
+  pending.push(makePngChunk('IEND', new Uint8Array(0)));
+  foldPendingIntoBlob();
 
-  const idatChunks: Uint8Array[] = [];
-  for (let i = 0; i < compressed.length; i += MAX_IDAT_BYTES) {
-    idatChunks.push(makePngChunk('IDAT', compressed.subarray(i, Math.min(i + MAX_IDAT_BYTES, compressed.length))));
-  }
-
-  const iendChunk = makePngChunk('IEND', new Uint8Array(0));
-
-  const parts = [signature, ihdrChunk, physChunk, ...idatChunks, iendChunk];
-  const totalLen = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(totalLen);
-  pos = 0;
-  for (const part of parts) {
-    out.set(part, pos);
-    pos += part.length;
-  }
-  return out;
+  return new Blob(fileParts, { type: 'image/png' });
 }
 
-async function runExportLegacy(input: ExportInput): Promise<Uint8Array> {
+async function runExportLegacy(input: ExportInput): Promise<Blob> {
   const { designs, sources, outW, outH, exportDpi } = input;
 
   const canvas = new OffscreenCanvas(outW, outH);
@@ -744,14 +758,7 @@ async function runExportLegacy(input: ExportInput): Promise<Uint8Array> {
     completed: 0,
     total: 1,
   });
-  const totalLen = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(totalLen);
-  let writePos = 0;
-  for (const part of parts) {
-    out.set(part, writePos);
-    writePos += part.length;
-  }
-  return out;
+  return new Blob(parts, { type: 'image/png' });
 }
 
 const hasStreaming = typeof CompressionStream !== 'undefined';
@@ -831,16 +838,14 @@ self.onmessage = async function(e: MessageEvent) {
     return;
   }
   if (e.data.type === 'export') {
-    const designs = e.data.designs as ExportInput['designs'] | undefined;
     try {
-      const bytes = hasStreaming
+      const blob = hasStreaming
         ? await buildPngStreaming(e.data)
         : await runExportLegacy(e.data);
-      const buffer = bytes.buffer as ArrayBuffer;
-      (self as unknown as Worker).postMessage(
-        { type: 'result', requestId: e.data.requestId, buffer, byteLength: bytes.byteLength },
-        [buffer],
-      );
+      if (blob.size === 0) throw new Error('Export produced an empty image.');
+      // A Blob is cloned by reference, so the sheet is not copied on the way
+      // out and never exists as one contiguous allocation on either thread.
+      self.postMessage({ type: 'result', requestId: e.data.requestId, blob, byteLength: blob.size });
     } catch (err: any) {
       self.postMessage({ type: 'error', requestId: e.data.requestId, error: err?.message || 'Export failed' });
     }
