@@ -1335,6 +1335,9 @@ export default function ImageEditorView() {
                           arm; on desktop they go to the sidebar. */}
                       {profile.enableFluorescent && <div ref={setFluorPanelContainer} />}
 
+                      {/* Bottom breathing room so the last layer row isn't
+                          flush against the sheet edge or the home indicator. */}
+                      <div className="h-4 flex-shrink-0" />
                     </>
                   )}
                 </MobileToolSheet>
