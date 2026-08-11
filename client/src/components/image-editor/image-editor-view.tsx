@@ -801,52 +801,48 @@ export default function ImageEditorView() {
           {/* Layers Panel — gate on the unified cross-sheet list so a blank
               active sheet still shows other sheets' rows + "Add here". */}
           {layerRows.length > 0 && (
-            <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
-                <div className="flex flex-1 min-w-0 items-center gap-3 rounded-md px-1.5 py-1 text-base font-semibold text-gray-800 overflow-hidden">
-                  <Layers className="h-7 w-7 flex-shrink-0 text-cyan-500" strokeWidth={2.25} />
-                  <span className="truncate">{t("editor.layers")}</span>
+            <>
+              {/* Add Designs — full-width standalone button, its own line */}
+              <button
+                onClick={() => sidebarFileRef.current?.click()}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-cyan-600 bg-cyan-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-cyan-500/25 transition-all hover:bg-cyan-600 hover:shadow-lg hover:shadow-cyan-500/30 active:scale-[0.98]"
+                title={t("editor.addDesignTitle")}
+              >
+                <Plus className="h-5 w-5 flex-shrink-0" strokeWidth={2.5} />
+                <span>{t("editor.addDesigns")}</span>
+              </button>
+              <input
+                ref={sidebarFileRef}
+                type="file"
+                className="hidden"
+                accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf"
+                multiple
+                onChange={handleSidebarFileChange}
+              />
+
+              {/* Layers card — header only shows icon + name + count now */}
+              <div ref={designInfoRef} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="flex items-center gap-3 px-3 py-2.5 min-w-0">
+                  <Layers className="h-6 w-6 flex-shrink-0 text-cyan-500" strokeWidth={2.25} />
+                  <span className="flex-1 truncate text-base font-semibold text-gray-800">{t("editor.layers")}</span>
                   <span className="flex-shrink-0 rounded-full bg-cyan-100 px-2.5 py-1 text-sm font-bold tabular-nums text-cyan-700">{designs.length}</span>
                 </div>
-                <button
-                  onClick={() => sidebarFileRef.current?.click()}
-                  className="flex min-h-10 flex-shrink-0 items-center gap-1.5 rounded-lg border border-cyan-600 bg-cyan-500 px-4 py-2 text-sm font-bold text-white shadow-md shadow-cyan-500/25 transition-all hover:bg-cyan-600 hover:shadow-lg hover:shadow-cyan-500/30 active:scale-[0.98] whitespace-nowrap"
-                  title={t("editor.addDesignTitle")}
-                >
-                  <Plus className="h-5 w-5 flex-shrink-0" strokeWidth={2.5} />
-                  <span>{t("editor.addDesigns")}</span>
-                </button>
-                <input
-                  ref={sidebarFileRef}
-                  type="file"
-                  className="hidden"
-                  accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf"
-                  multiple
-                  onChange={handleSidebarFileChange}
-                />
+                {showDesignInfo && (
+                  <div
+                    className={`layers-scroll border-t border-gray-200 overflow-y-scroll ${layerRows.length > 2 ? 'max-h-[400px]' : 'max-h-[180px] coarse:max-h-[320px]'}`}
+                    style={{ scrollbarWidth: 'thin', scrollbarColor: '#9ca3af transparent' }}
+                  >
+                    <style>{`
+                      .layers-scroll::-webkit-scrollbar { width: 5px; }
+                      .layers-scroll::-webkit-scrollbar-track { background: transparent; }
+                      .layers-scroll::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
+                      .layers-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+                    `}</style>
+                    {layerListItems}
+                  </div>
+                )}
               </div>
-              {showDesignInfo && (
-                /* The short cap exists so a one- or two-layer list does not
-                   reserve empty space. A touch row is 152px against 87px for a
-                   mouse, so 180px shows barely one of them; the coarse cap is
-                   sized to fit two. */
-                <div
-                  className={`layers-scroll border-t border-gray-200 overflow-y-scroll ${layerRows.length > 2 ? 'max-h-[400px]' : 'max-h-[180px] coarse:max-h-[320px]'}`}
-                  style={{
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: '#9ca3af transparent',
-                  }}
-                >
-                  <style>{`
-                    .layers-scroll::-webkit-scrollbar { width: 5px; }
-                    .layers-scroll::-webkit-scrollbar-track { background: transparent; }
-                    .layers-scroll::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
-                    .layers-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
-                  `}</style>
-                  {layerListItems}
-                </div>
-              )}
-            </div>
+            </>
           )}
 
           {/* Uploads library panel — previously uploaded files, re-addable.

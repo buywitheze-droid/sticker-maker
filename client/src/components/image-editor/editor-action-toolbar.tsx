@@ -262,23 +262,6 @@ if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contain
     {/* Row 1: Upload, file info, Auto-Arrange, Undo/Redo/Dup/Del */}
     <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-wrap flex-shrink-0 lg:basis-full lg:flex-nowrap lg:items-start">
       <div className="contents lg:flex lg:flex-1 lg:min-w-0 lg:flex-wrap lg:items-center lg:gap-2">
-      <UploadSection
-        onImageUpload={handleFileUploadUnified}
-        onBatchStart={handleBatchStart}
-        imageInfo={activeImageInfo}
-        embedCompact={embedFromShopify}
-      />
-      {isUploading && (
-        <div className="flex items-center gap-1.5 text-cyan-400">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span className="text-[11px]">{t("editor.processing")}</span>
-        </div>
-      )}
-      {activeImageInfo?.file?.name && (
-        <p className="text-[11px] text-gray-600 truncate max-w-[100px] hidden sm:block" title={activeImageInfo.file.name}>
-          {activeImageInfo.file.name}
-        </p>
-      )}
       {/* Wraps at lg because a narrow landscape tablet (1024px) leaves this row
           about 30px short of holding both button groups, and the toolbar clips
           rather than scrolls — "Duplicate & Arrange" was being cut in half. */}
@@ -317,64 +300,7 @@ if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contain
           </div>
           )}
         </div>
-        {!isMobile && (
-          <div className="flex items-center gap-1">
-            {/* `coarse:` sizing, not `lg:`, because a tablet renders this desktop
-                arm on a touch screen. 16px is the threshold below which iOS
-                Safari zooms the page in on focus, and the widget has to widen to
-                hold three digits at that size without clipping.
 
-                The height needs `!`: Tailwind emits custom variants ahead of the
-                responsive ones, so `lg:h-[24px]` would otherwise win on a tablet
-                and leave a 24px target under a 16px input. */}
-            <div className="relative w-10 coarse:w-16 h-[28px] lg:h-[24px] coarse:!h-8 rounded border border-gray-300 bg-white overflow-hidden focus-within:border-cyan-500">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={duplicateCount}
-                onChange={(e) => setDuplicateCount(parseDuplicateCount(e.target.value))}
-                onKeyDown={handleDuplicateCountKeyDown}
-                disabled={!selectedDesignId}
-                className="w-full h-full text-center text-[11px] coarse:text-[16px] leading-none p-0 pr-3 coarse:pr-6 bg-white outline-none disabled:opacity-30 disabled:pointer-events-none"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                title="Number of copies"
-              />
-              <div className="absolute right-0 top-0 h-full w-3 coarse:w-6 border-l border-gray-300 overflow-hidden rounded-r">
-                <button
-                  type="button"
-                  onClick={() => setDuplicateCount((prev) => clampDuplicateCount(prev + 1))}
-                  disabled={!selectedDesignId || duplicateCount >= 99}
-                  className="h-1/2 w-full flex items-center justify-center border-b border-gray-300 bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
-                  title="Increase copies"
-                >
-                  <ChevronUp className="w-2.5 h-2.5 coarse:w-4 coarse:h-4 text-gray-600" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDuplicateCount((prev) => clampDuplicateCount(prev - 1))}
-                  disabled={!selectedDesignId || duplicateCount <= 1}
-                  className="h-1/2 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
-                  title="Decrease copies"
-                >
-                  <ChevronDown className="w-2.5 h-2.5 coarse:w-4 coarse:h-4 text-gray-600" />
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={() => handleDuplicateAndArrange(duplicateCount)}
-              disabled={!selectedDesignId}
-              className={`flex items-center gap-1 px-2 py-1 lg:px-4 lg:py-2 rounded-md transition-all whitespace-nowrap ${lang !== 'en' ? 'text-[11px] lg:text-sm' : 'text-[12px] lg:text-sm'} font-semibold shadow-sm min-h-[36px] ${
-                selectedDesignId
-                  ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
-                  : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
-              }`}
-              title={t("editor.duplicateArrangeTitle")}
-            >
-              <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
-              {t("editor.duplicateArrange")}
-            </button>
-          </div>
-        )}
       </div>
       <div className="flex min-w-0 items-center justify-end gap-0.5 flex-wrap">
         <button
@@ -527,6 +453,50 @@ if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contain
             <LayoutGrid className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
             {t("editor.autoArrange")}
           </button>
+          {/* Duplicate & Arrange — count spinner + button, lives beside Auto Arrange */}
+          <div className="flex items-center gap-0.5">
+            <div className="relative w-10 coarse:w-16 h-[28px] coarse:!h-8 rounded border border-gray-300 bg-white overflow-hidden focus-within:border-cyan-500">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={duplicateCount}
+                onChange={(e) => setDuplicateCount(parseDuplicateCount(e.target.value))}
+                onKeyDown={handleDuplicateCountKeyDown}
+                disabled={!selectedDesignId}
+                className="w-full h-full text-center text-[11px] coarse:text-[16px] leading-none p-0 pr-3 coarse:pr-6 bg-white outline-none disabled:opacity-30 disabled:pointer-events-none"
+                title="Number of copies"
+              />
+              <div className="absolute right-0 top-0 h-full w-3 coarse:w-6 border-l border-gray-300 overflow-hidden rounded-r">
+                <button
+                  type="button"
+                  onClick={() => setDuplicateCount((prev) => clampDuplicateCount(prev + 1))}
+                  disabled={!selectedDesignId || duplicateCount >= 99}
+                  className="h-1/2 w-full flex items-center justify-center border-b border-gray-300 bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                  title="Increase copies"
+                ><ChevronUp className="w-2.5 h-2.5 coarse:w-4 coarse:h-4 text-gray-600" /></button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateCount((prev) => clampDuplicateCount(prev - 1))}
+                  disabled={!selectedDesignId || duplicateCount <= 1}
+                  className="h-1/2 w-full flex items-center justify-center bg-gray-50 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+                  title="Decrease copies"
+                ><ChevronDown className="w-2.5 h-2.5 coarse:w-4 coarse:h-4 text-gray-600" /></button>
+              </div>
+            </div>
+            <button
+              onClick={() => handleDuplicateAndArrange(duplicateCount)}
+              disabled={!selectedDesignId}
+              className={`flex items-center gap-1 px-2 py-1 lg:px-3 lg:py-2 rounded-md transition-all whitespace-nowrap text-[11px] lg:text-sm font-semibold shadow-sm min-h-[28px] ${
+                selectedDesignId
+                  ? 'bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0891B2] border border-[#CBD5E1] shadow-none'
+                  : 'bg-gray-200 text-gray-500 opacity-30 pointer-events-none'
+              }`}
+              title={t("editor.duplicateArrangeTitle")}
+            >
+              <Copy className="w-3 h-3 lg:w-4 lg:h-4" />
+              {t("editor.duplicateArrange")}
+            </button>
+          </div>
           {/* Margin — stacked label above select, sits right next to Auto Arrange */}
           {designs.length >= 2 && (
             <div className="flex flex-col items-center gap-0.5">
@@ -635,12 +605,12 @@ if (alignRotateOpen && alignRotateRef.current && !alignRotateRef.current.contain
               disabled={!selectedDesignId && selectedDesignIds.size === 0}
               aria-expanded={designToolsOpen}
               aria-haspopup="menu"
-              className={`flex items-center gap-1.5 px-2 py-1 lg:px-3 lg:py-1.5 rounded-md border transition-all whitespace-nowrap text-[11px] lg:text-sm font-semibold min-h-[36px] shadow-sm ${
+              className={`flex items-center gap-1.5 px-2 py-1 lg:px-3 lg:py-1.5 rounded-md border-0 transition-all whitespace-nowrap text-[11px] lg:text-sm font-bold min-h-[36px] ${
                 selectedDesignId || selectedDesignIds.size > 0
                   ? designToolsOpen
-                    ? "border-blue-700 bg-blue-700 text-white shadow-blue-200"
-                    : "border-blue-500 bg-blue-500 text-white hover:bg-blue-600 hover:border-blue-600 shadow-blue-100"
-                  : "border-gray-200 bg-gray-200 text-gray-500 opacity-30 pointer-events-none"
+                    ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-400/40 ring-2 ring-violet-400/60"
+                    : "bg-gradient-to-r from-violet-500 to-indigo-500 text-white shadow-md shadow-violet-400/30 hover:from-violet-600 hover:to-indigo-600 hover:shadow-lg hover:shadow-violet-400/40"
+                  : "bg-gray-200 text-gray-500 opacity-30 pointer-events-none"
               }`}
               title="Design tools — White BG, Magic Wand, Halftone"
             >
