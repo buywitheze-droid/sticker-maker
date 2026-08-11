@@ -153,7 +153,7 @@ const MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE = 64;
  */
 const SHARP_PIXEL_LIMIT = Math.ceil(MAX_SOURCE_MEGAPIXELS * 1_000_000);
 
-type RasterFormat = "png" | "jpeg" | "webp";
+type RasterFormat = "png" | "jpeg" | "webp" | "heic";
 
 /**
  * Identify a raster container from its leading bytes.
@@ -175,6 +175,15 @@ function sniffRasterFormat(buffer: Buffer): RasterFormat | null {
     buffer.toString("latin1", 8, 12) === "WEBP"
   ) {
     return "webp";
+  }
+  // HEIC / HEIF: ISOBMFF ftyp box with a heic/heif major brand.
+  // Byte layout: [4-byte box size][ftyp][4-byte major brand][…]
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("latin1", 4, 8) === "ftyp" &&
+    /^(heic|heis|heix|hevc|hevx|mif1|msf1|heif)/.test(buffer.toString("latin1", 8, 12))
+  ) {
+    return "heic";
   }
   return null;
 }
@@ -200,11 +209,15 @@ async function assertAllowedRasterFormat(
     failOn: "none",
     limitInputPixels: SHARP_PIXEL_LIMIT,
   }).metadata();
-  const decoded = metadata.format as RasterFormat | undefined;
+  // Sharp reports HEIC/HEIF containers as "heif" regardless of brand.
+  const rawFormat = metadata.format as string | undefined;
+  const decoded: RasterFormat | undefined =
+    rawFormat === "heif" ? "heic" : (rawFormat as RasterFormat | undefined);
   if (!decoded || !allowed.includes(decoded)) {
-    throw new UnsupportedRasterError(
-      `Unsupported image format. Only ${allowed.join(", ").toUpperCase()} files are accepted.`,
-    );
+    const label = (decoded === "heic")
+      ? "HEIC/HEIF photos are not supported — please export as JPEG or PNG from your Photos app"
+      : `Unsupported image format. Only ${allowed.filter(f => f !== "heic").join(", ").toUpperCase()} files are accepted.`;
+    throw new UnsupportedRasterError(label);
   }
   return metadata;
 }
@@ -215,7 +228,7 @@ const rasterUpload = multer({
     fileSize: MAX_PREPARE_FILE_BYTES,
     fieldSize: 10 * 1024 * 1024,
   },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (req, file, cb) => {
     // Some browsers hand over `application/octet-stream` for a perfectly good
     // PNG, so the extension still has to be tolerated here. It is only a cheap
     // pre-filter: `assertAllowedRasterFormat` is the real gate.
@@ -225,10 +238,24 @@ const rasterUpload = multer({
       declared === "image/jpeg" ||
       declared === "image/jpg" ||
       declared === "image/webp" ||
+      declared === "image/heic" ||
+      declared === "image/heif" ||
+      declared === "image/heic-sequence" ||
+      declared === "image/heif-sequence" ||
       ((declared === "application/octet-stream" || declared === "") &&
-        /\.(png|jpe?g|webp)$/i.test(file.originalname || ""));
-    if (ok) cb(null, true);
-    else cb(new Error("Only PNG, JPEG, and WebP files are allowed"));
+        /\.(png|jpe?g|webp|heic|heif)$/i.test(file.originalname || ""));
+    if (ok) {
+      cb(null, true);
+    } else {
+      // IMPORTANT: never call cb(error) here — multer v2 aborts the multipart
+      // stream on error, which sends a TCP RST instead of a proper HTTP response
+      // and poisons iOS Safari's connection pool (every subsequent fetch() on that
+      // connection also fails with "Failed to fetch").  Silently reject the file
+      // so multer drains the stream cleanly, then let the route handler return the
+      // 400 with a human-readable message.
+      (req as any)._multerRejectedMimetype = declared || file.originalname || "unknown";
+      cb(null, false);
+    }
   },
 });
 
@@ -364,7 +391,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/prepare-raster-upload", rasterUpload.single("image"), async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ error: "No image file provided" });
+        // If multer silently rejected the file (unsupported MIME type), say so.
+        const rejected = (req as any)._multerRejectedMimetype;
+        const error = rejected
+          ? `File type "${rejected}" is not supported. Please upload a PNG, JPEG, WebP, or HEIC file.`
+          : "No image file provided";
+        return res.status(400).json({ error });
       }
 
       const sharpOpts = {
@@ -373,7 +405,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limitInputPixels: SHARP_PIXEL_LIMIT,
       };
 
-      const meta = await assertAllowedRasterFormat(req.file.buffer, ["png", "jpeg", "webp"]);
+      const meta = await assertAllowedRasterFormat(req.file.buffer, ["png", "jpeg", "webp", "heic"]);
       // `metadata()` reports pre-rotation dimensions; EXIF orientations 5-8
       // swap the axes once `.rotate()` auto-orients the pipeline.
       const swapAxes = (meta.orientation ?? 0) >= 5;
@@ -485,7 +517,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/process-image", upload.single('image'), async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ error: "No image file provided" });
+        // If multer silently rejected the file (unsupported MIME type), say so.
+        const rejected = (req as any)._multerRejectedMimetype;
+        const error = rejected
+          ? `File type "${rejected}" is not supported. Please upload a PNG, JPEG, WebP, or HEIC file.`
+          : "No image file provided";
+        return res.status(400).json({ error });
       }
 
       const {
@@ -565,7 +602,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/image-info", upload.single('image'), async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ error: "No image file provided" });
+        // If multer silently rejected the file (unsupported MIME type), say so.
+        const rejected = (req as any)._multerRejectedMimetype;
+        const error = rejected
+          ? `File type "${rejected}" is not supported. Please upload a PNG, JPEG, WebP, or HEIC file.`
+          : "No image file provided";
+        return res.status(400).json({ error });
       }
 
       const metadata = await sharp(req.file.buffer).metadata();
@@ -830,7 +872,12 @@ ${pdfData ? '<p><strong>PDF design with CutContour is attached.</strong></p>' : 
   app.post("/api/upscale-image", upload.single("image"), async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ error: "No image file provided" });
+        // If multer silently rejected the file (unsupported MIME type), say so.
+        const rejected = (req as any)._multerRejectedMimetype;
+        const error = rejected
+          ? `File type "${rejected}" is not supported. Please upload a PNG, JPEG, WebP, or HEIC file.`
+          : "No image file provided";
+        return res.status(400).json({ error });
       }
 
       const scale = parseInt(req.body?.scale ?? "4") as 2 | 4;
