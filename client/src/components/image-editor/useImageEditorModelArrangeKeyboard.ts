@@ -1212,35 +1212,52 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
   ): number => {
     const rw = ref.widthInches * ref.transform.s;
     const rh = getEffectiveHeight(ref);
-    const refArea = (rw + gap) * (rh + gap);
-    if (refArea <= 0) return 0;
+    if (!(rw > 0) || !(rh > 0) || !(abW > 0) || !(abH > 0)) return 0;
 
-    const occupiedBottom = currentDesigns.reduce((maxY, d) => {
-      const cy = d.transform.ny * abH;
-      const hw = (d.widthInches * d.transform.s) / 2;
-      const hh = getEffectiveHeight(d) / 2;
-      const rad = ((d.transform.rotation ?? 0) * Math.PI) / 180;
-      const boundH = Math.abs(hw * Math.sin(rad)) + Math.abs(hh * Math.cos(rad));
-      return Math.max(maxY, cy + boundH);
+    const g = gap;
+    const refCellArea = (rw + g) * (rh + g);
+
+    // ── 1. Total capacity: exact grid formula, try both orientations ─────────
+    //
+    // For identical rectangles on a rectangular sheet this formula is exact and
+    // optimal.  cols × rows gives the true maximum without any efficiency
+    // guesswork.  We also try the 90° rotation and keep whichever fits more.
+    //
+    //   cols  = ⌊ (sheetW + gap) / (designW + gap) ⌋
+    //   rows  = ⌊ (sheetH + gap) / (designH + gap) ⌋
+    //   total = cols × rows
+    const colsN = Math.max(1, Math.floor((abW + g) / (rw + g)));
+    const rowsN = Math.max(1, Math.floor((abH + g) / (rh + g)));
+    let totalCapacity = colsN * rowsN;
+
+    // Non-square designs: also measure the rotated orientation.
+    if (Math.abs(rw - rh) > 0.01) {
+      const colsR = Math.max(1, Math.floor((abW + g) / (rh + g)));
+      const rowsR = Math.max(1, Math.floor((abH + g) / (rw + g)));
+      totalCapacity = Math.max(totalCapacity, colsR * rowsR);
+    }
+
+    // ── 2. Consumed slots: area-weighted against the ref-design cell ─────────
+    //
+    // Each existing design on the sheet occupies a fraction of a ref-cell in
+    // proportion to its own bounding-box area (with gap padding).  Summing
+    // these gives how many ref-equivalent slots are already taken.
+    const consumedSlots = currentDesigns.reduce((acc, d) => {
+      const dw = d.widthInches * d.transform.s;
+      const dh = getEffectiveHeight(d);
+      return acc + (dw + g) * (dh + g) / refCellArea;
     }, 0);
 
-    const remaining =
-      Math.max(0, abW * abH - abW * occupiedBottom) +
-      Math.max(
-        0,
-        abW * occupiedBottom -
-          currentDesigns.reduce(
-            (acc, d) =>
-              acc +
-              (d.widthInches * d.transform.s + gap) * (getEffectiveHeight(d) + gap),
-            0,
-          ),
-      );
-
-    const contentFill = sampleContentFill(ref);
-    const factor = Math.max(0.35, Math.min(0.58, 0.58 * contentFill));
-    return Math.floor((remaining / refArea) * factor);
-  }, [sampleContentFill]);
+    // ── 3. Net copies to add — small overshoot so the packer fills every gap ─
+    //
+    // We intentionally overshoot by ~5 % + 1.  handleFillEmptySpace runs
+    // auto-arrange with trimOverflow:true, which safely removes only fill copies
+    // that don't fit, never originals.  This means a slight overcount costs
+    // nothing except a couple of design objects the packer discards immediately,
+    // while an undercount leaves a visible strip of empty sheet.
+    const raw = totalCapacity - consumedSlots;
+    return Math.max(0, Math.round(raw * 1.05) + 1);
+  }, []);
 
   const canFill = useMemo(() => {
     if (isFilling || designs.length === 0) return false;
