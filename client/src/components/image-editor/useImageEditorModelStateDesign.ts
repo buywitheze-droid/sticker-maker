@@ -1606,15 +1606,104 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       toast({ title: "Remove failed", description: "Could not remove white background.", variant: "destructive" });
       return;
     }
+
+    // ── Auto-trim after bg removal ─────────────────────────────────────────
+    // White removal often leaves large transparent margins where white used to
+    // be.  We crop them away with the same content-bounds measurement the
+    // upload pipeline uses, so the design snaps to its real artwork bounds.
+    //
+    // Only designs that went through the print-source path are trimmed.
+    // Those results contain an `exportBlob` key (from printSourceFieldsAfterEdit).
+    // The fallback path (`{ image }` only) leaves the original exportBlob
+    // untouched, so we must not apply a preview-space crop to a mismatched
+    // source — those designs are skipped here.
+    const { measureContentBox } = await import("@/lib/content-bounds");
+    const artboardW = artboardWidthRef.current;
+    const artboardH = artboardHeightRef.current;
+    const trimResults = new Map<string, {
+      widthInches: number;
+      heightInches: number;
+      nx: number;
+      ny: number;
+    }>();
+
+    for (let i = 0; i < targetDesigns.length; i++) {
+      const result = results[i];
+      // `exportBlob` key only present on printSourceFieldsAfterEdit output.
+      if (!result || !("exportBlob" in result)) continue;
+      const d = targetDesigns[i];
+      const newInfo = updates.get(d.id);
+      if (!newInfo) continue;
+
+      const img = newInfo.image;
+      const prevW = img.naturalWidth || img.width;
+      const prevH = img.naturalHeight || img.height;
+      if (!prevW || !prevH) continue;
+
+      const box = await measureContentBox(img).catch(() => null);
+      if (!box) continue;
+
+      // Skip if every edge trim is under 0.5% — not worth shifting the design.
+      const leftFrac   = box.x / prevW;
+      const topFrac    = box.y / prevH;
+      const rightFrac  = (prevW - box.x - box.width)  / prevW;
+      const bottomFrac = (prevH - box.y - box.height) / prevH;
+      if (Math.max(leftFrac, topFrac, rightFrac, bottomFrac) < 0.005) continue;
+
+      // Scale the preview-space content box up to exportBlob pixel coordinates.
+      // The preview is a uniform downsample of the source, so the ratio is exact.
+      const dpi     = newInfo.dpi ?? d.imageInfo.dpi ?? 150;
+      const sourceW = d.widthInches * dpi;
+      const sourceH = d.heightInches * dpi;
+      const sx = sourceW / prevW;
+      const sy = sourceH / prevH;
+      const exportCrop: NonNullable<ImageInfo["exportCrop"]> = {
+        x:      Math.max(0, Math.round(box.x      * sx)),
+        y:      Math.max(0, Math.round(box.y      * sy)),
+        width:  Math.round(box.width  * sx),
+        height: Math.round(box.height * sy),
+      };
+
+      const newWidthInches  = d.widthInches  * (box.width  / prevW);
+      const newHeightInches = d.heightInches * (box.height / prevH);
+
+      // Shift the canvas centre so the artwork stays in exactly the same
+      // visual position after the bounding box shrinks.
+      // Content-box centre as fraction of the full preview (0 = left/top edge):
+      const contentFracX = (box.x + box.width  / 2) / prevW;
+      const contentFracY = (box.y + box.height / 2) / prevH;
+      const s = d.transform.s;
+      const newNx = d.transform.nx + (contentFracX - 0.5) * d.widthInches  * s / artboardW;
+      const newNy = d.transform.ny + (contentFracY - 0.5) * d.heightInches * s / artboardH;
+
+      updates.set(d.id, { ...newInfo, exportCrop });
+      trimResults.set(d.id, { widthInches: newWidthInches, heightInches: newHeightInches, nx: newNx, ny: newNy });
+    }
+    // ── End auto-trim ──────────────────────────────────────────────────────
+
     setDesigns(prev => prev.map(d => {
       const next = updates.get(d.id);
-      return next ? { ...d, imageInfo: next } : d;
+      if (!next) return d;
+      const trim = trimResults.get(d.id);
+      return {
+        ...d,
+        imageInfo: next,
+        widthInches:  trim?.widthInches  ?? d.widthInches,
+        heightInches: trim?.heightInches ?? d.heightInches,
+        transform: trim ? { ...d.transform, nx: trim.nx, ny: trim.ny } : d.transform,
+      };
     }));
     if (selectedDesignId && updates.has(selectedDesignId)) {
       setImageInfo(updates.get(selectedDesignId)!);
     }
     uiActions.setWandDeleteModeActive(false);
-    toast({ title: "White background removed", description: `Applied to ${updates.size} design${updates.size !== 1 ? "s" : ""}.` });
+    const trimCount = trimResults.size;
+    toast({
+      title: "White background removed",
+      description: trimCount > 0
+        ? `Applied to ${updates.size} design${updates.size !== 1 ? "s" : ""} — empty space trimmed.`
+        : `Applied to ${updates.size} design${updates.size !== 1 ? "s" : ""}.`,
+    });
   }, [selectedDesignId, selectedDesignIds, saveSnapshot, setDesigns, toast, uiActions]);
 
   const handleWandDelete = useCallback(async (nx: number, ny: number, designId: string) => {
