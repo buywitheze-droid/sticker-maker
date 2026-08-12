@@ -7,6 +7,7 @@ import { getDesignNestMask } from "@/lib/nest-mask";
 import type { ImageTransform } from "@/lib/types";
 import ExportWorkerModule from "@/lib/export-worker?worker";
 import ArrangeWorkerModule from "@/lib/arrange-worker?worker";
+import { exportPngInParallel, parallelWorkerCountFor } from "@/lib/png-parallel-export";
 import {
   ADD_TO_CART_LABEL_MAX_LEN,
   EXPORT_DPI,
@@ -600,6 +601,31 @@ export async function exportPngWithWorker(options: {
     printFileName: design.printFileName,
     name: design.name,
   }));
+
+  // Split the sheet across workers when the machine can afford it: several
+  // workers render and filter bands while one compresses them in order. The file
+  // is byte-for-byte what the single-worker path below produces — measured, not
+  // assumed — so this is purely a question of how long the customer waits.
+  // Any failure falls through to that path rather than failing the download.
+  const workerCount = parallelWorkerCountFor(options.outW, options.outH);
+  if (workerCount > 1) {
+    try {
+      return {
+        blob: await exportPngInParallel({
+          designs: designPayload,
+          sources,
+          outW: options.outW,
+          outH: options.outH,
+          exportDpi: options.exportDpi,
+          workerCount,
+          timeoutMs: EXPORT_TIMEOUT_MS,
+          onProgress: options.onProgress,
+        }),
+      };
+    } catch (error) {
+      console.warn("[export] parallel band export failed; falling back to a single worker", error);
+    }
+  }
 
   const requestId = nextExportRequestId();
   const blob = await new Promise<Blob>((resolve, reject) => {
