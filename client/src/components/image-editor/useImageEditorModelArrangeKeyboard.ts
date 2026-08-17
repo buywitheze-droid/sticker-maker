@@ -206,6 +206,12 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     fillIds?: Set<string>;
     /** Internal: a ladder step continuing the run that is already in flight. */
     continuation?: boolean;
+    /**
+     * Fill Sheet path: never grow the gangsheet even when overflow persists after removing
+     * surplus fill copies. If the originals themselves overflow, roll back to the pre-fill
+     * snapshot instead of expanding.
+     */
+    noGrow?: boolean;
   };
   const pendingArrangeRef = useRef<ArrangeOpts | null>(null);
   /**
@@ -227,10 +233,29 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       fullRepack: (a?.fullRepack ?? false) || (b?.fullRepack ?? false),
       trimOverflow: (a?.trimOverflow ?? false) || (b?.trimOverflow ?? false),
       fillIds,
+      noGrow: (a?.noGrow ?? false) || (b?.noGrow ?? false),
     };
   };
   /** True while Fill Sheet copies are waiting on / packing through arrange. */
   const fillSessionActiveRef = useRef(false);
+  /**
+   * Fix 1 — Fill Sheet must never grow the sheet.
+   *
+   * Saved by `handleFillEmptySpace` to the designs-before-copies snapshot immediately
+   * before setDesigns adds the fill copies. The very first thing `applyResult` does is
+   * read and clear this ref (one-shot), so the rollback target is always exactly one
+   * arrange behind.
+   */
+  const noGrowRestoreRef = useRef<DesignItem[] | null>(null);
+  /**
+   * Fix 3 — settle once per import batch.
+   *
+   * Armed in the `else` branch of `applyImageDirectly` when the packer could not place
+   * the incoming design (it overflows or no slot was found). `scheduleImportReseat`
+   * reads this after the batch drains; if set, it runs a full arrange instead of just
+   * re-seating the top band.
+   */
+  const strandedImportRef = useRef(false);
   const [isFilling, setIsFilling] = useState(false);
   /**
    * Release the lock and start whatever queued up behind the run that just finished.
@@ -386,6 +411,8 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     fillIds?: Set<string>;
     /** Internal: a ladder step continuing the run that is already in flight. */
     continuation?: boolean;
+    /** Fill Sheet path: never expand the sheet even when originals overflow. */
+    noGrow?: boolean;
   }) => {
     const currentDesigns = designsRef.current;
     if (currentDesigns.length === 0) {
@@ -651,10 +678,21 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     const maxLadderSteps = GANGSHEET_HEIGHTS.length + 2;
 
     const applyResult = (bestResult: PlacedItem[], anyRotated: boolean, hasOverflow: boolean, sizing?: PackSizing) => {
+      // Fix 1: Read and immediately clear the pre-fill snapshot so it is always one-shot.
+      // If the arrange is the retry that Fix 3 re-arms it for, the ref will have been
+      // restored before this call; clearing it here keeps the invariant.
+      const noGrowRestore = noGrowRestoreRef.current;
+      noGrowRestoreRef.current = null;
+
       // Fill Sheet: never climb the height ladder. Drop speculative fill copies
       // that did not fit and leave the customer's chosen size alone.
       if (hasOverflow && opts?.trimOverflow) {
-        const overflowPlacedIds = new Set(bestResult.filter((p) => p.overflows).map((p) => p.id));
+        // Fix 1: Under noGrow, also allow anchored fill copies to be treated as expendable —
+        // the packer kept them in their provisional positions, but if an original still
+        // overflows they need to be removed so the rollback below can fire cleanly.
+        const overflowPlacedIds = new Set(
+          bestResult.filter((p) => p.overflows && (opts?.noGrow || !p.anchored)).map((p) => p.id),
+        );
         const abW = artboardWidthRef.current;
         const abH = artboardHeightRef.current;
         const fillIds = opts.fillIds;
@@ -718,6 +756,30 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
           }
         }
 
+        // Fix 1: If originals themselves overflow even after all surplus fill copies are
+        // removed, restore the pre-fill snapshot so the sheet size stays unchanged.
+        if (opts?.noGrow && noGrowRestore) {
+          const originalOverflows = bestResult.some(p => {
+            if (!p.overflows) return false;
+            if (p.id.startsWith(GROUP_PREFIX)) {
+              const gid = p.id.slice(GROUP_PREFIX.length);
+              const g = groups.get(gid);
+              return g ? !g.members.every(m => removeIds.has(m.id)) : false;
+            }
+            return !removeIds.has(p.id);
+          });
+          if (originalOverflows) {
+            setDesigns(noGrowRestore);
+            if (!opts?.preserveSelection) {
+              setSelectedDesignId(null);
+              setSelectedDesignIds(new Set());
+            }
+            toast({ title: t("fill.full"), description: t("fill.fullDesc"), variant: "destructive" });
+            settleArrange();
+            return;
+          }
+        }
+
         setDesigns((prev) =>
           prev
             .filter((d) => !removeIds.has(d.id))
@@ -758,7 +820,27 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         return;
       }
 
-      if (hasOverflow && artboardHeightRef.current < MAX_ARTBOARD_HEIGHT && ladderStep < maxLadderSteps) {
+      // Fix 3: Before climbing the height ladder, retry once as a full repack.
+      // A stable-biased initial pack overflows far more readily than a fresh layout, and
+      // growing the sheet on its strength is often a false alarm that wastes film.
+      // The retry uses the same ladder step so it does not count as an expansion.
+      if (hasOverflow && !opts?.fullRepack) {
+        noGrowRestoreRef.current = noGrowRestore; // re-arm so Fix 1 rollback survives the retry
+        ladderChainRef.current = true;
+        ladderStepRef.current = ladderStep; // same rung — the retry is not a step up
+        setArrangeStage('nesting');
+        setTimeout(() => handleAutoArrangeRef.current({
+          ...opts,
+          fullRepack: true,
+          continuation: true,
+          skipSnapshot: true,
+        }), 0);
+        return;
+      }
+
+      // Fix 1: Fill Sheet must never grow the sheet, even when originals overflow after the
+      // trim removes their surplus fill copies.
+      if (!opts?.noGrow && hasOverflow && artboardHeightRef.current < MAX_ARTBOARD_HEIGHT && ladderStep < maxLadderSteps) {
         // Jump to the shortest rung the artwork could possibly fit on rather than the next
         // one up. `planLadderJump` only skips rungs a lower bound rules out, so it lands on
         // the same rung the one-at-a-time walk would have reached — and when the bound says
@@ -1253,10 +1335,28 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       }
       importReseatTimerRef.current = null;
       if (!mountedRef.current) return;
-      reseatSheetBandRef.current();
+      // Fix 3: If any design in the batch was stranded (packer found no slot), run a full
+      // re-arrange once the batch drains. The arrange ends with shrinkSheetToFit on its own,
+      // so no separate shrink is needed. For edit mode, the height is locked to the variant
+      // the customer already purchased — skip the arrange and re-seat only.
+      const stranded = strandedImportRef.current;
+      strandedImportRef.current = false;
+      if (stranded && designsRef.current.length >= 2 && !isEditMode) {
+        handleAutoArrangeRef.current({
+          arrangeAll: true,
+          fullRepack: true,
+          skipSnapshot: true,
+        });
+      } else if (!isEditMode) {
+        // Reclaim any film freed by the batch (no stranded designs, or only one total).
+        shrinkSheetToFitRef.current();
+      } else {
+        // Edit mode: sheet height is locked; just slide the top band down.
+        reseatSheetBandRef.current();
+      }
     };
     importReseatTimerRef.current = setTimeout(tick, 0);
-  }, [mountedRef]);
+  }, [mountedRef, isEditMode]);
 
   useEffect(() => () => {
     if (importReseatTimerRef.current) clearTimeout(importReseatTimerRef.current);
@@ -1416,6 +1516,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     fillSessionActiveRef.current = true;
     setIsFilling(true);
     pendingFillIdsRef.current = new Set(copies.map((c) => c.id));
+    // Fix 1: Arm the rollback snapshot before the copies land so applyResult can restore
+    // the pre-fill state if originals still overflow after the trim.
+    noGrowRestoreRef.current = designsRef.current;
     setDesigns((prev) => [...prev, ...copies]);
     toast({
       title: t("fill.working"),
@@ -1447,6 +1550,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       fullRepack: true,
       skipSnapshot: true,
       trimOverflow: true,
+      noGrow: true,
       fillIds,
     });
   }, [designs, handleAutoArrangeRef]);
@@ -1765,6 +1869,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         baseNy = spot.ny;
         placed = true;
       } else {
+        // Fix 3: Record that this design could not be placed by the nester so the
+        // post-batch settle can run a full re-arrange rather than just a band re-seat.
+        strandedImportRef.current = true;
         const maxBottom = Math.max(...currentRects.map(r => r.y + r.h));
         baseNx = (scaledW / 2) / currentAbW;
 
@@ -1819,7 +1926,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
     const halfNy = (scaledH / 2) / effectiveAbH;
     const newTransform = {
       nx: placed ? baseNx : Math.min(Math.max(baseNx, halfNx), Math.max(halfNx, 1 - halfNx)),
-      ny: placed ? baseNy : Math.max(baseNy, halfNy),
+      // Fix 3: Clamp to the sheet bottom so a stranded design never lands off-film when
+      // the sheet has already reached MAX_ARTBOARD_HEIGHT.
+      ny: placed ? baseNy : Math.min(Math.max(baseNy, halfNy), Math.max(halfNy, 1 - halfNy)),
       s: initialS,
       rotation: 0,
     };

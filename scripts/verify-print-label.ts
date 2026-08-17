@@ -368,17 +368,19 @@ async function main(): Promise<void> {
         `${where}: font ${layout.fontInches.toFixed(3)}" is over the ceiling`,
       );
       check(rect.width <= art.artW + EPS, `${where}: box is wider than the design`);
-      check(layout.text.length > 0, `${where}: nothing left to print after fitting`);
+      check(layout.lines.length > 0 && layout.lines.some(l => l.length > 0), `${where}: nothing left to print after fitting`);
       const full = labelTextFor(art.name);
+      // For wrapping: character-split lines join back to the original without spaces.
+      const joined = layout.lines.join('');
       check(
-        layout.text === full || layout.text.endsWith('…'),
+        joined === full || layout.lines[layout.lines.length - 1].endsWith('…'),
         `${where}: name was shortened without saying so`,
       );
 
       if (!flipX && !flipY) {
         console.log(
           `${art.label.padEnd(41)} ${(flipX ? 'x' : '-') + (flipY ? 'y' : '-')}      ` +
-          `${layout.placement.padEnd(10)} ${band.toFixed(3)}"  ${layout.fontInches.toFixed(3)}"  ${layout.text}`,
+          `${layout.placement.padEnd(10)} ${band.toFixed(3)}"  ${layout.fontInches.toFixed(3)}"  ${layout.lines.join(' | ')}`,
         );
       }
     }

@@ -85,7 +85,7 @@ function makeStampKey(d: DesignExportData, drawW: number, drawH: number): string
   // The label's own text and placement, not just the flag: a name that had to be shortened to fit
   // and a name that did not are different pixels, and a label in the corner is a different canvas
   // from one in a band. Two copies of a design may only share a pre-render if both match.
-  const labelKey = d.label ? `|n${d.label.text}|p${d.label.placement}` : '';
+  const labelKey = d.label ? `|n${d.label.lines.join('\x00')}|p${d.label.placement}` : '';
   return [
     designSourceKey(d),
     drawW,

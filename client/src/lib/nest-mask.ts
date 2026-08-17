@@ -141,9 +141,14 @@ function markLabel(
   artH: number,
   label: PrintLabelLayout,
 ): void {
-  const { col0, col1, row0, row1 } = cellRange(label.rect, artW, artH, cols, rows);
+  // Fill every column in the label rows, not just col0..col1.
+  // A long printed name used to widen the box into film a neighbour was already nested into
+  // without triggering a re-pack, because the mask only reserved the narrow column range.
+  // Full-width rows make the mask byte-identical for any name at the same row count, so
+  // a rename can never corrupt a neighbour's slot.
+  const { row0, row1 } = cellRange(label.rect, artW, artH, cols, rows);
   for (let r = row0; r < row1; r++) {
-    if (col1 > col0) bits.fill(1, r * cols + col0, r * cols + col1);
+    bits.fill(1, r * cols, r * cols + cols);
   }
 }
 

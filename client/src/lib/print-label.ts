@@ -31,6 +31,12 @@
 /** Clear film between the artwork's bottom edge and the label, when the label sits below. */
 export const LABEL_GAP_INCHES = 0.1;
 
+/** Maximum number of lines the label may wrap to. */
+const LABEL_MAX_LINES = 2;
+
+/** Vertical gap between lines, in ems. */
+const LABEL_LINE_GAP_EMS = 0.2;
+
 /** Label em size as a share of artwork height, before the legibility clamps below. */
 const LABEL_HEIGHT_FRACTION = 0.045;
 
@@ -84,8 +90,39 @@ export interface PrintLabelLayout {
   rect: LabelRect;
   /** Em size to draw the text at, inches. */
   fontInches: number;
-  /** The name as printed — extension stripped, shortened if it had to be. */
-  text: string;
+  /**
+   * The name as printed — extension stripped, wrapped across at most LABEL_MAX_LINES lines,
+   * shortened with an ellipsis on the last line if it still could not fit.
+   */
+  lines: string[];
+}
+
+/**
+ * Vertical distance between line baselines, inches.
+ * Equals one em plus the inter-line gap — the unit the multi-line draw loop steps by.
+ */
+export function labelLineStep(fontInches: number): number {
+  return fontInches * (1 + LABEL_LINE_GAP_EMS);
+}
+
+/**
+ * Height of the label background box for a given number of lines, inches.
+ * Derived from the font size, the gap between lines, and the top/bottom padding.
+ */
+export function labelBoxHeight(lineCount: number, fontInches: number): number {
+  const gap = LABEL_LINE_GAP_EMS * fontInches;
+  return lineCount * fontInches + (lineCount - 1) * gap + 2 * LABEL_PAD_EMS * fontInches;
+}
+
+/**
+ * A stable key that captures whether the label's film footprint changes on a rename.
+ *
+ * Two labels with the same placement and line count have the same nest-mask footprint —
+ * the mask fills full-width rows and ignores the text. Callers can compare this key before
+ * and after a rename and skip a re-arrange when it has not changed.
+ */
+export function labelFootprintKey(layout: PrintLabelLayout): string {
+  return `${layout.placement}:${layout.lines.length}`;
 }
 
 /** Width of a string at one em, so callers can convert to whatever unit they draw in. */
@@ -199,6 +236,53 @@ function fitText(measure: LabelMeasure, text: string, fontInches: number, maxWid
   return '…';
 }
 
+/**
+ * Breaks `text` into at most LABEL_MAX_LINES lines at `fontInches`, each fitting within
+ * `maxBoxWidth`. Returns a single-element array when the text already fits on one line.
+ *
+ * Two strategies, tried in order:
+ *   1. Greedy word wrap — only when there are ≥ 2 words and no single word is already too wide
+ *      to start a line, since a word that overflows defeats the wrap.
+ *   2. Character wrap — the common path for single-token filenames like IMG_20260814_v2.png.
+ *      Splits at the last character that fits on line one, then folds the remainder into line two
+ *      via `fitText`, which truncates with an ellipsis if needed.
+ */
+function wrapToLines(
+  measure: LabelMeasure,
+  text: string,
+  fontInches: number,
+  maxBoxWidth: number,
+): string[] {
+  const pad = LABEL_PAD_EMS * fontInches;
+  const maxTextWidth = Math.max(0, maxBoxWidth - 2 * pad);
+
+  // Already fits on one line — the common case.
+  if (measure(text) * fontInches <= maxTextWidth) return [text];
+
+  // Greedy word wrap.
+  const words = text.split(' ');
+  if (words.length >= 2 && words.every(w => measure(w) * fontInches <= maxTextWidth)) {
+    let line1 = words[0];
+    let i = 1;
+    while (i < words.length - 1 && measure(`${line1} ${words[i]}`) * fontInches <= maxTextWidth) {
+      line1 += ` ${words[i]}`;
+      i++;
+    }
+    const rest = words.slice(i).join(' ');
+    return [line1, fitText(measure, rest, fontInches, maxTextWidth)];
+  }
+
+  // Character wrap — most filenames are a single token, so this is the common fallback.
+  let splitAt = text.length;
+  while (splitAt > 1 && measure(text.slice(0, splitAt)) * fontInches > maxTextWidth) {
+    splitAt--;
+  }
+  const line1 = text.slice(0, splitAt);
+  const rest = text.slice(splitAt);
+  if (!rest) return [line1];
+  return [line1, fitText(measure, rest, fontInches, maxTextWidth)];
+}
+
 export interface PrintLabelInput {
   /** The design's file name, extension and all. */
   name: string;
@@ -216,10 +300,13 @@ export interface PrintLabelInput {
 /**
  * Decides the label's size and position, or null when there is nothing to print.
  *
- * The size is chosen first and independently of placement, so a design does not get a different
- * label depending on where it happens to fit. Then the corner is tried, because a label inside
- * the artwork's own bounding box costs no film at all; failing that it goes in a band below,
- * which is what any solid shape gets.
+ * Wrapping is tried at the natural font size before the font is shrunk — this keeps names
+ * legible on most artwork without sacrificing size for a single-row layout. If two wrapped
+ * rows still do not fit at the natural size, the function solves analytically for the largest
+ * em that does fit across LABEL_MAX_LINES rows and clamps to the legibility floor.
+ *
+ * Placement is decided after sizing: the corner is preferred because it costs no film;
+ * the band below the artwork is the fallback.
  */
 export function layoutPrintLabel(
   input: PrintLabelInput,
@@ -231,27 +318,42 @@ export function layoutPrintLabel(
   const full = labelTextFor(input.name);
   if (!full) return null;
 
-  // Widest box the footprint can carry. Anything wider would reserve film the design does not
-  // own, so this is a hard ceiling on the label rather than a preference.
+  // Widest box the footprint can carry. Anything wider reserves film the design does not own.
   const maxBoxWidth = artW;
 
-  let fontInches = Math.min(
+  const naturalFont = Math.min(
     LABEL_MAX_FONT_INCHES,
     Math.max(LABEL_MIN_FONT_INCHES, artH * LABEL_HEIGHT_FRACTION),
   );
 
-  // Shrink to fit before resorting to cutting the name, down to the point where the ink stops
-  // surviving the press.
-  const boxWidthAt = (size: number) => measure(full) * size + 2 * LABEL_PAD_EMS * size;
-  if (boxWidthAt(fontInches) > maxBoxWidth) {
-    const needed = maxBoxWidth / (measure(full) + 2 * LABEL_PAD_EMS);
-    fontInches = Math.max(LABEL_MIN_FONT_INCHES, needed);
+  // Try wrapping at the natural font size first — do not shrink before trying two rows.
+  const naturalWrapped = wrapToLines(measure, full, naturalFont, maxBoxWidth);
+  const pad0 = LABEL_PAD_EMS * naturalFont;
+  const naturalFits = naturalWrapped.every(
+    l => measure(l) * naturalFont <= Math.max(0, maxBoxWidth - 2 * pad0),
+  );
+
+  let fontInches: number;
+  let lines: string[];
+
+  if (naturalFits) {
+    fontInches = naturalFont;
+    lines = naturalWrapped;
+  } else {
+    // Solve for the largest s where LABEL_MAX_LINES rows can carry the full text.
+    // Each row's text budget: maxBoxWidth − 2 * PAD * s.  The advance scales with s:
+    //   measure(full) * s ≤ LABEL_MAX_LINES * (maxBoxWidth − 2 * PAD * s)
+    //   s ≤ LABEL_MAX_LINES * maxBoxWidth / (measure(full) + 2 * LABEL_MAX_LINES * PAD)
+    const solved =
+      (LABEL_MAX_LINES * maxBoxWidth) / (measure(full) + 2 * LABEL_MAX_LINES * LABEL_PAD_EMS);
+    fontInches = Math.max(LABEL_MIN_FONT_INCHES, Math.min(naturalFont, solved));
+    lines = wrapToLines(measure, full, fontInches, maxBoxWidth);
   }
 
   const pad = LABEL_PAD_EMS * fontInches;
-  const text = fitText(measure, full, fontInches, Math.max(0, maxBoxWidth - 2 * pad));
-  const boxW = Math.min(maxBoxWidth, measure(text) * fontInches + 2 * pad);
-  const boxH = fontInches + 2 * pad;
+  const maxLineAdvance = Math.max(...lines.map(l => measure(l) * fontInches));
+  const boxW = Math.min(maxBoxWidth, maxLineAdvance + 2 * pad);
+  const boxH = labelBoxHeight(lines.length, fontInches);
 
   // Inside the artwork's own corner, if the corner is empty. Checked with a moat around the box
   // so the label sits in open space rather than up against a stroke.
@@ -269,7 +371,7 @@ export function layoutPrintLabel(
       height: rect.height + 2 * LABEL_CLEARANCE_INCHES,
     };
     if (input.isClearOfInk(moat)) {
-      return { placement: 'inside', bandInches: 0, rect, fontInches, text };
+      return { placement: 'inside', bandInches: 0, rect, fontInches, lines };
     }
   }
 
@@ -283,7 +385,7 @@ export function layoutPrintLabel(
       height: boxH,
     },
     fontInches,
-    text,
+    lines,
   };
 }
 
@@ -325,6 +427,13 @@ export function drawPrintLabel(
   ctx.fillStyle = '#000000';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(layout.text, 0, 0);
+
+  // Multi-line: reverse the array when upsideDown so the top visual line is drawn first.
+  const lines = upsideDown ? [...layout.lines].reverse() : layout.lines;
+  const step = labelLineStep(layout.fontInches) * pxPerInch;
+  const startY = -((lines.length - 1) / 2) * step;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], 0, startY + i * step);
+  }
   ctx.restore();
 }

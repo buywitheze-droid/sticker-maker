@@ -1,0 +1,61 @@
+You are applying three bug fixes to a DTF gangsheet builder by hand. You have no access to the repository they were developed in, so locate the equivalent code by behaviour. If any piece described below has no counterpart in this codebase, stop and report that rather than inventing one — the three fixes are independent, so a missing piece in one does not block the others.
+
+Where all three meet. There is a function that runs after every pack of the sheet and decides what to do with designs the packer could not fit. It typically deletes expendable copies, then grows the sheet to the next purchasable height, then accepts the layout. Find it first; two of the three fixes are edits to it. In the original it is called applyResult, inside the auto-arrange hook.
+
+Fix 1 — Fill Sheet must never change the sheet height.
+
+Symptom: with several designs on a sheet and one selected, clicking Fill Sheet sometimes buys a taller sheet.
+
+Cause: Fill Sheet asks for roughly 5% more copies than it thinks fit and relies on a trim to delete the ones that miss. That trim is scoped to the copies. But Fill also packs from scratch, which is free to relocate the customer's own designs, and a crowded pack can put one of those over the edge. An original is not expendable, so the overflow reaches the growth ladder.
+
+Changes:
+
+Add noGrow?: boolean to the arrange options type. If the type is declared twice (once locally, once on a ref that other hooks call through), add it to both or it will not typecheck.
+Wherever two queued arrange requests are coalesced into one, union the flag: noGrow: (a?.noGrow ?? false) || (b?.noGrow ?? false). Union, not override — otherwise a fill merged with an ordinary arrange silently regains permission to grow.
+Add a ref holding the design array to roll back to: const noGrowRestoreRef = useRef<DesignItem[] | null>(null).
+At the very top of the post-pack function, read that ref into a local and null the ref immediately. One-shot semantics matter: an arrange that dies before it gets there must not leave a restore point armed for something unrelated later.
+In the trim, allow anchored copies to be deleted under this flag. The condition becomes p.overflows && (opts.noGrow || !p.anchored) && fillIds.has(p.id). Copies are the only thing the run may spend, so sparing one because the packer happened not to move it means growing instead.
+After the trim, before the growth ladder, add the rollback: if there is still an overflow and noGrow is set, restore the captured array, clear the selection unless the caller asked to preserve it, raise a "no space" toast, release the arrange lock, and return. Restore the whole array — not just "delete the copies" — because the repack moved the originals too, and only the array puts them back where they were.
+Gate the growth ladder: if (!opts?.noGrow && hasOverflow && ...).
+In the Fill Sheet handler, immediately before appending the copies, set noGrowRestoreRef.current = currentDesigns, and pass noGrow: true alongside the existing trimOverflow and fillIds.
+Fix 2 — Long printed names overlap neighbouring designs.
+
+Symptom: with the name stamp on, a short name looks fine, but editing it to something long prints over the design beside it.
+
+Cause, and this is the counterintuitive part: it is not a height mismatch between packer and renderer. The label is already clamped to the artwork's width. The real cause is that the nesting mask reserves only the label's box, which for a short name is narrow, deliberately leaving free film beside it for a neighbour to nest into. Renaming widens the box over that neighbour, and nothing re-packs, because renaming does not look like a layout change.
+
+Do the mask change even if you skip the wrapping. Two-row wrapping on its own makes the problem worse, because it makes the band taller.
+
+The load-bearing change. In the function that paints the label into the nesting mask, reserve the label's rows across the design's full width instead of only the box's columns. Compute the row range as before, then fill every column in each of those rows. This makes the footprint a function of the design's width and the label's row count — neither of which the text length can move — so any rename that stays on the same number of rows is byte-identical and cannot invalidate a layout. It costs some nesting efficiency for wide designs with short names; that is the accepted trade.
+
+Two-row wrapping. In the label layout module, change the layout type's text: string to lines: string[]. Add LABEL_MAX_LINES = 2 and a line-gap constant of about 0.2 em, plus two helpers: labelLineStep(fontInches) returning fontInches * (1 + gap), and labelBoxHeight(lineCount, fontInches) returning rows * font + (rows - 1) * gap * font + 2 * pad.
+
+Add a wrapToLines helper with two strategies. Greedy word wrap first; return null from it when the name has fewer than two words or when any single word is too wide, since both need mid-word breaking. Fall back to character wrapping — most real filenames like IMG_20260814_183245_final_v2.png are one word, so this is the common path. In both, fold everything still unplaced into the final line and shorten it with the existing ellipsis helper, so the result never exceeds two rows.
+
+Reorder the sizing in the layout function so wrapping is tried at the natural font size before the font shrinks. The current code shrinks first, which is why long names go tiny. Solve for the size rather than searching: at em size s the name needs measure(full) * s of advance and each of L rows offers maxBoxWidth - 2 * PAD * s, so the largest workable size is L * maxBoxWidth / (measure(full) + 2 * L * PAD). Apply that only when two rows at the natural size are not enough, and clamp it to the legibility floor. Then take boxW from the widest line (still capped at the artwork width) and boxH from labelBoxHeight.
+
+Every draw site. Run the typechecker to find them all; text was read in more places than are obvious. On canvas and in the PDF, lay the rows out about the centre of the box at labelLineStep apart, first row at -((n - 1) / 2) * step. Reverse the row order when the label reads upside down, or a two-row name comes out with its second row on top. If there is a render cache keyed on the label text, key it on the joined rows using a separator that cannot occur inside one, such as \u0000.
+
+Invalidate only when the footprint really changes. Add a labelFootprintKey(design) helper returning `${placement}:${lines.length}` — deliberately excluding the text. In the rename commit handler, compare the key computed for the design as it is against the key for { ...d, name: trimmed }; re-arrange only when they differ. Ordinary renames then cost nothing. Check that your mask cache key includes the label name; if it does not, both sides of that comparison return the cached old layout and the check is silently vacuous.
+
+Apply the same reasoning to the "print name" toggle: when switching it on puts the label in a band below the artwork rather than inside the artwork's own corner, re-arrange. Clamping the design back onto the sheet, which is what it probably does today, only relocates the collision. This reverses a deliberate decision in that function, so expect a comment there saying it does not re-nest; that comment is now wrong.
+
+If the preview has a "has anything changed" signature string used to skip redraws, add the design name to it for designs that print the stamp. It is likely omitted today, so renames do not repaint until something unrelated invalidates the same cache.
+
+Fix 3 — Uploads never use the growth ladder, and never give film back.
+
+Symptom: a design with nowhere to sit lands off the bottom of the sheet with no warning; and a multi-file drop leaves the sheet larger than the artwork needs.
+
+Cause: the import path grows the sheet only when one design's own height exceeds the film. A design that merely has nowhere to sit is stacked below everything else with no lower clamp. Separately, multi-file drops pre-bump the sheet to a working height (48 inches in the original) so files have somewhere to land while decoding, and nothing ever reclaims it.
+
+Repack before growing. In the post-pack function, when there is an overflow and the caller did not ask for a full repack, retry once as a full repack before touching the ladder. A stable-biased pack overflows far more readily than a real one, and growing on the strength of it is needless expansion. Mark the retry with an internal repacked flag so it cannot recurse, run it as a continuation so it keeps the arrange lock and skips a second undo snapshot, and re-arm the noGrowRestoreRef you cleared in step 4 of Fix 1 before returning, or the rollback target is lost on the retry.
+
+Flag stranded imports. Add a ref, set to true in the branch where the nester found the incoming design no slot. Clamp that fallback position at the bottom as well as the top, so the design lands on the film. It may overlap briefly, which is visible and self-evidently temporary; landing below the sheet is neither.
+
+Settle once per batch. There is almost certainly already a debounced end-of-import hook that parks itself while the upload queue is active — in the original it only did a rigid re-seat. Extend it: if the stranded flag is set and there are at least two designs, run one whole-sheet arrange and let the existing ladder size the growth; otherwise reclaim film by running the shrink-to-fit pass. The two are exclusive, because an arrange already ends in a shrink. Clear the flag either way.
+
+Once per batch is the whole point of the design, not an optimisation. Growing per file makes each rung look justified from a partial sheet, which is how ten designs that fit on one rung climb several. Deciding once lets the ladder's lower-bound estimate size the jump from the whole batch's ink area. Keep the per-file placement for immediate feedback; the settle pass corrects it.
+
+If the app has an edit mode where the height is locked to an already-purchased variant, use the rigid re-seat there instead of the shrink.
+
+Verifying without the original test harnesses. Check these by hand in the browser: Fill Sheet with a large design selected among several smaller ones never changes the height, and when it cannot fit anything it leaves the sheet exactly as it was; a design with the stamp on, renamed from something short to something very long, wraps to two rows and does not print over its neighbour; dropping ten small files leaves a sheet sized for them rather than the pre-bump height, and dropping files onto a full sheet leaves nothing below the bottom edge. The strongest single invariant, if you write any automated check at all, is that the mask reservation is byte-identical for a short and a long name at the same row count — that is the one the overlap bug reduces to.

@@ -263,6 +263,8 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       fillIds?: Set<string>;
       /** Internal to the arrange hook: a height-ladder step continuing the run in flight. */
       continuation?: boolean;
+      /** Fill Sheet path: never expand the sheet even when originals overflow. */
+      noGrow?: boolean;
     }
   ) => void>(() => {});
   /**
@@ -2730,6 +2732,29 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         .map(d => d.id),
     );
     const turningOn = !designsRef.current.some(d => idSet.has(d.id) && d.printFileName);
+
+    // Fix 2: When switching the label on, check if any affected design would receive a band
+    // (label below the artwork rather than inside an empty corner). A band grows the
+    // design's reserved footprint, which can push it past the sheet's bottom edge; a
+    // re-arrange corrects the layout without the customer having to click Auto-Arrange.
+    let needsRearrange = false;
+    if (turningOn) {
+      for (const d of designsRef.current) {
+        if (!idSet.has(d.id)) continue;
+        // A band is only possible when a label goes below the artwork. Inside placement
+        // costs no film, so there is nothing to re-arrange for. We cannot check
+        // isClearOfInk here (no mask available without image data), so we deliberately
+        // over-trigger: the label will resolve to 'inside' at pack time if the corner
+        // is free, and the re-arrange is a cheap no-op in that case.
+        const artW = d.widthInches * d.transform.s;
+        const artH = d.heightInches * d.transform.s;
+        if (artW > 0 && artH > 0) {
+          needsRearrange = true;
+          break;
+        }
+      }
+    }
+
     setDesigns(prev => {
       const labelled = prev.map(d => (idSet.has(d.id) ? { ...d, printFileName: turningOn } : d));
       if (!turningOn) return labelled;
@@ -2739,6 +2764,10 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         return { ...d, transform: { ...d.transform, nx, ny } };
       });
     });
+
+    if (needsRearrange) {
+      setTimeout(() => handleAutoArrangeRef.current({ arrangeAll: true, skipSnapshot: true }), 0);
+    }
   }, [saveSnapshot]);
 
   const handleDeleteGroup = useCallback((ids: string[]) => {

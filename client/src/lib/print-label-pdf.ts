@@ -12,7 +12,7 @@
  */
 
 import type { PrintLabelLayout } from './print-label';
-import { labelReadsUpsideDown } from './print-label';
+import { labelLineStep, labelReadsUpsideDown } from './print-label';
 
 const POINTS_PER_INCH = 72;
 
@@ -92,25 +92,37 @@ export function drawPrintLabelOnPdfPage(
   });
 
   const sizePt = layout.fontInches * scalePt;
-  const textWidthPt = font.widthOfTextAtSize(layout.text, sizePt);
-  const textWidthInches = textWidthPt / scalePt;
-  const startX = rect.x + (rect.width - textWidthInches) / 2;
   // Baselines sit below the visual centre by roughly a third of the em for Helvetica's cap height;
   // exact metrics are not worth an extra font query for a production label.
   const baselineOffset = layout.fontInches * 0.35;
   const centreY = rect.y + rect.height / 2;
-  const textAnchor = upsideDown
-    ? toPage(startX + textWidthInches, centreY - baselineOffset, place, scalePt)
-    : toPage(startX, centreY + baselineOffset, place, scalePt);
+  const stepInches = labelLineStep(layout.fontInches);
 
-  page.drawText(layout.text, {
-    x: textAnchor.x,
-    y: textAnchor.y,
-    size: sizePt,
-    font,
-    rotate,
-    color: { type: 'RGB', red: 0, green: 0, blue: 0 },
-  });
+  // Draw each line of the multi-line label. Reverse the order when upsideDown so the
+  // visual top line is drawn first regardless of the rotation.
+  const lines = upsideDown ? [...layout.lines].reverse() : layout.lines;
+  const startOffsetY = -((lines.length - 1) / 2) * stepInches;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineWidthPt = font.widthOfTextAtSize(line, sizePt);
+    const lineWidthInches = lineWidthPt / scalePt;
+    const startX = rect.x + (rect.width - lineWidthInches) / 2;
+    const lineOffsetY = startOffsetY + i * stepInches;
+    const lineY = centreY + lineOffsetY;
+    const textAnchor = upsideDown
+      ? toPage(startX + lineWidthInches, lineY - baselineOffset, place, scalePt)
+      : toPage(startX, lineY + baselineOffset, place, scalePt);
+
+    page.drawText(line, {
+      x: textAnchor.x,
+      y: textAnchor.y,
+      size: sizePt,
+      font,
+      rotate,
+      color: { type: 'RGB', red: 0, green: 0, blue: 0 },
+    });
+  }
 }
 
 export { POINTS_PER_INCH };
