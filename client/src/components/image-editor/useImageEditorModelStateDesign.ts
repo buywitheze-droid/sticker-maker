@@ -1957,9 +1957,13 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         const base = baseNameOf(d.name);
         const sk = sizeKeyOf(d);
         const src = d.imageInfo.image.src;
-        // Include editSplit in the key so partially-edited copies get their own
-        // row even when image src and placed size are identical.
-        const key = `${src}::${sk}::${d.editSplit ?? ""}`;
+        // Split designs key by tag+size, not src: pixel edits create a new blob
+        // URL per copy, so copies edited together in one gesture must be grouped
+        // by their shared editSplit tag or they would land in separate rows.
+        // Unsplit designs keep the original src::sk key (resize-split unchanged).
+        const key = d.editSplit
+          ? `editSplit:${d.editSplit}::${sk}`
+          : `${src}::${sk}`;
         if (!firstSizeBySrc.has(src)) firstSizeBySrc.set(src, sk);
         if (!rowMap.has(key)) {
           rowMap.set(key, {

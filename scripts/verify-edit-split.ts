@@ -1,10 +1,10 @@
 /**
  * verify-edit-split.ts
  *
- * Standalone test for `computeEditSplitStamps`. No DOM, no React — runs with
- * `npx tsx scripts/verify-edit-split.ts`.
+ * Standalone tests for `computeEditSplitStamps` and `rowKeyOf`. No DOM, no
+ * React — runs with `npx tsx scripts/verify-edit-split.ts`.
  */
-import { computeEditSplitStamps } from "../client/src/lib/edit-split";
+import { computeEditSplitStamps, rowKeyOf } from "../client/src/lib/edit-split";
 
 // ---------------------------------------------------------------------------
 // Minimal mock — satisfies the DesignLike duck-type without HTMLImageElement
@@ -174,6 +174,61 @@ console.log("\nCase 6b: cross-sheet whole-row edit (both copies)");
 
   check("h1 stamp is undefined (whole row, no split)", stamps.get("h1") === undefined);
   check("h2 stamp is undefined (whole row, no split)", stamps.get("h2") === undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Case 7: rowKeyOf grouping formula — two copies with same editSplit tag but
+//         DIFFERENT post-edit src values land in the SAME row key.
+//         This is the core of the fix: pixel edits create a new blob URL per
+//         copy, so grouping must key by tag+size not src+size.
+// ---------------------------------------------------------------------------
+console.log("\nCase 7: rowKeyOf groups by editSplit tag, not by src");
+{
+  const tag = "halftone:shared-uuid-abc";
+  const copy1 = makeDesign("i1", "blob:post-edit-url-1", 4, 4, tag);
+  const copy2 = makeDesign("i2", "blob:post-edit-url-2", 4, 4, tag); // different src
+
+  check(
+    "copies with same editSplit but different src share the same rowKey",
+    rowKeyOf(copy1) === rowKeyOf(copy2),
+  );
+  check(
+    "their rowKey starts with 'editSplit:'",
+    rowKeyOf(copy1).startsWith("editSplit:"),
+  );
+  check(
+    "unsplit designs still key by src",
+    rowKeyOf(makeDesign("j1", "blob:orig")).startsWith("blob:orig"),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Case 8: ThresholdAlphaAll cross-sheet — all active-sheet designs are passed
+//         to computeEditSplitStamps along with a cross-sheet copy.
+//         Active-sheet designs that have a twin on another sheet should stamp.
+//         Active-sheet designs that are solo (no other-sheet twin) should not.
+// ---------------------------------------------------------------------------
+console.log("\nCase 8: ThresholdAlphaAll cross-sheet stamping");
+{
+  // Design A: one copy on active sheet, one on another sheet → partial row
+  const a_active = makeDesign("k1", "blob:img-k");
+  const a_other  = makeDesign("k2", "blob:img-k"); // different sheet
+
+  // Design B: only on active sheet (solo) → whole row
+  const b_active = makeDesign("k3", "blob:img-l");
+
+  // "ThresholdAlphaAll" edits all active-sheet designs: k1 and k3
+  // The allDesigns population includes the other-sheet copy too: k1, k2, k3
+  const allSheetDesigns = [a_active, a_other, b_active];
+  const stamps = computeEditSplitStamps(
+    ["k1", "k3"],  // active-sheet design IDs
+    allSheetDesigns,
+    "pixelClean",
+  );
+
+  check("design A (cross-sheet) gets a stamp", !!stamps.get("k1"));
+  check("design B (solo) has undefined stamp (no split)", stamps.get("k3") === undefined);
+  check("other-sheet copy not in result", !stamps.has("k2"));
 }
 
 // ---------------------------------------------------------------------------

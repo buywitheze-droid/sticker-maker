@@ -1561,6 +1561,15 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
   const handleThresholdAlphaAll = useCallback(async () => {
     try {
       if (designs.length === 0) return;
+      // "All" edits every design on the active sheet, but a design may also have
+      // copies on other sheets that are NOT being edited. Those cross-sheet copies
+      // make this a partial-row edit from layerRows' perspective, so we must
+      // compute stamps the same way as the selected-designs path.
+      const editSplitStamps = computeEditSplitStamps(
+        designs.map(d => d.id),
+        sheetsRef.current.flatMap(s => s.designs),
+        "pixelClean",
+      );
       saveSnapshot();
       const results = await Promise.all(designs.map(d => thresholdAlphaForDesign(d.imageInfo, d.widthInches, d.heightInches)));
       const updates = new Map<string, ImageInfo>();
@@ -1568,7 +1577,8 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       if (updates.size === 0) { toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedAllDesc"), variant: "destructive" }); return; }
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
-        return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
+        if (!newInfo) return d;
+        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id) };
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
       toast({ title: t("toast.alphaAllApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });

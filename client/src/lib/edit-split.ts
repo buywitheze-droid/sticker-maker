@@ -28,9 +28,23 @@ function sizeKeyOf(d: DesignLike): string {
   return `${(d.widthInches * d.transform.s).toFixed(2)}x${(d.heightInches * d.transform.s).toFixed(2)}`;
 }
 
-/** The same row-grouping key used by `layerRows` (after the editSplit extension). */
+/**
+ * The row-grouping key used by `layerRows`.
+ *
+ * Split designs (editSplit set) are keyed by their tag + size rather than by
+ * image source. After a pixel edit each copy gets a new blob URL, so copies
+ * edited together in one gesture would land in separate rows if we kept `src`
+ * in the key. Using the tag (which is shared by the gesture) groups them back
+ * into a single split row regardless of their individual post-edit sources.
+ *
+ * Unsplit designs keep the original `src::sk` key so the pre-existing
+ * resize-split behaviour is unaffected.
+ */
 export function rowKeyOf(d: DesignLike): string {
-  return `${d.imageInfo.image.src}::${sizeKeyOf(d)}::${d.editSplit ?? ""}`;
+  const sk = sizeKeyOf(d);
+  return d.editSplit
+    ? `editSplit:${d.editSplit}::${sk}`
+    : `${d.imageInfo.image.src}::${sk}`;
 }
 
 /**
