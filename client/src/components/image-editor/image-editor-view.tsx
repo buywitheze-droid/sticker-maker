@@ -35,7 +35,7 @@ import {
   useCropModalDesignId,
   useUiActions,
 } from "@/state/ui-store";
-import { ArrangeBusyPill } from "./arrange-busy-pill";
+import { ArrangeOverlay } from "./arrange-overlay";
 
 /** Halftone icon — a grid of circles shrinking diagonally. */
 const HalftoneIcon = ({ className }: { className?: string }) => (
@@ -1072,7 +1072,7 @@ export default function ImageEditorView() {
                    onWandDeactivate={handleWandDeactivate}
                    onRegisterFocus={registerCanvasFocus}
                 />
-                <ArrangeBusyPill stage={arrangeStage} />
+                <ArrangeOverlay stage={arrangeStage} />
 
                 {/* Contextual tools. Nothing selected means no sheet at all, so
                     the controls cost zero canvas for as long as they are of no
@@ -1736,7 +1736,7 @@ export default function ImageEditorView() {
               onWandDeleteTap={handleWandDelete}
               onWandDeactivate={handleWandDeactivate}
             />
-            <ArrangeBusyPill stage={arrangeStage} />
+            <ArrangeOverlay stage={arrangeStage} />
           </div>
         )}
       </div>

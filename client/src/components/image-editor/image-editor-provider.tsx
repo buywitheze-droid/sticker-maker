@@ -59,7 +59,6 @@ function seedCopyGrid(args: {
     id,
     name: baseName,
     transform,
-    printFileName: false,
   });
 
   // A degenerate footprint would divide by zero below. Falling back to the old co-located
@@ -121,6 +120,7 @@ function useImageEditorModel(props: ImageEditorProps) {
     selectedDesignId: bagSelectedDesignId,
     selectedDesignIds: bagSelectedDesignIds,
     handleAutoArrangeRef: bagHandleAutoArrangeRef,
+    beginArrangeRef: bagBeginArrangeRef,
     artboardWidth: bagArtboardWidth,
     artboardHeight: bagArtboardHeight,
     designs: bagDesigns,
@@ -131,6 +131,9 @@ function useImageEditorModel(props: ImageEditorProps) {
     const delta = targetCount - row.designs.length;
     if (delta === 0) return;
     bagSaveSnapshot();
+    // Before the copies land: the seeded grid below and the pack that replaces it are two
+    // separate paints, and the veil is what stops the customer seeing the first one.
+    bagBeginArrangeRef.current();
     if (delta > 0) {
       const base = row.designs[0];
       const baseName = base.name.replace(/ copy( \d+)?$/, "");
@@ -170,14 +173,17 @@ function useImageEditorModel(props: ImageEditorProps) {
         // Copy-count changes must repack the whole sheet. The newly created
         // copies are selected for layer feedback, but selected-only arranging
         // would keep every other design fixed and stack copies in one column.
+        // `fullRepack` so the result matches the Auto-Arrange button — see
+        // COPY_ARRANGE_OPTS in useImageEditorModelStateDesign.
         bagHandleAutoArrangeRef.current({
           skipSnapshot: true,
           preserveSelection: true,
           arrangeAll: true,
+          fullRepack: true,
         });
       });
     });
-  }, [bagSaveSnapshot, bagSetDesigns, bagSetSelectedDesignIds, bagSetSelectedDesignId, bagSelectedDesignId, bagHandleAutoArrangeRef, bagArtboardWidth, bagArtboardHeight]);
+  }, [bagSaveSnapshot, bagSetDesigns, bagSetSelectedDesignIds, bagSetSelectedDesignId, bagSelectedDesignId, bagHandleAutoArrangeRef, bagBeginArrangeRef, bagArtboardWidth, bagArtboardHeight]);
 
   const handleSetRotation = useCallback((degrees: number) => {
     const ids = bagSelectedDesignIds.size > 0
