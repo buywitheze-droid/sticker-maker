@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type { ImageInfo, HalftoneSettings, HalftoneStrength } from "@/lib/types";
 import { applyHalftoneScreen } from "@/lib/halftone-core";
 import { runHalftone } from "@/lib/halftone";
+import { computeEditSplitStamps } from "@/lib/edit-split";
 import type { ImageEditorBagAfterUploadCrop } from "./image-editor-hook-bag.types";
 
 /** Apply 1-bit alpha threshold to an ImageInfo, returning a cleaned copy.
@@ -78,6 +79,13 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
   ) => {
     const design = designs.find(d => d.id === designId);
     if (!design) return;
+
+    // Compute the split stamp synchronously (before any async work) so the
+    // current design-array state is captured for the partial-edit check.
+    // Internal rebuilds (skipSnapshot:true) pass null to leave editSplit alone.
+    const editSplitStamps = !options?.skipSnapshot
+      ? computeEditSplitStamps([designId], designs, "halftone")
+      : null;
     // Always rebuild from the original pixels. Once a design has been
     // halftoned, imageInfo.image is the screened raster and must never become
     // the input to another screen when the design is resized.
@@ -228,7 +236,7 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
               setDesigns(prev => prev.map(d => {
                 if (d.id !== designId) return d;
                 if ((d.halftoneSourceImage ?? d.imageInfo.image) !== src) return d;
-                return {
+                const updated = {
                   ...d,
                   imageInfo: { ...d.imageInfo, image: img },
                   halftoned: true,
@@ -236,6 +244,11 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
                   halftoneSourceImage: src,
                   alphaThresholded: true,
                 };
+                // User gesture: apply stamp (undefined clears tag, string stamps it).
+                // Internal rebuild (editSplitStamps === null): leave editSplit as-is via spread.
+                return editSplitStamps !== null
+                  ? { ...updated, editSplit: editSplitStamps.get(d.id) }
+                  : updated;
               }));
               if (selectedDesignId === designId) setImageInfo(newInfo);
             }

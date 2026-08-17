@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, type Dispatch, type SetStateAction } from "react";
+import { badgeLabelKey } from "@/lib/edit-split";
 import { useToast } from "@/hooks/use-toast";
 import {
   useSelectedDesignId,
@@ -1359,6 +1360,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
          printFileName: d.printFileName,
          halftoned: d.halftoned,
          halftoneSettings: d.halftoneSettings,
+         editSplit: d.editSplit,
        })));
       infoMap = new Map(currentDesigns.map(d => [d.id, d.imageInfo]));
       snapshotCacheRef.current = { designs: currentDesigns, json, infoMap };
@@ -1380,6 +1382,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       printFileName?: boolean;
       halftoned?: boolean;
       halftoneSettings?: DesignItem["halftoneSettings"];
+      editSplit?: string;
     }>;
     try {
       parsed = JSON.parse(snap.designsJson);
@@ -1411,6 +1414,9 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
              // The original source image is retained in-memory when possible;
              // restored layers reload their original asset before rebuilding.
              halftoneSourceImage: p.halftoned ? existing.halftoneSourceImage : undefined,
+             // Explicitly restore so undo of a pixel edit clears the split tag; the
+             // spread above would otherwise silently carry the live (post-edit) value.
+             editSplit: p.editSplit,
           };
         }
         if (savedInfo) {
@@ -1425,6 +1431,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
              originalDPI: savedInfo.dpi,
              halftoned: p.halftoned,
              halftoneSettings: p.halftoneSettings,
+             editSplit: p.editSplit,
            } as DesignItem;
         }
         return null;
@@ -1939,6 +1946,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       sizeKey: string;
       designs: DesignItem[];
       isResized: boolean;
+      editSplitTag?: string;
       representative: DesignItem;
       sheetsWithThis: Array<{ id: string; name: string; count: number }>;
     };
@@ -1949,7 +1957,9 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         const base = baseNameOf(d.name);
         const sk = sizeKeyOf(d);
         const src = d.imageInfo.image.src;
-        const key = `${src}::${sk}`;
+        // Include editSplit in the key so partially-edited copies get their own
+        // row even when image src and placed size are identical.
+        const key = `${src}::${sk}::${d.editSplit ?? ""}`;
         if (!firstSizeBySrc.has(src)) firstSizeBySrc.set(src, sk);
         if (!rowMap.has(key)) {
           rowMap.set(key, {
@@ -1958,6 +1968,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
             sizeKey: sk,
             designs: [],
             isResized: sk !== (firstSizeBySrc.get(src) ?? sk),
+            editSplitTag: d.editSplit ? badgeLabelKey(d.editSplit) : undefined,
             representative: d,
             sheetsWithThis: [],
           });

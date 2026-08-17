@@ -112,6 +112,19 @@ export interface DesignItem {
    * belongs to more than one group at once.
    */
   groupId?: string;
+  /**
+   * Layers-panel split tag. When a pixel-changing edit (halftone, upscale,
+   * pixelClean, crop) is applied to SOME copies of a row but not all, the
+   * edited copies receive an `editSplit` tag of the form `"toolKey:uuid"`.
+   * The uuid is minted once per user gesture so copies edited together land
+   * in the same split row; the tool key drives the badge label shown in the
+   * panel. `undefined` means "no split — belongs to the canonical row".
+   *
+   * Never set this field during internal rebuilds (e.g. halftone re-screen
+   * after resize). Only real user edit gestures should stamp it.
+   * Duplicating a split copy inherits the tag automatically via spread.
+   */
+  editSplit?: string;
 }
 
 export function computeLayerRect(

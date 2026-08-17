@@ -62,6 +62,7 @@ import { revokeThumbnailCacheEntry } from "@/lib/thumbnail-cache";
 import { saveUploadToLibrary } from "@/lib/uploads-library";
 import { detectUpscaleSupport } from "@/lib/upscale-support";
 import type { DesignItem, ImageInfo, ResizeSettings } from "@/lib/types";
+import { computeEditSplitStamps } from "@/lib/edit-split";
 import type { ImageEditorBagAfterArrange } from "./image-editor-hook-bag.types";
 import { useUiActions, getUiSnapshot } from "@/state/ui-store";
 
@@ -1370,6 +1371,9 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         dpi: nextDpi,
       };
 
+      // Compute split stamp before saveSnapshot so the pre-upscale designs array
+      // is used for the partial-row check.
+      const editSplitStamps = computeEditSplitStamps([design.id], designs, "upscale");
       saveSnapshot();
       const oldSrc = sourceInfo.image.src;
       revokeThumbnailCacheEntry(thumbnailCacheRef.current, oldSrc);
@@ -1386,6 +1390,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
             halftoned: false,
             halftoneSettings: undefined,
             halftoneSourceImage: undefined,
+            editSplit: editSplitStamps.get(current.id),
           }
         : current
       ));
@@ -1521,6 +1526,8 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
     try {
       const targetIds = selectedDesignIds.size > 0 ? Array.from(selectedDesignIds) : (selectedDesignId ? [selectedDesignId] : []);
       if (targetIds.length === 0) return;
+      // Compute stamp before saveSnapshot — uses the pre-edit designs array.
+      const editSplitStamps = computeEditSplitStamps(targetIds, designs, "pixelClean");
       saveSnapshot();
       const targetDesigns = designs.filter(d => targetIds.includes(d.id));
       const results = await Promise.all(targetDesigns.map(d => thresholdAlphaForDesign(d.imageInfo, d.widthInches, d.heightInches)));
@@ -1529,7 +1536,8 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       if (updates.size === 0) { toast({ title: t("toast.alphaFailed"), description: t("toast.alphaFailedDesc"), variant: "destructive" }); return; }
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
-        return newInfo ? { ...d, imageInfo: newInfo, alphaThresholded: true } : d;
+        if (!newInfo) return d;
+        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id) };
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
       toast({ title: t("toast.alphaApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });
@@ -1574,6 +1582,8 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
   const handleCropApply = useCallback(async (designId: string, newImageInfo: ImageInfo) => {
     const design = designs.find(d => d.id === designId);
     if (!design) return;
+    // Compute stamp before saveSnapshot — uses the pre-edit designs array.
+    const editSplitStamps = computeEditSplitStamps([designId], designs, "crop");
     saveSnapshot();
     const aspect = design.widthInches / design.heightInches;
     const newAspect = newImageInfo.image.naturalWidth / newImageInfo.image.naturalHeight;
@@ -1623,7 +1633,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
 
     setDesigns(prev => prev.map(d =>
       d.id === designId
-        ? { ...d, ...designFields, imageInfo: info, widthInches, heightInches }
+        ? { ...d, ...designFields, imageInfo: info, widthInches, heightInches, editSplit: editSplitStamps.get(d.id) }
         : d
     ));
     if (selectedDesignId === designId) setImageInfo(info);

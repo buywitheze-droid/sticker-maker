@@ -163,6 +163,8 @@ export interface StoredDraftDesign {
    *  the trimmed artwork's box at export. */
   vectorInkBox?: VectorInkBox;
   groupId?: string;
+  /** See `DesignItem.editSplit` — persisted so split rows survive a save/reload. */
+  editSplit?: string;
 }
 
 export interface EditorDraft {
@@ -1092,6 +1094,7 @@ export function buildEditorDraft(
       halftoneSettings: design.halftoneSettings,
       printFileName: design.printFileName,
       groupId: design.groupId,
+      editSplit: design.editSplit,
       fileKey,
       fileName: file.name,
       fileType: file.type || "application/octet-stream",
@@ -1282,6 +1285,7 @@ export async function restoreEditorDraft(draft: EditorDraft): Promise<{
       halftoneSettings: stored.halftoneSettings,
       printFileName: stored.printFileName,
       groupId: stored.groupId,
+      editSplit: stored.editSplit,
     });
   }
 

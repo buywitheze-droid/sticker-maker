@@ -18,13 +18,19 @@ import {
 } from "@/state/editing-store";
 
 export interface LayerRowGroup {
-  /** Stable id of the form `${imageSrc}::${sizeKey}` — unique across sheets. */
+  /** Stable id of the form `${imageSrc}::${sizeKey}::${editSplit}` — unique across sheets. */
   rowKey: string;
   baseName: string;
   sizeKey: string;
   /** Copies on the sheet currently on screen. Empty when the design only lives elsewhere. */
   designs: DesignItem[];
   isResized: boolean;
+  /**
+   * Tool key extracted from the representative design's `editSplit` tag (e.g. `"halftone"`).
+   * Present only when some but not all copies of the original row were edited with a
+   * pixel-changing tool; drives the badge label in the layers panel.
+   */
+  editSplitTag?: string;
   /** Thumbnail / Add-here source when the active sheet has no copies of this design. */
   representative: DesignItem;
   sheetsWithThis: Array<{ id: string; name: string; count: number }>;
@@ -371,6 +377,11 @@ function LayerRowComponent({ rowKey, row, handlers }: LayerRowProps) {
             {row.isResized && (
               <span className="ml-1 text-[9px] text-amber-400/80 font-medium">
                 {t("editor.resized")}
+              </span>
+            )}
+            {row.editSplitTag && (
+              <span className="ml-1 text-[9px] text-amber-400/80 font-medium">
+                {t(`editor.editSplit.${row.editSplitTag}` as Parameters<typeof t>[0])}
               </span>
             )}
           </p>
