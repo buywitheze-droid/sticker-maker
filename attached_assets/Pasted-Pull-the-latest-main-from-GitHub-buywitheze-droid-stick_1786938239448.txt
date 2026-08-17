@@ -1,0 +1,40 @@
+Pull the latest main from GitHub (buywitheze-droid/sticker-maker). Three new commits
+are on top of b49a99c "Auto-trim empty space after white background removal":
+
+  f05ef1e  Restore the printed name label, and stop large uploads failing on capable machines
+  8f521f9  Label every copy, pack copies the way the button does, and hide the repack
+  3c37fe6  Stop the packer heaping what it cannot fit, and let a margin change reach the whole sheet
+
+Do this:
+  git fetch origin
+  git reset --hard origin/main      (only if you have no local work you need to keep)
+  npm install                       (no new dependencies were added, but run it anyway)
+  npm run build
+
+Do not revert, re-implement or "clean up" any of it, and do not reformat the files.
+Everything is already verified.
+
+New files you will see: client/src/lib/print-label.ts, client/src/lib/print-label-pdf.ts,
+client/src/lib/wake-lock.ts, client/src/components/image-editor/arrange-overlay.tsx,
+scripts/lib/extract-ts.mjs, scripts/verify-print-label.ts, scripts/verify-arrange-tidy.ts,
+scripts/verify-arrange-integrity.ts.
+
+Deleted: client/src/components/image-editor/arrange-busy-pill.tsx (replaced by arrange-overlay.tsx).
+
+Two behaviour changes worth knowing about:
+  1. The upload error toasts changed. The translation keys toast.networkError and
+     toast.networkErrorDesc are gone, replaced by toast.uploadNetworkDesc,
+     toast.uploadServerBusyDesc and toast.uploadFileGoneDesc in en, es and fr. A
+     failure from the /api/prepare-raster-upload endpoint now says the service was
+     busy instead of blaming the customer's internet. The server route itself is
+     unchanged.
+  2. Large images are now decoded in the browser on capable desktops instead of
+     being POSTed to /api/prepare-raster-upload, so that endpoint should see less
+     traffic. Nothing server-side needs changing.
+
+If you want to confirm the port yourself:
+  npx tsc --noEmit
+  npx tsx scripts/verify-print-label.ts        (expect PASS, 8 designs x 4 flips)
+  npx tsx scripts/verify-arrange-integrity.ts  (expect "no arrange prints ink on ink")
+
+Then publish.
