@@ -125,6 +125,17 @@ export interface DesignItem {
    * Duplicating a split copy inherits the tag automatically via spread.
    */
   editSplit?: string;
+  /**
+   * Stable row-grouping lineage key. Set to the design's `imageInfo.image.src`
+   * captured **before** a pixel edit (halftone, upscale, pixelClean, crop)
+   * replaces the blob URL. Preserved through subsequent edits so all copies
+   * that originated from the same row continue to be grouped together in the
+   * layers panel even when their individual post-edit blob URLs differ.
+   *
+   * `undefined` on an unedited design — grouping falls back to `imageInfo.image.src`.
+   * Inherited automatically by duplicates via spread (like `editSplit`).
+   */
+  rowLineage?: string;
 }
 
 export function computeLayerRect(

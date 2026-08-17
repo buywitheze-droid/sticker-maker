@@ -1380,6 +1380,9 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         sheetsRef.current.flatMap(s => s.designs),
         "upscale",
       );
+      // Capture stable lineage BEFORE saveSnapshot: the upscale will replace
+      // the blob URL and the design must stay grouped with its row-mates.
+      const preEditLineage = design.rowLineage ?? design.imageInfo.image.src;
       saveSnapshot();
       const oldSrc = sourceInfo.image.src;
       revokeThumbnailCacheEntry(thumbnailCacheRef.current, oldSrc);
@@ -1397,6 +1400,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
             halftoneSettings: undefined,
             halftoneSourceImage: undefined,
             editSplit: editSplitStamps.get(current.id),
+            rowLineage: preEditLineage,
           }
         : current
       ));
@@ -1539,6 +1543,14 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         sheetsRef.current.flatMap(s => s.designs),
         "pixelClean",
       );
+      // Capture stable lineage BEFORE saveSnapshot: the pixel-clean replaces
+      // each copy's blob URL and designs must stay grouped with their row-mates.
+      const targetIdSet = new Set(targetIds);
+      const preEditLineageMap = new Map<string, string>(
+        designs
+          .filter(d => targetIdSet.has(d.id))
+          .map(d => [d.id, d.rowLineage ?? d.imageInfo.image.src]),
+      );
       saveSnapshot();
       const targetDesigns = designs.filter(d => targetIds.includes(d.id));
       const results = await Promise.all(targetDesigns.map(d => thresholdAlphaForDesign(d.imageInfo, d.widthInches, d.heightInches)));
@@ -1548,7 +1560,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
         if (!newInfo) return d;
-        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id) };
+        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id), rowLineage: preEditLineageMap.get(d.id) ?? d.rowLineage };
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
       toast({ title: t("toast.alphaApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });
@@ -1570,6 +1582,10 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
         sheetsRef.current.flatMap(s => s.designs),
         "pixelClean",
       );
+      // Capture stable lineage BEFORE saveSnapshot (same reason as handleThresholdAlpha).
+      const preEditLineageMapAll = new Map<string, string>(
+        designs.map(d => [d.id, d.rowLineage ?? d.imageInfo.image.src]),
+      );
       saveSnapshot();
       const results = await Promise.all(designs.map(d => thresholdAlphaForDesign(d.imageInfo, d.widthInches, d.heightInches)));
       const updates = new Map<string, ImageInfo>();
@@ -1578,7 +1594,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       setDesigns(prev => prev.map(d => {
         const newInfo = updates.get(d.id);
         if (!newInfo) return d;
-        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id) };
+        return { ...d, imageInfo: newInfo, alphaThresholded: true, editSplit: editSplitStamps.get(d.id), rowLineage: preEditLineageMapAll.get(d.id) ?? d.rowLineage };
       }));
       if (selectedDesignId && updates.has(selectedDesignId)) setImageInfo(updates.get(selectedDesignId)!);
       toast({ title: t("toast.alphaAllApplied"), description: updates.size !== 1 ? t("toast.alphaAppliedDescPlural", { count: updates.size }) : t("toast.alphaAppliedDesc", { count: updates.size }) });
@@ -1610,6 +1626,8 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       sheetsRef.current.flatMap(s => s.designs),
       "crop",
     );
+    // Capture stable lineage BEFORE saveSnapshot: crop replaces the blob URL.
+    const preEditLineage = design.rowLineage ?? design.imageInfo.image.src;
     saveSnapshot();
     const aspect = design.widthInches / design.heightInches;
     const newAspect = newImageInfo.image.naturalWidth / newImageInfo.image.naturalHeight;
@@ -1659,7 +1677,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
 
     setDesigns(prev => prev.map(d =>
       d.id === designId
-        ? { ...d, ...designFields, imageInfo: info, widthInches, heightInches, editSplit: editSplitStamps.get(d.id) }
+        ? { ...d, ...designFields, imageInfo: info, widthInches, heightInches, editSplit: editSplitStamps.get(d.id), rowLineage: preEditLineage }
         : d
     ));
     if (selectedDesignId === designId) setImageInfo(info);

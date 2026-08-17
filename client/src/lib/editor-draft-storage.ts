@@ -165,6 +165,8 @@ export interface StoredDraftDesign {
   groupId?: string;
   /** See `DesignItem.editSplit` — persisted so split rows survive a save/reload. */
   editSplit?: string;
+  /** See `DesignItem.rowLineage` — persisted so post-edit grouping survives a reload. */
+  rowLineage?: string;
 }
 
 export interface EditorDraft {
@@ -1095,6 +1097,7 @@ export function buildEditorDraft(
       printFileName: design.printFileName,
       groupId: design.groupId,
       editSplit: design.editSplit,
+      rowLineage: design.rowLineage,
       fileKey,
       fileName: file.name,
       fileType: file.type || "application/octet-stream",
@@ -1286,6 +1289,7 @@ export async function restoreEditorDraft(draft: EditorDraft): Promise<{
       printFileName: stored.printFileName,
       groupId: stored.groupId,
       editSplit: stored.editSplit,
+      rowLineage: stored.rowLineage,
     });
   }
 

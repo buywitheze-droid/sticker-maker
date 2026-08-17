@@ -1361,6 +1361,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
          halftoned: d.halftoned,
          halftoneSettings: d.halftoneSettings,
          editSplit: d.editSplit,
+         rowLineage: d.rowLineage,
        })));
       infoMap = new Map(currentDesigns.map(d => [d.id, d.imageInfo]));
       snapshotCacheRef.current = { designs: currentDesigns, json, infoMap };
@@ -1383,6 +1384,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
       halftoned?: boolean;
       halftoneSettings?: DesignItem["halftoneSettings"];
       editSplit?: string;
+      rowLineage?: string;
     }>;
     try {
       parsed = JSON.parse(snap.designsJson);
@@ -1417,6 +1419,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
              // Explicitly restore so undo of a pixel edit clears the split tag; the
              // spread above would otherwise silently carry the live (post-edit) value.
              editSplit: p.editSplit,
+             rowLineage: p.rowLineage,
           };
         }
         if (savedInfo) {
@@ -1432,6 +1435,7 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
              halftoned: p.halftoned,
              halftoneSettings: p.halftoneSettings,
              editSplit: p.editSplit,
+             rowLineage: p.rowLineage,
            } as DesignItem;
         }
         return null;
@@ -1957,13 +1961,13 @@ export function useImageEditorModelStateDesign(props: ImageEditorProps) {
         const base = baseNameOf(d.name);
         const sk = sizeKeyOf(d);
         const src = d.imageInfo.image.src;
-        // Split designs key by tag+size, not src: pixel edits create a new blob
-        // URL per copy, so copies edited together in one gesture must be grouped
-        // by their shared editSplit tag or they would land in separate rows.
-        // Unsplit designs keep the original src::sk key (resize-split unchanged).
+        // Three-tier grouping key — must stay in sync with rowKeyOf() in edit-split.ts:
+        //  1. editSplit set → tag+size (copies edited together share a tag)
+        //  2. rowLineage set → lineage+size (whole-row edits that changed blob URL)
+        //  3. neither → src+size (original, unedited behaviour)
         const key = d.editSplit
           ? `editSplit:${d.editSplit}::${sk}`
-          : `${src}::${sk}`;
+          : `${d.rowLineage ?? src}::${sk}`;
         if (!firstSizeBySrc.has(src)) firstSizeBySrc.set(src, sk);
         if (!rowMap.has(key)) {
           rowMap.set(key, {

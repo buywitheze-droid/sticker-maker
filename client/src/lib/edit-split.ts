@@ -21,6 +21,8 @@ export interface DesignLike {
   heightInches: number;
   transform: { s: number };
   editSplit?: string;
+  /** See `DesignItem.rowLineage` — stable grouping key across pixel edits. */
+  rowLineage?: string;
 }
 
 /** The same placed-size formula used by `layerRows`. */
@@ -31,20 +33,19 @@ function sizeKeyOf(d: DesignLike): string {
 /**
  * The row-grouping key used by `layerRows`.
  *
- * Split designs (editSplit set) are keyed by their tag + size rather than by
- * image source. After a pixel edit each copy gets a new blob URL, so copies
- * edited together in one gesture would land in separate rows if we kept `src`
- * in the key. Using the tag (which is shared by the gesture) groups them back
- * into a single split row regardless of their individual post-edit sources.
- *
- * Unsplit designs keep the original `src::sk` key so the pre-existing
- * resize-split behaviour is unaffected.
+ * Three-tier priority:
+ * 1. `editSplit` set → keyed by tag+size. After a pixel edit each copy gets a
+ *    new blob URL; the shared tag (minted once per gesture) keeps copies edited
+ *    together in one split row.
+ * 2. `rowLineage` set (but no editSplit) → keyed by lineage+size. Lineage is
+ *    the pre-edit src captured before the blob URL changed, so whole-row edits
+ *    (where editSplit is intentionally absent) still group together.
+ * 3. Neither set → keyed by current src+size (unedited designs, original behaviour).
  */
 export function rowKeyOf(d: DesignLike): string {
   const sk = sizeKeyOf(d);
-  return d.editSplit
-    ? `editSplit:${d.editSplit}::${sk}`
-    : `${d.imageInfo.image.src}::${sk}`;
+  if (d.editSplit) return `editSplit:${d.editSplit}::${sk}`;
+  return `${d.rowLineage ?? d.imageInfo.image.src}::${sk}`;
 }
 
 /**

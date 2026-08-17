@@ -177,28 +177,42 @@ console.log("\nCase 6b: cross-sheet whole-row edit (both copies)");
 }
 
 // ---------------------------------------------------------------------------
-// Case 7: rowKeyOf grouping formula — two copies with same editSplit tag but
-//         DIFFERENT post-edit src values land in the SAME row key.
-//         This is the core of the fix: pixel edits create a new blob URL per
-//         copy, so grouping must key by tag+size not src+size.
+// Case 7: rowKeyOf three-tier grouping formula.
 // ---------------------------------------------------------------------------
-console.log("\nCase 7: rowKeyOf groups by editSplit tag, not by src");
+console.log("\nCase 7: rowKeyOf three-tier grouping");
 {
   const tag = "halftone:shared-uuid-abc";
-  const copy1 = makeDesign("i1", "blob:post-edit-url-1", 4, 4, tag);
-  const copy2 = makeDesign("i2", "blob:post-edit-url-2", 4, 4, tag); // different src
 
+  // Tier 1: editSplit set — keyed by tag+size regardless of src
+  const splitCopy1 = makeDesign("i1", "blob:post-edit-url-1", 4, 4, tag);
+  const splitCopy2 = makeDesign("i2", "blob:post-edit-url-2", 4, 4, tag);
   check(
-    "copies with same editSplit but different src share the same rowKey",
-    rowKeyOf(copy1) === rowKeyOf(copy2),
+    "same editSplit tag + different src → same rowKey",
+    rowKeyOf(splitCopy1) === rowKeyOf(splitCopy2),
+  );
+  check("split rowKey starts with 'editSplit:'", rowKeyOf(splitCopy1).startsWith("editSplit:"));
+
+  // Tier 2: rowLineage set (no editSplit) — keyed by lineage, not current src
+  // This is the whole-row-edit path where editSplitStamps returns undefined.
+  function makeDesignWithLineage(id: string, src: string, lineage: string) {
+    return { ...makeDesign(id, src), rowLineage: lineage };
+  }
+  const lineage = "blob:original-src";
+  const wholeCopy1 = makeDesignWithLineage("j1", "blob:new-src-1", lineage);
+  const wholeCopy2 = makeDesignWithLineage("j2", "blob:new-src-2", lineage);
+  check(
+    "same rowLineage + different src → same rowKey (whole-row edit stays together)",
+    rowKeyOf(wholeCopy1) === rowKeyOf(wholeCopy2),
   );
   check(
-    "their rowKey starts with 'editSplit:'",
-    rowKeyOf(copy1).startsWith("editSplit:"),
+    "rowLineage-keyed rowKey is the lineage, not the post-edit src",
+    rowKeyOf(wholeCopy1).startsWith("blob:original-src"),
   );
+
+  // Tier 3: neither set — keyed by current src
   check(
-    "unsplit designs still key by src",
-    rowKeyOf(makeDesign("j1", "blob:orig")).startsWith("blob:orig"),
+    "unsplit designs still key by current src",
+    rowKeyOf(makeDesign("k1", "blob:orig")).startsWith("blob:orig"),
   );
 }
 

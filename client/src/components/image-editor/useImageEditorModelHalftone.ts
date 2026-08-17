@@ -93,6 +93,10 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
           "halftone",
         )
       : null;
+    // Capture the stable lineage key BEFORE any async work or blob URL change.
+    // Used in setDesigns to ensure the design stays grouped with its row-mates
+    // even after its imageInfo.image.src changes to a new post-halftone blob URL.
+    const preEditLineage = design.rowLineage ?? design.imageInfo.image.src;
     // Always rebuild from the original pixels. Once a design has been
     // halftoned, imageInfo.image is the screened raster and must never become
     // the input to another screen when the design is resized.
@@ -251,10 +255,10 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
                   halftoneSourceImage: src,
                   alphaThresholded: true,
                 };
-                // User gesture: apply stamp (undefined clears tag, string stamps it).
-                // Internal rebuild (editSplitStamps === null): leave editSplit as-is via spread.
+                // User gesture: apply stamp and lock lineage. Internal rebuild
+                // (editSplitStamps === null): leave editSplit / rowLineage as-is via spread.
                 return editSplitStamps !== null
-                  ? { ...updated, editSplit: editSplitStamps.get(d.id) }
+                  ? { ...updated, editSplit: editSplitStamps.get(d.id), rowLineage: preEditLineage }
                   : updated;
               }));
               if (selectedDesignId === designId) setImageInfo(newInfo);
