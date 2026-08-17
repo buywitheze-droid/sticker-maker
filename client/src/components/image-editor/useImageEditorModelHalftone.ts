@@ -42,6 +42,7 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
   const {
     designs,
     designsRef,
+    sheetsRef,
     selectedDesignId,
     selectedDesignIds,
     setDesigns,
@@ -82,9 +83,15 @@ export function useImageEditorModelHalftone(bag: ImageEditorBagAfterUploadCrop) 
 
     // Compute the split stamp synchronously (before any async work) so the
     // current design-array state is captured for the partial-edit check.
+    // Use all sheets so a copy on a different sheet is counted as part of the
+    // same row — matching the cross-sheet grouping layerRows uses.
     // Internal rebuilds (skipSnapshot:true) pass null to leave editSplit alone.
     const editSplitStamps = !options?.skipSnapshot
-      ? computeEditSplitStamps([designId], designs, "halftone")
+      ? computeEditSplitStamps(
+          [designId],
+          sheetsRef.current.flatMap(s => s.designs),
+          "halftone",
+        )
       : null;
     // Always rebuild from the original pixels. Once a design has been
     // halftoned, imageInfo.image is the screened raster and must never become

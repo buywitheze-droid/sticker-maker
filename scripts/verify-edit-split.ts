@@ -139,5 +139,43 @@ console.log("\nCase 5: empty editing set");
 }
 
 // ---------------------------------------------------------------------------
+// Case 6: cross-sheet — one copy on active sheet, one on another sheet.
+//         Editing the active-sheet copy is a partial edit of the row even
+//         though the all-sheets population has two members.
+//
+//         This is the regression that the reviewer caught: if the helper only
+//         sees active-sheet designs it would count 1-of-1 → whole-row → no stamp.
+// ---------------------------------------------------------------------------
+console.log("\nCase 6: cross-sheet partial edit");
+{
+  // Same image src + size on both sheets → same row in layerRows.
+  const activeSheetCopy  = makeDesign("g1", "blob:img-g");
+  const otherSheetCopy   = makeDesign("g2", "blob:img-g"); // different sheet, same row
+
+  // The caller passes ALL designs from ALL sheets to computeEditSplitStamps.
+  const allSheetDesigns = [activeSheetCopy, otherSheetCopy];
+
+  // Only the active-sheet copy is being edited.
+  const stamps = computeEditSplitStamps(["g1"], allSheetDesigns, "upscale");
+
+  check("g1 gets a stamp (partial cross-sheet row)", !!stamps.get("g1"));
+  check("stamp starts with 'upscale:'", (stamps.get("g1") ?? "").startsWith("upscale:"));
+  check("g2 not in result (other sheet, not edited)", !stamps.has("g2"));
+}
+
+// Case 6b: editing BOTH copies (one per sheet) → no stamp (whole row).
+console.log("\nCase 6b: cross-sheet whole-row edit (both copies)");
+{
+  const h1 = makeDesign("h1", "blob:img-h");
+  const h2 = makeDesign("h2", "blob:img-h");
+  const allSheetDesigns = [h1, h2];
+
+  const stamps = computeEditSplitStamps(["h1", "h2"], allSheetDesigns, "crop");
+
+  check("h1 stamp is undefined (whole row, no split)", stamps.get("h1") === undefined);
+  check("h2 stamp is undefined (whole row, no split)", stamps.get("h2") === undefined);
+}
+
+// ---------------------------------------------------------------------------
 console.log(pass ? "\nPASS — all cases passed." : "\nFAIL — see errors above.");
 process.exit(pass ? 0 : 1);

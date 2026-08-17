@@ -239,6 +239,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
     contentFillCacheRef,
     assetDataUrlCacheRef,
     restoredLayerAssetRef,
+    sheetsRef,
   } = bag;
   // Actions from the Zustand UI store — replacements for the model's
   // previous `setMobilePanel` / `setContextMenu` / `setCropModalDesignId`.
@@ -1372,8 +1373,13 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       };
 
       // Compute split stamp before saveSnapshot so the pre-upscale designs array
-      // is used for the partial-row check.
-      const editSplitStamps = computeEditSplitStamps([design.id], designs, "upscale");
+      // is used for the partial-row check. Use all sheets so a copy on another
+      // sheet is counted as part of the same row — matching layerRows grouping.
+      const editSplitStamps = computeEditSplitStamps(
+        [design.id],
+        sheetsRef.current.flatMap(s => s.designs),
+        "upscale",
+      );
       saveSnapshot();
       const oldSrc = sourceInfo.image.src;
       revokeThumbnailCacheEntry(thumbnailCacheRef.current, oldSrc);
@@ -1526,8 +1532,13 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
     try {
       const targetIds = selectedDesignIds.size > 0 ? Array.from(selectedDesignIds) : (selectedDesignId ? [selectedDesignId] : []);
       if (targetIds.length === 0) return;
-      // Compute stamp before saveSnapshot — uses the pre-edit designs array.
-      const editSplitStamps = computeEditSplitStamps(targetIds, designs, "pixelClean");
+      // Compute stamp before saveSnapshot — use all sheets so copies on other
+      // sheets are counted in the same row, matching layerRows grouping.
+      const editSplitStamps = computeEditSplitStamps(
+        targetIds,
+        sheetsRef.current.flatMap(s => s.designs),
+        "pixelClean",
+      );
       saveSnapshot();
       const targetDesigns = designs.filter(d => targetIds.includes(d.id));
       const results = await Promise.all(targetDesigns.map(d => thresholdAlphaForDesign(d.imageInfo, d.widthInches, d.heightInches)));
@@ -1582,8 +1593,13 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
   const handleCropApply = useCallback(async (designId: string, newImageInfo: ImageInfo) => {
     const design = designs.find(d => d.id === designId);
     if (!design) return;
-    // Compute stamp before saveSnapshot — uses the pre-edit designs array.
-    const editSplitStamps = computeEditSplitStamps([designId], designs, "crop");
+    // Compute stamp before saveSnapshot — use all sheets so copies on other
+    // sheets are counted in the same row, matching layerRows grouping.
+    const editSplitStamps = computeEditSplitStamps(
+      [designId],
+      sheetsRef.current.flatMap(s => s.designs),
+      "crop",
+    );
     saveSnapshot();
     const aspect = design.widthInches / design.heightInches;
     const newAspect = newImageInfo.image.naturalWidth / newImageInfo.image.naturalHeight;
