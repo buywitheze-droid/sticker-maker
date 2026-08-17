@@ -31,6 +31,8 @@ import {
   ownUploadedBytes,
   prepareRasterUpload,
   type PreparedRaster,
+  PrepareNetworkError,
+  prepareErrorMessageKey,
 } from "@/lib/prepare-raster-upload";
 import {
   LOW_RES_EFFECTIVE_DPI_THRESHOLD,
@@ -55,7 +57,7 @@ import {
 import { createVectorPrintSourceResolver, hasVectorPrintSource } from "@/lib/vector-print-source";
 import { VECTOR_TARGET_DPI, vectorPrintDpi } from "@/lib/vector-raster-limits";
 import { getUpscaleManager, resolveUpscaleScale } from "@/lib/upscale-manager";
-import { getContourWorkerManager } from "@/lib/contour-worker-manager";
+import { clearContourCacheIfActive } from "@/lib/contour-worker-manager";
 import { revokeThumbnailCacheEntry } from "@/lib/thumbnail-cache";
 import { saveUploadToLibrary } from "@/lib/uploads-library";
 import { detectUpscaleSupport } from "@/lib/upscale-support";
@@ -467,10 +469,11 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
             const rawMsg = err instanceof Error ? err.message : "";
             const isNetworkErr = /interrupted|Failed to fetch|connection/i.test(rawMsg);
             toast({
-              title: isNetworkErr ? t("toast.networkError") : t("toast.uploadFailed"),
-              description: isNetworkErr
-                ? t("toast.networkErrorDesc")
-                : rawMsg || t("toast.uploadFailedDesc"),
+              title: t("toast.uploadFailed"),
+              description:
+                err instanceof PrepareNetworkError
+                  ? t(prepareErrorMessageKey(err))
+                  : err instanceof Error ? err.message : t("toast.uploadFailedDesc"),
               variant: "destructive",
             });
             setIsUploading(false);
@@ -1118,15 +1121,11 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       } catch (err) {
         console.error("[sidebar-upload] raster import failed:", err);
         toast({
-          title: (() => {
-              const m = err instanceof Error ? err.message : "";
-              return /interrupted|Failed to fetch|connection/i.test(m) ? t("toast.networkError") : t("toast.uploadFailed");
-            })(),
-          description: (() => {
-              const m = err instanceof Error ? err.message : "";
-              if (/interrupted|Failed to fetch|connection/i.test(m)) return t("toast.networkErrorDesc");
-              return m || t("toast.failedLoadFile", { name: file.name });
-            })(),
+          title: t("toast.uploadFailed"),
+          description:
+            err instanceof PrepareNetworkError
+              ? t(prepareErrorMessageKey(err))
+              : err instanceof Error ? err.message : t("toast.failedLoadFile", { name: file.name }),
           variant: "destructive",
         });
       }
@@ -1377,7 +1376,7 @@ export function useImageEditorModelUploadCrop(bag: ImageEditorBagAfterArrange) {
       contentFillCacheRef.current.delete(oldSrc);
       assetDataUrlCacheRef.current.delete(design.id);
       restoredLayerAssetRef.current.delete(design.id);
-      getContourWorkerManager().clearCache();
+      clearContourCacheIfActive();
       setDesigns(prev => prev.map(current => current.id === design.id
         ? {
             ...current,

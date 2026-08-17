@@ -173,6 +173,27 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
    * get anyway. Bursts of clicks now cost two packs rather than one per click.
    */
   const arrangeInFlightRef = useRef(false);
+  /**
+   * What the sheet is busy doing, for the indicator over the preview. `null` when idle.
+   *
+   * This mirrors `arrangeInFlightRef` rather than replacing it. The lock has to be read and
+   * written synchronously within a single call, which state cannot do, and the indicator has
+   * to cause a render, which a ref cannot do.
+   *
+   * It deliberately stays set across the height ladder. Growing the sheet is several packs
+   * with a paint between each, and reporting them separately is what makes one operation look
+   * like the editor stuttering three times.
+   */
+  const [arrangeStage, setArrangeStage] = useState<'nesting' | 'expanding' | null>(null);
+  /**
+   * Bumped whenever an arrange commits new positions.
+   *
+   * The preview animates designs into their new places, and to do that it needs to know the
+   * move came from an arrange rather than from a drag it was already following frame by
+   * frame. A counter says that unambiguously; diffing the design list could not tell the two
+   * apart.
+   */
+  const [arrangeEpoch, setArrangeEpoch] = useState(0);
   /** Bumped per externally-requested arrange, so a stale result can be recognised and dropped. */
   const arrangeGenerationRef = useRef(0);
   type ArrangeOpts = {
@@ -228,6 +249,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       fillSessionActiveRef.current = false;
       setIsFilling(false);
     }
+    // Only report idle when nothing is queued, or a burst of clicks would flash the
+    // indicator off and straight back on between the packs it coalesced into.
+    setArrangeStage(next ? 'nesting' : null);
     if (next) setTimeout(() => handleAutoArrangeRef.current(next), 0);
   };
 
@@ -382,6 +406,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       }
       arrangeInFlightRef.current = true;
       arrangeGenerationRef.current++;
+      setArrangeStage('nesting');
     }
     const generation = arrangeGenerationRef.current;
 
@@ -435,8 +460,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         image: img,
         artW: d.widthInches * d.transform.s,
         artH: d.heightInches * d.transform.s,
-        stampExtra: getStampExtra(d),
-        stampText: d.printFileName ? d.name : undefined,
+        labelName: d.printFileName ? d.name : undefined,
         flipX: d.transform.flipX,
         flipY: d.transform.flipY,
         sourceKey: img.src,
@@ -741,6 +765,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         // MAX with a real, non-phantom overflow).
         ladderStepRef.current = ladderStep + 1;
         ladderChainRef.current = true;
+        setArrangeStage('expanding');
         setTimeout(() => handleAutoArrangeRef.current({
           skipSnapshot: true,
           preserveSelection: true,
@@ -844,6 +869,9 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         const { nx, ny } = clampDesignToArtboard({ ...d, transform: newTransform }, abW, abH);
         return { ...d, transform: { ...newTransform, nx, ny } };
       }));
+      // Let the preview slide the designs into place. An arrange where every design was
+      // anchored produced no deltas and moved nothing, so there is nothing to animate.
+      if (deltas.size > 0) setArrangeEpoch(e => e + 1);
       if (!opts?.preserveSelection) {
         setSelectedDesignId(null);
         setSelectedDesignIds(new Set());
@@ -874,7 +902,14 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         if (!mountedRef.current) return;
         // A result from a superseded run would undo placements the current one has already
         // made, and would carry nothing at all for designs added since it was posted.
-        if (generation !== arrangeGenerationRef.current) return;
+        //
+        // Dropping it still has to release the lock. This is not reachable today, because the
+        // generation only advances when a run takes a lock nobody was holding — but
+        // `settleArrange` is documented as being on every way out of an arrange, and a return
+        // that kept the lock would stop the editor arranging again for the rest of the
+        // session. The unmount check above needs no such treatment: there is nothing left to
+        // release once the hook is gone.
+        if (generation !== arrangeGenerationRef.current) { settleArrange(); return; }
         if (e.data.type === 'error') {
           console.warn('[autoArrange] worker error:', e.data.error);
           toast({ title: "Arrange failed", variant: "destructive" });
@@ -1175,8 +1210,7 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         image: design.imageInfo.image,
         artW: design.widthInches * design.transform.s,
         artH: design.heightInches * design.transform.s,
-        stampExtra: getStampExtra(design),
-        stampText: design.printFileName ? design.name : undefined,
+        labelName: design.printFileName ? design.name : undefined,
         flipX: design.transform.flipX,
         flipY: design.transform.flipY,
         sourceKey: src,
@@ -1306,7 +1340,6 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
       id: crypto.randomUUID(),
       name: baseName,
       transform: { ...ref.transform },
-      printFileName: false,
     }));
     saveSnapshot();
     fillSessionActiveRef.current = true;
@@ -1633,7 +1666,6 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
         image: newImageInfo.image,
         artW: scaledW,
         artH: scaledH,
-        stampExtra: 0,
         sourceKey: newImageInfo.image.src,
       })?.mask;
       // Nesting rather than rectangle-fitting the newcomer, so it can slot into a
@@ -1754,6 +1786,8 @@ export function useImageEditorModelArrangeKeyboard(bag: ImageEditorBagAfterDesig
 
   return {
     ...bag,
+    arrangeStage,
+    arrangeEpoch,
     getAlignDelta,
     handleAlignCorner,
     handleAutoArrange,

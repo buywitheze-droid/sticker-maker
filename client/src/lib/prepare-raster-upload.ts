@@ -8,6 +8,7 @@
  * never move high-resolution pixels back over the network.
  */
 
+import { holdScreenAwake } from "./wake-lock";
 import {
   checkFileSizeBudget,
   checkPixelBudget,
@@ -48,6 +49,30 @@ export interface PreparedRaster {
 }
 
 export type RejectReason = "too_many_pixels" | "file_too_large" | "unreadable_dimensions";
+
+/**
+ * Take ownership of a picked file's bytes.
+ *
+ * A `File` from a picker or a drop is a *reference* to a path on disk plus the
+ * size and modification time it had when it was chosen. Nothing is read until
+ * something reads it, and if the file has moved, been renamed or deleted, been
+ * re-saved by the customer, or been turned back into a cloud placeholder by
+ * OneDrive or Dropbox in the meantime, that read fails.
+ *
+ * That matters because this file is the design's *print source*: the export
+ * decodes it at the placement size when Download is pressed, which can be an
+ * hour after the upload. Retaining the reference means a gangsheet quietly
+ * depends on the customer's folder staying untouched for the whole session, and
+ * it fails at the last possible step, after the sheet has rendered.
+ *
+ * The read costs one pass over the file here, while it is certainly still
+ * there. The bytes then live in browser-managed blob storage, which can page to
+ * disk, so this buys independence from the filesystem rather than heap.
+ */
+export async function ownUploadedBytes(file: File): Promise<Blob> {
+  const bytes = await file.arrayBuffer();
+  return new Blob([bytes], { type: file.type || "application/octet-stream" });
+}
 
 function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -183,111 +208,162 @@ export async function isSupportedRasterContainer(file: File): Promise<boolean> {
 }
 
 /**
- * Copy an uploaded file's bytes into a blob the app owns.
- *
- * A `File` from a picker or a drop is a *reference* to a path on disk plus the
- * size and modification time it had when it was chosen. Nothing is read until
- * something reads it, and if the file has moved, been renamed or deleted, been
- * re-saved by the customer, or been turned back into a cloud placeholder by
- * OneDrive or Dropbox in the meantime, that read fails —
- * "A requested file or directory could not be found at the time an operation
- * was processed."
- *
- * That matters because this file is the design's *print source*: the export
- * decodes it at the placement size when Download is pressed, which can be an
- * hour after the upload. Retaining the reference meant a gangsheet quietly
- * depended on the customer's folder staying untouched for the whole session,
- * and it failed at the last possible step, after the sheet had rendered.
- *
- * The read costs one pass over the file here, while it is certainly still
- * there. The bytes then live in browser-managed blob storage, which can page to
- * disk, so this buys independence from the filesystem rather than heap.
+ * The prepare POST never reached the server (or hit a transient gateway
+ * error) after retries. Callers show a plain-language connectivity message
+ * for this instead of the raw browser text ("Failed to fetch", "Load
+ * failed"), which customers read as a broken product.
  */
-export async function ownUploadedBytes(file: File): Promise<Blob> {
-  const bytes = await file.arrayBuffer();
-  return new Blob([bytes], { type: file.type || "application/octet-stream" });
+export class PrepareNetworkError extends Error {
+  /** "network": connection problem, retrying may help. "file": the picked
+   *  File itself became unreadable (iOS reclaims picker files under memory
+   *  pressure or app switches) — only re-selecting it can fix that.
+   *  "server": the request arrived and the service could not complete it —
+   *  out of memory, queue full, or rate limited. Telling that customer to
+   *  check their internet sends them to reset a router over our problem. */
+  constructor(
+    message: string,
+    readonly kind: "network" | "file" | "server" = "network",
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Which message a failed prepare earns.
+ *
+ * Three call sites show this error and each used to spell the mapping out itself, which is how
+ * a service failure came to be reported as a connection problem in all three at once.
+ */
+export function prepareErrorMessageKey(err: PrepareNetworkError): string {
+  switch (err.kind) {
+    case "file": return "toast.uploadFileGoneDesc";
+    case "server": return "toast.uploadServerBusyDesc";
+    default: return "toast.uploadNetworkDesc";
+  }
+}
+
+/** Chrome "Failed to fetch", Safari/iOS "Load failed", Firefox "NetworkError…" — one transport failure, three spellings. */
+function isNetworkFetchError(err: unknown): err is Error {
+  if (!(err instanceof Error)) return false;
+  const m = err.message;
+  return m === "Failed to fetch" || m === "Load failed" || /^NetworkError\b/.test(m);
 }
 
 export async function prepareRasterUpload(file: File): Promise<PreparedRaster> {
-  const maxAttempts = 3;
-  let lastError: unknown;
+  // Hold a screen wake lock while the file rides up and the preview comes
+  // back: iOS locking the screen mid-POST suspends the network process and
+  // kills the transfer. Best-effort no-op elsewhere.
+  const releaseWakeLock = await holdScreenAwake();
+  try {
+    return await prepareRasterUploadInner(file);
+  } finally {
+    releaseWakeLock();
+  }
+}
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+async function prepareRasterUploadInner(file: File): Promise<PreparedRaster> {
+  // Every large file rides on this one POST — on phones that means a
+  // multi-second cellular upload that dies whenever the connection blips or
+  // iOS kills the socket because the customer switched apps. A fresh
+  // FormData per attempt re-reads the File, and the server prepare is a
+  // pure computation (no state), so retrying is safe. Only transport
+  // failures and transient gateway statuses retry; real HTTP errors
+  // (budget rejections etc.) surface immediately.
+  let res: Response | null = null;
+  let lastNetworkDetail = "";
+  // Whether the last failure was the service answering badly rather than the request failing to
+  // arrive. Both exhaust the retries and both used to be reported as a dropped connection, which
+  // is a lie in one of the two cases and sends the customer to check a working router.
+  let lastFailureWasServer = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt === 1 ? 600 : 1800));
     try {
       const form = new FormData();
       form.append("image", file);
-      const res = await fetch("/api/prepare-raster-upload", { method: "POST", body: form });
-      if (!res.ok) {
-        let message = `Prepare failed (${res.status})`;
-        try {
-          const errJson = (await res.json()) as { error?: string };
-          if (errJson?.error) message = errJson.error;
-        } catch {
-          /* keep the status-based message */
-        }
-        // 4xx (except 408/429) is not worth retrying — the file itself was rejected.
-        const retryableStatus = res.status >= 500 || res.status === 408 || res.status === 429;
-        if (!retryableStatus || attempt === maxAttempts) {
-          throw new Error(message);
-        }
-        lastError = new Error(message);
-        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)));
-        continue;
-      }
-
-      const num = (name: string) => Number(res.headers.get(name));
-      const sourceWidth = num("X-Anynest-Source-Width");
-      const sourceHeight = num("X-Anynest-Source-Height");
-      const cropWidth = num("X-Anynest-Crop-Width");
-      const cropHeight = num("X-Anynest-Crop-Height");
-      if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(cropWidth > 0) || !(cropHeight > 0)) {
-        throw new Error("Prepare response was missing dimension headers");
-      }
-
-      const previewBlob = await res.blob();
-      const previewImage = await loadImageFromBlob(previewBlob);
-      const baseName = file.name.replace(/\.\w+$/, "") || "design";
-
-      return {
-        previewImage,
-        previewFile: new File([previewBlob], `${baseName}.png`, { type: "image/png" }),
-        sourceBlob: await ownUploadedBytes(file),
-        sourceCrop: {
-          x: Math.max(0, num("X-Anynest-Crop-X") || 0),
-          y: Math.max(0, num("X-Anynest-Crop-Y") || 0),
-          width: cropWidth,
-          height: cropHeight,
-        },
-        sourceWidth,
-        sourceHeight,
-        dpi: num("X-Anynest-Density") || 72,
-        sourceMegapixels: num("X-Anynest-Source-MP") || (sourceWidth * sourceHeight) / 1_000_000,
-        binaryAlpha: res.headers.get("X-Anynest-Binary-Alpha") === "1",
-        hasTransparency: res.headers.get("X-Anynest-Has-Transparency") === "1",
-      };
+      res = await fetch("/api/prepare-raster-upload", { method: "POST", body: form });
     } catch (err) {
-      lastError = err;
-      const detail = err instanceof Error ? err.message : String(err);
-      const isNetwork =
-        detail === "Failed to fetch" ||
-        /network|interrupted|timeout|Failed to load/i.test(detail);
-      const isRetryablePrepare = /Prepare failed \(5\d\d\)|Prepare failed \(408\)|Prepare failed \(429\)/.test(detail);
-      if ((isNetwork || isRetryablePrepare) && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)));
-        continue;
-      }
-      if (isNetwork) {
-        throw new Error(
-          "Your connection was interrupted during upload. Please check your internet and try again.",
-        );
-      }
-      throw err instanceof Error ? err : new Error(String(err));
+      if (!isNetworkFetchError(err)) throw err;
+      lastNetworkDetail = err.message;
+      lastFailureWasServer = false;
+      res = null;
+      continue;
     }
+    // 500 is deliberately included: while a production instance is booting
+    // (or was just OOM-killed), the platform itself answers plain 500s —
+    // observed live in the deployment log — and those windows pass within
+    // seconds. The endpoint's own deterministic rejections use 400. 408/429
+    // are transient by definition (timeout / rate limit).
+    if (res.status >= 500 || res.status === 408 || res.status === 429) {
+      lastNetworkDetail = `HTTP ${res.status}`;
+      lastFailureWasServer = true;
+      res = null;
+      continue;
+    }
+    break;
+  }
+  if (!res) {
+    // Same TypeError spelling either way, but a dead File and a dead network
+    // need opposite remedies — probe one byte to tell them apart.
+    let fileReadable = true;
+    try {
+      await file.slice(0, 1).arrayBuffer();
+    } catch {
+      fileReadable = false;
+    }
+    if (!fileReadable) {
+      throw new PrepareNetworkError(
+        `The selected file is no longer readable (${lastNetworkDetail})`,
+        "file",
+      );
+    }
+    throw new PrepareNetworkError(
+      lastFailureWasServer
+        ? `The image preparation service could not complete this file (${lastNetworkDetail})`
+        : `Could not reach the image preparation service (${lastNetworkDetail})`,
+      lastFailureWasServer ? "server" : "network",
+    );
+  }
+  if (!res.ok) {
+    let message = `Prepare failed (${res.status})`;
+    try {
+      const errJson = (await res.json()) as { error?: string };
+      if (errJson?.error) message = errJson.error;
+    } catch {
+      /* keep the status-based message */
+    }
+    throw new Error(message);
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Prepare failed after retries");
+  const num = (name: string) => Number(res.headers.get(name));
+  const sourceWidth = num("X-Anynest-Source-Width");
+  const sourceHeight = num("X-Anynest-Source-Height");
+  const cropWidth = num("X-Anynest-Crop-Width");
+  const cropHeight = num("X-Anynest-Crop-Height");
+  if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(cropWidth > 0) || !(cropHeight > 0)) {
+    throw new Error("Prepare response was missing dimension headers");
+  }
+
+  const previewBlob = await res.blob();
+  const previewImage = await loadImageFromBlob(previewBlob);
+  const baseName = file.name.replace(/\.\w+$/, "") || "design";
+
+  return {
+    previewImage,
+    previewFile: new File([previewBlob], `${baseName}.png`, { type: "image/png" }),
+    sourceBlob: await ownUploadedBytes(file),
+    sourceCrop: {
+      x: Math.max(0, num("X-Anynest-Crop-X") || 0),
+      y: Math.max(0, num("X-Anynest-Crop-Y") || 0),
+      width: cropWidth,
+      height: cropHeight,
+    },
+    sourceWidth,
+    sourceHeight,
+    dpi: num("X-Anynest-Density") || 72,
+    sourceMegapixels: num("X-Anynest-Source-MP") || (sourceWidth * sourceHeight) / 1_000_000,
+    binaryAlpha: res.headers.get("X-Anynest-Binary-Alpha") === "1",
+    hasTransparency: res.headers.get("X-Anynest-Has-Transparency") === "1",
+  };
 }
 
 export function describeBudgetRejection(

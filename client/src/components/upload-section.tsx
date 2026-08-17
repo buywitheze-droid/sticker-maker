@@ -8,6 +8,8 @@ import {
   describeBudgetRejection,
   importRasterForEditor,
   type PreparedRaster,
+  PrepareNetworkError,
+  prepareErrorMessageKey,
 } from "@/lib/prepare-raster-upload";
 import { IOS_SAFE_CANVAS_DIM, SAFARI_MAX_CANVAS_AREA } from "@/lib/image-budget";
 // From the module rather than the `image-editor` barrel: that barrel renders
@@ -194,7 +196,10 @@ export default function UploadSection({ onImageUpload, onBatchStart, imageInfo, 
       console.error("[upload] raster import failed:", err);
       toast({
         title: t("toast.uploadFailed"),
-        description: err instanceof Error ? err.message : t("toast.uploadFailedDesc"),
+        description:
+          err instanceof PrepareNetworkError
+            ? t(prepareErrorMessageKey(err))
+            : err instanceof Error ? err.message : t("toast.uploadFailedDesc"),
         variant: "destructive",
       });
     }
