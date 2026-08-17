@@ -36,6 +36,7 @@ import {
   useUiActions,
 } from "@/state/ui-store";
 import { ArrangeOverlay } from "./arrange-overlay";
+import { LoadingVeil } from "./loading-veil";
 
 /** Halftone icon — a grid of circles shrinking diagonally. */
 const HalftoneIcon = ({ className }: { className?: string }) => (
@@ -1931,20 +1932,13 @@ export default function ImageEditorView() {
         </div>
       )}
 
-      {/* Processing Modal — covers downloads, edit-link restore, and add-to-cart/update */}
+      {/* Processing veil — covers downloads, edit-link restore, and add-to-cart/update */}
       {isProcessing && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-sm mx-4">
-            <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-5 w-5 border-2 border-cyan-500 border-t-transparent"></div>
-              <span className="text-white">
-                {isAddingToCart
-                  ? (isUpdateFlow ? t("editor.updatingDesignModal") : t("editor.addingToCartModal"))
-                  : t("editor.processing")}
-              </span>
-            </div>
-          </div>
-        </div>
+        <LoadingVeil shown fixed className="z-50">
+          {isAddingToCart
+            ? (isUpdateFlow ? t("editor.updatingDesignModal") : t("editor.addingToCartModal"))
+            : t("editor.processing")}
+        </LoadingVeil>
       )}
     </div>
   );

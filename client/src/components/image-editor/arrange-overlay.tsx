@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/i18n";
+import { LoadingVeil } from "./loading-veil";
 
 /**
  * How long the sheet has to be busy before the veil appears.
@@ -62,17 +62,8 @@ export function ArrangeOverlay({ stage }: { stage: 'nesting' | 'expanding' | nul
   if (!mounted) return null;
 
   return (
-    <div
-      aria-hidden
-      className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-white/70 backdrop-blur-[2px] transition-opacity ${
-        shown ? "opacity-100" : "opacity-0"
-      }`}
-      style={{ transitionDuration: `${FADE_MS}ms` }}
-    >
-      <div className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-[12px] font-semibold text-white shadow-lg">
-        <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
-        {lastStage === 'expanding' ? t("editor.expandingSheet") : t("editor.nesting")}
-      </div>
-    </div>
+    <LoadingVeil shown={shown} fadeDuration={FADE_MS} className="z-20">
+      {lastStage === 'expanding' ? t("editor.expandingSheet") : t("editor.nesting")}
+    </LoadingVeil>
   );
 }
