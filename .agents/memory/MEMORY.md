@@ -2,3 +2,4 @@
 - [GitHub reference repo](github-reference-repo.md) — https://github.com/buywitheze-droid/sticker-maker; color list UI parity target (w-8 swatch, hex+%, 1% threshold, always visible).
 - [White underbase pipeline](white-underbase-pipeline.md) — silhouette at 50 DPI (halftone averages), upscale to 150 DPI, detail-safe standard choke (single distance, 0.010" default, thin fallback 0.002").
 - [Vector file import tools](vector-import-tools.md) — PDF/SVG/EPS server-side conversion stack; GhostScript nix path; waifu2x upscale worker.
+- [Large raster preparation](large-raster-preparation.md) — use one exact native-depth alpha scan; analysis failures retain the full frame.

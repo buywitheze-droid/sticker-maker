@@ -261,5 +261,10 @@ export function upscale(inputBuf: Buffer, scale: 2 | 4 = 4): Promise<Buffer> {
   });
 }
 
-// Pre-warm: spawn worker at module load so the first request doesn't pay startup cost.
-spawnWorker();
+// Pre-warm in the application so the first customer request does not pay startup
+// cost. Route-level verification imports this module only to exercise raster
+// preparation, where a persistent Python worker would otherwise keep the test
+// process alive after its HTTP server closes.
+if (process.env.ANYNEST_SKIP_UPSCALE_PREWARM !== "1") {
+  spawnWorker();
+}

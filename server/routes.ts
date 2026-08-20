@@ -10,6 +10,7 @@ import { promisify } from "util";
 import * as fs from "fs";
 import * as os from "os";
 import * as crypto from "crypto";
+import { inspectRasterAlpha, type SharpReadOpts } from "./raster-content-bounds";
 
 const execFileAsync = promisify(execFile);
 
@@ -150,8 +151,6 @@ const MAX_PREPARE_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_SOURCE_MEGAPIXELS = 150;
 const PREPARE_PREVIEW_MAX_EDGE = 4096;
 const MAX_INLINE_DECODE_MEGAPIXELS = 40;
-/** How many source pixels collapse into one sample of the reduced alpha probe. */
-const MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE = 64;
 
 /**
  * Limit concurrent raster-prepare jobs to one at a time.
@@ -313,110 +312,6 @@ function fitWithinMegapixels(w: number, h: number, maxMP: number, maxEdge: numbe
   return Math.min(1, mpScale, edgeScale);
 }
 
-type SharpReadOpts = {
-  failOn: "none";
-  sequentialRead: boolean;
-  limitInputPixels: number;
-};
-
-/**
- * Sample the alpha channel to learn whether the artwork is actually cut out
- * and whether its alpha is binary.
- *
- * Reduced nearest-neighbour, so every byte read is an exact source value
- * rather than a blend of its neighbours — that is what makes the binary-alpha
- * answer trustworthy. Roughly a megabyte even for a 150 MP source.
- */
-async function probeAlpha(
-  filePath: string,
-  sharpOpts: SharpReadOpts,
-  srcW: number,
-  srcH: number,
-): Promise<{ hasTransparentPixels: boolean; binaryAlpha: boolean }> {
-  const cells = Math.ceil((srcW * srcH) / MAX_SOURCE_PIXELS_PER_ALPHA_SAMPLE);
-  const scale = Math.min(1, Math.sqrt(cells / Math.max(1, srcW * srcH)));
-  const samples = await sharp(filePath, sharpOpts)
-    .rotate()
-    .toColourspace("srgb")
-    .ensureAlpha()
-    .extractChannel(3)
-    .resize(Math.max(1, Math.round(srcW * scale)), Math.max(1, Math.round(srcH * scale)), {
-      fit: "fill",
-      kernel: "nearest",
-    })
-    .raw()
-    .toBuffer();
-
-  let hasTransparentPixels = false;
-  let hasPartialAlpha = false;
-  for (let i = 0; i < samples.length; i++) {
-    const a = samples[i];
-    if (a === 0) hasTransparentPixels = true;
-    else if (a !== 255) hasPartialAlpha = true;
-  }
-
-  // "Binary alpha" is a claim about hard-edged cut-out artwork, and it is only
-  // meaningful when transparency exists at all. A fully opaque image trivially
-  // satisfies "every alpha is 0 or 255", and calling that binary sends ordinary
-  // opaque PNGs down the hard-edge path: nearest-neighbour for the preview and
-  // pixelated resampling at print size, both visibly aliased.
-  return {
-    hasTransparentPixels,
-    binaryAlpha: hasTransparentPixels && !hasPartialAlpha,
-  };
-}
-
-/**
- * Measure the exact content box of a large raster without materializing it.
- *
- * libvips' find_trim runs at full resolution and before any resize, and it
- * reports how far it moved the top-left corner. Running it a second time on
- * the mirrored image turns those same two numbers into the right and bottom
- * insets, so two passes give all four edges exactly — no cell quantisation,
- * no padding fudge, and soft shadow ramps survive down to alpha 1. Both
- * pipelines resize their output to 1×1, so nothing full-size is ever encoded
- * or held in memory.
- */
-async function measureContentBounds(
-  filePath: string,
-  sharpOpts: SharpReadOpts,
-  srcW: number,
-  srcH: number,
-): Promise<{ left: number; top: number; width: number; height: number }> {
-  const probe = (mirror: boolean) => {
-    let p = sharp(filePath, sharpOpts).rotate();
-    if (mirror) p = p.flop().flip();
-    return p
-      // `lineArt` is essential, not a tweak: without it libvips compares an
-      // averaged row/column profile, so a 1-2 px stroke on a wide canvas falls
-      // below the threshold and gets cropped off the artwork.
-      .trim({ threshold: 0, lineArt: true })
-      .resize(1, 1, { fit: "fill" })
-      .toBuffer({ resolveWithObject: true });
-  };
-
-  const full = { left: 0, top: 0, width: srcW, height: srcH };
-  let normal: Awaited<ReturnType<typeof probe>>;
-  let mirrored: Awaited<ReturnType<typeof probe>>;
-  try {
-    [normal, mirrored] = await Promise.all([probe(false), probe(true)]);
-  } catch {
-    // A uniform image gives libvips nothing to trim against.
-    return full;
-  }
-
-  const left = Math.max(0, -(normal.info.trimOffsetLeft ?? 0));
-  const top = Math.max(0, -(normal.info.trimOffsetTop ?? 0));
-  const right = Math.min(srcW, srcW + (mirrored.info.trimOffsetLeft ?? 0));
-  const bottom = Math.min(srcH, srcH + (mirrored.info.trimOffsetTop ?? 0));
-  const width = right - left;
-  const height = bottom - top;
-
-  if (!(width > 0) || !(height > 0)) return full;
-  if (width >= srcW && height >= srcH) return full;
-  return { left, top, width, height };
-}
-
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/downloads", express.static(path.resolve(process.cwd(), "downloads")));
 
@@ -512,15 +407,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Crop to content only for genuinely cut-out artwork. A PNG that carries
-        // an alpha channel but no transparent pixels is treated like a photo:
-        // trimming it would eat a deliberate solid border.
+        // This one exact alpha scan determines both eligibility and bounds. A
+        // PNG that carries alpha but no transparent pixels is treated like a
+        // photo, so a deliberate solid border is never trimmed.
         const alpha = meta.hasAlpha
-          ? await probeAlpha(tmpPath, sharpOpts, srcW, srcH)
-          : { hasTransparentPixels: false, binaryAlpha: false };
-        const bounds = alpha.hasTransparentPixels
-          ? await measureContentBounds(tmpPath, sharpOpts, srcW, srcH)
-          : { left: 0, top: 0, width: srcW, height: srcH };
+          ? await inspectRasterAlpha(
+              tmpPath,
+              sharpOpts,
+              srcW,
+              srcH,
+              meta.depth === "ushort" ? "ushort" : "uchar",
+            )
+          : {
+              left: 0,
+              top: 0,
+              width: srcW,
+              height: srcH,
+              hasTransparentPixels: false,
+              binaryAlpha: false,
+            };
+        const bounds = alpha;
 
         const previewScale = fitWithinMegapixels(
           bounds.width,
