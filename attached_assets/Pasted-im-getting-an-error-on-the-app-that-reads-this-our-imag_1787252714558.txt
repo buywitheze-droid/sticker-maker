@@ -1,0 +1,39 @@
+im getting an error on the app that reads this: "our image service was too busy to prepare this file. your connection is fine -- please try again in a moment
+
+8 minutes ago
+I’m checking the image-preparation service now. That message means the app deliberately paused a request because the processing queue was full—not that your internet dropped.
+
+
+
+3 actions
+I found the cause: the app accepts only one large-image preparation at a time and safely queues eight more. Your request was rejected only after that queue stayed full through its retries. I’m checking whether the live site is running the newest protected version or an older version that needs publishing.
+
+
+
+7 actions
+The live deployment does include the safety fixes, so this is not the older crash-prone version. I’m pulling the live request logs now to see whether this was a queue-full response, a restart, or an image-specific processing failure.
+
+
+
+4 actions
+The live logs confirm this was not just a full queue: the production process ran out of memory and was killed several times, including immediately when your error appeared. I’m narrowing down which image operation triggered the memory spike before I change anything.
+
+
+
+13 actions
+I found the concrete bug: the server queue allows only one image at a time, but inside that one request it was still decoding the same transparent image twice simultaneously to find its edges. On large PNGs, those two decodes exceed production memory and kill the app. I’m changing those edge scans to run one after the other, which preserves the exact result while cutting that peak roughly in half.
+
+
+
+4 actions
+The memory-safe change is in place. I’m restarting the development app and running the upload checks, including a large transparent PNG that exercises the exact failing edge-scan path.
+
+
+
+5 actions
+The first large-image test passed, but it exposed a second issue: even with sequential scans, the exact edge finder still peaks far too high for production. I’m replacing its heavyweight “trim twice” method with one streaming alpha scan, which finds the same exact pixel bounds without keeping multiple decoded copies in memory.
+
+
+
+9 actions
+The replacement passed the same 64-megapixel transparent-image test with identical crop headers and preview output. Preparation time dropped from 7.7 seconds to 1.1 seconds, and the image operation’s extra memory fell from roughly 2 GB to about 143 MB. I’m running the full project checks and an independent code review now.
